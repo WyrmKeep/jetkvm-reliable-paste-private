@@ -56,6 +56,11 @@ TEST_DIRS := $(shell find . -name "*_test.go" -type f -exec dirname {} \; | sort
 test:
 	go test ./...
 
+# Fail fast if rclone cannot reach the R2 bucket.
+check_r2:
+	@command -v rclone >/dev/null 2>&1 || { echo "Error: rclone is not installed"; exit 1; }
+	@rclone lsf r2://jetkvm-update/ >/dev/null 2>&1 || { echo "Error: Cannot access R2 bucket. Check rclone configuration and credentials."; exit 1; }
+
 # Fail fast if the requested signing key is not available in local GPG keyring.
 check_signing_key:
 	@if [ -z "$(SIGNING_KEY_FPR)" ]; then \
@@ -221,7 +226,7 @@ git_check_dev:
 	@command -v gh >/dev/null 2>&1 || { echo "Error: gh CLI not installed"; exit 1; }
 	@gh auth status >/dev/null 2>&1 || { echo "Error: gh CLI not authenticated. Run 'gh auth login'"; exit 1; }
 
-dev_release: git_check_dev
+dev_release: git_check_dev check_r2
 	@if [ -z "$(DEVICE_IP)" ]; then \
 		echo "Error: DEVICE_IP is required"; \
 		echo "Usage: make dev_release DEVICE_IP=<ip>"; \
@@ -278,7 +283,7 @@ _build_release_inner: build_native
 		$(GO_RELEASE_BUILD_ARGS) \
 		-o bin/jetkvm_app cmd/main.go
 
-release: git_check_dev
+release: git_check_dev check_r2
 	@if [ -z "$(SIGNING_KEY_FPR)" ]; then \
 		echo "Error: SIGNING_KEY_FPR is required for releases"; \
 		echo "Usage: make release DEVICE_IP=<ip> SIGNING_KEY_FPR=<fingerprint>"; \
