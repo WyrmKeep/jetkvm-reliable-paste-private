@@ -28,7 +28,11 @@ import {
  * Test order matters:
  *   - Test 1 (unsigned): mock serves NO signature -> update must fail with GPG error.
  *     The device stays at baseline because the update was rejected.
- *   - Test 2 (signed): signature is enabled on the mock -> update must succeed.
+ *   - Test 2 (wrong key): mock serves a bogus signature (random bytes) -> update must
+ *     fail with GPG verification error. Device stays at baseline.
+ *   - Test 3 (empty sig): mock serves a 0-byte signature file -> update must
+ *     fail with "signature file is empty". Regression test for empty-sig bypass.
+ *   - Test 4 (signed): real signature is enabled on the mock -> update must succeed.
  *
  * Required environment variables:
  *   - JETKVM_URL: Device URL (e.g., http://192.168.1.77)
@@ -89,6 +93,71 @@ test.describe("OTA Signature Verification", () => {
 
     // The OTA code should reject the update with a GPG signature error
     await expect(page.getByText(/requires GPG signature/i)).toBeVisible({ timeout: 30000 });
+  });
+
+  test("wrong-key signature fails with GPG verification error", async ({ page }) => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const os = await import("os");
+    const crypto = await import("crypto");
+
+    const fakeSigPath = path.join(os.tmpdir(), `wrong_key_sig_${Date.now()}.sig`);
+    fs.writeFileSync(fakeSigPath, crypto.randomBytes(256));
+
+    try {
+      mockServer.enableSignature(fakeSigPath);
+
+      await page.goto("/settings/general/update");
+      await page.waitForLoadState("networkidle");
+
+      const retryButton = page.getByRole("button", { name: "Retry" });
+      if (await retryButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await retryButton.click();
+      }
+
+      const updateButton = page.getByRole("button", { name: "Update Now" });
+      await expect(updateButton).toBeVisible({ timeout: 30000 });
+      await updateButton.click();
+
+      await expect(page.getByText(/GPG signature verification failed/i)).toBeVisible({
+        timeout: 30000,
+      });
+    } finally {
+      mockServer.disableSignature();
+      fs.unlinkSync(fakeSigPath);
+    }
+  });
+
+  test("empty signature file is rejected", async ({ page }) => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const os = await import("os");
+
+    const emptySigPath = path.join(os.tmpdir(), `empty_sig_${Date.now()}.sig`);
+    fs.writeFileSync(emptySigPath, Buffer.alloc(0));
+
+    try {
+      mockServer.enableSignature(emptySigPath);
+
+      await page.goto("/settings/general/update");
+      await page.waitForLoadState("networkidle");
+
+      const retryButton = page.getByRole("button", { name: "Retry" });
+      if (await retryButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await retryButton.click();
+      }
+
+      const updateButton = page.getByRole("button", { name: "Update Now" });
+      await expect(updateButton).toBeVisible({ timeout: 30000 });
+      await updateButton.click();
+
+      await expect(page.getByText(/signature file is empty/i)).toBeVisible({
+        timeout: 30000,
+      });
+    } finally {
+      mockServer.disableSignature();
+      fs.unlinkSync(emptySigPath);
+    }
   });
 
   test("signed stable update succeeds", async ({ page }) => {
