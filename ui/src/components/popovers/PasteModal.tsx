@@ -38,7 +38,7 @@ export default function PasteModal() {
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
-  const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number; phase: "sending" | "draining" } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState<string | null>(null);
@@ -107,13 +107,14 @@ export default function PasteModal() {
       if (batches.length > 0) {
         const abortController = new AbortController();
         pasteAbortControllerRef.current = abortController;
-        setPasteProgress({ completed: 0, total: batches.length });
+        setPasteProgress({ completed: 0, total: batches.length, phase: "sending" });
         setTraceLines([
           `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : 'textarea'} chars=${text.length} batches=${batches.length} steps=${batchStats.reduce((sum, item) => sum + item.stepCount, 0)}`,
         ]);
+        const finalSettleMs = pasteProfile === "fast" ? 1500 : 500;
         await runPasteBatches(batches, executePasteMacro, {
           batchPauseMs: profile.batchPauseMs,
-          finalSettleMs: pasteProfile === "fast" ? 1500 : 500,
+          finalSettleMs,
           tailBatchCount: pasteProfile === "fast" ? 16 : 8,
           tailPauseMs: pasteProfile === "fast" ? 75 : 25,
           stressDurationMs: pasteProfile === "fast" ? 900 : 700,
@@ -124,6 +125,7 @@ export default function PasteModal() {
             setPasteProgress({
               completed: progress.completedBatches,
               total: progress.totalBatches,
+              phase: "sending",
             });
           },
           onTrace: trace => {
@@ -133,6 +135,8 @@ export default function PasteModal() {
             ]);
           },
         });
+        setPasteProgress({ completed: batches.length, total: batches.length, phase: "draining" });
+        await new Promise(resolve => setTimeout(resolve, finalSettleMs));
         pasteAbortControllerRef.current = null;
         setPasteProgress(null);
       }
@@ -304,7 +308,9 @@ export default function PasteModal() {
                   </p>
                   {pasteProgress && (
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      Sending paste batch {pasteProgress.completed} / {pasteProgress.total}
+                      {pasteProgress.phase === "draining"
+                        ? `Draining final input… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
+                        : `Sending paste batch ${pasteProgress.completed} / ${pasteProgress.total}`}
                     </p>
                   )}
                   {debugMode && traceLines.length > 0 && (
