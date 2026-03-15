@@ -22,6 +22,10 @@ import { PASTE_PROFILES, type PasteProfileName, runPasteBatches } from "@/utils/
 const pasteMaxLength = 1073741824;
 const defaultDelay = 20;
 
+function normalizePasteText(value: string): string {
+  return value.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 export default function PasteModal() {
   const TextAreaRef = useRef<HTMLTextAreaElement>(null);
   const pasteAbortControllerRef = useRef<AbortController | null>(null);
@@ -73,7 +77,7 @@ export default function PasteModal() {
   const onConfirmPaste = useCallback(async () => {
     if (!TextAreaRef.current || !selectedKeyboard) return;
 
-    const text = fileText ?? TextAreaRef.current.value;
+    const text = normalizePasteText(fileText ?? TextAreaRef.current.value);
 
     try {
       const profile = PASTE_PROFILES[pasteProfile];
@@ -182,7 +186,7 @@ export default function PasteModal() {
                         }
                       }}
                       onChange={e => {
-                        const value = e.target.value;
+                        const value = normalizePasteText(e.target.value);
                         const invalidChars = [
                           ...new Set(
                             // @ts-expect-error TS doesn't recognize Intl.Segmenter in some environments
@@ -212,8 +216,17 @@ export default function PasteModal() {
                           }
 
                           try {
-                            const text = await file.text();
+                            const text = normalizePasteText(await file.text());
                             setFileText(text);
+                            const invalidChars = [
+                              ...new Set(
+                                // @ts-expect-error TS doesn't recognize Intl.Segmenter in some environments
+                                [...new Intl.Segmenter().segment(text)]
+                                  .map(x => x.segment.normalize("NFC"))
+                                  .filter(char => !selectedKeyboard.chars[char]),
+                              ),
+                            ];
+                            setInvalidChars(invalidChars);
                             setTraceLines([`loaded file=${file.name} bytes=${file.size.toLocaleString()} chars=${text.length}`]);
                           } catch (error) {
                             setFileText(null);
