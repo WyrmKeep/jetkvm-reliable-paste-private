@@ -13,8 +13,8 @@ export const PASTE_PROFILES = {
     batchPauseMs: 0,
   },
   fast: {
-    maxStepsPerBatch: 320,
-    keyDelayMs: 5,
+    maxStepsPerBatch: 448,
+    keyDelayMs: 3,
     batchPauseMs: 0,
   },
 } satisfies Record<string, PasteBatchProfile>;
