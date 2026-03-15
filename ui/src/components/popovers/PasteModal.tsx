@@ -35,6 +35,7 @@ export default function PasteModal() {
   const [delayValue, setDelayValue] = useState(defaultDelay);
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
   const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [traceLines, setTraceLines] = useState<string[]>([]);
   const delay = useMemo(() => {
     if (delayValue < 0 || delayValue > 65534) {
       return defaultDelay;
@@ -73,11 +74,16 @@ export default function PasteModal() {
     try {
       const profile = PASTE_PROFILES[pasteProfile];
       const effectiveDelay = debugMode ? delay : profile.keyDelayMs;
-      const { batches, invalidChars: aggregatedInvalidChars } = buildPasteMacroBatches(
+      const {
+        batches,
+        invalidChars: aggregatedInvalidChars,
+        batchStats,
+      } = buildPasteMacroBatches(
         text,
         selectedKeyboard,
         effectiveDelay,
         profile.maxStepsPerBatch,
+        profile.maxBytesPerBatch,
       );
 
       if (aggregatedInvalidChars.length > 0) {
@@ -94,14 +100,24 @@ export default function PasteModal() {
         const abortController = new AbortController();
         pasteAbortControllerRef.current = abortController;
         setPasteProgress({ completed: 0, total: batches.length });
+        setTraceLines([
+          `profile=${pasteProfile} chars=${text.length} batches=${batches.length} steps=${batchStats.reduce((sum, item) => sum + item.stepCount, 0)}`,
+        ]);
         await runPasteBatches(batches, executePasteMacro, {
           batchPauseMs: profile.batchPauseMs,
           signal: abortController.signal,
+          batchStats,
           onProgress: progress => {
             setPasteProgress({
               completed: progress.completedBatches,
               total: progress.totalBatches,
             });
+          },
+          onTrace: trace => {
+            setTraceLines(current => [
+              ...current,
+              `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs ?? 0}ms`,
+            ]);
           },
         });
         pasteAbortControllerRef.current = null;
@@ -236,6 +252,11 @@ export default function PasteModal() {
                     <p className="text-xs text-slate-600 dark:text-slate-400">
                       Sending paste batch {pasteProgress.completed} / {pasteProgress.total}
                     </p>
+                  )}
+                  {debugMode && traceLines.length > 0 && (
+                    <pre className="max-h-40 overflow-auto rounded-md bg-slate-100 p-2 text-[10px] text-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                      {traceLines.join("\n")}
+                    </pre>
                   )}
                 </div>
               </div>

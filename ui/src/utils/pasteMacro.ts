@@ -24,6 +24,13 @@ export interface PasteMacroBuildResult {
 export interface PasteMacroBatchResult {
   batches: MacroStep[][];
   invalidChars: string[];
+  batchStats: Array<{ stepCount: number; estimatedBytes: number }>;
+}
+
+function estimateBatchBytes(stepCount: number): number {
+  // Matches HID macro report layout in hidRpc.ts:
+  // 6-byte header + 9 bytes per step.
+  return 6 + stepCount * 9;
 }
 
 function buildStepsForChar(
@@ -98,14 +105,29 @@ export function buildPasteMacroBatches(
   keyboard: KeyboardLayoutLike,
   delay: number,
   maxStepsPerBatch: number,
+  maxBytesPerBatch: number,
 ): PasteMacroBatchResult {
   if (maxStepsPerBatch <= 0) {
     throw new Error("maxStepsPerBatch must be greater than zero");
   }
+  if (maxBytesPerBatch <= 0) {
+    throw new Error("maxBytesPerBatch must be greater than zero");
+  }
 
   const batches: MacroStep[][] = [];
+  const batchStats: Array<{ stepCount: number; estimatedBytes: number }> = [];
   const invalidChars = new Set<string>();
   let currentBatch: MacroStep[] = [];
+
+  const flushBatch = () => {
+    if (currentBatch.length === 0) return;
+    batches.push(currentBatch);
+    batchStats.push({
+      stepCount: currentBatch.length,
+      estimatedBytes: estimateBatchBytes(currentBatch.length),
+    });
+    currentBatch = [];
+  };
 
   for (const char of text) {
     const normalizedChar = char.normalize("NFC");
@@ -115,20 +137,24 @@ export function buildPasteMacroBatches(
       continue;
     }
 
-    if (currentBatch.length > 0 && currentBatch.length + charSteps.length > maxStepsPerBatch) {
-      batches.push(currentBatch);
-      currentBatch = [];
+    const projectedStepCount = currentBatch.length + charSteps.length;
+    const projectedBytes = estimateBatchBytes(projectedStepCount);
+
+    if (
+      currentBatch.length > 0 &&
+      (projectedStepCount > maxStepsPerBatch || projectedBytes > maxBytesPerBatch)
+    ) {
+      flushBatch();
     }
 
     currentBatch.push(...charSteps);
   }
 
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
-  }
+  flushBatch();
 
   return {
     batches,
     invalidChars: Array.from(invalidChars),
+    batchStats,
   };
 }
