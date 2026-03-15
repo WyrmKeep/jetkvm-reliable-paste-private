@@ -60,6 +60,8 @@ export interface ExecutePasteTextOptions {
   tailPauseMs: number;
   stressDurationMs: number;
   stressPauseMs: number;
+  longRunThreshold?: number;
+  longRunPauseMs?: number;
   signal?: AbortSignal;
   onProgress?: (progress: PasteExecutionProgress) => void;
   onTrace?: (trace: PasteExecutionTrace) => void;
@@ -451,6 +453,8 @@ export default function useKeyboard() {
         tailPauseMs,
         stressDurationMs,
         stressPauseMs,
+        longRunThreshold,
+        longRunPauseMs,
         signal,
         onProgress,
         onTrace,
@@ -509,10 +513,12 @@ export default function useKeyboard() {
         const batchesRemaining = batches.length - (index + 1);
         const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;
         const stressMode = durationMs >= stressDurationMs;
+        const longRunMode = longRunThreshold !== undefined && (index + 1) >= longRunThreshold;
         const appliedPauseMs = Math.max(
           batchPauseMs,
           tailMode ? tailPauseMs : 0,
           stressMode ? stressPauseMs : 0,
+          longRunMode ? (longRunPauseMs ?? 0) : 0,
         );
 
         onTrace?.({
