@@ -33,7 +33,7 @@ function estimateBatchBytes(stepCount: number): number {
   return 6 + stepCount * 9;
 }
 
-function buildStepsForChar(
+export function buildStepsForChar(
   normalizedChar: string,
   keyboard: KeyboardLayoutLike,
   delay: number,

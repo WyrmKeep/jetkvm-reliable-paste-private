@@ -17,6 +17,7 @@ import { useHidRpc } from "@/hooks/useHidRpc";
 import { JsonRpcResponse, useJsonRpc } from "@/hooks/useJsonRpc";
 import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
+import { buildStepsForChar, type KeyboardLayoutLike } from "@/utils/pasteMacro";
 
 const MACRO_RESET_KEYBOARD_STATE = {
   keys: new Array(hidKeyBufferSize).fill(0),
@@ -31,6 +32,38 @@ export interface MacroStep {
 }
 
 export type MacroSteps = MacroStep[];
+
+export interface PasteExecutionProgress {
+  completedBatches: number;
+  totalBatches: number;
+}
+
+export interface PasteExecutionTrace {
+  batchIndex: number;
+  totalBatches: number;
+  stepCount: number;
+  estimatedBytes: number;
+  durationMs: number;
+  appliedPauseMs: number;
+  tailMode: boolean;
+  stressMode: boolean;
+}
+
+export interface ExecutePasteTextOptions {
+  keyboard: KeyboardLayoutLike;
+  delayMs: number;
+  maxStepsPerBatch: number;
+  maxBytesPerBatch: number;
+  batchPauseMs: number;
+  finalSettleMs: number;
+  tailBatchCount: number;
+  tailPauseMs: number;
+  stressDurationMs: number;
+  stressPauseMs: number;
+  signal?: AbortSignal;
+  onProgress?: (progress: PasteExecutionProgress) => void;
+  onTrace?: (trace: PasteExecutionTrace) => void;
+}
 
 export default function useKeyboard() {
   const { send } = useJsonRpc();
@@ -400,6 +433,125 @@ export default function useKeyboard() {
     [rpcHidReady, executeMacroRemote, executeMacroClientSide],
   );
 
+  const executePasteText = useCallback(
+    async (text: string, options: ExecutePasteTextOptions) => {
+      const {
+        keyboard,
+        delayMs,
+        maxStepsPerBatch,
+        maxBytesPerBatch,
+        batchPauseMs,
+        finalSettleMs,
+        tailBatchCount,
+        tailPauseMs,
+        stressDurationMs,
+        stressPauseMs,
+        signal,
+        onProgress,
+        onTrace,
+      } = options;
+
+      const batches: MacroSteps[] = [];
+      let currentBatch: MacroSteps = [];
+
+      const estimateBytes = (logicalSteps: number) => 6 + logicalSteps * 18;
+
+      const flushBatch = () => {
+        if (currentBatch.length === 0) return;
+        batches.push(currentBatch);
+        currentBatch = [];
+      };
+
+      const invalidChars = new Set<string>();
+
+      for (const char of text) {
+        const normalizedChar = char.normalize("NFC");
+        const charSteps = buildStepsForChar(normalizedChar, keyboard, delayMs);
+        if (!charSteps) {
+          invalidChars.add(normalizedChar);
+          continue;
+        }
+
+        const projectedSteps = currentBatch.length + charSteps.length;
+        const projectedBytes = estimateBytes(projectedSteps);
+
+        if (
+          currentBatch.length > 0 &&
+          (projectedSteps > maxStepsPerBatch || projectedBytes > maxBytesPerBatch)
+        ) {
+          flushBatch();
+        }
+
+        currentBatch.push(...charSteps);
+      }
+
+      flushBatch();
+
+      if (invalidChars.size > 0) {
+        throw new Error(`Unsupported characters: ${Array.from(invalidChars).join(", ")}`);
+      }
+
+      for (let index = 0; index < batches.length; index += 1) {
+        if (signal?.aborted) {
+          throw new Error("Paste execution aborted");
+        }
+
+        const batch = batches[index];
+        const submittedAt = Date.now();
+        await executePasteMacro(batch);
+        const durationMs = Date.now() - submittedAt;
+
+        const batchesRemaining = batches.length - (index + 1);
+        const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;
+        const stressMode = durationMs >= stressDurationMs;
+        const appliedPauseMs = Math.max(
+          batchPauseMs,
+          tailMode ? tailPauseMs : 0,
+          stressMode ? stressPauseMs : 0,
+        );
+
+        onTrace?.({
+          batchIndex: index + 1,
+          totalBatches: batches.length,
+          stepCount: batch.length,
+          estimatedBytes: estimateBytes(batch.length),
+          durationMs,
+          appliedPauseMs,
+          tailMode,
+          stressMode,
+        });
+
+        onProgress?.({
+          completedBatches: index + 1,
+          totalBatches: batches.length,
+        });
+
+        if (appliedPauseMs > 0 && index < batches.length - 1) {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(resolve, appliedPauseMs);
+            const abortHandler = () => {
+              clearTimeout(timeout);
+              reject(new Error("Paste execution aborted"));
+            };
+            signal?.addEventListener("abort", abortHandler, { once: true });
+          });
+        }
+      }
+
+      if (finalSettleMs > 0) {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(resolve, finalSettleMs);
+          const abortHandler = () => {
+            clearTimeout(timeout);
+            reject(new Error("Paste execution aborted"));
+          };
+          signal?.addEventListener("abort", abortHandler, { once: true });
+        });
+      }
+    },
+    [executePasteMacro],
+  );
+
   const cancelExecuteMacro = useCallback(async () => {
     if (abortController.current) {
       abortController.current.abort();
@@ -416,6 +568,7 @@ export default function useKeyboard() {
     resetKeyboardState,
     executeMacro,
     executePasteMacro,
+    executePasteText,
     cleanup,
     cancelExecuteMacro,
   };

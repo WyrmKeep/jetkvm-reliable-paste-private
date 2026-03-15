@@ -7,7 +7,7 @@ import { cx } from "@/cva.config";
 import { m } from "@localizations/messages.js";
 import { useHidStore, useSettingsStore, useUiStore } from "@hooks/stores";
 import { JsonRpcResponse, useJsonRpc } from "@hooks/useJsonRpc";
-import useKeyboard from "@hooks/useKeyboard";
+import useKeyboard, { type KeyboardLayoutLike } from "@hooks/useKeyboard";
 import useKeyboardLayout from "@hooks/useKeyboardLayout";
 import notifications from "@/notifications";
 import { Button } from "@components/Button";
@@ -15,8 +15,7 @@ import { GridCard } from "@components/Card";
 import { InputFieldWithLabel } from "@components/InputField";
 import { SettingsPageHeader } from "@components/SettingsPageheader";
 import { TextAreaWithLabel } from "@components/TextArea";
-import { buildPasteMacroBatches } from "@/utils/pasteMacro";
-import { PASTE_PROFILES, type PasteProfileName, runPasteBatches } from "@/utils/pasteBatches";
+import { PASTE_PROFILES, type PasteProfileName } from "@/utils/pasteBatches";
 
 // uint32 max value / 4
 const pasteMaxLength = 1073741824;
@@ -33,7 +32,7 @@ export default function PasteModal() {
   const { setDisableVideoFocusTrap } = useUiStore();
 
   const { send } = useJsonRpc();
-  const { executePasteMacro, cancelExecuteMacro } = useKeyboard();
+  const { executePasteText, cancelExecuteMacro } = useKeyboard();
 
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
@@ -82,71 +81,48 @@ export default function PasteModal() {
     try {
       const profile = PASTE_PROFILES[pasteProfile];
       const effectiveDelay = debugMode ? delay : profile.keyDelayMs;
-      const {
-        batches,
-        invalidChars: aggregatedInvalidChars,
-        batchStats,
-      } = buildPasteMacroBatches(
-        text,
-        selectedKeyboard,
-        effectiveDelay,
-        profile.maxStepsPerBatch,
-        profile.maxBytesPerBatch,
-      );
+      const abortController = new AbortController();
+      pasteAbortControllerRef.current = abortController;
+      setTraceLines([
+        `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : 'textarea'} chars=${text.length}`,
+      ]);
 
-      if (aggregatedInvalidChars.length > 0) {
-        setInvalidChars(aggregatedInvalidChars);
-        notifications.error(
-          m.paste_modal_failed_paste({
-            error: `Unsupported characters: ${aggregatedInvalidChars.join(", ")}`,
-          }),
-        );
-        return;
-      }
+      await executePasteText(text, {
+        keyboard: selectedKeyboard as KeyboardLayoutLike,
+        delayMs: effectiveDelay,
+        maxStepsPerBatch: profile.maxStepsPerBatch,
+        maxBytesPerBatch: profile.maxBytesPerBatch,
+        batchPauseMs: profile.batchPauseMs,
+        finalSettleMs: pasteProfile === "fast" ? 1500 : 500,
+        tailBatchCount: pasteProfile === "fast" ? 16 : 8,
+        tailPauseMs: pasteProfile === "fast" ? 75 : 25,
+        stressDurationMs: pasteProfile === "fast" ? 900 : 700,
+        stressPauseMs: pasteProfile === "fast" ? 150 : 50,
+        signal: abortController.signal,
+        onProgress: progress => {
+          setPasteProgress({
+            completed: progress.completedBatches,
+            total: progress.totalBatches,
+            phase: progress.completedBatches === progress.totalBatches ? "draining" : "sending",
+          });
+        },
+        onTrace: trace => {
+          setTraceLines(current => [
+            ...current,
+            `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs}ms pause=${trace.appliedPauseMs}ms tail=${trace.tailMode ? 1 : 0} stress=${trace.stressMode ? 1 : 0}`,
+          ]);
+        },
+      });
 
-      if (batches.length > 0) {
-        const abortController = new AbortController();
-        pasteAbortControllerRef.current = abortController;
-        setPasteProgress({ completed: 0, total: batches.length, phase: "sending" });
-        setTraceLines([
-          `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : 'textarea'} chars=${text.length} batches=${batches.length} steps=${batchStats.reduce((sum, item) => sum + item.stepCount, 0)}`,
-        ]);
-        const finalSettleMs = pasteProfile === "fast" ? 1500 : 500;
-        await runPasteBatches(batches, executePasteMacro, {
-          batchPauseMs: profile.batchPauseMs,
-          finalSettleMs,
-          tailBatchCount: pasteProfile === "fast" ? 16 : 8,
-          tailPauseMs: pasteProfile === "fast" ? 75 : 25,
-          stressDurationMs: pasteProfile === "fast" ? 900 : 700,
-          stressPauseMs: pasteProfile === "fast" ? 150 : 50,
-          signal: abortController.signal,
-          batchStats,
-          onProgress: progress => {
-            setPasteProgress({
-              completed: progress.completedBatches,
-              total: progress.totalBatches,
-              phase: "sending",
-            });
-          },
-          onTrace: trace => {
-            setTraceLines(current => [
-              ...current,
-              `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs ?? 0}ms pause=${trace.appliedPauseMs ?? 0}ms tail=${trace.tailMode ? 1 : 0} stress=${trace.stressMode ? 1 : 0}`,
-            ]);
-          },
-        });
-        setPasteProgress({ completed: batches.length, total: batches.length, phase: "draining" });
-        await new Promise(resolve => setTimeout(resolve, finalSettleMs));
-        pasteAbortControllerRef.current = null;
-        setPasteProgress(null);
-      }
+      pasteAbortControllerRef.current = null;
+      setPasteProgress(null);
     } catch (error) {
       pasteAbortControllerRef.current = null;
       setPasteProgress(null);
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executePasteMacro, delay, pasteProfile, debugMode, selectedFile, fileText]);
+  }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
