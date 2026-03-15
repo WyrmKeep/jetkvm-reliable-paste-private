@@ -62,6 +62,8 @@ export interface ExecutePasteTextOptions {
   stressPauseMs: number;
   longRunThreshold?: number;
   longRunPauseMs?: number;
+  breathingIntervalChars?: number;
+  breathingPauseMs?: number;
   signal?: AbortSignal;
   onProgress?: (progress: PasteExecutionProgress) => void;
   onTrace?: (trace: PasteExecutionTrace) => void;
@@ -468,6 +470,8 @@ export default function useKeyboard() {
         stressPauseMs,
         longRunThreshold,
         longRunPauseMs,
+        breathingIntervalChars,
+        breathingPauseMs,
         signal,
         onProgress,
         onTrace,
@@ -513,6 +517,10 @@ export default function useKeyboard() {
         throw new Error(`Unsupported characters: ${Array.from(invalidChars).join(", ")}`);
       }
 
+      // Track cumulative characters for breathing pauses.
+      // Each batch has ~1 character per logical step (most chars = 1 step).
+      let charsSinceBreathing = 0;
+
       for (let index = 0; index < batches.length; index += 1) {
         if (signal?.aborted) {
           throw new Error("Paste execution aborted");
@@ -522,6 +530,30 @@ export default function useKeyboard() {
         const submittedAt = Date.now();
         await executePasteMacro(batch);
         const durationMs = Date.now() - submittedAt;
+
+        // Track characters for breathing pauses (approximate: 1 char per step)
+        charsSinceBreathing += batch.length;
+
+        // Breathing pause: let the host message pump drain before the queue overflows.
+        // Windows has a 10,000 message queue limit per thread. At ~500 messages/sec,
+        // it fills in ~20s. A 250ms pause every 5000 chars keeps us well under.
+        if (
+          breathingIntervalChars !== undefined &&
+          breathingIntervalChars > 0 &&
+          charsSinceBreathing >= breathingIntervalChars &&
+          index < batches.length - 1
+        ) {
+          const pause = breathingPauseMs ?? 250;
+          charsSinceBreathing = 0;
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(resolve, pause);
+            const abortHandler = () => {
+              clearTimeout(timeout);
+              reject(new Error("Paste execution aborted"));
+            };
+            signal?.addEventListener("abort", abortHandler, { once: true });
+          });
+        }
 
         const batchesRemaining = batches.length - (index + 1);
         const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;

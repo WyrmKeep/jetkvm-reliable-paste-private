@@ -112,6 +112,8 @@ export default function PasteModal() {
         tailPauseMs: pasteProfile === "fast" ? 75 : 25,
         longRunThreshold: pasteProfile === "fast" ? 360 : Number.POSITIVE_INFINITY,
         longRunPauseMs: pasteProfile === "fast" ? 50 : 0,
+        breathingIntervalChars: 5000,
+        breathingPauseMs: 250,
         stressDurationMs: pasteProfile === "fast" ? 700 : 700,
         stressPauseMs: pasteProfile === "fast" ? 150 : 50,
         signal: abortController.signal,
