@@ -206,22 +206,21 @@ export default function PasteModal() {
                     type="number"
                     label={m.paste_modal_delay_between_keys()}
                     placeholder={m.paste_modal_delay_between_keys()}
-                    min={50}
+                    min={1}
                     max={65534}
                     value={delayValue}
                     onChange={e => {
                       setDelayValue(parseInt(e.target.value, 10));
                     }}
                   />
-                  {delayValue < 50 ||
-                    (delayValue > 65534 && (
-                      <div className="mt-2 flex items-center gap-x-2">
-                        <ExclamationCircleIcon className="h-4 w-4 text-red-500 dark:text-red-400" />
-                        <span className="text-xs text-red-500 dark:text-red-400">
-                          {m.paste_modal_delay_out_of_range({ min: 50, max: 65534 })}
-                        </span>
-                      </div>
-                    ))}
+                  {(delayValue < 1 || delayValue > 65534) && (
+                    <div className="mt-2 flex items-center gap-x-2">
+                      <ExclamationCircleIcon className="h-4 w-4 text-red-500 dark:text-red-400" />
+                      <span className="text-xs text-red-500 dark:text-red-400">
+                        {m.paste_modal_delay_out_of_range({ min: 1, max: 65534 })}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">

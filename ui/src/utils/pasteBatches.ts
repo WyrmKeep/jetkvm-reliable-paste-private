@@ -11,13 +11,13 @@ export const PASTE_PROFILES = {
   reliable: {
     maxStepsPerBatch: 128,
     maxBytesPerBatch: 1200,
-    keyDelayMs: 10,
+    keyDelayMs: 3,
     batchPauseMs: 0,
   },
   fast: {
     maxStepsPerBatch: 448,
     maxBytesPerBatch: 1400,
-    keyDelayMs: 3,
+    keyDelayMs: 2,
     batchPauseMs: 0,
   },
 } satisfies Record<string, PasteBatchProfile>;
