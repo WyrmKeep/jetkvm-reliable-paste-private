@@ -158,6 +158,7 @@ export default function useKeyboard() {
 
   const waitForPasteMacroCompletion = useCallback(async (timeoutMs = 30000) => {
     let started = false;
+    let lastValue = useHidStore.getState().isPasteInProgress;
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -166,7 +167,11 @@ export default function useKeyboard() {
       }, timeoutMs);
 
       const unsubscribe = useHidStore.subscribe(state => {
-        if (state.isPasteInProgress) {
+        const current = state.isPasteInProgress;
+        if (current === lastValue) return;
+        lastValue = current;
+
+        if (current) {
           started = true;
           return;
         }
