@@ -22,7 +22,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ env.DOCKER_BUILD_CONTEXT_DIR }}
           file: ${{ env.DOCKER_BUILD_CONTEXT_DIR }}/Dockerfile.build
