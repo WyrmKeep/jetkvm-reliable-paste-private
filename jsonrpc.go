@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v4"
@@ -1032,6 +1033,8 @@ func setKeyboardMacroCancel(cancel context.CancelFunc) {
 }
 
 func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
+	macroID := keyboardMacroSequence.Add(1)
+	logger.Info().Uint64("macro_id", macroID).Int("step_count", len(macro)).Msg("starting keyboard macro execution")
 	cancelKeyboardMacro()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1047,6 +1050,11 @@ func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
 	}
 
 	err := rpcDoExecuteKeyboardMacro(ctx, macro)
+	if err != nil {
+		logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("keyboard macro execution failed")
+	} else {
+		logger.Info().Uint64("macro_id", macroID).Msg("keyboard macro execution completed")
+	}
 
 	setKeyboardMacroCancel(nil)
 
@@ -1063,6 +1071,7 @@ func rpcCancelKeyboardMacro() {
 }
 
 var keyboardClearStateKeys = make([]byte, hidrpc.HidKeyBufferSize)
+var keyboardMacroSequence atomic.Uint64
 
 func isClearKeyStep(step hidrpc.KeyboardMacroStep) bool {
 	return step.Modifier == 0 && bytes.Equal(step.Keys, keyboardClearStateKeys)

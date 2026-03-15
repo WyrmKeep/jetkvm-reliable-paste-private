@@ -50,6 +50,8 @@ export async function runPasteBatches(
     finalSettleMs?: number;
     tailBatchCount?: number;
     tailPauseMs?: number;
+    longRunThreshold?: number;
+    longRunPauseMs?: number;
     stressDurationMs?: number;
     stressPauseMs?: number;
     signal?: AbortSignal;
@@ -63,6 +65,8 @@ export async function runPasteBatches(
     finalSettleMs = 0,
     tailBatchCount = 0,
     tailPauseMs = 0,
+    longRunThreshold = Number.POSITIVE_INFINITY,
+    longRunPauseMs = 0,
     stressDurationMs = Number.POSITIVE_INFINITY,
     stressPauseMs = 0,
     signal,
@@ -92,10 +96,12 @@ export async function runPasteBatches(
 
     const batchesRemaining = batches.length - (index + 1);
     const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;
+    const longRunMode = index + 1 >= longRunThreshold;
     const stressMode = (trace.durationMs ?? 0) >= stressDurationMs;
     const appliedPauseMs = Math.max(
       batchPauseMs,
       tailMode ? tailPauseMs : 0,
+      longRunMode ? longRunPauseMs : 0,
       stressMode ? stressPauseMs : 0,
     );
 

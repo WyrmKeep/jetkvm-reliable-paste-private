@@ -110,7 +110,9 @@ export default function PasteModal() {
         finalSettleMs: pasteProfile === "fast" ? 1500 : 500,
         tailBatchCount: pasteProfile === "fast" ? 16 : 8,
         tailPauseMs: pasteProfile === "fast" ? 75 : 25,
-        stressDurationMs: pasteProfile === "fast" ? 900 : 700,
+        longRunThreshold: pasteProfile === "fast" ? 360 : Number.POSITIVE_INFINITY,
+        longRunPauseMs: pasteProfile === "fast" ? 50 : 0,
+        stressDurationMs: pasteProfile === "fast" ? 700 : 700,
         stressPauseMs: pasteProfile === "fast" ? 150 : 50,
         signal: abortController.signal,
         onProgress: progress => {
