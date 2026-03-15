@@ -37,6 +37,7 @@ export default function PasteModal() {
   const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileText, setFileText] = useState<string | null>(null);
   const delay = useMemo(() => {
     if (delayValue < 0 || delayValue > 65534) {
       return defaultDelay;
@@ -65,12 +66,14 @@ export default function PasteModal() {
     setDisableVideoFocusTrap(false);
     setInvalidChars([]);
     setPasteProgress(null);
+    setSelectedFile(null);
+    setFileText(null);
   }, [setDisableVideoFocusTrap, cancelExecuteMacro]);
 
   const onConfirmPaste = useCallback(async () => {
     if (!TextAreaRef.current || !selectedKeyboard) return;
 
-    const text = selectedFile ? await selectedFile.text() : TextAreaRef.current.value;
+    const text = fileText ?? TextAreaRef.current.value;
 
     try {
       const profile = PASTE_PROFILES[pasteProfile];
@@ -131,7 +134,7 @@ export default function PasteModal() {
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executePasteMacro, delay, pasteProfile, debugMode, selectedFile]);
+  }, [selectedKeyboard, executePasteMacro, delay, pasteProfile, debugMode, selectedFile, fileText]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
@@ -200,8 +203,23 @@ export default function PasteModal() {
                       <input
                         type="file"
                         className="block w-full text-xs text-slate-600 dark:text-slate-400"
-                        onChange={e => {
-                          setSelectedFile(e.target.files?.[0] ?? null);
+                        onChange={async e => {
+                          const file = e.target.files?.[0] ?? null;
+                          setSelectedFile(file);
+                          if (!file) {
+                            setFileText(null);
+                            return;
+                          }
+
+                          try {
+                            const text = await file.text();
+                            setFileText(text);
+                            setTraceLines([`loaded file=${file.name} bytes=${file.size.toLocaleString()} chars=${text.length}`]);
+                          } catch (error) {
+                            setFileText(null);
+                            console.error("Failed to read file for paste:", error);
+                            notifications.error(m.paste_modal_failed_paste({ error: `Failed to read file: ${String(error)}` }));
+                          }
                         }}
                       />
                       {selectedFile && (
