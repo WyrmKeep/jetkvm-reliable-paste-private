@@ -15,6 +15,8 @@ import { GridCard } from "@components/Card";
 import { InputFieldWithLabel } from "@components/InputField";
 import { SettingsPageHeader } from "@components/SettingsPageheader";
 import { TextAreaWithLabel } from "@components/TextArea";
+import { buildPasteMacroSteps } from "@/utils/pasteMacro";
+import { chunkPasteText, PASTE_PROFILES, type PasteProfileName, runPasteBatches } from "@/utils/pasteBatches";
 
 // uint32 max value / 4
 const pasteMaxLength = 1073741824;
@@ -30,6 +32,8 @@ export default function PasteModal() {
 
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
+  const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
+  const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number } | null>(null);
   const delay = useMemo(() => {
     if (delayValue < 0 || delayValue > 65534) {
       return defaultDelay;
@@ -63,53 +67,49 @@ export default function PasteModal() {
     const text = TextAreaRef.current.value;
 
     try {
-      const macroSteps: MacroStep[] = [];
+      const profile = PASTE_PROFILES[pasteProfile];
+      const textBatches = chunkPasteText(text, profile.maxCharsPerBatch);
+      const macroBatches = textBatches.map(batch =>
+        buildPasteMacroSteps(batch, selectedKeyboard, delay || profile.keyDelayMs),
+      );
 
-      for (const char of text) {
-        const normalizedChar = char.normalize("NFC");
-        const keyprops = selectedKeyboard.chars[normalizedChar];
-        if (!keyprops) continue;
+      const aggregatedInvalidChars = [
+        ...new Set(macroBatches.flatMap(batch => batch.invalidChars)),
+      ];
 
-        const { key, shift, altRight, deadKey, accentKey } = keyprops;
-        if (!key) continue;
-
-        // if this is an accented character, we need to send that accent FIRST
-        if (accentKey) {
-          const accentModifiers: string[] = [];
-          if (accentKey.shift) accentModifiers.push("ShiftLeft");
-          if (accentKey.altRight) accentModifiers.push("AltRight");
-
-          macroSteps.push({
-            keys: [String(accentKey.key)],
-            modifiers: accentModifiers.length > 0 ? accentModifiers : null,
-            delay,
-          });
-        }
-
-        // now send the actual key
-        const modifiers: string[] = [];
-        if (shift) modifiers.push("ShiftLeft");
-        if (altRight) modifiers.push("AltRight");
-
-        macroSteps.push({
-          keys: [String(key)],
-          modifiers: modifiers.length > 0 ? modifiers : null,
-          delay,
-        });
-
-        // if what was requested was a dead key, we need to send an unmodified space to emit
-        // just the accent character
-        if (deadKey) macroSteps.push({ keys: ["Space"], modifiers: null, delay });
+      if (aggregatedInvalidChars.length > 0) {
+        setInvalidChars(aggregatedInvalidChars);
+        notifications.error(
+          m.paste_modal_failed_paste({
+            error: `Unsupported characters: ${aggregatedInvalidChars.join(", ")}`,
+          }),
+        );
+        return;
       }
 
-      if (macroSteps.length > 0) {
-        await executeMacro(macroSteps);
+      const stepsBatches: MacroStep[][] = macroBatches
+        .map(batch => batch.steps)
+        .filter(batch => batch.length > 0);
+
+      if (stepsBatches.length > 0) {
+        setPasteProgress({ completed: 0, total: stepsBatches.length });
+        await runPasteBatches(stepsBatches, executeMacro, {
+          batchPauseMs: profile.batchPauseMs,
+          onProgress: progress => {
+            setPasteProgress({
+              completed: progress.completedBatches,
+              total: progress.totalBatches,
+            });
+          },
+        });
+        setPasteProgress(null);
       }
     } catch (error) {
+      setPasteProgress(null);
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executeMacro, delay]);
+  }, [selectedKeyboard, executeMacro, delay, pasteProfile]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
@@ -203,6 +203,24 @@ export default function PasteModal() {
                       </div>
                     ))}
                 </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Paste mode
+                  </label>
+                  <select
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                    value={pasteProfile}
+                    onChange={e => setPasteProfile(e.target.value as PasteProfileName)}
+                  >
+                    <option value="reliable">Reliable</option>
+                    <option value="fast">Fast</option>
+                  </select>
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    {pasteProfile === "reliable"
+                      ? "Reliable mode uses smaller batches and more pacing for large pastes."
+                      : "Fast mode uses larger batches and lower pacing; validate on your device before trusting large transfers."}
+                  </p>
+                </div>
                 <div className="space-y-4">
                   <p className="text-xs text-slate-600 dark:text-slate-400">
                     {m.paste_modal_sending_using_layout({
@@ -210,6 +228,11 @@ export default function PasteModal() {
                       name: selectedKeyboard.name,
                     })}
                   </p>
+                  {pasteProgress && (
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Sending paste batch {pasteProgress.completed} / {pasteProgress.total}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
