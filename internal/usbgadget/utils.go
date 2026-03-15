@@ -131,13 +131,12 @@ func (u *UsbGadget) writeWithTimeout(file *os.File, data []byte) (n int, err err
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		u.logWithSuppression(
 			fmt.Sprintf("writeWithTimeout_%s", file.Name()),
-			1000,
+			1,
 			u.log,
 			err,
 			"write timed out: %s",
 			file.Name(),
 		)
-		err = nil
 	}
 
 	return
