@@ -8,14 +8,14 @@ export interface PasteBatchProfile {
 
 export const PASTE_PROFILES = {
   reliable: {
-    maxStepsPerBatch: 48,
-    keyDelayMs: 35,
-    batchPauseMs: 120,
+    maxStepsPerBatch: 72,
+    keyDelayMs: 25,
+    batchPauseMs: 40,
   },
   fast: {
-    maxStepsPerBatch: 160,
-    keyDelayMs: 20,
-    batchPauseMs: 60,
+    maxStepsPerBatch: 192,
+    keyDelayMs: 15,
+    batchPauseMs: 20,
   },
 } satisfies Record<string, PasteBatchProfile>;
 
