@@ -90,7 +90,7 @@ func onHidMessage(msg hidQueueMessage, session *Session) {
 
 	t := time.Now()
 
-	r := make(chan interface{})
+	r := make(chan interface{}, 1)
 	go func() {
 		handleHidRPCMessage(message, session)
 		r <- nil
