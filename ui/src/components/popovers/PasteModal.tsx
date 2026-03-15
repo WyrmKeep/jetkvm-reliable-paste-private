@@ -105,6 +105,7 @@ export default function PasteModal() {
         ]);
         await runPasteBatches(batches, executePasteMacro, {
           batchPauseMs: profile.batchPauseMs,
+          finalSettleMs: pasteProfile === "fast" ? 1500 : 500,
           signal: abortController.signal,
           batchStats,
           onProgress: progress => {

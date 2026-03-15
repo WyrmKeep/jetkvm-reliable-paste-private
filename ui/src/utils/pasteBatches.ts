@@ -15,8 +15,8 @@ export const PASTE_PROFILES = {
     batchPauseMs: 0,
   },
   fast: {
-    maxStepsPerBatch: 448,
-    maxBytesPerBatch: 1400,
+    maxStepsPerBatch: 320,
+    maxBytesPerBatch: 1100,
     keyDelayMs: 2,
     batchPauseMs: 0,
   },
@@ -44,13 +44,14 @@ export async function runPasteBatches(
   executeBatch: (batch: MacroStep[]) => Promise<void>,
   options: {
     batchPauseMs?: number;
+    finalSettleMs?: number;
     signal?: AbortSignal;
     batchStats?: Array<{ stepCount: number; estimatedBytes: number }>;
     onProgress?: (progress: BatchProgress) => void;
     onTrace?: (entry: PasteTraceEntry) => void;
   } = {},
 ): Promise<void> {
-  const { batchPauseMs = 0, signal, batchStats = [], onProgress, onTrace } = options;
+  const { batchPauseMs = 0, finalSettleMs = 0, signal, batchStats = [], onProgress, onTrace } = options;
 
   for (let index = 0; index < batches.length; index += 1) {
     if (signal?.aborted) {
@@ -88,5 +89,17 @@ export async function runPasteBatches(
         signal?.addEventListener("abort", abortHandler, { once: true });
       });
     }
+  }
+
+  if (finalSettleMs > 0) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(resolve, finalSettleMs);
+      const abortHandler = () => {
+        clearTimeout(timeout);
+        reject(new Error("Paste execution aborted"));
+      };
+
+      signal?.addEventListener("abort", abortHandler, { once: true });
+    });
   }
 }
