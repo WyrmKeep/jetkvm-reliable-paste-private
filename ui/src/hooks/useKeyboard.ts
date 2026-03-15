@@ -70,7 +70,7 @@ export interface ExecutePasteTextOptions {
 export default function useKeyboard() {
   const { send } = useJsonRpc();
   const { rpcDataChannel } = useRTCStore();
-  const { keysDownState, setKeysDownState, setKeyboardLedState, setPasteModeEnabled } =
+  const { keysDownState, setKeysDownState, setKeyboardLedState, setPasteModeEnabled, setPasteError } =
     useHidStore();
 
   const abortController = useRef<AbortController | null>(null);
@@ -108,10 +108,18 @@ export default function useKeyboard() {
       case KeyboardLedStateMessage:
         setKeyboardLedState((message as KeyboardLedStateMessage).keyboardLedState);
         break;
-      case KeyboardMacroStateMessage:
-        if (!(message as KeyboardMacroStateMessage).isPaste) break;
-        setPasteModeEnabled((message as KeyboardMacroStateMessage).state);
+      case KeyboardMacroStateMessage: {
+        const macroMsg = message as KeyboardMacroStateMessage;
+        if (!macroMsg.isPaste) break;
+        setPasteModeEnabled(macroMsg.state);
+        if (macroMsg.state) {
+          // Clear any previous error when a new macro starts
+          setPasteError("");
+        } else if (macroMsg.error) {
+          setPasteError(macroMsg.error);
+        }
         break;
+      }
       default:
         break;
     }
@@ -181,7 +189,12 @@ export default function useKeyboard() {
         if (started) {
           clearTimeout(timeout);
           unsubscribe();
-          resolve();
+          const error = state.pasteError;
+          if (error) {
+            reject(new Error(`Macro execution failed: ${error}`));
+          } else {
+            resolve();
+          }
         }
       });
     });

@@ -1059,6 +1059,9 @@ func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
 	setKeyboardMacroCancel(nil)
 
 	s.State = false
+	if err != nil {
+		s.Error = err.Error()
+	}
 	if currentSession != nil {
 		currentSession.reportHidRPCKeyboardMacroState(s)
 	}
