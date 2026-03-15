@@ -36,6 +36,7 @@ export default function PasteModal() {
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
   const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const delay = useMemo(() => {
     if (delayValue < 0 || delayValue > 65534) {
       return defaultDelay;
@@ -69,7 +70,7 @@ export default function PasteModal() {
   const onConfirmPaste = useCallback(async () => {
     if (!TextAreaRef.current || !selectedKeyboard) return;
 
-    const text = TextAreaRef.current.value;
+    const text = selectedFile ? await selectedFile.text() : TextAreaRef.current.value;
 
     try {
       const profile = PASTE_PROFILES[pasteProfile];
@@ -101,7 +102,7 @@ export default function PasteModal() {
         pasteAbortControllerRef.current = abortController;
         setPasteProgress({ completed: 0, total: batches.length });
         setTraceLines([
-          `profile=${pasteProfile} chars=${text.length} batches=${batches.length} steps=${batchStats.reduce((sum, item) => sum + item.stepCount, 0)}`,
+          `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : 'textarea'} chars=${text.length} batches=${batches.length} steps=${batchStats.reduce((sum, item) => sum + item.stepCount, 0)}`,
         ]);
         await runPasteBatches(batches, executePasteMacro, {
           batchPauseMs: profile.batchPauseMs,
@@ -130,7 +131,7 @@ export default function PasteModal() {
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executePasteMacro, delay, pasteProfile, debugMode]);
+  }, [selectedKeyboard, executePasteMacro, delay, pasteProfile, debugMode, selectedFile]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
@@ -191,6 +192,24 @@ export default function PasteModal() {
                         setInvalidChars(invalidChars);
                       }}
                     />
+
+                    <div className="mt-3 space-y-2">
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Large paste file (optional)
+                      </label>
+                      <input
+                        type="file"
+                        className="block w-full text-xs text-slate-600 dark:text-slate-400"
+                        onChange={e => {
+                          setSelectedFile(e.target.files?.[0] ?? null);
+                        }}
+                      />
+                      {selectedFile && (
+                        <p className="text-xs text-slate-600 dark:text-slate-400">
+                          Using file source: {selectedFile.name} ({selectedFile.size.toLocaleString()} bytes)
+                        </p>
+                      )}
+                    </div>
 
                     {invalidChars.length > 0 && (
                       <div className="mt-2 flex items-center gap-x-2">
