@@ -544,6 +544,7 @@ export default function useKeyboard() {
           index < batches.length - 1
         ) {
           const pause = breathingPauseMs ?? 250;
+          console.log(`[paste] breathing pause at batch ${index + 1}/${batches.length}, ~${charsSinceBreathing} chars since last pause, waiting ${pause}ms`);
           charsSinceBreathing = 0;
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(resolve, pause);
