@@ -534,18 +534,26 @@ export default function useKeyboard() {
         // Track characters for breathing pauses (approximate: 1 char per step)
         charsSinceBreathing += batch.length;
 
-        // Breathing pause: let the host message pump drain before the queue overflows.
-        // Windows has a 10,000 message queue limit per thread. At ~500 messages/sec,
-        // it fills in ~20s. A 250ms pause every 5000 chars keeps us well under.
+        // Segment reset: full stop/restart to prevent host input queue overflow.
+        // Windows has a 10,000 message queue limit per thread. Under sustained
+        // HID input, the queue fills and silently drops WM_KEYUP messages, leaving
+        // modifiers stuck. Every N characters, we send an explicit all-keys-up
+        // HID report to clear any stuck state, then wait for the host to fully
+        // drain its message queue before resuming.
         if (
           breathingIntervalChars !== undefined &&
           breathingIntervalChars > 0 &&
           charsSinceBreathing >= breathingIntervalChars &&
           index < batches.length - 1
         ) {
-          const pause = breathingPauseMs ?? 250;
-          console.log(`[paste] breathing pause at batch ${index + 1}/${batches.length}, ~${charsSinceBreathing} chars since last pause, waiting ${pause}ms`);
+          const pause = breathingPauseMs ?? 1000;
+          console.log(`[paste] segment reset at batch ${index + 1}/${batches.length}, ~${charsSinceBreathing} chars since last reset, sending keyboard reset + ${pause}ms pause`);
           charsSinceBreathing = 0;
+
+          // Send explicit all-keys-up to clear any stuck modifiers on the host
+          await resetKeyboardState();
+
+          // Wait for the host to fully drain its message queue
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(resolve, pause);
             const abortHandler = () => {
@@ -606,7 +614,7 @@ export default function useKeyboard() {
         });
       }
     },
-    [executePasteMacro],
+    [executePasteMacro, resetKeyboardState],
   );
 
   const cancelExecuteMacro = useCallback(async () => {
