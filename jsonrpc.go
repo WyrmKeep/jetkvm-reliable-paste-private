@@ -1050,6 +1050,11 @@ func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
 	}
 
 	err := rpcDoExecuteKeyboardMacro(ctx, macro)
+
+	// Allow host USB stack to drain pending HID reports before signaling completion.
+	// 50ms gives the host time for ~50 USB polls at 1ms intervals.
+	time.Sleep(50 * time.Millisecond)
+
 	if err != nil {
 		logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("keyboard macro execution failed")
 	} else {
