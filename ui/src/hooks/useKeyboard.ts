@@ -534,12 +534,11 @@ export default function useKeyboard() {
         // Track characters for breathing pauses (approximate: 1 char per step)
         charsSinceBreathing += batch.length;
 
-        // Segment reset: full stop/restart to prevent host input queue overflow.
-        // Windows has a 10,000 message queue limit per thread. Under sustained
-        // HID input, the queue fills and silently drops WM_KEYUP messages, leaving
-        // modifiers stuck. Every N characters, we send an explicit all-keys-up
-        // HID report to clear any stuck state, then wait for the host to fully
-        // drain its message queue before resuming.
+        // Chunk breathing pause: let the host application (e.g., Notepad) catch
+        // up with its rendering and message processing. The backend now handles
+        // USB pipeline draining (proportional drain delay before signaling
+        // completion), so this pause targets the HOST APPLICATION layer --
+        // giving it time to process queued Windows messages and redraw.
         if (
           breathingIntervalChars !== undefined &&
           breathingIntervalChars > 0 &&
@@ -547,13 +546,9 @@ export default function useKeyboard() {
           index < batches.length - 1
         ) {
           const pause = breathingPauseMs ?? 1000;
-          console.log(`[paste] segment reset at batch ${index + 1}/${batches.length}, ~${charsSinceBreathing} chars since last reset, sending keyboard reset + ${pause}ms pause`);
+          console.log(`[paste] chunk pause at batch ${index + 1}/${batches.length}, ~${charsSinceBreathing} chars, waiting ${pause}ms for host app to catch up`);
           charsSinceBreathing = 0;
 
-          // Send explicit all-keys-up to clear any stuck modifiers on the host
-          await resetKeyboardState();
-
-          // Wait for the host to fully drain its message queue
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(resolve, pause);
             const abortHandler = () => {
@@ -614,7 +609,7 @@ export default function useKeyboard() {
         });
       }
     },
-    [executePasteMacro, resetKeyboardState],
+    [executePasteMacro],
   );
 
   const cancelExecuteMacro = useCallback(async () => {

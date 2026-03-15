@@ -1051,9 +1051,23 @@ func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
 
 	err := rpcDoExecuteKeyboardMacro(ctx, macro)
 
-	// Allow host USB stack to drain pending HID reports before signaling completion.
-	// 50ms gives the host time for ~50 USB polls at 1ms intervals.
-	time.Sleep(50 * time.Millisecond)
+	// Allow host USB stack to drain pending HID reports before signaling
+	// completion. write() to /dev/hidg0 returns when the kernel accepts the
+	// report, NOT when the host polls it over USB. With bInterval ~4-10ms,
+	// the host may still be receiving reports from the kernel FIFO when the
+	// macro loop finishes. Drain delay is proportional to batch size:
+	// each HID report may take up to 10ms for the host to poll, and writes
+	// may pipeline ahead of polling. We use 5ms/report as a conservative
+	// estimate (covers bInterval 4-10ms with partial pipelining).
+	drainMs := len(macro) * 5
+	if drainMs < 50 {
+		drainMs = 50
+	}
+	if drainMs > 2000 {
+		drainMs = 2000
+	}
+	logger.Debug().Uint64("macro_id", macroID).Int("drain_ms", drainMs).Int("steps", len(macro)).Msg("draining USB pipeline")
+	time.Sleep(time.Duration(drainMs) * time.Millisecond)
 
 	if err != nil {
 		logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("keyboard macro execution failed")
