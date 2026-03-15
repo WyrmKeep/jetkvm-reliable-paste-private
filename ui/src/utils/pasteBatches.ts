@@ -37,6 +37,9 @@ export interface PasteTraceEntry {
   submittedAt: number;
   completedAt?: number;
   durationMs?: number;
+  appliedPauseMs?: number;
+  tailMode?: boolean;
+  stressMode?: boolean;
 }
 
 export async function runPasteBatches(
@@ -45,13 +48,28 @@ export async function runPasteBatches(
   options: {
     batchPauseMs?: number;
     finalSettleMs?: number;
+    tailBatchCount?: number;
+    tailPauseMs?: number;
+    stressDurationMs?: number;
+    stressPauseMs?: number;
     signal?: AbortSignal;
     batchStats?: Array<{ stepCount: number; estimatedBytes: number }>;
     onProgress?: (progress: BatchProgress) => void;
     onTrace?: (entry: PasteTraceEntry) => void;
   } = {},
 ): Promise<void> {
-  const { batchPauseMs = 0, finalSettleMs = 0, signal, batchStats = [], onProgress, onTrace } = options;
+  const {
+    batchPauseMs = 0,
+    finalSettleMs = 0,
+    tailBatchCount = 0,
+    tailPauseMs = 0,
+    stressDurationMs = Number.POSITIVE_INFINITY,
+    stressPauseMs = 0,
+    signal,
+    batchStats = [],
+    onProgress,
+    onTrace,
+  } = options;
 
   for (let index = 0; index < batches.length; index += 1) {
     if (signal?.aborted) {
@@ -71,6 +89,19 @@ export async function runPasteBatches(
 
     trace.completedAt = Date.now();
     trace.durationMs = trace.completedAt - trace.submittedAt;
+
+    const batchesRemaining = batches.length - (index + 1);
+    const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;
+    const stressMode = (trace.durationMs ?? 0) >= stressDurationMs;
+    const appliedPauseMs = Math.max(
+      batchPauseMs,
+      tailMode ? tailPauseMs : 0,
+      stressMode ? stressPauseMs : 0,
+    );
+
+    trace.tailMode = tailMode;
+    trace.stressMode = stressMode;
+    trace.appliedPauseMs = appliedPauseMs;
     onTrace?.(trace);
 
     onProgress?.({
@@ -78,9 +109,9 @@ export async function runPasteBatches(
       totalBatches: batches.length,
     });
 
-    if (batchPauseMs > 0 && index < batches.length - 1) {
+    if (appliedPauseMs > 0 && index < batches.length - 1) {
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(resolve, batchPauseMs);
+        const timeout = setTimeout(resolve, appliedPauseMs);
         const abortHandler = () => {
           clearTimeout(timeout);
           reject(new Error("Paste execution aborted"));

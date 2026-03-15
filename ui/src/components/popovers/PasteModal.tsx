@@ -114,6 +114,10 @@ export default function PasteModal() {
         await runPasteBatches(batches, executePasteMacro, {
           batchPauseMs: profile.batchPauseMs,
           finalSettleMs: pasteProfile === "fast" ? 1500 : 500,
+          tailBatchCount: pasteProfile === "fast" ? 16 : 8,
+          tailPauseMs: pasteProfile === "fast" ? 75 : 25,
+          stressDurationMs: pasteProfile === "fast" ? 900 : 700,
+          stressPauseMs: pasteProfile === "fast" ? 150 : 50,
           signal: abortController.signal,
           batchStats,
           onProgress: progress => {
@@ -125,7 +129,7 @@ export default function PasteModal() {
           onTrace: trace => {
             setTraceLines(current => [
               ...current,
-              `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs ?? 0}ms`,
+              `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs ?? 0}ms pause=${trace.appliedPauseMs ?? 0}ms tail=${trace.tailMode ? 1 : 0} stress=${trace.stressMode ? 1 : 0}`,
             ]);
           },
         });
