@@ -25,6 +25,8 @@ function normalizePasteText(value: string): string {
   return value.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 }
 
+const PASTE_TRACE_STORAGE_KEY = "jetkvm_reliable_paste_trace";
+
 export default function PasteModal() {
   const TextAreaRef = useRef<HTMLTextAreaElement>(null);
   const pasteAbortControllerRef = useRef<AbortController | null>(null);
@@ -48,6 +50,18 @@ export default function PasteModal() {
     return delayValue;
   }, [delayValue]);
   const close = useClose();
+
+  const setTraceLinesPersisted = useCallback((updater: string[] | ((current: string[]) => string[])) => {
+    setTraceLines(current => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      try {
+        window.localStorage.setItem(PASTE_TRACE_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage failures
+      }
+      return next;
+    });
+  }, []);
 
   const debugMode = useSettingsStore(state => state.debugMode);
   const delayClassName = useMemo(() => (debugMode ? "" : "hidden"), [debugMode]);
@@ -83,7 +97,7 @@ export default function PasteModal() {
       const effectiveDelay = debugMode ? delay : profile.keyDelayMs;
       const abortController = new AbortController();
       pasteAbortControllerRef.current = abortController;
-      setTraceLines([
+      setTraceLinesPersisted([
         `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : 'textarea'} chars=${text.length}`,
       ]);
 
@@ -107,7 +121,7 @@ export default function PasteModal() {
           });
         },
         onTrace: trace => {
-          setTraceLines(current => [
+          setTraceLinesPersisted(current => [
             ...current,
             `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs}ms pause=${trace.appliedPauseMs}ms tail=${trace.tailMode ? 1 : 0} stress=${trace.stressMode ? 1 : 0}`,
           ]);
@@ -122,11 +136,23 @@ export default function PasteModal() {
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText]);
+  }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText, setTraceLinesPersisted]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
       TextAreaRef.current.focus();
+    }
+
+    try {
+      const saved = window.localStorage.getItem(PASTE_TRACE_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setTraceLines(parsed.filter(item => typeof item === "string"));
+        }
+      }
+    } catch {
+      // ignore trace restore failures
     }
   }, []);
 
@@ -211,7 +237,7 @@ export default function PasteModal() {
                               ),
                             ];
                             setInvalidChars(invalidChars);
-                            setTraceLines([`loaded file=${file.name} bytes=${file.size.toLocaleString()} chars=${text.length}`]);
+                            setTraceLinesPersisted([`loaded file=${file.name} bytes=${file.size.toLocaleString()} chars=${text.length}`]);
                           } catch (error) {
                             setFileText(null);
                             console.error("Failed to read file for paste:", error);
