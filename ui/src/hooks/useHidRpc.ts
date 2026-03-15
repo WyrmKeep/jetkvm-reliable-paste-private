@@ -263,8 +263,8 @@ export function useHidRpc(onHidRpcMessage?: (payload: RpcMessage) => void) {
   );
 
   const reportKeyboardMacroEvent = useCallback(
-    (steps: KeyboardMacroStep[]) => {
-      sendMessage(new KeyboardMacroReportMessage(false, steps.length, steps));
+    (steps: KeyboardMacroStep[], isPaste = false) => {
+      sendMessage(new KeyboardMacroReportMessage(isPaste, steps.length, steps));
     },
     [sendMessage],
   );

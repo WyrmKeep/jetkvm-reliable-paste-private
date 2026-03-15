@@ -7,7 +7,7 @@ import { cx } from "@/cva.config";
 import { m } from "@localizations/messages.js";
 import { useHidStore, useSettingsStore, useUiStore } from "@hooks/stores";
 import { JsonRpcResponse, useJsonRpc } from "@hooks/useJsonRpc";
-import useKeyboard, { type MacroStep } from "@hooks/useKeyboard";
+import useKeyboard from "@hooks/useKeyboard";
 import useKeyboardLayout from "@hooks/useKeyboardLayout";
 import notifications from "@/notifications";
 import { Button } from "@components/Button";
@@ -15,8 +15,8 @@ import { GridCard } from "@components/Card";
 import { InputFieldWithLabel } from "@components/InputField";
 import { SettingsPageHeader } from "@components/SettingsPageheader";
 import { TextAreaWithLabel } from "@components/TextArea";
-import { buildPasteMacroSteps } from "@/utils/pasteMacro";
-import { chunkPasteText, PASTE_PROFILES, type PasteProfileName, runPasteBatches } from "@/utils/pasteBatches";
+import { buildPasteMacroBatches } from "@/utils/pasteMacro";
+import { PASTE_PROFILES, type PasteProfileName, runPasteBatches } from "@/utils/pasteBatches";
 
 // uint32 max value / 4
 const pasteMaxLength = 1073741824;
@@ -24,11 +24,12 @@ const defaultDelay = 20;
 
 export default function PasteModal() {
   const TextAreaRef = useRef<HTMLTextAreaElement>(null);
+  const pasteAbortControllerRef = useRef<AbortController | null>(null);
   const { isPasteInProgress } = useHidStore();
   const { setDisableVideoFocusTrap } = useUiStore();
 
   const { send } = useJsonRpc();
-  const { executeMacro, cancelExecuteMacro } = useKeyboard();
+  const { executePasteMacro, cancelExecuteMacro } = useKeyboard();
 
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
@@ -56,9 +57,12 @@ export default function PasteModal() {
   }, [send, setKeyboardLayout]);
 
   const onCancelPasteMode = useCallback(() => {
+    pasteAbortControllerRef.current?.abort();
+    pasteAbortControllerRef.current = null;
     cancelExecuteMacro();
     setDisableVideoFocusTrap(false);
     setInvalidChars([]);
+    setPasteProgress(null);
   }, [setDisableVideoFocusTrap, cancelExecuteMacro]);
 
   const onConfirmPaste = useCallback(async () => {
@@ -68,14 +72,13 @@ export default function PasteModal() {
 
     try {
       const profile = PASTE_PROFILES[pasteProfile];
-      const textBatches = chunkPasteText(text, profile.maxCharsPerBatch);
-      const macroBatches = textBatches.map(batch =>
-        buildPasteMacroSteps(batch, selectedKeyboard, delay || profile.keyDelayMs),
+      const effectiveDelay = debugMode ? delay : profile.keyDelayMs;
+      const { batches, invalidChars: aggregatedInvalidChars } = buildPasteMacroBatches(
+        text,
+        selectedKeyboard,
+        effectiveDelay,
+        profile.maxStepsPerBatch,
       );
-
-      const aggregatedInvalidChars = [
-        ...new Set(macroBatches.flatMap(batch => batch.invalidChars)),
-      ];
 
       if (aggregatedInvalidChars.length > 0) {
         setInvalidChars(aggregatedInvalidChars);
@@ -87,14 +90,13 @@ export default function PasteModal() {
         return;
       }
 
-      const stepsBatches: MacroStep[][] = macroBatches
-        .map(batch => batch.steps)
-        .filter(batch => batch.length > 0);
-
-      if (stepsBatches.length > 0) {
-        setPasteProgress({ completed: 0, total: stepsBatches.length });
-        await runPasteBatches(stepsBatches, executeMacro, {
+      if (batches.length > 0) {
+        const abortController = new AbortController();
+        pasteAbortControllerRef.current = abortController;
+        setPasteProgress({ completed: 0, total: batches.length });
+        await runPasteBatches(batches, executePasteMacro, {
           batchPauseMs: profile.batchPauseMs,
+          signal: abortController.signal,
           onProgress: progress => {
             setPasteProgress({
               completed: progress.completedBatches,
@@ -102,14 +104,16 @@ export default function PasteModal() {
             });
           },
         });
+        pasteAbortControllerRef.current = null;
         setPasteProgress(null);
       }
     } catch (error) {
+      pasteAbortControllerRef.current = null;
       setPasteProgress(null);
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executeMacro, delay, pasteProfile]);
+  }, [selectedKeyboard, executePasteMacro, delay, pasteProfile, debugMode]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
@@ -258,7 +262,7 @@ export default function PasteModal() {
             size="SM"
             theme="primary"
             text={m.paste_modal_confirm_paste()}
-            disabled={isPasteInProgress}
+            disabled={isPasteInProgress || invalidChars.length > 0}
             onClick={onConfirmPaste}
             LeadingIcon={LuCornerDownLeft}
           />

@@ -123,6 +123,30 @@ export default function useKeyboard() {
     }
   }, []);
 
+  const waitForPasteMacroCompletion = useCallback(async (timeoutMs = 30000) => {
+    let started = false;
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error(`Paste macro timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const unsubscribe = useHidStore.subscribe(state => {
+        if (state.isPasteInProgress) {
+          started = true;
+          return;
+        }
+
+        if (started) {
+          clearTimeout(timeout);
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }, []);
+
   const scheduleKeepAlive = useCallback(() => {
     // Clears existing keepalive timer
     cancelKeepAlive();
@@ -278,7 +302,7 @@ export default function useKeyboard() {
   // If a step has no keys or modifiers, it is treated as a delay-only step.
   // A small pause is added between steps to ensure that the device can process the events.
   const executeMacroRemote = useCallback(
-    async (steps: MacroSteps) => {
+    async (steps: MacroSteps, isPaste = false) => {
       const macro: KeyboardMacroStep[] = [];
 
       for (const [_, step] of steps.entries()) {
@@ -296,9 +320,11 @@ export default function useKeyboard() {
         }
       }
 
-      sendKeyboardMacroEventHidRpc(macro);
+      const completionPromise = isPaste ? waitForPasteMacroCompletion() : Promise.resolve();
+      sendKeyboardMacroEventHidRpc(macro, isPaste);
+      await completionPromise;
     },
-    [sendKeyboardMacroEventHidRpc],
+    [sendKeyboardMacroEventHidRpc, waitForPasteMacroCompletion],
   );
 
   const executeMacroClientSide = useCallback(
@@ -364,6 +390,16 @@ export default function useKeyboard() {
     [rpcHidReady, executeMacroRemote, executeMacroClientSide],
   );
 
+  const executePasteMacro = useCallback(
+    async (steps: MacroSteps) => {
+      if (rpcHidReady) {
+        return executeMacroRemote(steps, true);
+      }
+      return executeMacroClientSide(steps);
+    },
+    [rpcHidReady, executeMacroRemote, executeMacroClientSide],
+  );
+
   const cancelExecuteMacro = useCallback(async () => {
     if (abortController.current) {
       abortController.current.abort();
@@ -379,6 +415,7 @@ export default function useKeyboard() {
     handleKeyPress,
     resetKeyboardState,
     executeMacro,
+    executePasteMacro,
     cleanup,
     cancelExecuteMacro,
   };
