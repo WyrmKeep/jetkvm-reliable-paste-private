@@ -39,7 +39,7 @@ export default function PasteModal() {
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
   const [chunkChars, setChunkChars] = useState(5000);
-  const [chunkPauseMs, setChunkPauseMs] = useState(3000);
+  const [chunkPauseMs, setChunkPauseMs] = useState(2000);
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
   const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number; phase: "sending" | "draining" } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
