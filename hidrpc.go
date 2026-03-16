@@ -90,7 +90,7 @@ func onHidMessage(msg hidQueueMessage, session *Session) {
 
 	t := time.Now()
 
-	r := make(chan interface{})
+	r := make(chan interface{}, 1)
 	go func() {
 		handleHidRPCMessage(message, session)
 		r <- nil
@@ -212,7 +212,7 @@ func reportHidRPC(params any, session *Session) {
 	case usbgadget.KeysDownState:
 		message, err = hidrpc.NewKeydownStateMessage(params).Marshal()
 	case hidrpc.KeyboardMacroState:
-		message, err = hidrpc.NewKeyboardMacroStateMessage(params.State, params.IsPaste).Marshal()
+		message, err = hidrpc.NewKeyboardMacroStateMessage(params.State, params.IsPaste, params.Error).Marshal()
 	default:
 		err = fmt.Errorf("unknown HID RPC message type: %T", params)
 	}

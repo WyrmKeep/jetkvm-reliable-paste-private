@@ -501,6 +501,9 @@ export interface HidState {
   isPasteInProgress: boolean;
   setPasteModeEnabled: (enabled: boolean) => void;
 
+  pasteError: string;
+  setPasteError: (error: string) => void;
+
   usbState: USBStates;
   setUsbState: (state: USBStates) => void;
 }
@@ -524,6 +527,9 @@ export const useHidStore = create<HidState>(set => ({
 
   isPasteInProgress: false,
   setPasteModeEnabled: (enabled: boolean): void => set({ isPasteInProgress: enabled }),
+
+  pasteError: "",
+  setPasteError: (error: string): void => set({ pasteError: error }),
 
   // Add these new properties for USB state
   usbState: "not attached",

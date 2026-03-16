@@ -60,6 +60,10 @@ export interface ExecutePasteTextOptions {
   tailPauseMs: number;
   stressDurationMs: number;
   stressPauseMs: number;
+  longRunThreshold?: number;
+  longRunPauseMs?: number;
+  breathingIntervalChars?: number;
+  breathingPauseMs?: number;
   signal?: AbortSignal;
   onProgress?: (progress: PasteExecutionProgress) => void;
   onTrace?: (trace: PasteExecutionTrace) => void;
@@ -68,7 +72,7 @@ export interface ExecutePasteTextOptions {
 export default function useKeyboard() {
   const { send } = useJsonRpc();
   const { rpcDataChannel } = useRTCStore();
-  const { keysDownState, setKeysDownState, setKeyboardLedState, setPasteModeEnabled } =
+  const { keysDownState, setKeysDownState, setKeyboardLedState, setPasteModeEnabled, setPasteError } =
     useHidStore();
 
   const abortController = useRef<AbortController | null>(null);
@@ -106,10 +110,18 @@ export default function useKeyboard() {
       case KeyboardLedStateMessage:
         setKeyboardLedState((message as KeyboardLedStateMessage).keyboardLedState);
         break;
-      case KeyboardMacroStateMessage:
-        if (!(message as KeyboardMacroStateMessage).isPaste) break;
-        setPasteModeEnabled((message as KeyboardMacroStateMessage).state);
+      case KeyboardMacroStateMessage: {
+        const macroMsg = message as KeyboardMacroStateMessage;
+        if (!macroMsg.isPaste) break;
+        setPasteModeEnabled(macroMsg.state);
+        if (macroMsg.state) {
+          // Clear any previous error when a new macro starts
+          setPasteError("");
+        } else if (macroMsg.error) {
+          setPasteError(macroMsg.error);
+        }
         break;
+      }
       default:
         break;
     }
@@ -158,6 +170,7 @@ export default function useKeyboard() {
 
   const waitForPasteMacroCompletion = useCallback(async (timeoutMs = 30000) => {
     let started = false;
+    let lastValue = useHidStore.getState().isPasteInProgress;
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -166,7 +179,11 @@ export default function useKeyboard() {
       }, timeoutMs);
 
       const unsubscribe = useHidStore.subscribe(state => {
-        if (state.isPasteInProgress) {
+        const current = state.isPasteInProgress;
+        if (current === lastValue) return;
+        lastValue = current;
+
+        if (current) {
           started = true;
           return;
         }
@@ -174,7 +191,12 @@ export default function useKeyboard() {
         if (started) {
           clearTimeout(timeout);
           unsubscribe();
-          resolve();
+          const error = state.pasteError;
+          if (error) {
+            reject(new Error(`Macro execution failed: ${error}`));
+          } else {
+            resolve();
+          }
         }
       });
     });
@@ -446,6 +468,10 @@ export default function useKeyboard() {
         tailPauseMs,
         stressDurationMs,
         stressPauseMs,
+        longRunThreshold,
+        longRunPauseMs,
+        breathingIntervalChars,
+        breathingPauseMs,
         signal,
         onProgress,
         onTrace,
@@ -491,6 +517,10 @@ export default function useKeyboard() {
         throw new Error(`Unsupported characters: ${Array.from(invalidChars).join(", ")}`);
       }
 
+      // Track cumulative characters for breathing pauses.
+      // Each batch has ~1 character per logical step (most chars = 1 step).
+      let charsSinceBreathing = 0;
+
       for (let index = 0; index < batches.length; index += 1) {
         if (signal?.aborted) {
           throw new Error("Paste execution aborted");
@@ -501,13 +531,43 @@ export default function useKeyboard() {
         await executePasteMacro(batch);
         const durationMs = Date.now() - submittedAt;
 
+        // Track characters for breathing pauses (approximate: 1 char per step)
+        charsSinceBreathing += batch.length;
+
+        // Chunk breathing pause: let the host application (e.g., Notepad) catch
+        // up with its rendering and message processing. The backend now handles
+        // USB pipeline draining (proportional drain delay before signaling
+        // completion), so this pause targets the HOST APPLICATION layer --
+        // giving it time to process queued Windows messages and redraw.
+        if (
+          breathingIntervalChars !== undefined &&
+          breathingIntervalChars > 0 &&
+          charsSinceBreathing >= breathingIntervalChars &&
+          index < batches.length - 1
+        ) {
+          const pause = breathingPauseMs ?? 1000;
+          console.log(`[paste] chunk pause at batch ${index + 1}/${batches.length}, ~${charsSinceBreathing} chars, waiting ${pause}ms for host app to catch up`);
+          charsSinceBreathing = 0;
+
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(resolve, pause);
+            const abortHandler = () => {
+              clearTimeout(timeout);
+              reject(new Error("Paste execution aborted"));
+            };
+            signal?.addEventListener("abort", abortHandler, { once: true });
+          });
+        }
+
         const batchesRemaining = batches.length - (index + 1);
         const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;
         const stressMode = durationMs >= stressDurationMs;
+        const longRunMode = longRunThreshold !== undefined && (index + 1) >= longRunThreshold;
         const appliedPauseMs = Math.max(
           batchPauseMs,
           tailMode ? tailPauseMs : 0,
           stressMode ? stressPauseMs : 0,
+          longRunMode ? (longRunPauseMs ?? 0) : 0,
         );
 
         onTrace?.({

@@ -375,10 +375,11 @@ func (u *UsbGadget) KeyboardReport(modifier byte, keys []byte) error {
 	err := u.keyboardWriteHidFile(modifier, keys)
 	if err != nil {
 		u.log.Warn().Uint8("modifier", modifier).Uints8("keys", keys).Msg("Could not write keyboard report to hidg0")
+		return err
 	}
 
 	u.UpdateKeysDown(modifier, keys)
-	return err
+	return nil
 }
 
 const (
