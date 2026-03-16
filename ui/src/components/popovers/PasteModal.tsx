@@ -38,6 +38,8 @@ export default function PasteModal() {
 
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
+  const [chunkChars, setChunkChars] = useState(5000);
+  const [chunkPauseMs, setChunkPauseMs] = useState(3000);
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
   const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number; phase: "sending" | "draining" } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
@@ -112,8 +114,8 @@ export default function PasteModal() {
         tailPauseMs: pasteProfile === "fast" ? 75 : 25,
         longRunThreshold: pasteProfile === "fast" ? 360 : Number.POSITIVE_INFINITY,
         longRunPauseMs: pasteProfile === "fast" ? 50 : 0,
-        breathingIntervalChars: 5000,
-        breathingPauseMs: 3000,
+        breathingIntervalChars: chunkChars,
+        breathingPauseMs: chunkPauseMs,
         stressDurationMs: pasteProfile === "fast" ? 700 : 700,
         stressPauseMs: pasteProfile === "fast" ? 150 : 50,
         signal: abortController.signal,
@@ -140,7 +142,7 @@ export default function PasteModal() {
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
     }
-  }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText, setTraceLinesPersisted]);
+  }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText, setTraceLinesPersisted, chunkChars, chunkPauseMs]);
 
   useEffect(() => {
     if (TextAreaRef.current) {
@@ -304,6 +306,30 @@ export default function PasteModal() {
                       ? "Reliable mode uses smaller batches and more pacing for large pastes."
                       : "Fast mode uses larger batches and lower pacing; validate on your device before trusting large transfers."}
                   </p>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="text-xs text-slate-600 dark:text-slate-400">
+                    <InputFieldWithLabel
+                      type="number"
+                      label="Chunk size (chars)"
+                      placeholder="5000"
+                      min={500}
+                      max={50000}
+                      value={chunkChars}
+                      onChange={e => setChunkChars(parseInt(e.target.value, 10) || 5000)}
+                    />
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-400">
+                    <InputFieldWithLabel
+                      type="number"
+                      label="Chunk pause (ms)"
+                      placeholder="3000"
+                      min={0}
+                      max={30000}
+                      value={chunkPauseMs}
+                      onChange={e => setChunkPauseMs(parseInt(e.target.value, 10) || 3000)}
+                    />
+                  </div>
                 </div>
                 <div className="space-y-4">
                   <p className="text-xs text-slate-600 dark:text-slate-400">
