@@ -478,7 +478,7 @@ func handleSessionRequest(
 	cloudLogger.Trace().Interface("session", session).Msg("new session accepted")
 
 	// Cancel any ongoing keyboard macro when session changes
-	cancelKeyboardMacro()
+	cancelAndDrainMacroQueue()
 
 	currentSession = session
 	_ = wsjson.Write(context.Background(), c, gin.H{"type": "answer", "data": sd})
