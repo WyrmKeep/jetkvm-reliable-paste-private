@@ -245,7 +245,7 @@ func handleWebRTCSession(c *gin.Context) {
 	}
 
 	// Cancel any ongoing keyboard macro when session changes
-	cancelKeyboardMacro()
+	cancelAndDrainMacroQueue()
 
 	currentSession = session
 	c.JSON(http.StatusOK, gin.H{"sd": sd})

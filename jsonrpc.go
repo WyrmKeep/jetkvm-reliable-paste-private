@@ -1009,65 +1009,113 @@ func rpcSetLocalLoopbackOnly(enabled bool) error {
 }
 
 var (
-	keyboardMacroCancel context.CancelFunc
-	keyboardMacroLock   sync.Mutex
+	// macroQueue is the channel-based FIFO for keyboard macro batches.
+	// The drain goroutine is the sole consumer; rpcExecuteKeyboardMacro is the producer.
+	macroQueue chan []hidrpc.KeyboardMacroStep
+
+	// macroCurrentCancel cancels the currently executing macro in the drain goroutine.
+	macroCurrentCancel context.CancelFunc
+	macroLock          sync.Mutex
+	macroQueueOnce     sync.Once
 )
 
-// cancelKeyboardMacro cancels any ongoing keyboard macro execution
-func cancelKeyboardMacro() {
-	keyboardMacroLock.Lock()
-	defer keyboardMacroLock.Unlock()
+// startMacroQueue creates the macro queue channel and starts the drain goroutine.
+// Called when the first WebRTC session is established.
+func startMacroQueue() {
+	macroQueueOnce.Do(func() {
+		macroQueue = make(chan []hidrpc.KeyboardMacroStep, 4096)
+		go drainMacroQueue()
+	})
+}
 
-	if keyboardMacroCancel != nil {
-		keyboardMacroCancel()
-		logger.Info().Msg("canceled keyboard macro")
-		keyboardMacroCancel = nil
+// drainMacroQueue is the sole consumer of macroQueue. It executes each macro
+// sequentially and reports completion state to the frontend after each one.
+func drainMacroQueue() {
+	for macro := range macroQueue {
+		macroID := keyboardMacroSequence.Add(1)
+		logger.Info().Uint64("macro_id", macroID).Int("step_count", len(macro)).Msg("executing queued keyboard macro")
+
+		// Report macro start (frontend uses this for isPasteInProgress)
+		if currentSession != nil {
+			currentSession.reportHidRPCKeyboardMacroState(hidrpc.KeyboardMacroState{
+				State:   true,
+				IsPaste: true,
+			})
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		macroLock.Lock()
+		macroCurrentCancel = cancel
+		macroLock.Unlock()
+
+		err := rpcDoExecuteKeyboardMacro(ctx, macro)
+		if err != nil {
+			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
+		} else {
+			logger.Info().Uint64("macro_id", macroID).Msg("queued keyboard macro completed")
+		}
+
+		macroLock.Lock()
+		macroCurrentCancel = nil
+		macroLock.Unlock()
+
+		cancel()
+
+		// Report per-macro completion (frontend uses this for draining phase detection)
+		s := hidrpc.KeyboardMacroState{
+			State:   false,
+			IsPaste: true,
+		}
+		if currentSession != nil {
+			currentSession.reportHidRPCKeyboardMacroState(s)
+		}
 	}
 }
 
-func setKeyboardMacroCancel(cancel context.CancelFunc) {
-	keyboardMacroLock.Lock()
-	defer keyboardMacroLock.Unlock()
+// cancelAndDrainMacroQueue cancels the currently executing macro and discards
+// all queued macros. Called on session teardown, session takeover, and explicit cancel.
+func cancelAndDrainMacroQueue() {
+	macroLock.Lock()
+	if macroCurrentCancel != nil {
+		macroCurrentCancel()
+		logger.Info().Msg("canceled current keyboard macro")
+	}
+	macroLock.Unlock()
 
-	keyboardMacroCancel = cancel
+	// Drain any queued macros without executing them
+	if macroQueue != nil {
+		drained := 0
+		for {
+			select {
+			case <-macroQueue:
+				drained++
+			default:
+				if drained > 0 {
+					logger.Info().Int("count", drained).Msg("drained queued keyboard macros")
+				}
+				return
+			}
+		}
+	}
 }
 
 func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
 	macroID := keyboardMacroSequence.Add(1)
-	logger.Info().Uint64("macro_id", macroID).Int("step_count", len(macro)).Msg("starting keyboard macro execution")
-	cancelKeyboardMacro()
+	logger.Info().Uint64("macro_id", macroID).Int("step_count", len(macro)).Msg("enqueuing keyboard macro")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	setKeyboardMacroCancel(cancel)
+	// Ensure queue is started (idempotent)
+	startMacroQueue()
 
-	s := hidrpc.KeyboardMacroState{
-		State:   true,
-		IsPaste: true,
-	}
-
-	if currentSession != nil {
-		currentSession.reportHidRPCKeyboardMacroState(s)
-	}
-
-	err := rpcDoExecuteKeyboardMacro(ctx, macro)
-	if err != nil {
-		logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("keyboard macro execution failed")
-	} else {
-		logger.Info().Uint64("macro_id", macroID).Msg("keyboard macro execution completed")
-	}
-
-	setKeyboardMacroCancel(nil)
-
-	s.State = false
-	if currentSession != nil {
-		currentSession.reportHidRPCKeyboardMacroState(s)
-	}
-
-	return err
+	// Blocking enqueue. If the channel is full (4096 batches), this blocks
+	// until the drain goroutine frees a slot, creating backpressure through
+	// the SCTP stack to the frontend's bufferedAmount flow control.
+	macroQueue <- macro
+	return nil
 }
 
 func rpcCancelKeyboardMacro() {
-	cancelKeyboardMacro()
+	cancelAndDrainMacroQueue()
 }
 
 var keyboardClearStateKeys = make([]byte, hidrpc.HidKeyBufferSize)

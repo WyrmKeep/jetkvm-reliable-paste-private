@@ -43,10 +43,7 @@ export interface PasteExecutionTrace {
   totalBatches: number;
   stepCount: number;
   estimatedBytes: number;
-  durationMs: number;
-  appliedPauseMs: number;
-  tailMode: boolean;
-  stressMode: boolean;
+  bufferedAmount: number;
 }
 
 export interface ExecutePasteTextOptions {
@@ -54,12 +51,7 @@ export interface ExecutePasteTextOptions {
   delayMs: number;
   maxStepsPerBatch: number;
   maxBytesPerBatch: number;
-  batchPauseMs: number;
   finalSettleMs: number;
-  tailBatchCount: number;
-  tailPauseMs: number;
-  stressDurationMs: number;
-  stressPauseMs: number;
   signal?: AbortSignal;
   onProgress?: (progress: PasteExecutionProgress) => void;
   onTrace?: (trace: PasteExecutionTrace) => void;
@@ -97,6 +89,7 @@ export default function useKeyboard() {
     reportKeyboardMacroEvent: sendKeyboardMacroEventHidRpc,
     cancelOngoingKeyboardMacro: cancelOngoingKeyboardMacroHidRpc,
     reportKeypressKeepAlive: sendKeypressKeepAliveHidRpc,
+    rpcHidChannel,
     rpcHidReady,
   } = useHidRpc(message => {
     switch (message.constructor) {
@@ -154,30 +147,6 @@ export default function useKeyboard() {
       clearInterval(keepAliveTimerRef.current);
       keepAliveTimerRef.current = null;
     }
-  }, []);
-
-  const waitForPasteMacroCompletion = useCallback(async (timeoutMs = 30000) => {
-    let started = false;
-
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        unsubscribe();
-        reject(new Error(`Paste macro timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      const unsubscribe = useHidStore.subscribe(state => {
-        if (state.isPasteInProgress) {
-          started = true;
-          return;
-        }
-
-        if (started) {
-          clearTimeout(timeout);
-          unsubscribe();
-          resolve();
-        }
-      });
-    });
   }, []);
 
   const scheduleKeepAlive = useCallback(() => {
@@ -341,23 +310,18 @@ export default function useKeyboard() {
       for (const [_, step] of steps.entries()) {
         const keyValues = (step.keys || []).map(key => keys[key]).filter(Boolean);
         const modifierMask: number = (step.modifiers || [])
-
           .map(mod => modifiers[mod])
-
           .reduce((acc, val) => acc + val, 0);
 
-        // If the step has keys and/or modifiers, press them and hold for the delay
         if (keyValues.length > 0 || modifierMask > 0) {
           macro.push({ keys: keyValues, modifier: modifierMask, delay: 5 });
           macro.push({ ...MACRO_RESET_KEYBOARD_STATE, delay: step.delay || 25 });
         }
       }
 
-      const completionPromise = isPaste ? waitForPasteMacroCompletion() : Promise.resolve();
       sendKeyboardMacroEventHidRpc(macro, isPaste);
-      await completionPromise;
     },
-    [sendKeyboardMacroEventHidRpc, waitForPasteMacroCompletion],
+    [sendKeyboardMacroEventHidRpc],
   );
 
   const executeMacroClientSide = useCallback(
@@ -440,12 +404,7 @@ export default function useKeyboard() {
         delayMs,
         maxStepsPerBatch,
         maxBytesPerBatch,
-        batchPauseMs,
         finalSettleMs,
-        tailBatchCount,
-        tailPauseMs,
-        stressDurationMs,
-        stressPauseMs,
         signal,
         onProgress,
         onTrace,
@@ -491,65 +450,92 @@ export default function useKeyboard() {
         throw new Error(`Unsupported characters: ${Array.from(invalidChars).join(", ")}`);
       }
 
-      for (let index = 0; index < batches.length; index += 1) {
-        if (signal?.aborted) {
-          throw new Error("Paste execution aborted");
-        }
+      // Pipeline flow control constants
+      const PASTE_LOW_WATERMARK = 64 * 1024;
+      const PASTE_HIGH_WATERMARK = 256 * 1024;
 
-        const batch = batches[index];
-        const submittedAt = Date.now();
-        await executePasteMacro(batch);
-        const durationMs = Date.now() - submittedAt;
-
-        const batchesRemaining = batches.length - (index + 1);
-        const tailMode = tailBatchCount > 0 && batchesRemaining < tailBatchCount;
-        const stressMode = durationMs >= stressDurationMs;
-        const appliedPauseMs = Math.max(
-          batchPauseMs,
-          tailMode ? tailPauseMs : 0,
-          stressMode ? stressPauseMs : 0,
-        );
-
-        onTrace?.({
-          batchIndex: index + 1,
-          totalBatches: batches.length,
-          stepCount: batch.length,
-          estimatedBytes: estimateBytes(batch.length),
-          durationMs,
-          appliedPauseMs,
-          tailMode,
-          stressMode,
-        });
-
-        onProgress?.({
-          completedBatches: index + 1,
-          totalBatches: batches.length,
-        });
-
-        if (appliedPauseMs > 0 && index < batches.length - 1) {
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(resolve, appliedPauseMs);
-            const abortHandler = () => {
-              clearTimeout(timeout);
-              reject(new Error("Paste execution aborted"));
-            };
-            signal?.addEventListener("abort", abortHandler, { once: true });
-          });
-        }
+      const channel = rpcHidChannel;
+      if (!channel || channel.readyState !== "open") {
+        throw new Error("HID data channel not available");
       }
 
-      if (finalSettleMs > 0) {
+      // Save and set bufferedAmount threshold for paste flow control
+      const prevThreshold = channel.bufferedAmountLowThreshold;
+      channel.bufferedAmountLowThreshold = PASTE_LOW_WATERMARK;
+
+      let drainResolve: (() => void) | null = null;
+      const waitForDrain = () => new Promise<void>(r => { drainResolve = r; });
+      const onLow = () => { drainResolve?.(); };
+      channel.addEventListener("bufferedamountlow", onLow);
+
+      try {
+        for (let index = 0; index < batches.length; index++) {
+          if (signal?.aborted) {
+            throw new Error("Paste execution aborted");
+          }
+
+          const batch = batches[index];
+          await executePasteMacro(batch);
+
+          onTrace?.({
+            batchIndex: index + 1,
+            totalBatches: batches.length,
+            stepCount: batch.length,
+            estimatedBytes: estimateBytes(batch.length),
+            bufferedAmount: channel.bufferedAmount,
+          });
+
+          onProgress?.({
+            completedBatches: index + 1,
+            totalBatches: batches.length,
+          });
+
+          // Pause if channel buffer exceeds high watermark
+          if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) {
+            await waitForDrain();
+          }
+        }
+
+        // Wait for backend to finish draining all queued macros.
+        // The drain goroutine sends State:false after each macro completes.
+        // We wait for isPasteInProgress to become false (final completion signal),
+        // with a generous timeout based on the number of batches.
+        const drainTimeoutMs = Math.max(finalSettleMs, batches.length * 1000);
         await new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(resolve, finalSettleMs);
+          // If paste is already not in progress (e.g. very small paste), resolve immediately
+          if (!useHidStore.getState().isPasteInProgress) {
+            resolve();
+            return;
+          }
+
+          const timeout = setTimeout(() => {
+            unsubscribe();
+            resolve(); // Resolve on timeout rather than reject — batches were sent successfully
+          }, drainTimeoutMs);
+
           const abortHandler = () => {
             clearTimeout(timeout);
+            unsubscribe();
             reject(new Error("Paste execution aborted"));
           };
           signal?.addEventListener("abort", abortHandler, { once: true });
+
+          const unsubscribe = useHidStore.subscribe(state => {
+            if (!state.isPasteInProgress) {
+              clearTimeout(timeout);
+              signal?.removeEventListener("abort", abortHandler);
+              unsubscribe();
+              // Small settle delay after final completion for host USB consumption
+              setTimeout(resolve, 500);
+            }
+          });
         });
+      } finally {
+        channel.removeEventListener("bufferedamountlow", onLow);
+        channel.bufferedAmountLowThreshold = prevThreshold;
       }
     },
-    [executePasteMacro],
+    [executePasteMacro, rpcHidChannel],
   );
 
   const cancelExecuteMacro = useCallback(async () => {

@@ -106,14 +106,7 @@ export default function PasteModal() {
         delayMs: effectiveDelay,
         maxStepsPerBatch: profile.maxStepsPerBatch,
         maxBytesPerBatch: profile.maxBytesPerBatch,
-        batchPauseMs: profile.batchPauseMs,
-        finalSettleMs: pasteProfile === "fast" ? 1500 : 500,
-        tailBatchCount: pasteProfile === "fast" ? 16 : 8,
-        tailPauseMs: pasteProfile === "fast" ? 75 : 25,
-        longRunThreshold: pasteProfile === "fast" ? 360 : Number.POSITIVE_INFINITY,
-        longRunPauseMs: pasteProfile === "fast" ? 50 : 0,
-        stressDurationMs: pasteProfile === "fast" ? 700 : 700,
-        stressPauseMs: pasteProfile === "fast" ? 150 : 50,
+        finalSettleMs: 3000,
         signal: abortController.signal,
         onProgress: progress => {
           setPasteProgress({
@@ -125,7 +118,7 @@ export default function PasteModal() {
         onTrace: trace => {
           setTraceLinesPersisted(current => [
             ...current,
-            `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} duration=${trace.durationMs}ms pause=${trace.appliedPauseMs}ms tail=${trace.tailMode ? 1 : 0} stress=${trace.stressMode ? 1 : 0}`,
+            `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`,
           ]);
         },
       });

@@ -323,6 +323,7 @@ export function useHidRpc(onHidRpcMessage?: (payload: RpcMessage) => void) {
     reportKeyboardMacroEvent,
     cancelOngoingKeyboardMacro,
     reportKeypressKeepAlive,
+    rpcHidChannel,
     rpcHidProtocolVersion,
     rpcHidReady,
     rpcHidStatus,
