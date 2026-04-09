@@ -1070,6 +1070,12 @@ func drainMacroQueue() {
 		if currentSession != nil {
 			currentSession.reportHidRPCKeyboardMacroState(s)
 		}
+
+		// Inter-macro drain delay: gives the host USB stack time to process
+		// buffered HID reports before the next macro arrives. Without this,
+		// back-to-back macros overflow the host's USB input queue, causing
+		// character corruption on busy systems.
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
