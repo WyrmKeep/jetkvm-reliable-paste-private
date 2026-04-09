@@ -84,6 +84,12 @@ type UsbGadget struct {
 
 	lastUserInput time.Time
 
+	writeHealthLock  sync.Mutex
+	writeWindow      []writeRecord
+	hasEverWritten   bool
+	overrideActive   bool
+	writeHealthClock func() time.Time // injectable for tests; nil uses time.Now
+
 	tx     *UsbGadgetTransaction
 	txLock sync.Mutex
 
