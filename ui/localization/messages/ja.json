@@ -846,6 +846,7 @@
     "usb_state_connecting": "接続中",
     "usb_state_disconnected": "切断",
     "usb_state_low_power_mode": "低電力モード",
+    "usb_state_unknown": "不明",
     "user_interface_language_description": "JetKVMユーザーインターフェースで使用する言語を選択してください",
     "user_interface_language_title": "インターフェース言語",
     "video_brightness_description": "明るさレベル ({value}倍)",

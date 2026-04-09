@@ -872,6 +872,7 @@
     "usb_state_connecting": "Подключение",
     "usb_state_disconnected": "Отключено",
     "usb_state_low_power_mode": "Режим низкого энергопотребления",
+    "usb_state_unknown": "Неизвестно",
     "user_interface_language_description": "Выберите язык для использования в интерфейсе JetKVM",
     "user_interface_language_title": "Язык интерфейса",
     "video_brightness_description": "Уровень яркости ({value}x)",
