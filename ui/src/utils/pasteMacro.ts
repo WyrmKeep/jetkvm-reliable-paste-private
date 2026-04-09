@@ -27,10 +27,12 @@ export interface PasteMacroBatchResult {
   batchStats: Array<{ stepCount: number; estimatedBytes: number }>;
 }
 
-function estimateBatchBytes(stepCount: number): number {
-  // Matches HID macro report layout in hidRpc.ts:
-  // 6-byte header + 9 bytes per step.
-  return 6 + stepCount * 9;
+export function estimateBatchBytes(stepCount: number): number {
+  // Wire-byte estimate for HID macro report:
+  // 6-byte header + 18 bytes per MacroStep.
+  // Each MacroStep expands to 2 KeyboardMacroSteps (press + reset)
+  // in executeMacroRemote, and each KeyboardMacroStep is 9 bytes.
+  return 6 + stepCount * 18;
 }
 
 export function buildStepsForChar(

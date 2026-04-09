@@ -17,7 +17,11 @@ import { useHidRpc } from "@/hooks/useHidRpc";
 import { JsonRpcResponse, useJsonRpc } from "@/hooks/useJsonRpc";
 import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
-import { buildStepsForChar, type KeyboardLayoutLike } from "@/utils/pasteMacro";
+import {
+  buildPasteMacroBatches,
+  estimateBatchBytes,
+  type KeyboardLayoutLike,
+} from "@/utils/pasteMacro";
 
 const MACRO_RESET_KEYBOARD_STATE = {
   keys: new Array(hidKeyBufferSize).fill(0),
@@ -410,44 +414,16 @@ export default function useKeyboard() {
         onTrace,
       } = options;
 
-      const batches: MacroSteps[] = [];
-      let currentBatch: MacroSteps = [];
+      const { batches, invalidChars } = buildPasteMacroBatches(
+        text,
+        keyboard,
+        delayMs,
+        maxStepsPerBatch,
+        maxBytesPerBatch,
+      );
 
-      const estimateBytes = (logicalSteps: number) => 6 + logicalSteps * 18;
-
-      const flushBatch = () => {
-        if (currentBatch.length === 0) return;
-        batches.push(currentBatch);
-        currentBatch = [];
-      };
-
-      const invalidChars = new Set<string>();
-
-      for (const char of text) {
-        const normalizedChar = char.normalize("NFC");
-        const charSteps = buildStepsForChar(normalizedChar, keyboard, delayMs);
-        if (!charSteps) {
-          invalidChars.add(normalizedChar);
-          continue;
-        }
-
-        const projectedSteps = currentBatch.length + charSteps.length;
-        const projectedBytes = estimateBytes(projectedSteps);
-
-        if (
-          currentBatch.length > 0 &&
-          (projectedSteps > maxStepsPerBatch || projectedBytes > maxBytesPerBatch)
-        ) {
-          flushBatch();
-        }
-
-        currentBatch.push(...charSteps);
-      }
-
-      flushBatch();
-
-      if (invalidChars.size > 0) {
-        throw new Error(`Unsupported characters: ${Array.from(invalidChars).join(", ")}`);
+      if (invalidChars.length > 0) {
+        throw new Error(`Unsupported characters: ${invalidChars.join(", ")}`);
       }
 
       // Pipeline flow control constants
@@ -481,7 +457,7 @@ export default function useKeyboard() {
             batchIndex: index + 1,
             totalBatches: batches.length,
             stepCount: batch.length,
-            estimatedBytes: estimateBytes(batch.length),
+            estimatedBytes: estimateBatchBytes(batch.length),
             bufferedAmount: channel.bufferedAmount,
           });
 

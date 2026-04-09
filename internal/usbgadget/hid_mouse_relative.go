@@ -85,6 +85,7 @@ func (u *UsbGadget) RelMouseReport(mx int8, my int8, buttons uint8) error {
 		byte(my), // Y
 		0,        // Wheel
 	})
+	u.RecordWriteResult(err)
 	if err != nil {
 		return err
 	}

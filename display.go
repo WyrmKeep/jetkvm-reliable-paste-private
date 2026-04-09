@@ -41,7 +41,11 @@ func switchToMainScreen() {
 }
 
 func updateDisplayUsbState() {
-	if usbState == "configured" {
+	state := "unknown"
+	if usbMonitorInstance != nil {
+		state = usbMonitorInstance.EffectiveState()
+	}
+	if state == "configured" {
 		nativeInstance.UpdateLabelIfChanged("usb_status_label", "Connected")
 		_, _ = nativeInstance.UIObjAddState("usb_status_label", "LV_STATE_CHECKED")
 	} else {

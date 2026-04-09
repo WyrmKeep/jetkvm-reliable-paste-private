@@ -841,6 +841,7 @@
     "usb_state_connecting": "Tilkobling",
     "usb_state_disconnected": "Frakoblet",
     "usb_state_low_power_mode": "Lavstrømsmodus",
+    "usb_state_unknown": "Ukjent",
     "user_interface_language_description": "Velg språket som skal brukes i JetKVM-brukergrensesnittet",
     "user_interface_language_title": "Grensesnittspråk",
     "video_brightness_description": "Lysstyrkenivå ( {value} x)",

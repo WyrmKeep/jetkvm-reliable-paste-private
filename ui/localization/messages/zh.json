@@ -841,6 +841,7 @@
     "usb_state_connecting": "连接中",
     "usb_state_disconnected": "已断开",
     "usb_state_low_power_mode": "低功耗模式",
+    "usb_state_unknown": "未知",
     "user_interface_language_description": "选择 JetKVM 用户界面的显示语言。",
     "user_interface_language_title": "界面语言",
     "video_brightness_description": "亮度级别 ({value}x)",

@@ -1,13 +1,13 @@
 package kvm
 
 import (
-	"sync"
 	"time"
 
 	"github.com/jetkvm/kvm/internal/usbgadget"
 )
 
 var gadget *usbgadget.UsbGadget
+var usbMonitorInstance *usbMonitor
 
 // initUsbGadget initializes the USB gadget.
 // call it only after the config is loaded.
@@ -19,12 +19,23 @@ func initUsbGadget() {
 		usbLogger,
 	)
 
+	usbMonitorInstance = newUsbMonitor(
+		gadget,
+		time.Now,
+		gadget.GetUsbState,
+		usbLogger,
+	)
+
+	// Start the polling loop
 	go func() {
 		for {
-			checkUSBState()
+			usbMonitorInstance.tick()
 			time.Sleep(500 * time.Millisecond)
 		}
 	}()
+
+	// Start the state update consumer
+	go usbStateConsumer()
 
 	gadget.SetOnKeyboardStateChange(func(state usbgadget.KeyboardState) {
 		if currentSession != nil {
@@ -78,37 +89,36 @@ func rpcGetKeysDownState() (state usbgadget.KeysDownState) {
 	return gadget.GetKeysDownState()
 }
 
-var (
-	usbState     = "unknown"
-	usbStateLock sync.Mutex
-)
-
 func rpcGetUSBState() (state string) {
+	if usbMonitorInstance != nil {
+		return usbMonitorInstance.EffectiveState()
+	}
 	return gadget.GetUsbState()
 }
 
+// triggerUSBStateUpdate pushes the current effective state through the monitor's channel.
 func triggerUSBStateUpdate() {
-	go func() {
-		if currentSession == nil {
-			usbLogger.Info().Msg("No active RPC session, skipping USB state update")
-			return
-		}
-		writeJSONRPCEvent("usbState", usbState, currentSession)
-	}()
-}
-
-func checkUSBState() {
-	usbStateLock.Lock()
-	defer usbStateLock.Unlock()
-
-	newState := gadget.GetUsbState()
-	if newState == usbState {
+	if usbMonitorInstance == nil {
 		return
 	}
+	state := usbMonitorInstance.EffectiveState()
+	select {
+	case usbMonitorInstance.stateCh <- stateUpdate{
+		raw:       usbMonitorInstance.RawState(),
+		effective: state,
+		reason:    "session_init",
+	}:
+	default:
+		usbLogger.Warn().Msg("USB state update channel full during triggerUSBStateUpdate")
+	}
+}
 
-	usbState = newState
-	usbLogger.Info().Str("from", usbState).Str("to", newState).Msg("USB state changed")
-
-	requestDisplayUpdate(true, "usb_state_changed")
-	triggerUSBStateUpdate()
+// usbStateConsumer reads from the monitor's state channel and publishes to display + RPC.
+func usbStateConsumer() {
+	for update := range usbMonitorInstance.stateCh {
+		requestDisplayUpdate(true, "usb_state_changed")
+		if currentSession != nil {
+			writeJSONRPCEvent("usbState", update.effective, currentSession)
+		}
+	}
 }

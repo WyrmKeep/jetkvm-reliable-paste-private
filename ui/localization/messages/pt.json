@@ -846,6 +846,7 @@
     "usb_state_connecting": "Conectando",
     "usb_state_disconnected": "Desconectado",
     "usb_state_low_power_mode": "Modo de baixa energia",
+    "usb_state_unknown": "Desconhecido",
     "user_interface_language_description": "Selecione o idioma a ser usado na interface do usuário JetKVM",
     "user_interface_language_title": "Idioma da Interface",
     "video_brightness_description": "Nível de brilho ({value}x)",
