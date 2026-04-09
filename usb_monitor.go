@@ -7,6 +7,8 @@ import (
 	"github.com/jetkvm/kvm/internal/usbgadget"
 
 	"github.com/rs/zerolog"
+
+	stdsync "sync"
 )
 
 type stateUpdate struct {
@@ -21,6 +23,7 @@ type usbMonitor struct {
 	readState func() string
 	logger    *zerolog.Logger
 
+	mu             stdsync.Mutex
 	rawState       string
 	effectiveState string
 
@@ -49,11 +52,15 @@ func newUsbMonitor(
 
 // EffectiveState returns the current effective USB state.
 func (m *usbMonitor) EffectiveState() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.effectiveState
 }
 
 // RawState returns the current raw sysfs USB state.
 func (m *usbMonitor) RawState() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.rawState
 }
 
@@ -67,6 +74,8 @@ func (m *usbMonitor) RecordWriteResult(err error) {
 // tick performs one poll cycle: read sysfs, derive effective state, publish changes.
 func (m *usbMonitor) tick() {
 	newRaw := m.readState()
+
+	m.mu.Lock()
 	oldRaw := m.rawState
 	oldEffective := m.effectiveState
 
@@ -81,8 +90,9 @@ func (m *usbMonitor) tick() {
 	// Step 3: Derive effective state
 	effective := m.deriveEffective(newRaw)
 	m.effectiveState = effective
+	m.mu.Unlock()
 
-	// Step 4: Publish if effective changed
+	// Step 4: Publish if effective changed (outside lock to avoid blocking on channel)
 	if effective != oldEffective {
 		reason := "sysfs"
 		if effective != newRaw {
