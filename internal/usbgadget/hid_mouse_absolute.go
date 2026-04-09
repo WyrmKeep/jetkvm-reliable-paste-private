@@ -97,6 +97,7 @@ func (u *UsbGadget) AbsMouseReport(x int, y int, buttons uint8) error {
 		byte(y),      // Y Low Byte
 		byte(y >> 8), // Y High Byte
 	})
+	u.RecordWriteResult(err)
 	if err != nil {
 		return err
 	}
@@ -118,6 +119,7 @@ func (u *UsbGadget) AbsMouseWheelReport(wheelY int8) error {
 		2,            // Report ID 2
 		byte(wheelY), // Wheel Y (signed)
 	})
+	u.RecordWriteResult(err)
 
 	u.resetUserInputTime()
 	return err
