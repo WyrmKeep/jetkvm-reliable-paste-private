@@ -1075,7 +1075,7 @@ func drainMacroQueue() {
 		// buffered HID reports before the next macro arrives. Without this,
 		// back-to-back macros overflow the host's USB input queue, causing
 		// character corruption on busy systems.
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(70 * time.Millisecond)
 	}
 }
 
