@@ -5,8 +5,6 @@ import (
 	"errors"
 	"syscall"
 	"time"
-
-	"github.com/jetkvm/kvm/internal/sync"
 )
 
 type writeRecord struct {
