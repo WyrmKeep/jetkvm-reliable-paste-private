@@ -376,10 +376,14 @@ func (u *UsbGadget) KeyboardReport(modifier byte, keys []byte) error {
 	u.RecordWriteResult(err)
 	if err != nil {
 		u.log.Warn().Uint8("modifier", modifier).Uints8("keys", keys).Msg("Could not write keyboard report to hidg0")
+		// Do NOT update internal key state on a failed write — otherwise
+		// keysDownState diverges from what the host actually received and
+		// subsequent reports will be based on a poisoned snapshot.
+		return err
 	}
 
 	u.UpdateKeysDown(modifier, keys)
-	return err
+	return nil
 }
 
 const (

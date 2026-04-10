@@ -34,7 +34,7 @@ func handleHidRPCMessage(message hidrpc.Message, session *Session) {
 			logger.Warn().Err(err).Msg("failed to get keyboard macro report")
 			return
 		}
-		rpcErr = rpcExecuteKeyboardMacro(keyboardMacroReport.Steps)
+		rpcErr = rpcExecuteKeyboardMacro(session, keyboardMacroReport.Steps, keyboardMacroReport.IsPaste)
 	case hidrpc.TypeCancelKeyboardMacroReport:
 		rpcCancelKeyboardMacro()
 		return
@@ -90,14 +90,31 @@ func onHidMessage(msg hidQueueMessage, session *Session) {
 
 	t := time.Now()
 
-	r := make(chan interface{})
+	// Buffered completion channel so the worker goroutine's send never blocks.
+	// With the shallow 64-slot macroQueue and blocking backpressure on full,
+	// handleHidRPCMessage can legitimately take longer than the 1-second
+	// timeout below. If we left this unbuffered, the worker would block forever
+	// on the done-send once the timeout fired, leaking a goroutine per
+	// timed-out message.
+	//
+	// chan struct{} rather than chan interface{} — the channel is a pure
+	// done-signal, no payload ever flows through it.
+	r := make(chan struct{}, 1)
 	go func() {
 		handleHidRPCMessage(message, session)
-		r <- nil
+		r <- struct{}{}
 	}()
 	select {
 	case <-time.After(1 * time.Second):
-		scopedLogger.Warn().Msg("HID RPC message timed out")
+		// Downgrade the timeout log for keyboard-macro messages: with blocking
+		// backpressure from the shallow macroQueue, enqueue taking >1s is an
+		// expected, benign signal that the backend is absorbing flow control,
+		// not a fault.
+		if message.Type() == hidrpc.TypeKeyboardMacroReport {
+			scopedLogger.Debug().Msg("HID RPC keyboard-macro handler took >1s (backpressure)")
+		} else {
+			scopedLogger.Warn().Msg("HID RPC message timed out")
+		}
 	case <-r:
 		scopedLogger.Debug().Dur("duration", time.Since(t)).Msg("HID RPC message handled")
 	}
