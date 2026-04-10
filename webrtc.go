@@ -237,10 +237,27 @@ func getOnHidMessageHandler(session *Session, scopedLogger *zerolog.Logger, chan
 
 		queue := session.hidQueue[queueIndex]
 		if queue != nil {
-			queue <- hidQueueMessage{
-				DataChannelMessage: msg,
-				channel:            channel,
-			}
+			// Defensive: session teardown closes session.hidQueue[i] at
+			// webrtc.go:440-443 without holding hidQueueLock, while the pion
+			// readLoop goroutine may deliver one last buffered message from
+			// the wire after the close. The unsynchronized close-vs-send race
+			// produces "send on closed channel". Recover here so a late
+			// message during teardown drops with a warning instead of
+			// panicking the whole app. Proper fix is to serialize close and
+			// send under hidQueueLock — tracked as a follow-up.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						l.Warn().
+							Interface("recover", r).
+							Msg("hidQueue send panicked (channel closed during session teardown); message dropped")
+					}
+				}()
+				queue <- hidQueueMessage{
+					DataChannelMessage: msg,
+					channel:            channel,
+				}
+			}()
 		} else {
 			l.Warn().Int("queueIndex", queueIndex).Msg("received data in HID RPC message handler, but queue is nil")
 			return
