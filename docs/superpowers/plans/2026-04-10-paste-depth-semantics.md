@@ -303,6 +303,7 @@ func drainMacroQueue() {
 		// Non-paste macros never touch pasteDepth or emit state.
 		if item.isPaste {
 			if pasteDepth.Add(-1) == 0 {
+				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (drain complete)")
 				emitPasteState(item.session, false)
 			}
 		}
@@ -410,7 +411,9 @@ func cancelAndDrainMacroQueue() {
 		logger.Info().Int("count", discardedTotal).Msg("drained queued keyboard macros")
 	}
 	if discardedPaste > 0 {
+		logger.Debug().Int32("discarded_paste", discardedPaste).Msg("cancel sweep discarded paste macros")
 		if pasteDepth.Add(-discardedPaste) == 0 {
+			logger.Debug().Msg("paste-depth 1->0 (cancel sweep)")
 			emitPasteState(lastPasteSession, false)
 		}
 	}
@@ -461,6 +464,7 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// Emit State:true if this Add is the 0→1 transition.
 	if isPaste {
 		if pasteDepth.Add(1) == 1 {
+			logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 0->1 (enqueue)")
 			emitPasteState(session, true)
 		}
 	}
@@ -475,6 +479,7 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	case <-ctx.Done():
 		if isPaste {
 			if pasteDepth.Add(-1) == 0 {
+				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (enqueue rollback)")
 				emitPasteState(session, false)
 			}
 		}
@@ -634,12 +639,15 @@ Replace with:
 	// With the shallow 64-slot macroQueue and blocking backpressure on full,
 	// handleHidRPCMessage can legitimately take longer than the 1-second
 	// timeout below. If we left this unbuffered, the worker would block forever
-	// on `r <- nil` once the timeout fired, leaking a goroutine per timed-out
-	// message.
-	r := make(chan interface{}, 1)
+	// on the done-send once the timeout fired, leaking a goroutine per
+	// timed-out message.
+	//
+	// chan struct{} rather than chan interface{} — the channel is a pure
+	// done-signal, no payload ever flows through it.
+	r := make(chan struct{}, 1)
 	go func() {
 		handleHidRPCMessage(message, session)
-		r <- nil
+		r <- struct{}{}
 	}()
 	select {
 	case <-time.After(1 * time.Second):
@@ -694,8 +702,8 @@ fix(hid): buffer onHidMessage completion channel and downgrade keyboard-macro ti
 
 The onHidMessage worker previously sent into an unbuffered completion
 channel. If the 1-second handler timeout won the race, the worker would
-block forever on `r <- nil` because nothing was reading — a goroutine
-leak per timed-out message.
+block forever on the done-send because nothing was reading — a
+goroutine leak per timed-out message.
 
 This was latent under the 4096-slot queue because enqueue rarely blocked
 longer than 1s. With the new 64-slot queue from the paste-depth change,
@@ -705,6 +713,8 @@ a busy host, so the leak would become measurable.
 Fix:
 - Buffer the completion channel (capacity 1) so the worker's send is
   always non-blocking, even after the timeout branch has taken over.
+- Change the channel type from chan interface{} to chan struct{} to
+  make the "done signal, no payload" intent obvious.
 - Downgrade the timeout log to Debug for TypeKeyboardMacroReport
   messages specifically — a >1s enqueue under backpressure is expected,
   not a fault. Other HID RPC message types still log Warn on timeout.
@@ -896,6 +906,8 @@ Identify the import block and any existing module-scoped constants (so the new h
 
 Add the following block above the `useKeyboard` hook declaration (directly above the `export function useKeyboard(...)` line, or directly above the nearest module-scoped helper already in the file). This helper must live at module scope, NOT inside `useKeyboard`, because it doesn't use React state.
 
+**Critical correctness note — the `seenTrue` latch.** `useHidStore.subscribe((state) => ...)` without a selector fires on **every** store mutation, not just `isPasteInProgress` changes. If we resolved whenever a subscription update arrived with `isPasteInProgress === false`, an unrelated store update (e.g., a keyboard modifier, a USB status flag, any other slice) during the late-start window would resolve the wait early while the backend hasn't yet emitted `State:true`. The helper latches `seenTrue` — "have we ever observed `isPasteInProgress === true` during this wait?" — and only takes the clean-drain exit once we've actually seen a paste become active. This is the difference between "fast-return on false" (wrong) and "transition-true-then-false" (right).
+
 ```typescript
 type PasteDrainMode = "required" | "bestEffort";
 
@@ -912,12 +924,19 @@ const PASTE_DRAIN_DEFAULT_SETTLE_MS = 500;
  * - "required" — rejects on timeout, never takes the arm-window fast path.
  *   Reserved for #38's chunk boundaries in Phase 2. No Phase 1 call sites.
  *
- * The helper subscribes to useHidStore BEFORE checking the current
- * isPasteInProgress value, so a late-arriving backend State:true cannot be
- * missed. In bestEffort mode, if isPasteInProgress is still false after a
- * short arm window, we assume the paste never materialized (zero batches,
- * immediate error, send loop that did nothing) and resolve without waiting
- * for the full timeout.
+ * Correctness: the helper subscribes to useHidStore BEFORE sampling the
+ * current isPasteInProgress value, and latches a local `seenTrue` flag.
+ * The clean-drain exit fires only when the subscription observes
+ * isPasteInProgress transition to false AFTER we've already seen it be
+ * true. Without the latch, any unrelated store mutation arriving while
+ * isPasteInProgress is still in its late-start false window would resolve
+ * the wait early — reintroducing a softer version of the race we are
+ * trying to remove.
+ *
+ * In bestEffort mode, if the arm window elapses without isPasteInProgress
+ * ever going true, we assume the paste never materialized (zero batches,
+ * immediate error, send loop that did nothing) and resolve without
+ * waiting for the full timeout.
  */
 async function waitForPasteDrain(
   mode: PasteDrainMode,
@@ -928,6 +947,7 @@ async function waitForPasteDrain(
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let done = false;
+    let seenTrue = false;
     let armHandle: ReturnType<typeof setTimeout> | undefined;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
@@ -962,13 +982,30 @@ async function waitForPasteDrain(
 
     const onAbort = () => rejectErr(new Error("Paste execution aborted"));
 
-    // Subscribe FIRST so we never miss a State:true that arrives between
-    // now and the arm-window check below.
+    // Subscribe FIRST. Every store update runs this callback; we update
+    // the `seenTrue` latch on truthy updates and only take the clean-drain
+    // exit on a falsy update AFTER seenTrue has been latched.
     const unsubscribe = useHidStore.subscribe((state) => {
-      if (!state.isPasteInProgress) {
+      if (state.isPasteInProgress) {
+        seenTrue = true;
+        return;
+      }
+      if (seenTrue) {
         resolveClean();
       }
     });
+
+    // Now sample the current value. If a state change happened between
+    // subscribe() and getState(), the subscription callback above already
+    // set seenTrue — this assignment is harmlessly redundant in that case.
+    // If no change happened, we pick up whatever the store says right now.
+    seenTrue = useHidStore.getState().isPasteInProgress;
+
+    // Fast-reject if the caller already aborted before we even started.
+    if (signal?.aborted) {
+      rejectErr(new Error("Paste execution aborted"));
+      return;
+    }
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -983,18 +1020,21 @@ async function waitForPasteDrain(
       }
     }, timeoutMs);
 
-    // Arm window — bestEffort only. If isPasteInProgress is still false
-    // after armWindowMs, assume the paste never materialized and resolve.
-    // In required mode the caller is asserting "a paste is in progress or
-    // about to start"; we wait the full timeout budget instead.
-    if (mode === "bestEffort" && !useHidStore.getState().isPasteInProgress) {
+    // Arm window — bestEffort only, and only if we haven't yet seen a
+    // paste become active. If after armWindowMs the store still says
+    // isPasteInProgress === false AND seenTrue is still false, assume
+    // the paste never materialized and resolve. If the store has gone
+    // true during the window, flip seenTrue and defer to the subscription.
+    if (mode === "bestEffort" && !seenTrue) {
       armHandle = setTimeout(() => {
         armHandle = undefined;
-        if (!useHidStore.getState().isPasteInProgress) {
+        if (useHidStore.getState().isPasteInProgress) {
+          seenTrue = true;
+          return;
+        }
+        if (!seenTrue) {
           resolveImmediate();
         }
-        // else: a State:true arrived during the arm window; the subscription
-        // will fire when the matching State:false lands.
       }, armWindowMs);
     }
   });
@@ -1002,6 +1042,8 @@ async function waitForPasteDrain(
 ```
 
 **Placement note:** put this directly above the `export function useKeyboard` declaration (or the equivalent `const useKeyboard = ...` if the file uses that style). It must be OUTSIDE the hook body.
+
+**Why subscribe before getState:** Zustand's `.subscribe()` does not fire with the current value — it fires only on subsequent changes. Subscribing first, then reading `getState()`, closes the small window where a state change could otherwise slip between sampling and wiring the listener. If a mutation lands after subscribe but before getState, the callback runs and sets `seenTrue`; the getState read then picks up the new (still `true`) value and the redundant reassignment leaves `seenTrue` correct. If we reversed the order, a mutation in that window would be missed entirely.
 
 - [ ] **Step 4.4: Replace the inline drain-wait block in `executePasteText`**
 
@@ -1085,7 +1127,7 @@ Run:
 ```bash
 git add ui/src/hooks/useKeyboard.ts
 git commit -m "$(cat <<'EOF'
-feat(paste): waitForPasteDrain helper with subscribe-first arm window (#42)
+feat(paste): waitForPasteDrain helper with subscribe-first seenTrue latch (#42)
 
 Factor the inline drain-wait block inside executePasteText into a reusable
 module-scoped helper waitForPasteDrain(mode, timeoutMs, signal). Mode is
@@ -1096,17 +1138,21 @@ module-scoped helper waitForPasteDrain(mode, timeoutMs, signal). Mode is
 - "required" rejects on timeout. Reserved for #38 (Phase 2) chunk boundaries;
   no call sites in Phase 1.
 
-The helper subscribes to useHidStore BEFORE checking the current
-isPasteInProgress value. This closes the late-start race where the send
-loop finished before the backend's State:true had landed, the store still
-read false, and the naive fast-return reported the paste complete while
-it was still queued and running.
+Correctness: the helper latches a local `seenTrue` flag — "have we ever
+observed isPasteInProgress === true during this wait?" — and only takes
+the clean-drain exit after seenTrue has been set. useHidStore.subscribe()
+without a selector fires on every store mutation, not just
+isPasteInProgress changes, so without the latch an unrelated store update
+during the late-start window would resolve the wait early while the
+backend hasn't yet emitted State:true. The latch combined with a
+subscribe-first-then-sample order closes both the "missed transition"
+and "spurious unrelated update" races.
 
-In bestEffort mode, if isPasteInProgress is still false after a 200ms arm
-window, the helper resolves immediately — handles the "paste never
-materialized" case (zero batches, immediate error) without waiting for the
-full timeout. required mode skips the arm window and waits the full
-timeout budget.
+In bestEffort mode, if the arm window (200ms) elapses without
+isPasteInProgress ever going true, the helper resolves immediately —
+handles the "paste never materialized" case (zero batches, immediate
+error) without waiting for the full timeout. required mode skips the
+arm window and waits the full timeout budget.
 
 executePasteText's inline drain wait is replaced with a single
 `await waitForPasteDrain("bestEffort", drainTimeoutMs, signal)`. The
