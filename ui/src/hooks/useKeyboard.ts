@@ -61,6 +61,143 @@ export interface ExecutePasteTextOptions {
   onTrace?: (trace: PasteExecutionTrace) => void;
 }
 
+type PasteDrainMode = "required" | "bestEffort";
+
+const PASTE_DRAIN_DEFAULT_ARM_WINDOW_MS = 200;
+const PASTE_DRAIN_DEFAULT_SETTLE_MS = 500;
+
+/**
+ * Wait for a paste session to drain from the backend macro queue.
+ *
+ * Modes:
+ * - "bestEffort" — resolves on timeout or on the arm window (if no paste ever
+ *   started). Preserves the existing final-settle UX from executePasteText.
+ *   Used by Phase 1's final-drain call site.
+ * - "required" — rejects on timeout, never takes the arm-window fast path.
+ *   Reserved for #38's chunk boundaries in Phase 2. No Phase 1 call sites.
+ *
+ * Correctness: the helper subscribes to useHidStore BEFORE sampling the
+ * current isPasteInProgress value, and latches a local `seenTrue` flag.
+ * The clean-drain exit fires only when the subscription observes
+ * isPasteInProgress transition to false AFTER we've already seen it be
+ * true. Without the latch, any unrelated store mutation arriving while
+ * isPasteInProgress is still in its late-start false window would resolve
+ * the wait early — reintroducing a softer version of the race we are
+ * trying to remove.
+ *
+ * In bestEffort mode, if the arm window elapses without isPasteInProgress
+ * ever going true, we assume the paste never materialized (zero batches,
+ * immediate error, send loop that did nothing) and resolve without
+ * waiting for the full timeout.
+ */
+async function waitForPasteDrain(
+  mode: PasteDrainMode,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  settleMs: number = PASTE_DRAIN_DEFAULT_SETTLE_MS,
+  armWindowMs: number = PASTE_DRAIN_DEFAULT_ARM_WINDOW_MS,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let done = false;
+    let seenTrue = false;
+    let armHandle: ReturnType<typeof setTimeout> | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (armHandle !== undefined) {
+        clearTimeout(armHandle);
+        armHandle = undefined;
+      }
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = undefined;
+      }
+      signal?.removeEventListener("abort", onAbort);
+      unsubscribe();
+    };
+
+    const resolveClean = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      // Observed drain → host USB settle delay before the caller resumes.
+      setTimeout(resolve, settleMs);
+    };
+
+    const resolveImmediate = () => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve();
+    };
+
+    const rejectErr = (err: Error) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    const onAbort = () => rejectErr(new Error("Paste execution aborted"));
+
+    // Subscribe FIRST. Every store update runs this callback; we update
+    // the `seenTrue` latch on truthy updates and only take the clean-drain
+    // exit on a falsy update AFTER seenTrue has been latched.
+    const unsubscribe = useHidStore.subscribe((state) => {
+      if (state.isPasteInProgress) {
+        seenTrue = true;
+        return;
+      }
+      if (seenTrue) {
+        resolveClean();
+      }
+    });
+
+    // Now sample the current value. If a state change happened between
+    // subscribe() and getState(), the subscription callback above already
+    // set seenTrue — this assignment is harmlessly redundant in that case.
+    // If no change happened, we pick up whatever the store says right now.
+    seenTrue = useHidStore.getState().isPasteInProgress;
+
+    // Fast-reject if the caller already aborted before we even started.
+    if (signal?.aborted) {
+      rejectErr(new Error("Paste execution aborted"));
+      return;
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    timeoutHandle = setTimeout(() => {
+      if (mode === "required") {
+        rejectErr(
+          new Error(`waitForPasteDrain: required drain timed out after ${timeoutMs}ms`),
+        );
+      } else {
+        // bestEffort: treat timeout as success, skip settle.
+        resolveImmediate();
+      }
+    }, timeoutMs);
+
+    // Arm window — bestEffort only, and only if we haven't yet seen a
+    // paste become active. If after armWindowMs the store still says
+    // isPasteInProgress === false AND seenTrue is still false, assume
+    // the paste never materialized and resolve. If the store has gone
+    // true during the window, flip seenTrue and defer to the subscription.
+    if (mode === "bestEffort" && !seenTrue) {
+      armHandle = setTimeout(() => {
+        armHandle = undefined;
+        if (useHidStore.getState().isPasteInProgress) {
+          seenTrue = true;
+          return;
+        }
+        if (!seenTrue) {
+          resolveImmediate();
+        }
+      }, armWindowMs);
+    }
+  });
+}
+
 export default function useKeyboard() {
   const { send } = useJsonRpc();
   const { rpcDataChannel } = useRTCStore();
@@ -472,40 +609,14 @@ export default function useKeyboard() {
           }
         }
 
-        // Wait for backend to finish draining all queued macros.
-        // The drain goroutine sends State:false after each macro completes.
-        // We wait for isPasteInProgress to become false (final completion signal),
-        // with a generous timeout based on the number of batches.
+        // Wait for backend to finish draining all queued macros. The helper
+        // subscribes first (no late-start race) and uses an arm window so a
+        // paste that never materialized doesn't block for the full timeout.
+        // bestEffort mode preserves the current final-settle UX — resolves on
+        // timeout, resolves with a settle delay on clean drain, rejects only
+        // on abort.
         const drainTimeoutMs = Math.max(finalSettleMs, batches.length * 1000);
-        await new Promise<void>((resolve, reject) => {
-          // If paste is already not in progress (e.g. very small paste), resolve immediately
-          if (!useHidStore.getState().isPasteInProgress) {
-            resolve();
-            return;
-          }
-
-          const timeout = setTimeout(() => {
-            unsubscribe();
-            resolve(); // Resolve on timeout rather than reject — batches were sent successfully
-          }, drainTimeoutMs);
-
-          const abortHandler = () => {
-            clearTimeout(timeout);
-            unsubscribe();
-            reject(new Error("Paste execution aborted"));
-          };
-          signal?.addEventListener("abort", abortHandler, { once: true });
-
-          const unsubscribe = useHidStore.subscribe(state => {
-            if (!state.isPasteInProgress) {
-              clearTimeout(timeout);
-              signal?.removeEventListener("abort", abortHandler);
-              unsubscribe();
-              // Small settle delay after final completion for host USB consumption
-              setTimeout(resolve, 500);
-            }
-          });
-        });
+        await waitForPasteDrain("bestEffort", drainTimeoutMs, signal);
       } finally {
         channel.removeEventListener("bufferedamountlow", onLow);
         channel.bufferedAmountLowThreshold = prevThreshold;
