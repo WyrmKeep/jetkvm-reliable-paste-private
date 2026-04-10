@@ -143,7 +143,7 @@ async function waitForPasteDrain(
     // Subscribe FIRST. Every store update runs this callback; we update
     // the `seenTrue` latch on truthy updates and only take the clean-drain
     // exit on a falsy update AFTER seenTrue has been latched.
-    const unsubscribe = useHidStore.subscribe((state) => {
+    const unsubscribe = useHidStore.subscribe(state => {
       if (state.isPasteInProgress) {
         seenTrue = true;
         return;
@@ -169,9 +169,7 @@ async function waitForPasteDrain(
 
     timeoutHandle = setTimeout(() => {
       if (mode === "required") {
-        rejectErr(
-          new Error(`waitForPasteDrain: required drain timed out after ${timeoutMs}ms`),
-        );
+        rejectErr(new Error(`waitForPasteDrain: required drain timed out after ${timeoutMs}ms`));
       } else {
         // bestEffort: treat timeout as success, skip settle.
         resolveImmediate();
