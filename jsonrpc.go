@@ -1008,40 +1008,100 @@ func rpcSetLocalLoopbackOnly(enabled bool) error {
 	return nil
 }
 
+// macroQueueDepth is the buffered capacity of macroQueue. Keep this shallow so
+// the frontend's bufferedAmount flow control provides real backpressure — a
+// deep queue hides the sender's view of how far behind the backend has fallen.
+// See docs/superpowers/specs/2026-04-08-paste-pipeline-flow-control-design.md.
+const macroQueueDepth = 64
+
+// queuedMacro wraps a macro batch with its paste flag and origin session so
+// drainMacroQueue and cancelAndDrainMacroQueue can report state messages back
+// to the session that enqueued the paste, not whichever global currentSession
+// happens to be live when the edge fires.
+type queuedMacro struct {
+	steps   []hidrpc.KeyboardMacroStep
+	isPaste bool
+	session *Session
+}
+
 var (
 	// macroQueue is the channel-based FIFO for keyboard macro batches.
 	// The drain goroutine is the sole consumer; rpcExecuteKeyboardMacro is the producer.
-	macroQueue chan []hidrpc.KeyboardMacroStep
+	macroQueue chan queuedMacro
 
 	// macroCurrentCancel cancels the currently executing macro in the drain goroutine.
 	macroCurrentCancel context.CancelFunc
 	macroLock          sync.Mutex
 	macroQueueOnce     sync.Once
+
+	// pasteDepth is the atomic count of accepted/executing paste macros.
+	// Incremented by rpcExecuteKeyboardMacro before the blocking channel send,
+	// decremented by drainMacroQueue after each paste macro finishes, by
+	// rpcExecuteKeyboardMacro's rollback branch on cancelled enqueue, and by
+	// cancelAndDrainMacroQueue for each paste macro swept out of the queue.
+	// State:true emits on the 0→1 transition; State:false emits on the 1→0
+	// transition. Non-paste macros never touch this counter.
+	pasteDepth atomic.Int32
+
+	// macroEnqueueCtx is the cancellation context for blocking enqueues.
+	// It is owned by the macro queue (not by any handler or session) and is
+	// rotated by cancelAndDrainMacroQueue so that enqueuers blocked on a full
+	// macroQueue wake up, roll back their paste-depth reservation, and return
+	// ctx.Err() to the caller.
+	macroEnqueueCtx    context.Context
+	macroEnqueueCancel context.CancelFunc
+	macroEnqueueMu     sync.Mutex
 )
 
-// startMacroQueue creates the macro queue channel and starts the drain goroutine.
-// Called when the first WebRTC session is established.
+// startMacroQueue creates the macro queue channel, the enqueue cancellation
+// context, and starts the drain goroutine. Idempotent — safe to call from
+// every rpcExecuteKeyboardMacro invocation.
 func startMacroQueue() {
 	macroQueueOnce.Do(func() {
-		macroQueue = make(chan []hidrpc.KeyboardMacroStep, 4096)
+		macroQueue = make(chan queuedMacro, macroQueueDepth)
+		macroEnqueueCtx, macroEnqueueCancel = context.WithCancel(context.Background())
 		go drainMacroQueue()
 	})
 }
 
-// drainMacroQueue is the sole consumer of macroQueue. It executes each macro
-// sequentially and reports completion state to the frontend after each one.
-func drainMacroQueue() {
-	for macro := range macroQueue {
-		macroID := keyboardMacroSequence.Add(1)
-		logger.Info().Uint64("macro_id", macroID).Int("step_count", len(macro)).Msg("executing queued keyboard macro")
+// currentEnqueueCtx returns the active enqueue cancellation context under
+// lock. Enqueuers snapshot this once at entry; if cancelAndDrainMacroQueue
+// rotates the context while they're blocked on send, the snapshot they hold
+// still fires on the old Cancel and unblocks them cleanly.
+func currentEnqueueCtx() context.Context {
+	macroEnqueueMu.Lock()
+	defer macroEnqueueMu.Unlock()
+	return macroEnqueueCtx
+}
 
-		// Report macro start (frontend uses this for isPasteInProgress)
-		if currentSession != nil {
-			currentSession.reportHidRPCKeyboardMacroState(hidrpc.KeyboardMacroState{
-				State:   true,
-				IsPaste: true,
-			})
-		}
+// emitPasteState reports a paste-session state transition to the origin
+// session. Callers must only invoke this on the 0→1 or 1→0 transition
+// (i.e., when the relevant pasteDepth.Add return value equals 1 or 0
+// respectively). If the session is nil (origin session torn down between
+// enqueue and drain), this silently no-ops — the frontend on the new
+// session will reconcile state through its own fresh subscription.
+func emitPasteState(session *Session, state bool) {
+	if session == nil {
+		return
+	}
+	session.reportHidRPCKeyboardMacroState(hidrpc.KeyboardMacroState{
+		State:   state,
+		IsPaste: true,
+	})
+}
+
+// drainMacroQueue is the sole consumer of macroQueue. It executes each macro
+// sequentially. Paste-session state transitions (State:true / State:false) are
+// emitted on atomic pasteDepth 0↔1 edges, not per macro — see rpcExecuteKeyboardMacro
+// for the 0→1 emit and the post-run block below for the 1→0 emit.
+func drainMacroQueue() {
+	for item := range macroQueue {
+		macroID := keyboardMacroSequence.Add(1)
+		logger.Info().
+			Uint64("macro_id", macroID).
+			Int("step_count", len(item.steps)).
+			Bool("is_paste", item.isPaste).
+			Msg("executing queued keyboard macro")
 
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -1049,7 +1109,7 @@ func drainMacroQueue() {
 		macroCurrentCancel = cancel
 		macroLock.Unlock()
 
-		err := rpcDoExecuteKeyboardMacro(ctx, macro)
+		err := rpcDoExecuteKeyboardMacro(ctx, item.steps)
 		if err != nil {
 			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
 		} else {
@@ -1062,13 +1122,13 @@ func drainMacroQueue() {
 
 		cancel()
 
-		// Report per-macro completion (frontend uses this for draining phase detection)
-		s := hidrpc.KeyboardMacroState{
-			State:   false,
-			IsPaste: true,
-		}
-		if currentSession != nil {
-			currentSession.reportHidRPCKeyboardMacroState(s)
+		// Paste-depth decrement + conditional emit on the 1→0 transition.
+		// Non-paste macros never touch pasteDepth or emit state.
+		if item.isPaste {
+			if pasteDepth.Add(-1) == 0 {
+				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (drain complete)")
+				emitPasteState(item.session, false)
+			}
 		}
 
 		// Inter-macro drain delay: gives the host USB stack time to process
@@ -1079,9 +1139,29 @@ func drainMacroQueue() {
 	}
 }
 
-// cancelAndDrainMacroQueue cancels the currently executing macro and discards
-// all queued macros. Called on session teardown, session takeover, and explicit cancel.
+// cancelAndDrainMacroQueue cancels the currently executing macro, wakes any
+// enqueuers blocked on a full macroQueue, and discards all queued macros.
+// Called on session teardown, session takeover, and explicit cancel.
+//
+// The steps run in order: (1) rotate the enqueue context so blocked enqueuers
+// wake and roll back cleanly, (2) cancel the in-flight macro so drainMacroQueue
+// returns from rpcDoExecuteKeyboardMacro and hits its post-run decrement
+// block, (3) sweep the channel and atomically subtract the discarded paste
+// count from pasteDepth, emitting State:false on a 1→0 transition.
 func cancelAndDrainMacroQueue() {
+	// Step 1: Rotate the enqueue context. Cancel the current one to wake any
+	// enqueuers blocked on macroQueue send; install a fresh context for future
+	// enqueues.
+	macroEnqueueMu.Lock()
+	if macroEnqueueCancel != nil {
+		macroEnqueueCancel()
+	}
+	macroEnqueueCtx, macroEnqueueCancel = context.WithCancel(context.Background())
+	macroEnqueueMu.Unlock()
+
+	// Step 2: Cancel the in-flight macro (if any). drainMacroQueue's post-run
+	// block will decrement pasteDepth and emit State:false if that decrement is
+	// the 1→0 transition.
 	macroLock.Lock()
 	if macroCurrentCancel != nil {
 		macroCurrentCancel()
@@ -1089,35 +1169,82 @@ func cancelAndDrainMacroQueue() {
 	}
 	macroLock.Unlock()
 
-	// Drain any queued macros without executing them
-	if macroQueue != nil {
-		drained := 0
-		for {
-			select {
-			case <-macroQueue:
-				drained++
-			default:
-				if drained > 0 {
-					logger.Info().Int("count", drained).Msg("drained queued keyboard macros")
-				}
-				return
+	// Step 3: Sweep any remaining items out of the channel without running them.
+	// Track the session of the last paste item we saw so that if our sweep closes
+	// the paste session (1→0), we emit State:false to the right session.
+	if macroQueue == nil {
+		return
+	}
+	var discardedTotal int
+	var discardedPaste int32
+	var lastPasteSession *Session
+	draining := true
+	for draining {
+		select {
+		case item := <-macroQueue:
+			discardedTotal++
+			if item.isPaste {
+				discardedPaste++
+				lastPasteSession = item.session
 			}
+		default:
+			draining = false
+		}
+	}
+	if discardedTotal > 0 {
+		logger.Info().Int("count", discardedTotal).Msg("drained queued keyboard macros")
+	}
+	if discardedPaste > 0 {
+		logger.Debug().Int32("discarded_paste", discardedPaste).Msg("cancel sweep discarded paste macros")
+		if pasteDepth.Add(-discardedPaste) == 0 {
+			logger.Debug().Msg("paste-depth 1->0 (cancel sweep)")
+			emitPasteState(lastPasteSession, false)
 		}
 	}
 }
 
-func rpcExecuteKeyboardMacro(macro []hidrpc.KeyboardMacroStep) error {
+func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep, isPaste bool) error {
 	macroID := keyboardMacroSequence.Add(1)
-	logger.Info().Uint64("macro_id", macroID).Int("step_count", len(macro)).Msg("enqueuing keyboard macro")
+	logger.Info().
+		Uint64("macro_id", macroID).
+		Int("step_count", len(steps)).
+		Bool("is_paste", isPaste).
+		Msg("enqueuing keyboard macro")
 
 	// Ensure queue is started (idempotent)
 	startMacroQueue()
 
-	// Blocking enqueue. If the channel is full (4096 batches), this blocks
-	// until the drain goroutine frees a slot, creating backpressure through
-	// the SCTP stack to the frontend's bufferedAmount flow control.
-	macroQueue <- macro
-	return nil
+	// Snapshot the current enqueue cancellation context. If
+	// cancelAndDrainMacroQueue rotates the context while we're blocked on
+	// send, the snapshot we hold still fires on the old Cancel and unblocks
+	// us cleanly.
+	ctx := currentEnqueueCtx()
+
+	// Pre-increment: reserve a paste-depth slot BEFORE we attempt to enqueue.
+	// Emit State:true if this Add is the 0→1 transition.
+	if isPaste {
+		if pasteDepth.Add(1) == 1 {
+			logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 0->1 (enqueue)")
+			emitPasteState(session, true)
+		}
+	}
+
+	// Cancellable blocking send. If the enqueue context is cancelled (user
+	// pressed cancel → cancelAndDrainMacroQueue rotated the context) before
+	// the channel accepts the item, roll back the pasteDepth increment and
+	// emit State:false if the rollback is itself the 1→0 transition.
+	select {
+	case macroQueue <- queuedMacro{steps: steps, isPaste: isPaste, session: session}:
+		return nil
+	case <-ctx.Done():
+		if isPaste {
+			if pasteDepth.Add(-1) == 0 {
+				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (enqueue rollback)")
+				emitPasteState(session, false)
+			}
+		}
+		return ctx.Err()
+	}
 }
 
 func rpcCancelKeyboardMacro() {
