@@ -116,10 +116,22 @@ export default function PasteModal() {
           });
         },
         onTrace: trace => {
-          setTraceLinesPersisted(current => [
-            ...current,
-            `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`,
-          ]);
+          let line: string;
+          switch (trace.kind) {
+            case "batch":
+              line = `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`;
+              break;
+            case "chunk-sent":
+              line = `chunk ${trace.chunkIndex}/${trace.chunkTotal} sent: chars=${trace.sourceChars} batches=${trace.batches}`;
+              break;
+            case "chunk-drained":
+              line = `chunk ${trace.chunkIndex} drained in ${trace.drainMs}ms`;
+              break;
+            case "chunk-pause":
+              line = `chunk ${trace.chunkIndex} pause ${trace.pauseMs}ms`;
+              break;
+          }
+          setTraceLinesPersisted(current => [...current, line]);
         },
       });
 

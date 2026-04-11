@@ -42,13 +42,32 @@ export interface PasteExecutionProgress {
   totalBatches: number;
 }
 
-export interface PasteExecutionTrace {
-  batchIndex: number;
-  totalBatches: number;
-  stepCount: number;
-  estimatedBytes: number;
-  bufferedAmount: number;
-}
+export type PasteExecutionTrace =
+  | {
+      kind: "batch";
+      batchIndex: number;
+      totalBatches: number;
+      stepCount: number;
+      estimatedBytes: number;
+      bufferedAmount: number;
+    }
+  | {
+      kind: "chunk-sent";
+      chunkIndex: number;
+      chunkTotal: number;
+      sourceChars: number;
+      batches: number;
+    }
+  | {
+      kind: "chunk-drained";
+      chunkIndex: number;
+      drainMs: number;
+    }
+  | {
+      kind: "chunk-pause";
+      chunkIndex: number;
+      pauseMs: number;
+    };
 
 export interface ExecutePasteTextOptions {
   keyboard: KeyboardLayoutLike;
@@ -620,6 +639,7 @@ export default function useKeyboard() {
           await executePasteMacro(batch);
 
           onTrace?.({
+            kind: "batch",
             batchIndex: index + 1,
             totalBatches: batches.length,
             stepCount: batch.length,
