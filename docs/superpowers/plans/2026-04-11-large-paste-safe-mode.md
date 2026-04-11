@@ -854,19 +854,24 @@ Replace the entire `executePasteText` definition (from `const executePasteText =
             // chunk ~2x its measured worst case, with a policy floor for
             // small chunks.
             //
-            // Derivation assumptions (tuned to current Phase 1 pacing):
-            //   - 20ms per MacroStep upper bound (press 5ms + reset up to 5ms,
-            //     × 2 safety margin)
-            //   - 400ms per batch upper bound (200ms inter-macro × 2 safety)
-            //   - 5s flat slack
+            // The derivation reads delayMs directly from ExecutePasteTextOptions
+            // so debug-mode overrides (delayMs up to 65534) stay within budget.
+            // Each frontend MacroStep costs (5 + delayMs) ms of backend wire
+            // work; doubling gives a 2x safety margin for HID-layer jitter.
+            // Inter-macro sleep is 200ms (pasteInterMacroDrainMs in jsonrpc.go);
+            // doubling gives 400ms per batch. Plus a 5s flat slack.
             // If Phase 3a retunes any of these, re-verify this formula.
+            const perMacroStepBackendMs = (5 + delayMs) * 2;
+            const perBatchInterMacroMs = 400;
             let chunkStepCount = 0;
             for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
               chunkStepCount += batchStats[b].stepCount;
             }
             const chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex;
             const derivedDrainTimeoutMs =
-              chunkStepCount * 20 + chunkNumBatches * 400 + 5000;
+              chunkStepCount * perMacroStepBackendMs +
+              chunkNumBatches * perBatchInterMacroMs +
+              5000;
             const chunkDrainTimeoutMs = Math.max(
               policy.chunkDrainTimeoutFloorMs,
               derivedDrainTimeoutMs,

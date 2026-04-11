@@ -140,29 +140,49 @@ Threshold, chunk size, and pause duration come directly from issue #38's "only d
 
 **Per-chunk drain-timeout derivation (computed inside `executePasteText`):**
 
+The derivation reads `delayMs` directly from `ExecutePasteTextOptions` so that debug-mode overrides (which can set `delayMs` up to 65 534 via the PasteModal delay slider) stay within the derived budget. The press delay is hardcoded in `executeMacroRemote` at 5 ms; the reset delay comes from `delayMs`. Each frontend MacroStep therefore costs `5 + delayMs` ms of backend wire work. Doubling gives a 2× safety margin for HID-layer jitter.
+
 ```
-chunkStepCount  = sum of batchStats[b].stepCount for b in [chunk.batchStartIndex, chunk.batchEndIndex)
-chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex
+perMacroStepBackendMs = (5 + delayMs) * 2       // (press 5 ms + reset delayMs) × 2 safety margin
+perBatchInterMacroMs  = pasteInterMacroDrainMs * 2  // 200 ms × 2 safety margin = 400 ms
+chunkStepCount        = sum of batchStats[b].stepCount for b in [chunk.batchStartIndex, chunk.batchEndIndex)
+chunkNumBatches       = chunk.batchEndIndex - chunk.batchStartIndex
 derivedDrainTimeoutMs
-  = chunkStepCount  * 20   // ~10 ms per MacroStep × 2 safety margin (press 5 ms + reset up to 5 ms)
-  + chunkNumBatches * 400  // 200 ms inter-macro sleep × 2 safety margin
-  + 5000                    // flat slack
-chunkDrainTimeoutMs = max(policy.chunkDrainTimeoutFloorMs, derivedDrainTimeoutMs)
+  = chunkStepCount  * perMacroStepBackendMs
+  + chunkNumBatches * perBatchInterMacroMs
+  + 5000                                         // flat slack
+chunkDrainTimeoutMs   = max(policy.chunkDrainTimeoutFloorMs, derivedDrainTimeoutMs)
 ```
 
-Walkthrough for reliable profile, 5 000-char chunk, ~66 steps/batch:
-- chunkStepCount ≈ 5 000 MacroSteps → 100 000 ms
+Walkthrough for reliable profile (`delayMs = 3`), 5 000-char chunk, ~66 steps/batch:
+- perMacroStepBackendMs = (5 + 3) × 2 = 16 ms
+- perBatchInterMacroMs  = 400 ms
+- chunkStepCount ≈ 5 000 MacroSteps → 80 000 ms
 - chunkNumBatches ≈ 76 → 30 400 ms
 - + 5 000 ms slack
-- derivedDrainTimeoutMs ≈ 135 400 ms (≈2.25 min)
-- vs. measured worst case ~55 s → ~2.5× safety margin
+- derivedDrainTimeoutMs ≈ 115 400 ms (≈1.92 min)
+- vs. measured worst case ≈ (5 000 × 8) + (76 × 200) = 40 000 + 15 200 ≈ 55 200 ms (≈55 s)
+- safety margin ≈ 115 400 / 55 200 ≈ 2.09×
 
-Walkthrough for fast profile, 5 000-char chunk, ~152 steps/batch:
-- chunkStepCount ≈ 5 000 MacroSteps → 100 000 ms
-- chunkNumBatches ≈ 33 → 13 200 ms
+Walkthrough for fast profile (`delayMs = 2`), 5 000-char chunk. Fast profile has `maxStepsPerBatch: 320` and `maxBytesPerBatch: 1100`, but is **byte-limited** in practice because `estimateBatchBytes(stepCount) = 6 + stepCount * 18`, so the byte cap of 1 100 kicks in at `(1100 − 6) / 18 ≈ 60` steps per batch — slightly below reliable's ~66:
+- perMacroStepBackendMs = (5 + 2) × 2 = 14 ms
+- perBatchInterMacroMs  = 400 ms
+- chunkStepCount ≈ 5 000 MacroSteps → 70 000 ms
+- chunkNumBatches ≈ 84 → 33 600 ms
 - + 5 000 ms slack
-- derivedDrainTimeoutMs ≈ 118 200 ms (≈2 min)
-- vs. measured worst case ~40 s → ~3× safety margin
+- derivedDrainTimeoutMs ≈ 108 600 ms (≈1.81 min)
+- vs. measured worst case ≈ (5 000 × 7) + (84 × 200) = 35 000 + 16 800 ≈ 51 800 ms (≈52 s)
+- safety margin ≈ 108 600 / 51 800 ≈ 2.10×
+
+Walkthrough for debug-mode reliable profile with a user-set `delayMs = 50`, 5 000-char chunk:
+- perMacroStepBackendMs = (5 + 50) × 2 = 110 ms
+- perBatchInterMacroMs  = 400 ms
+- chunkStepCount ≈ 5 000 → 550 000 ms
+- chunkNumBatches ≈ 76 → 30 400 ms
+- + 5 000 ms slack
+- derivedDrainTimeoutMs ≈ 585 400 ms (≈9.76 min)
+- vs. measured worst case ≈ (5 000 × 55) + (76 × 200) = 275 000 + 15 200 ≈ 290 200 ms (≈4.84 min)
+- safety margin ≈ 585 400 / 290 200 ≈ 2.02× — holds under extreme configurations too
 
 The floor (`60 000 ms`) only kicks in for very small chunks where the derivation would undershoot the minimum reasonable wait.
 
@@ -440,16 +460,18 @@ The following invariants must hold after Phase 2 lands:
 - **Why the derivation is needed:** an earlier draft of this spec used a flat 15 000 ms timeout. Against the actual reliable-profile pacing on current `main` (5 ms press + 3 ms reset = 8 ms per MacroStep; 200 ms inter-macro sleep; ~66 steps per byte-limited batch), a 5 000-char chunk takes ~55 s of backend work, so a 15 s timeout would fire on every chunk boundary of every large paste. The derived timeout gives each chunk ~2× its measured worst case.
 
 ### Race E: `isPasteInProgress` transitions happen faster than the subscriber can see them
-- Phase 1 already handled this with `seenTrue` latching (lines 146–160 in `waitForPasteDrain`). A 0 → 1 → 0 sequence that completes before the subscription arms will still resolve the drain wait because `required` mode waits for the arm window + transition cycle.
-- Phase 2 relies on Phase 1's latching behavior; no new race surface.
+- Phase 1 already handled the common variant of this with `seenTrue` latching (lines 146–160 in `waitForPasteDrain`). When the subscription callback observes `state.isPasteInProgress === true`, it sets `seenTrue = true`; when it later observes `false`, if `seenTrue` has been latched, the helper resolves cleanly.
+- The `required` mode does **not** have an arm window — that fast path is `bestEffort`-only (lines 184–195 in `waitForPasteDrain`). So Race E in `required` mode is NOT absorbed by the arm window; it would fall through to the timeout if the 0→1 and 1→0 both fire before the subscription takes effect.
+- **Why this doesn't break Phase 2 in practice:** `useHidStore.subscribe` delivers transitions synchronously (Zustand fires subscribers during the store's `set` call, same event loop turn). The subscription is installed before `getState()` is read, so any transition that happens after `subscribe()` but before the event loop yield is still observed by the subscriber. The only way Race E could fire is if the transition happened strictly before `subscribe()` returned — which is impossible for a paste that the current frame just submitted.
+- Phase 2 does not introduce a new Race E surface; it relies on Phase 1's latching for the subscription and on the synchronous-subscriber behavior of Zustand. Race F (below) covers the related but distinct case where the backend drains an entire chunk after the last batch was submitted but before `waitForPasteDrain("required", ...)` is awaited.
 
 ### Race F: Backend drains the entire chunk before `waitForPasteDrain("required")` arms
 - The backend emits `State:false` on 1→0 transition of `pasteDepth`, which only drops to 0 when the queue is empty and all in-flight macros have completed.
 - `waitForPasteDrain("required", ...)` in Phase 1 does not arm a grace window (that's `bestEffort`-only). If the helper subscribes after `pasteDepth` has already returned to 0, the `seenTrue` latch cannot fire and the helper waits the full derived `chunkDrainTimeoutMs` before rejecting.
 - The risk exists in principle whenever the backend can drain a chunk faster than the frontend can create the next await.
-- **Practical analysis:** a chunk is `chunkChars = 5000` source chars, which at ≤ 64 steps per batch and ≈60 chars worth of keypress/release steps per batch is roughly 80 batches. Each macro execution in `drainMacroQueue` runs at minimum `pasteInterMacroDrainMs = 200ms` of inter-macro sleep plus the HID write loop for its steps (~5 ms press + 3 ms release per step — on the order of hundreds of ms for a single macro). Lower bound for the backend to drain 80 batches is **tens of seconds**. The frontend, in contrast, spends microseconds of synchronous JS between the last `dataChannel.send()` of the chunk and the `await waitForPasteDrain("required", ...)` line — the two are separated only by a synchronous `emitProgress` call and a `performance.now()`.
-- **Conclusion:** the backend cannot drain a full chunk in the microseconds the frontend takes to arm the drain wait. The race is theoretically present but cannot fire under realistic pacing. If future profile retuning (Phase 3a) ever shrinks per-macro latency dramatically, this invariant must be re-verified; until then, Phase 2 relies on the ≫ ratio between backend drain time and frontend arming time.
-- **Defensive fallback:** if this race ever does fire, the symptom is a 15-second pause at a chunk boundary followed by a required-drain-timeout error. The user can cancel at any point during the pause; the rest of the paste is unaffected because the aborted paste rolls back via the existing cancel path. No data corruption is possible from this race — only a spurious error surfaced to the user.
+- **Practical analysis:** a 5 000-char chunk at reliable profile has `~5 000` frontend MacroSteps split across `~76` byte-limited batches. In `drainMacroQueue`, each batch takes (~5 ms press + ~3 ms reset) × `stepCount` ≈ 8 ms × 66 ≈ 528 ms of HID execution plus 200 ms `pasteInterMacroDrainMs`, ≈ 728 ms per batch. Lower bound for the backend to drain the full chunk: `76 × 728 ≈ 55 300 ms` ≈ **55 seconds**. The frontend, in contrast, spends microseconds of synchronous JS between the last `dataChannel.send()` of the chunk and the `await waitForPasteDrain("required", ...)` line — the two are separated only by a synchronous `emitProgress` call, a `performance.now()`, and a `for`-loop increment over `batchStats` for the drain-timeout derivation.
+- **Conclusion:** the backend cannot drain a full chunk in the microseconds the frontend takes to arm the drain wait. The race is theoretically present but cannot fire under realistic pacing; the ratio between backend drain time (~55 s) and frontend arming time (< 1 ms) is roughly 55 000×. If future profile retuning (Phase 3a) ever shrinks per-macro latency dramatically, this invariant must be re-verified; until then, Phase 2 relies on the ≫ ratio between backend drain time and frontend arming time.
+- **Defensive fallback:** if this race ever does fire, the symptom is a pause at the chunk boundary equal to the derived per-chunk drain timeout (`chunkStepCount × 20 + chunkNumBatches × 400 + 5000`, floored at `chunkDrainTimeoutFloorMs = 60000`), followed by a required-drain-timeout error — for a typical reliable 5 000-char chunk, ~135 seconds; for a small chunk that hits the floor, 60 seconds. The user can cancel at any point during the pause; the rest of the paste is unaffected because the aborted paste rolls back via the existing cancel path. No data corruption is possible from this race — only a spurious error surfaced to the user. The long pause is the intentional trade-off of using a generous derived timeout to avoid premature rejection on large chunks.
 
 ## Test plan
 
