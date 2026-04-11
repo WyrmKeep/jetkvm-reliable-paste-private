@@ -32,6 +32,36 @@ const MACRO_RESET_KEYBOARD_STATE = {
   delay: 0,
 };
 
+// Module-level guards for the Phase 2 chunk-aware paste path.
+//
+// `executePasteTextInFlight` is the correctness guard against concurrent
+// executePasteText invocations on the same WebRTC channel. It lives at
+// module scope (not inside useKeyboard or PasteModal) so that even if
+// PasteModal unmounts and remounts between chunks — e.g., when
+// ActionBar's PopoverPanel unmounts on outside click — the flag
+// survives and the second paste is rejected before it can start
+// interleaving batches with the first. PasteModal's own `pasteActive`
+// state is still used for UI disabled-button rendering, but the
+// correctness-level guard is this flag.
+//
+// `pasteStateSupportObserved` tracks whether the device this session is
+// connected to has EVER emitted a KeyboardMacroStateMessage with IsPaste
+// true (set in the useHidRpc onMessage handler below). Chunk mode
+// relies on observing isPasteInProgress transitions via
+// waitForPasteDrain("required", ...), and that only works on Phase 1+
+// devices that emit paste-state messages. Older v1 firmware without
+// Phase 1 still advertises the same HID RPC protocol version (0x01),
+// so `rpcHidReady` alone is not a reliable indicator of paste-state
+// support. Chunk mode gates on this flag, defaulting to the safe
+// non-chunk path until the device proves it sends paste-state events.
+// Consequence: the first paste of a session always runs non-chunk
+// (byte-for-byte identical to pre-Phase-2 behavior); subsequent
+// pastes — chunkable or not — will observe the flag having flipped
+// true during the first paste's drain messages and use chunk mode if
+// the device supports it.
+let executePasteTextInFlight = false;
+let pasteStateSupportObserved = false;
+
 export interface MacroStep {
   keys: string[] | null;
   modifiers: string[] | null;
@@ -296,6 +326,10 @@ export default function useKeyboard() {
         break;
       case KeyboardMacroStateMessage:
         if (!(message as KeyboardMacroStateMessage).isPaste) break;
+        // Latch paste-state support the first time we observe a real
+        // paste-state event. Chunk mode gates on this to avoid hanging
+        // on older v1 firmware that does not emit paste-state events.
+        pasteStateSupportObserved = true;
         setPasteModeEnabled((message as KeyboardMacroStateMessage).state);
         break;
       default:
@@ -594,6 +628,17 @@ export default function useKeyboard() {
 
   const executePasteText = useCallback(
     async (text: string, options: ExecutePasteTextOptions) => {
+      // Module-level concurrency guard. PasteModal also has a local
+      // in-flight guard for UI responsiveness, but that guard dies
+      // when the popover unmounts (e.g., click-outside dismissal during
+      // a chunk boundary). This flag survives component remounts and
+      // is the correctness-level guard against interleaved pastes on
+      // the same data channel.
+      if (executePasteTextInFlight) {
+        throw new Error("A paste is already in progress");
+      }
+      executePasteTextInFlight = true;
+      try {
       const {
         keyboard,
         delayMs,
@@ -665,28 +710,40 @@ export default function useKeyboard() {
       channel.addEventListener("bufferedamountlow", onLow);
       signal?.addEventListener("abort", onBufferedDrainAbort);
 
-      // Phase 2 chunk policy. Chunk mode is automatic above the threshold
-      // AND only when rpcHidReady is true: partition batches by source-char
-      // budget and drain the backend between chunks via
-      // waitForPasteDrain("required", ...). Below the threshold OR on the
-      // legacy client-side path (rpcHidReady === false, executePasteMacro
-      // falls through to executeMacroClientSide which never emits
-      // KeyboardMacroState messages), the chunks array is a single
-      // synthetic plan covering all batches so the outer loop runs once
-      // and behavior is identical to the pre-Phase-2 linear path.
+      // Phase 2 chunk policy. Chunk mode is automatic above the threshold,
+      // but ONLY when (a) rpcHidReady is true and (b) the current session
+      // has previously observed a real paste-state event from the device
+      // (pasteStateSupportObserved latched at module scope in the
+      // KeyboardMacroStateMessage handler above). Gating on
+      // pasteStateSupportObserved is load-bearing for compatibility:
+      // - On the legacy client-side path (!rpcHidReady), executePasteMacro
+      //   falls through to executeMacroClientSide which never emits
+      //   paste-state messages.
+      // - On older v1 firmware that has not landed Phase 1 paste-state
+      //   semantics, rpcHidReady is true (the HID RPC channel is open
+      //   and protocol version 0x01 is negotiated) but the device never
+      //   emits KeyboardMacroState events with isPaste=true.
+      // - waitForPasteDrain("required", ...) has no arm window (that's
+      //   bestEffort-only) and waits for an isPasteInProgress 0→1→0
+      //   transition. On either of the above paths, that transition
+      //   never arrives, so a chunk-boundary drain would hang until
+      //   the full derived timeout (60s minimum) before rejecting,
+      //   regressing every large paste to a failure.
       //
-      // Gating on rpcHidReady is load-bearing: waitForPasteDrain("required")
-      // has no arm window (that's bestEffort-only) and relies on seeing
-      // isPasteInProgress transition 0→1→0. On the legacy path,
-      // isPasteInProgress is never set, so a chunk-boundary drain would
-      // hang until the full derived timeout (60s minimum) before
-      // rejecting. That would regress large pastes on legacy backends,
-      // which is out of scope for Phase 2 (which is paste reliability
-      // improvements on the modern HID RPC path). The final bestEffort
-      // drain at the end of the non-chunk path works on both paths
-      // because bestEffort DOES have an arm window fast-path.
+      // Consequence: the FIRST paste of any session always runs the
+      // non-chunk path regardless of size (byte-for-byte identical to
+      // pre-Phase-2 behavior). During that paste, the bestEffort final
+      // drain waits for isPasteInProgress events — if any arrive, the
+      // latch flips true and subsequent pastes in the session use
+      // chunk mode if they exceed the threshold. If no paste-state
+      // events arrive (legacy/old-firmware device), the latch stays
+      // false and all pastes in the session stay on the non-chunk
+      // path for safety.
       const policy = DEFAULT_LARGE_PASTE_POLICY;
-      const chunkMode = rpcHidReady && text.length >= policy.autoThresholdChars;
+      const chunkMode =
+        rpcHidReady &&
+        pasteStateSupportObserved &&
+        text.length >= policy.autoThresholdChars;
       const chunks: PasteChunkPlan[] = chunkMode
         ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
         : [
@@ -874,6 +931,9 @@ export default function useKeyboard() {
         channel.removeEventListener("bufferedamountlow", onLow);
         signal?.removeEventListener("abort", onBufferedDrainAbort);
         channel.bufferedAmountLowThreshold = prevThreshold;
+      }
+      } finally {
+        executePasteTextInFlight = false;
       }
     },
     [executePasteMacro, rpcHidChannel, rpcHidReady],
