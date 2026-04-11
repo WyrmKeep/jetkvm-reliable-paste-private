@@ -665,14 +665,28 @@ export default function useKeyboard() {
       channel.addEventListener("bufferedamountlow", onLow);
       signal?.addEventListener("abort", onBufferedDrainAbort);
 
-      // Phase 2 chunk policy. Chunk mode is automatic above the threshold:
-      // partition batches by source-char budget and drain the backend
-      // between chunks via waitForPasteDrain("required", ...). Below the
-      // threshold, the chunks array is a single synthetic plan covering
-      // all batches, so the outer loop runs once and behavior is identical
-      // to the pre-Phase-2 linear path.
+      // Phase 2 chunk policy. Chunk mode is automatic above the threshold
+      // AND only when rpcHidReady is true: partition batches by source-char
+      // budget and drain the backend between chunks via
+      // waitForPasteDrain("required", ...). Below the threshold OR on the
+      // legacy client-side path (rpcHidReady === false, executePasteMacro
+      // falls through to executeMacroClientSide which never emits
+      // KeyboardMacroState messages), the chunks array is a single
+      // synthetic plan covering all batches so the outer loop runs once
+      // and behavior is identical to the pre-Phase-2 linear path.
+      //
+      // Gating on rpcHidReady is load-bearing: waitForPasteDrain("required")
+      // has no arm window (that's bestEffort-only) and relies on seeing
+      // isPasteInProgress transition 0→1→0. On the legacy path,
+      // isPasteInProgress is never set, so a chunk-boundary drain would
+      // hang until the full derived timeout (60s minimum) before
+      // rejecting. That would regress large pastes on legacy backends,
+      // which is out of scope for Phase 2 (which is paste reliability
+      // improvements on the modern HID RPC path). The final bestEffort
+      // drain at the end of the non-chunk path works on both paths
+      // because bestEffort DOES have an arm window fast-path.
       const policy = DEFAULT_LARGE_PASTE_POLICY;
-      const chunkMode = text.length >= policy.autoThresholdChars;
+      const chunkMode = rpcHidReady && text.length >= policy.autoThresholdChars;
       const chunks: PasteChunkPlan[] = chunkMode
         ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
         : [
@@ -813,7 +827,7 @@ export default function useKeyboard() {
         channel.bufferedAmountLowThreshold = prevThreshold;
       }
     },
-    [executePasteMacro, rpcHidChannel],
+    [executePasteMacro, rpcHidChannel, rpcHidReady],
   );
 
   const cancelExecuteMacro = useCallback(async () => {
