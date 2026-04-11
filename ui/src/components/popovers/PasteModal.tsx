@@ -30,6 +30,15 @@ const PASTE_TRACE_STORAGE_KEY = "jetkvm_reliable_paste_trace";
 export default function PasteModal() {
   const TextAreaRef = useRef<HTMLTextAreaElement>(null);
   const pasteAbortControllerRef = useRef<AbortController | null>(null);
+  // Local in-flight guard. Phase 2 chunk mode lets isPasteInProgress go
+  // false between chunks (because the required drain waits for
+  // pasteDepth 1→0), which would otherwise re-enable the submit button
+  // mid-paste and allow duplicate submission. The ref is checked
+  // synchronously at the top of onConfirmPaste to block double-clicks
+  // before the first re-render, and the state mirrors it for the
+  // button's disabled prop.
+  const pasteActiveRef = useRef(false);
+  const [pasteActive, setPasteActive] = useState(false);
   const { isPasteInProgress } = useHidStore();
   const { setDisableVideoFocusTrap } = useUiStore();
 
@@ -95,6 +104,13 @@ export default function PasteModal() {
 
   const onConfirmPaste = useCallback(async () => {
     if (!TextAreaRef.current || !selectedKeyboard) return;
+    // Synchronous guard: ref is checked BEFORE React has a chance to
+    // re-render the disabled button, so a rapid double-click on Paste
+    // is blocked even within the same event loop turn. The state below
+    // drives the button's disabled prop for subsequent renders.
+    if (pasteActiveRef.current) return;
+    pasteActiveRef.current = true;
+    setPasteActive(true);
 
     const text = normalizePasteText(fileText ?? TextAreaRef.current.value);
 
@@ -150,6 +166,12 @@ export default function PasteModal() {
       setPasteProgress(null);
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
+    } finally {
+      // Always clear the in-flight guard so the submit button re-enables
+      // after the operation completes (success, error, or abort). Phase 2
+      // relies on this to prevent a stuck-disabled button on errors.
+      pasteActiveRef.current = false;
+      setPasteActive(false);
     }
   }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText, setTraceLinesPersisted]);
 
@@ -369,7 +391,7 @@ export default function PasteModal() {
             size="SM"
             theme="primary"
             text={m.paste_modal_confirm_paste()}
-            disabled={isPasteInProgress || invalidChars.length > 0}
+            disabled={isPasteInProgress || pasteActive || invalidChars.length > 0}
             onClick={onConfirmPaste}
             LeadingIcon={LuCornerDownLeft}
           />
