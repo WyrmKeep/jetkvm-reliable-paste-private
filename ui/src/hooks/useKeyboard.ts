@@ -764,15 +764,19 @@ export default function useKeyboard() {
             // each chunk ~2x its measured worst case, with a policy
             // floor for small chunks.
             //
-            // The derivation reads delayMs directly from
-            // ExecutePasteTextOptions so debug-mode overrides (delayMs up
-            // to 65534) stay within budget. Each frontend MacroStep costs
-            // (5 + delayMs) ms of backend wire work; doubling gives a
-            // 2x safety margin for HID-layer jitter. Inter-macro sleep is
-            // 200ms (pasteInterMacroDrainMs in jsonrpc.go); doubling gives
-            // 400ms per batch. Plus a 5s flat slack. If Phase 3a retunes
-            // any of these, re-verify this formula.
-            const perMacroStepBackendMs = (5 + delayMs) * 2;
+            // The derivation reads delayMs from ExecutePasteTextOptions
+            // and applies the SAME `|| 25` fallback that executeMacroRemote
+            // uses for MacroStep.delay. This matters for debug-mode pastes
+            // where the PasteModal delay input can be 0 (slider at 0) or
+            // NaN (empty input). Without the fallback, delayMs=0 would
+            // halve the derived budget and delayMs=NaN would collapse the
+            // whole expression to NaN, making Math.max short-circuit and
+            // the required drain fire almost immediately. The `|| 25`
+            // matches executeMacroRemote's step.delay || 25 at line 456
+            // of this file — same expression, same default, same source
+            // of truth.
+            const effectiveResetDelayMs = delayMs || 25;
+            const perMacroStepBackendMs = (5 + effectiveResetDelayMs) * 2;
             const perBatchInterMacroMs = 400;
             let chunkStepCount = 0;
             for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
@@ -788,8 +792,17 @@ export default function useKeyboard() {
               derivedDrainTimeoutMs,
             );
 
+            // settleMs: 0 to skip waitForPasteDrain's default 500ms host
+            // settle delay — chunkPauseMs (default 2000ms) is the
+            // explicit inter-chunk catch-up pause, and adding a 500ms
+            // settle on top doubles cancel latency at chunk boundaries
+            // without buying correctness (the backend has already
+            // confirmed drain via the pasteDepth 1→0 edge at this
+            // point). On a 100k paste with ~20 chunks this saves ~10s
+            // of hidden latency and keeps chunk-boundary cancel
+            // responsive.
             const drainStart = performance.now();
-            await waitForPasteDrain("required", chunkDrainTimeoutMs, signal);
+            await waitForPasteDrain("required", chunkDrainTimeoutMs, signal, 0);
             onTrace?.({
               kind: "chunk-drained",
               chunkIndex: chunk.chunkIndex + 1,
