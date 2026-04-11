@@ -196,6 +196,37 @@ async function waitForPasteDrain(
   });
 }
 
+/**
+ * Sleep for `ms` milliseconds, rejecting early if `signal` aborts.
+ *
+ * Used by Phase 2's chunk-aware paste loop to pause between chunks
+ * without blocking cancel. The rejection error message matches
+ * waitForPasteDrain's abort path so executePasteText's catch block
+ * treats them uniformly.
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Paste execution aborted"));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      reject(new Error("Paste execution aborted"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      timer = undefined;
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export default function useKeyboard() {
   const { send } = useJsonRpc();
   const { rpcDataChannel } = useRTCStore();
