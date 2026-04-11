@@ -327,7 +327,7 @@ export default function PasteModal() {
                     <div className="space-y-1">
                       <p className="text-xs text-slate-600 dark:text-slate-400">
                         {pasteProgress.phase === "draining"
-                          ? `Draining final input… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
+                          ? `Draining input on target… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
                           : pasteProgress.phase === "pausing"
                             ? `Pausing to let target catch up… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
                             : `Sending paste batch ${pasteProgress.completed} / ${pasteProgress.total}`}

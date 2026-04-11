@@ -748,10 +748,16 @@ export default function useKeyboard() {
               batches: chunk.batchEndIndex - chunk.batchStartIndex,
             });
 
+            // "draining" progress fires while we wait for the backend to
+            // finish the chunk, NOT "pausing" — that was the original
+            // framing but it misrepresents the state to the user on slow
+            // targets where the drain wait can take tens of seconds. The
+            // "pausing" phase is emitted separately below, right before
+            // the explicit inter-chunk abortableSleep.
             onProgress?.({
               completedBatches: chunk.batchEndIndex,
               totalBatches: batches.length,
-              phase: "pausing",
+              phase: "draining",
               chunkIndex: chunk.chunkIndex + 1,
               chunkTotal: chunks.length,
             });
@@ -792,17 +798,36 @@ export default function useKeyboard() {
               derivedDrainTimeoutMs,
             );
 
-            // settleMs: 0 to skip waitForPasteDrain's default 500ms host
-            // settle delay — chunkPauseMs (default 2000ms) is the
-            // explicit inter-chunk catch-up pause, and adding a 500ms
-            // settle on top doubles cancel latency at chunk boundaries
-            // without buying correctness (the backend has already
-            // confirmed drain via the pasteDepth 1→0 edge at this
-            // point). On a 100k paste with ~20 chunks this saves ~10s
-            // of hidden latency and keeps chunk-boundary cancel
-            // responsive.
+            // Intermediate chunks (ci < chunks.length - 1) skip the
+            // 500ms settle delay because chunkPauseMs (default 2000ms)
+            // is the explicit inter-chunk catch-up pause, so adding a
+            // 500ms settle on top doubles cancel latency without
+            // buying correctness — on a 100k paste with ~20 chunks
+            // that's ~10s of hidden latency.
+            //
+            // The LAST chunk keeps the default settle (undefined →
+            // PASTE_DRAIN_DEFAULT_SETTLE_MS = 500ms) because without
+            // it, the tail of the final chunk loses the existing
+            // host-settle grace period. The subsequent final
+            // bestEffort drain sees isPasteInProgress already false
+            // and takes the 200ms arm-window fast path, so without a
+            // settle on the last required drain the total post-drain
+            // grace collapses from ~500ms (pre-Phase-2) to ~200ms,
+            // which can cause end-of-paste tail corruption on slower
+            // targets. Preserving the settle on the last chunk
+            // restores the pre-Phase-2 settle behavior for that tail.
             const drainStart = performance.now();
-            await waitForPasteDrain("required", chunkDrainTimeoutMs, signal, 0);
+            const isLastChunk = ci === chunks.length - 1;
+            if (isLastChunk) {
+              await waitForPasteDrain("required", chunkDrainTimeoutMs, signal);
+            } else {
+              await waitForPasteDrain(
+                "required",
+                chunkDrainTimeoutMs,
+                signal,
+                0,
+              );
+            }
             onTrace?.({
               kind: "chunk-drained",
               chunkIndex: chunk.chunkIndex + 1,
@@ -810,6 +835,17 @@ export default function useKeyboard() {
             });
 
             if (ci < chunks.length - 1) {
+              // "pausing" progress fires here, right before the explicit
+              // inter-chunk sleep — this is the real catch-up window
+              // (Codex iter 3 flagged that previously this phase was
+              // emitted earlier and incorrectly spanned the drain wait).
+              onProgress?.({
+                completedBatches: chunk.batchEndIndex,
+                totalBatches: batches.length,
+                phase: "pausing",
+                chunkIndex: chunk.chunkIndex + 1,
+                chunkTotal: chunks.length,
+              });
               onTrace?.({
                 kind: "chunk-pause",
                 chunkIndex: chunk.chunkIndex + 1,
