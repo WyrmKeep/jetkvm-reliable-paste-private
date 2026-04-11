@@ -21,10 +21,16 @@ export interface PasteMacroBuildResult {
   invalidChars: string[];
 }
 
+export interface PasteBatchStat {
+  stepCount: number;
+  estimatedBytes: number;
+  sourceChars: number;
+}
+
 export interface PasteMacroBatchResult {
   batches: MacroStep[][];
   invalidChars: string[];
-  batchStats: Array<{ stepCount: number; estimatedBytes: number }>;
+  batchStats: PasteBatchStat[];
 }
 
 export function estimateBatchBytes(stepCount: number): number {
@@ -117,9 +123,10 @@ export function buildPasteMacroBatches(
   }
 
   const batches: MacroStep[][] = [];
-  const batchStats: Array<{ stepCount: number; estimatedBytes: number }> = [];
+  const batchStats: PasteBatchStat[] = [];
   const invalidChars = new Set<string>();
   let currentBatch: MacroStep[] = [];
+  let currentBatchSourceChars = 0;
 
   const flushBatch = () => {
     if (currentBatch.length === 0) return;
@@ -127,8 +134,10 @@ export function buildPasteMacroBatches(
     batchStats.push({
       stepCount: currentBatch.length,
       estimatedBytes: estimateBatchBytes(currentBatch.length),
+      sourceChars: currentBatchSourceChars,
     });
     currentBatch = [];
+    currentBatchSourceChars = 0;
   };
 
   for (const char of text) {
@@ -150,6 +159,7 @@ export function buildPasteMacroBatches(
     }
 
     currentBatch.push(...charSteps);
+    currentBatchSourceChars += 1;
   }
 
   flushBatch();
@@ -159,4 +169,81 @@ export function buildPasteMacroBatches(
     invalidChars: Array.from(invalidChars),
     batchStats,
   };
+}
+
+export interface LargePastePolicy {
+  autoThresholdChars: number;
+  chunkChars: number;
+  chunkPauseMs: number;
+  // Floor for the per-chunk derived drain timeout. The actual timeout
+  // used by waitForPasteDrain("required", ...) is computed inside
+  // executePasteText from the chunk's step count and batch count, then
+  // max'd against this floor. A flat timeout would be wrong: a
+  // reliable-profile 5000-char chunk takes ~55s end-to-end on current
+  // pacing, so the derivation gives each chunk ~2x its measured worst
+  // case.
+  chunkDrainTimeoutFloorMs: number;
+}
+
+export const DEFAULT_LARGE_PASTE_POLICY: LargePastePolicy = {
+  autoThresholdChars: 5000,
+  chunkChars: 5000,
+  chunkPauseMs: 2000,
+  chunkDrainTimeoutFloorMs: 60000,
+};
+
+export interface PasteChunkPlan {
+  chunkIndex: number; // 0-based
+  batchStartIndex: number; // inclusive
+  batchEndIndex: number; // exclusive
+  sourceChars: number;
+}
+
+export function partitionBatchesByChunkChars(
+  batchStats: PasteBatchStat[],
+  chunkChars: number,
+): PasteChunkPlan[] {
+  if (chunkChars <= 0) {
+    throw new Error("chunkChars must be greater than zero");
+  }
+  if (batchStats.length === 0) {
+    return [];
+  }
+
+  const chunks: PasteChunkPlan[] = [];
+  let chunkIndex = 0;
+  let chunkStart = 0;
+  let chunkSourceChars = 0;
+
+  for (let i = 0; i < batchStats.length; i++) {
+    const batchChars = batchStats[i].sourceChars;
+    // Commit the current chunk before starting a new one. This keeps
+    // batches whole and aligns chunk boundaries to real batch edges —
+    // we never split a batch in the middle. A single batch whose
+    // sourceChars exceeds chunkChars becomes its own oversized chunk,
+    // which is acceptable fallback behavior; the required drain still
+    // runs at the chunk boundary.
+    if (chunkSourceChars > 0 && chunkSourceChars + batchChars > chunkChars) {
+      chunks.push({
+        chunkIndex,
+        batchStartIndex: chunkStart,
+        batchEndIndex: i,
+        sourceChars: chunkSourceChars,
+      });
+      chunkIndex += 1;
+      chunkStart = i;
+      chunkSourceChars = 0;
+    }
+    chunkSourceChars += batchChars;
+  }
+
+  // Flush the final chunk.
+  chunks.push({
+    chunkIndex,
+    batchStartIndex: chunkStart,
+    batchEndIndex: batchStats.length,
+    sourceChars: chunkSourceChars,
+  });
+
+  return chunks;
 }

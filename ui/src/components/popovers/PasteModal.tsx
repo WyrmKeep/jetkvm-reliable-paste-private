@@ -30,6 +30,15 @@ const PASTE_TRACE_STORAGE_KEY = "jetkvm_reliable_paste_trace";
 export default function PasteModal() {
   const TextAreaRef = useRef<HTMLTextAreaElement>(null);
   const pasteAbortControllerRef = useRef<AbortController | null>(null);
+  // Local in-flight guard. Phase 2 chunk mode lets isPasteInProgress go
+  // false between chunks (because the required drain waits for
+  // pasteDepth 1→0), which would otherwise re-enable the submit button
+  // mid-paste and allow duplicate submission. The ref is checked
+  // synchronously at the top of onConfirmPaste to block double-clicks
+  // before the first re-render, and the state mirrors it for the
+  // button's disabled prop.
+  const pasteActiveRef = useRef(false);
+  const [pasteActive, setPasteActive] = useState(false);
   const { isPasteInProgress } = useHidStore();
   const { setDisableVideoFocusTrap } = useUiStore();
 
@@ -39,7 +48,13 @@ export default function PasteModal() {
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
-  const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number; phase: "sending" | "draining" } | null>(null);
+  const [pasteProgress, setPasteProgress] = useState<{
+    completed: number;
+    total: number;
+    phase: "sending" | "draining" | "pausing";
+    chunkIndex: number;
+    chunkTotal: number;
+  } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState<string | null>(null);
@@ -89,6 +104,13 @@ export default function PasteModal() {
 
   const onConfirmPaste = useCallback(async () => {
     if (!TextAreaRef.current || !selectedKeyboard) return;
+    // Synchronous guard: ref is checked BEFORE React has a chance to
+    // re-render the disabled button, so a rapid double-click on Paste
+    // is blocked even within the same event loop turn. The state below
+    // drives the button's disabled prop for subsequent renders.
+    if (pasteActiveRef.current) return;
+    pasteActiveRef.current = true;
+    setPasteActive(true);
 
     const text = normalizePasteText(fileText ?? TextAreaRef.current.value);
 
@@ -112,14 +134,28 @@ export default function PasteModal() {
           setPasteProgress({
             completed: progress.completedBatches,
             total: progress.totalBatches,
-            phase: progress.completedBatches === progress.totalBatches ? "draining" : "sending",
+            phase: progress.phase,
+            chunkIndex: progress.chunkIndex,
+            chunkTotal: progress.chunkTotal,
           });
         },
         onTrace: trace => {
-          setTraceLinesPersisted(current => [
-            ...current,
-            `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`,
-          ]);
+          let line: string;
+          switch (trace.kind) {
+            case "batch":
+              line = `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`;
+              break;
+            case "chunk-sent":
+              line = `chunk ${trace.chunkIndex}/${trace.chunkTotal} sent: chars=${trace.sourceChars} batches=${trace.batches}`;
+              break;
+            case "chunk-drained":
+              line = `chunk ${trace.chunkIndex} drained in ${trace.drainMs}ms`;
+              break;
+            case "chunk-pause":
+              line = `chunk ${trace.chunkIndex} pause ${trace.pauseMs}ms`;
+              break;
+          }
+          setTraceLinesPersisted(current => [...current, line]);
         },
       });
 
@@ -130,6 +166,12 @@ export default function PasteModal() {
       setPasteProgress(null);
       console.error("Failed to paste text:", error);
       notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
+    } finally {
+      // Always clear the in-flight guard so the submit button re-enables
+      // after the operation completes (success, error, or abort). Phase 2
+      // relies on this to prevent a stuck-disabled button on errors.
+      pasteActiveRef.current = false;
+      setPasteActive(false);
     }
   }, [selectedKeyboard, executePasteText, delay, pasteProfile, debugMode, selectedFile, fileText, setTraceLinesPersisted]);
 
@@ -304,11 +346,20 @@ export default function PasteModal() {
                     })}
                   </p>
                   {pasteProgress && (
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      {pasteProgress.phase === "draining"
-                        ? `Draining final input… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
-                        : `Sending paste batch ${pasteProgress.completed} / ${pasteProgress.total}`}
-                    </p>
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-600 dark:text-slate-400">
+                        {pasteProgress.phase === "draining"
+                          ? `Draining input on target… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
+                          : pasteProgress.phase === "pausing"
+                            ? `Pausing to let target catch up… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
+                            : `Sending paste batch ${pasteProgress.completed} / ${pasteProgress.total}`}
+                      </p>
+                      {pasteProgress.chunkTotal > 0 && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-500">
+                          Chunk {pasteProgress.chunkIndex} / {pasteProgress.chunkTotal}
+                        </p>
+                      )}
+                    </div>
                   )}
                   {debugMode && traceLines.length > 0 && (
                     <pre className="max-h-40 overflow-auto rounded-md bg-slate-100 p-2 text-[10px] text-slate-700 dark:bg-slate-900 dark:text-slate-300">
@@ -340,7 +391,7 @@ export default function PasteModal() {
             size="SM"
             theme="primary"
             text={m.paste_modal_confirm_paste()}
-            disabled={isPasteInProgress || invalidChars.length > 0}
+            disabled={isPasteInProgress || pasteActive || invalidChars.length > 0}
             onClick={onConfirmPaste}
             LeadingIcon={LuCornerDownLeft}
           />
