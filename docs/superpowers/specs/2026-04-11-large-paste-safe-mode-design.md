@@ -24,7 +24,7 @@ All line citations below are against the current `main` branch as of 2026-04-11.
   await waitForPasteDrain("bestEffort", drainTimeoutMs, signal);
   ```
 - **`waitForPasteDrain` helper lives at lines 93–197** and already accepts `(mode: "required" | "bestEffort", timeoutMs, signal?, settleMs?, armWindowMs?)`. Both modes are implemented. The `"required"` branch at lines ~170–175 rejects with `Error("waitForPasteDrain: required drain timed out after ${timeoutMs}ms")`. **Phase 1 landed both modes; Phase 1 only uses `"bestEffort"`. Phase 2 is the first consumer of `"required"`.**
-- **Flow control (lines 565–566)** defines `PASTE_LOW_WATERMARK = 64 * 1024`, `PASTE_HIGH_WATERMARK = 256 * 1024`. The `bufferedamountlow` listener is inside `executePasteText`; **these are untouched in Phase 2**.
+- **Flow control (lines 565–566)** defines `PASTE_LOW_WATERMARK = 64 * 1024`, `PASTE_HIGH_WATERMARK = 256 * 1024`. The `bufferedamountlow` listener is inside `executePasteText`; **the watermark values, threshold config, and the low-watermark drain-resume behavior are untouched in Phase 2**. Phase 2 additively wires the existing `waitForChannelDrain` helper to `signal` so cancel interrupts a high-watermark pause — a correctness fix, not a rewrite. See Race A below for the motivation.
 - **Cancel path:** `onConfirmPaste` (line 98) creates an `AbortController`, passes `abortController.signal` as `signal` (line 110) to `executePasteText`. `waitForPasteDrain` subscribes via `signal?.addEventListener("abort", onAbort)` (line 168) and rejects on abort (line 141). Cancel cascade is already uniform; Phase 2 will plug `abortableSleep` into the same signal.
 
 #### Frontend — `ui/src/utils/pasteMacro.ts`
@@ -69,10 +69,11 @@ The cited state is what Phase 1 delivered. The gap to Phase 2's acceptance crite
 
 1. **No chunk policy** — there is no code that knows about `autoThresholdChars`, `chunkChars`, or `chunkPauseMs`. Large pastes run a single monolithic sending loop followed by a best-effort drain wait.
 2. **No chunk accounting in `batchStats`** — the frontend cannot partition batches into chunks without a per-batch source-character count.
-3. **`waitForPasteDrain("required", ...)` has zero call sites** — Phase 2 is the first consumer. A required drain timeout must surface as a real error (not a silent resolve), and the catch path in `executePasteText` must cover it.
+3. **`waitForPasteDrain("required", ...)` has zero call sites** — Phase 2 is the first consumer. A required drain timeout must surface as a real error (not a silent resolve), and the catch path in `executePasteText` must cover it. The required-drain timeout must be sized per chunk rather than a flat constant; at reliable-profile pacing on current `main`, a 5 000-char chunk takes ~55 s end-to-end, so a naive 15 s timeout (as an earlier draft proposed) would fire on every chunk boundary.
 4. **No abortable sleep primitive** — Phase 2 needs a small `abortableSleep(ms, signal)` helper in `useKeyboard.ts` that `Promise.race`s a timeout against the `signal.abort` event and rejects on abort.
-5. **No chunk UI** — the modal has no `"pausing"` phase label and no chunk progress display.
-6. **200 ms literal is a magic number** — naming it makes Phase 3b's timer-reuse landing site obvious and documents the load-bearing invariant in the declaration.
+5. **`waitForChannelDrain` (the high-watermark pause inside `executePasteText`) ignores the abort signal** — current `main` wires it only to the persistent `bufferedamountlow` listener via a captured `drainResolve` ref. If the user cancels while the loop is parked on a full channel buffer, the cancel is effectively delayed until the buffer actually drains, which may be seconds. Phase 2 wires the existing helper to reject on `signal.abort()` as an additive correctness fix (no change to the watermark values or the low-watermark resume path).
+6. **No chunk UI** — the modal has no `"pausing"` phase label and no chunk progress display.
+7. **200 ms literal is a magic number** — naming it makes Phase 3b's timer-reuse landing site obvious and documents the load-bearing invariant in the declaration.
 
 ## Design
 
@@ -80,12 +81,12 @@ The cited state is what Phase 1 delivered. The gap to Phase 2's acceptance crite
 
 **Touch list (the only files changed in this PR):**
 - `ui/src/utils/pasteMacro.ts` — `LargePastePolicy` type, `DEFAULT_LARGE_PASTE_POLICY`, `PasteBatchStat` named interface, `sourceChars` in batch stats, `partitionBatchesByChunkChars` pure helper
-- `ui/src/hooks/useKeyboard.ts` — chunk-aware branch in `executePasteText`, `abortableSleep` helper, `PasteProgress` type extension, trace emission for the three new chunk kinds
+- `ui/src/hooks/useKeyboard.ts` — chunk-aware branch in `executePasteText`, `abortableSleep` helper, `PasteProgress` type extension, trace emission for the three new chunk kinds, abort-aware upgrade to the existing `waitForChannelDrain` pattern (adds `drainReject` slot and an abort listener; values and low-watermark resume behavior unchanged)
 - `ui/src/components/popovers/PasteModal.tsx` — `"pausing"` phase label, `Chunk X/Y` subline, trace formatter switch for the new kinds
 - `jsonrpc.go` — rename `200 * time.Millisecond` literal to `pasteInterMacroDrainMs` named constant, value unchanged
 
 **Must NOT touch (Phase 2 forbidden list):**
-- `PASTE_LOW_WATERMARK`, `PASTE_HIGH_WATERMARK`, and the `bufferedamountlow` listener in `useKeyboard.ts` — #46's work, preserved exactly
+- `PASTE_LOW_WATERMARK`, `PASTE_HIGH_WATERMARK` numeric values, `bufferedAmountLowThreshold` assignment, and the basic `bufferedamountlow` drain-resume mechanism in `useKeyboard.ts` — #46's work, values preserved exactly. **Exception:** Phase 2 adds an abort-path to the existing `waitForChannelDrain` helper so cancel during a high-watermark pause rejects immediately. This is an additive correctness fix that does not change any existing field's value or rename the listener; pre-Phase-2 callers would not see a behavior difference in the non-abort path.
 - Backend `macroQueue` depth or `queuedMacro` struct — Phase 1 scope, already landed
 - `ui/src/utils/pasteBatches.ts` — profile retuning is Phase 3a scope
 - `estimateBatchBytes` formula in `pasteMacro.ts` — already correct, untouched
@@ -121,18 +122,51 @@ export interface LargePastePolicy {
   autoThresholdChars: number;
   chunkChars: number;
   chunkPauseMs: number;
-  chunkDrainTimeoutMs: number;
+  // Floor for the per-chunk derived drain timeout. Actual per-chunk
+  // timeout is computed at runtime from the chunk's step count and
+  // batch count (see executePasteText), then max'd against this floor.
+  chunkDrainTimeoutFloorMs: number;
 }
 
 export const DEFAULT_LARGE_PASTE_POLICY: LargePastePolicy = {
   autoThresholdChars: 5000,
   chunkChars: 5000,
   chunkPauseMs: 2000,
-  chunkDrainTimeoutMs: 15000,
+  chunkDrainTimeoutFloorMs: 60000,
 };
 ```
 
-Defaults come directly from issue #38's "only documented-working setting." These are named constants that can be retuned in a later PR without touching the chunk loop.
+Threshold, chunk size, and pause duration come directly from issue #38's "only documented-working setting." The drain-timeout floor is **not** a fixed timeout — it is only the lower bound for a runtime-derived per-chunk budget. The `chunkDrainTimeoutMs` field from an earlier draft of this spec used a flat 15 s value, which would fire prematurely for any reasonably sized chunk on the reliable profile: a 5 000-char chunk at reliable pacing (`keyDelayMs = 3`, byte-limited to ~66 steps/batch per `PASTE_PROFILES.reliable`) takes ~40 s of HID-layer execution (5 000 MacroSteps × 8 ms per step) plus ~15 s of inter-macro sleeps (~76 batches × 200 ms), i.e. ~55 s end-to-end. The derivation below accounts for this.
+
+**Per-chunk drain-timeout derivation (computed inside `executePasteText`):**
+
+```
+chunkStepCount  = sum of batchStats[b].stepCount for b in [chunk.batchStartIndex, chunk.batchEndIndex)
+chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex
+derivedDrainTimeoutMs
+  = chunkStepCount  * 20   // ~10 ms per MacroStep × 2 safety margin (press 5 ms + reset up to 5 ms)
+  + chunkNumBatches * 400  // 200 ms inter-macro sleep × 2 safety margin
+  + 5000                    // flat slack
+chunkDrainTimeoutMs = max(policy.chunkDrainTimeoutFloorMs, derivedDrainTimeoutMs)
+```
+
+Walkthrough for reliable profile, 5 000-char chunk, ~66 steps/batch:
+- chunkStepCount ≈ 5 000 MacroSteps → 100 000 ms
+- chunkNumBatches ≈ 76 → 30 400 ms
+- + 5 000 ms slack
+- derivedDrainTimeoutMs ≈ 135 400 ms (≈2.25 min)
+- vs. measured worst case ~55 s → ~2.5× safety margin
+
+Walkthrough for fast profile, 5 000-char chunk, ~152 steps/batch:
+- chunkStepCount ≈ 5 000 MacroSteps → 100 000 ms
+- chunkNumBatches ≈ 33 → 13 200 ms
+- + 5 000 ms slack
+- derivedDrainTimeoutMs ≈ 118 200 ms (≈2 min)
+- vs. measured worst case ~40 s → ~3× safety margin
+
+The floor (`60 000 ms`) only kicks in for very small chunks where the derivation would undershoot the minimum reasonable wait.
+
+The constants `20`, `400`, and `5000` inside the derivation are tuned to the current Phase 1 pacing (`pasteInterMacroDrainMs = 200 ms`, `executeMacroRemote` press delay = 5 ms, reliable `keyDelayMs = 3`). If Phase 3a retunes any of those, this derivation must be re-checked. A comment in `executePasteText` calls this out.
 
 #### 3. `partitionBatchesByChunkChars` pure helper
 
@@ -245,8 +279,17 @@ for (let i = 0; i < chunks.length; i++) {
     chunkTotal: chunks.length,
   });
 
+  // Per-chunk drain timeout derived from this chunk's actual work.
+  let chunkStepCount = 0;
+  for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
+    chunkStepCount += batchStats[b].stepCount;
+  }
+  const chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex;
+  const derivedDrainTimeoutMs = chunkStepCount * 20 + chunkNumBatches * 400 + 5000;
+  const chunkDrainTimeoutMs = Math.max(policy.chunkDrainTimeoutFloorMs, derivedDrainTimeoutMs);
+
   const drainStart = performance.now();
-  await waitForPasteDrain("required", policy.chunkDrainTimeoutMs, signal);
+  await waitForPasteDrain("required", chunkDrainTimeoutMs, signal);
   onTrace?.({
     kind: "chunk-drained",
     chunkIndex: i + 1,
@@ -363,13 +406,15 @@ The following invariants must hold after Phase 2 lands:
 6. **Cancel works during chunk send, chunk pause, and required drain** — all three await points subscribe to the same `signal`. The existing cleanup path in `executePasteText`'s catch/finally covers all three cases uniformly.
 7. **Trace output shows chunk boundaries, drain waits, and pause timing** — three new trace kinds, additive to existing batch traces.
 8. **Sub-threshold pastes (text.length < autoThresholdChars) take the non-chunk path exactly as today** — chunk-mode branch is guarded by an early test; the non-chunk path is unchanged byte-for-byte.
-9. **Flow control watermarks and `bufferedamountlow` listener are untouched** — batch submission inside the chunk loop reuses the same per-batch submission code as the non-chunk path.
+9. **Flow control watermark values and low-watermark drain-resume behavior are preserved** — batch submission inside the chunk loop reuses the same per-batch submission code as the non-chunk path, and the numeric watermark values are unchanged. Phase 2 additively wires the existing `waitForChannelDrain` helper to respect `signal.abort()`, so cancel during a high-watermark pause rejects immediately instead of waiting for the channel to drain naturally. This is additive — the non-abort resume path still fires on `bufferedamountlow` exactly as before.
 
 ## Race walkthroughs
 
-### Race A: Cancel fires during chunk-send phase
+### Race A: Cancel fires during chunk-send phase (including during a `bufferedamountlow` pause)
 - User clicks cancel while chunk `i` is still submitting batches inside the inner `for` loop.
-- `abortController.abort()` fires. The inner loop's `bufferedamountlow` await is a promise that subscribes to `signal` already. It rejects.
+- **Sub-case A1 — cancel between batch submissions:** the loop's top-of-iteration `if (signal?.aborted) throw` fires on the next iteration.
+- **Sub-case A2 — cancel while the loop is paused on `waitForChannelDrain()`** (the `bufferedamountlow` wait triggered when `channel.bufferedAmount >= PASTE_HIGH_WATERMARK`): **this is the load-bearing case.** In pre-Phase-2 `main`, `waitForChannelDrain` is a plain `new Promise(r => { drainResolve = r; })` with no abort wiring, so `signal.abort()` does **not** immediately unblock the wait. The wait resumes only when the channel buffer actually drains (via the persistent `onLow` listener), which may be seconds later — during that window, cancel is effectively delayed.
+- **Phase 2 fix:** `executePasteText` gains a paired `drainReject` slot and an `onBufferedDrainAbort` listener wired to `signal`. When `signal.abort()` fires while `drainResolve`/`drainReject` are pending, the listener rejects the pending promise with `Error("Paste execution aborted")` and clears both slots. The persistent `onLow` listener and the abort listener are both removed in the `finally` block alongside the threshold restore. This makes cancel during a high-watermark wait behave identically to cancel during any other phase — immediate rejection.
 - `executePasteText`'s catch block runs, removes listeners, the frontend's existing `cancelOngoingKeyboardMacroHidRpc` fires against the backend.
 - Backend `cancelAndDrainMacroQueue` sweeps queued macros, decrements `pasteDepth`, emits `State:false` on 1→0 transition.
 - Frontend sees `isPasteInProgress → false`; modal resets.
@@ -386,12 +431,13 @@ The following invariants must hold after Phase 2 lands:
 - `executePasteText`'s catch block handles it identically to Race A.
 
 ### Race D: `waitForPasteDrain("required", ...)` times out mid-paste
-- The required-drain timeout at `chunkDrainTimeoutMs = 15000` fires.
-- `waitForPasteDrain` rejects with `Error("waitForPasteDrain: required drain timed out after 15000ms")`.
+- The required-drain timeout fires. The timeout is derived per chunk (see "Per-chunk drain-timeout derivation" above): for a typical reliable-profile 5 000-char chunk this is ~135 s; for a small chunk, the floor (`chunkDrainTimeoutFloorMs = 60000`) applies.
+- `waitForPasteDrain` rejects with `Error(\`waitForPasteDrain: required drain timed out after ${chunkDrainTimeoutMs}ms\`)`.
 - `executePasteText`'s catch block runs the normal cleanup.
 - Backend continues processing queued batches (no backend cancel fires because the frontend didn't explicitly abort — the timeout is a frontend-local decision that "this paste is unsafe to continue").
 - **Known gap:** trailing batches that were already in `macroQueue` will still execute on the target after the error surfaces. Issue #38 documents this as the "post-cancel trailing batches" protocol gap, explicitly out of Phase 2 scope. Phase 2 does not introduce this gap; it pre-exists in the cancel path today.
 - Modal displays the error; user decides whether to retry.
+- **Why the derivation is needed:** an earlier draft of this spec used a flat 15 000 ms timeout. Against the actual reliable-profile pacing on current `main` (5 ms press + 3 ms reset = 8 ms per MacroStep; 200 ms inter-macro sleep; ~66 steps per byte-limited batch), a 5 000-char chunk takes ~55 s of backend work, so a 15 s timeout would fire on every chunk boundary of every large paste. The derived timeout gives each chunk ~2× its measured worst case.
 
 ### Race E: `isPasteInProgress` transitions happen faster than the subscriber can see them
 - Phase 1 already handled this with `seenTrue` latching (lines 146–160 in `waitForPasteDrain`). A 0 → 1 → 0 sequence that completes before the subscription arms will still resolve the drain wait because `required` mode waits for the arm window + transition cycle.
@@ -399,7 +445,7 @@ The following invariants must hold after Phase 2 lands:
 
 ### Race F: Backend drains the entire chunk before `waitForPasteDrain("required")` arms
 - The backend emits `State:false` on 1→0 transition of `pasteDepth`, which only drops to 0 when the queue is empty and all in-flight macros have completed.
-- `waitForPasteDrain("required", ...)` in Phase 1 does not arm a grace window (that's `bestEffort`-only). If the helper subscribes after `pasteDepth` has already returned to 0, the `seenTrue` latch cannot fire and the helper waits the full `chunkDrainTimeoutMs` before rejecting.
+- `waitForPasteDrain("required", ...)` in Phase 1 does not arm a grace window (that's `bestEffort`-only). If the helper subscribes after `pasteDepth` has already returned to 0, the `seenTrue` latch cannot fire and the helper waits the full derived `chunkDrainTimeoutMs` before rejecting.
 - The risk exists in principle whenever the backend can drain a chunk faster than the frontend can create the next await.
 - **Practical analysis:** a chunk is `chunkChars = 5000` source chars, which at ≤ 64 steps per batch and ≈60 chars worth of keypress/release steps per batch is roughly 80 batches. Each macro execution in `drainMacroQueue` runs at minimum `pasteInterMacroDrainMs = 200ms` of inter-macro sleep plus the HID write loop for its steps (~5 ms press + 3 ms release per step — on the order of hundreds of ms for a single macro). Lower bound for the backend to drain 80 batches is **tens of seconds**. The frontend, in contrast, spends microseconds of synchronous JS between the last `dataChannel.send()` of the chunk and the `await waitForPasteDrain("required", ...)` line — the two are separated only by a synchronous `emitProgress` call and a `performance.now()`.
 - **Conclusion:** the backend cannot drain a full chunk in the microseconds the frontend takes to arm the drain wait. The race is theoretically present but cannot fire under realistic pacing. If future profile retuning (Phase 3a) ever shrinks per-macro latency dramatically, this invariant must be re-verified; until then, Phase 2 relies on the ≫ ratio between backend drain time and frontend arming time.
@@ -441,7 +487,7 @@ Run these manual tests on the device against a target machine:
 1. **Sub-threshold paste (1 000 chars)** — UI unchanged, no chunk subline, no `"pausing"` label. Existing behavior preserved.
 2. **32k-char paste** — visible `Chunk X/Y` subline counting up, `"pausing"` label visible between chunks. No character corruption on the target.
 3. **100k-char paste** — same as above, many chunks. No character corruption under normal target-machine load.
-4. **100k-char paste under target-machine load** — open several applications on the target to induce CPU/USB contention. Correctness maintained; some chunks may take longer but required drain should not time out with `chunkDrainTimeoutMs = 15000`.
+4. **100k-char paste under target-machine load** — open several applications on the target to induce CPU/USB contention. Correctness maintained; some chunks may take longer but required drain should not time out against the derived per-chunk timeout (≈2× the measured worst-case drain time for each chunk).
 5. **Cancel during chunk send** — click cancel while submission is mid-chunk. Modal resets, paste stops.
 6. **Cancel during chunk pause** — click cancel while `"pausing…"` is visible. Modal resets, paste stops.
 7. **Cancel during required drain** — click cancel while waiting for a chunk drain (harder to time; may need a large paste with a slow target). Modal resets, paste stops.
