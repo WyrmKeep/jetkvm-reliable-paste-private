@@ -45,9 +45,9 @@ Restore `fast > reliable` steps-per-batch as a user-visible speed gap, and lock 
 
 ## 4. Design
 
-### 4.1 Approach — Option B (retune larger on consolidated batching)
+### 4.1 Approach — issue Option A, retuned upward after #38
 
-The issue proposed `reliable=96` / `fast=160` conservatively and noted "start conservative and tune after #38 lands. Chunk-aware sender in #38 will make larger batches safer." #38 has landed (PR #52). Tune upward now while still staying well inside the WebRTC SCTP safe zone.
+This phase keeps the issue's "step count is the source of truth" derivation (issue #40 Option A). Only the target step counts are increased from the conservative 96/160 sample in the issue body to 128/256, now that Phase 2 (#38, PR #52) has landed the chunk-aware sender that absorbs host-side backlog at chunk boundaries. The issue explicitly noted "start conservative and tune after #38 lands. Chunk-aware sender in #38 will make larger batches safer." The derivation mechanism (`deriveProfile(steps, keyDelayMs)` → `estimateBatchBytes(steps) + HEADROOM_BYTES`) is unchanged from Option A.
 
 ### 4.2 Values
 
@@ -138,7 +138,7 @@ export type PasteProfileName = keyof typeof PASTE_PROFILES;
 
 The assertion runs once at module-load time in the browser. If a future commit ships a profile whose byte cap is smaller than `estimateBatchBytes(maxStepsPerBatch)` — for example, a manual regression that bypasses `deriveProfile` — the UI fails fast with a clear diagnostic. The assertion is cheap (two multiplications per profile) and runs before any paste can execute, so there is no risk of a partial paste under a misconfigured profile.
 
-The assertion also serves as the acceptance-criterion "unit test or CI script catches unreachable step caps" without requiring `package.json` changes (forbidden this phase) or a new `ui/scripts/` directory.
+The assertion provides fail-fast runtime coverage toward AC3, but the literal "unit test or CI script" portion of the acceptance criterion remains deferred to Phase 5 (vitest harness, issue #45) as described in §7 — `tsc --noEmit` and `eslint` do not execute module code, so CI does not exercise the assertion.
 
 ### 4.5 Why `PasteProfile` shape is preserved
 
@@ -194,7 +194,7 @@ Phase 3a is pure static config. There is one narrow ordering consideration and n
 
 **Trigger:** a consumer file (e.g., `PasteModal.tsx`) imports from `pasteBatches.ts`, which in turn imports `estimateBatchBytes` from `./pasteMacro`.
 
-**Analysis:** ES module graphs are resolved and top-level bodies are executed in dependency order. `pasteMacro.ts` has no import from `pasteBatches.ts`, so there is no cycle. `estimateBatchBytes` is defined at `pasteMacro.ts:36-42` and is exported as a named function declaration, which is fully initialized before any importer's top-level code runs. `deriveProfile` can safely call `estimateBatchBytes` at the top level of `pasteBatches.ts`. `assertProfilesReachable` runs after `PASTE_PROFILES` is constructed, also at the top level, and throws synchronously if the invariant is violated.
+**Analysis:** ES module graphs are resolved and top-level bodies are executed in dependency order. `pasteMacro.ts` has no runtime import from `pasteBatches.ts`, so there is no cycle. The only symbol `pasteMacro.ts` pulls from `useKeyboard.ts` is `MacroStep`, and it is imported via `import type { MacroStep } from "@/hooks/useKeyboard"` (see `pasteMacro.ts:1`). TypeScript's `import type` syntax is erased from emitted JavaScript, so it does NOT create a runtime edge from `pasteMacro.ts` back into `useKeyboard.ts` — and therefore no runtime cycle through `pasteBatches.ts → pasteMacro.ts → useKeyboard.ts → pasteBatches.ts`. `estimateBatchBytes` is defined at `pasteMacro.ts:36-42` and is exported as a named function declaration, which is fully initialized before any importer's top-level code runs. `deriveProfile` can safely call `estimateBatchBytes` at the top level of `pasteBatches.ts`. `assertProfilesReachable` runs after `PASTE_PROFILES` is constructed, also at the top level, and throws synchronously if the invariant is violated.
 
 **Outcome:** no race. Module loading is deterministic and synchronous at the top level.
 
