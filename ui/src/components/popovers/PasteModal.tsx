@@ -39,7 +39,13 @@ export default function PasteModal() {
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
   const [pasteProfile, setPasteProfile] = useState<PasteProfileName>("reliable");
-  const [pasteProgress, setPasteProgress] = useState<{ completed: number; total: number; phase: "sending" | "draining" } | null>(null);
+  const [pasteProgress, setPasteProgress] = useState<{
+    completed: number;
+    total: number;
+    phase: "sending" | "draining" | "pausing";
+    chunkIndex: number;
+    chunkTotal: number;
+  } | null>(null);
   const [traceLines, setTraceLines] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState<string | null>(null);
@@ -112,7 +118,9 @@ export default function PasteModal() {
           setPasteProgress({
             completed: progress.completedBatches,
             total: progress.totalBatches,
-            phase: progress.completedBatches === progress.totalBatches ? "draining" : "sending",
+            phase: progress.phase,
+            chunkIndex: progress.chunkIndex,
+            chunkTotal: progress.chunkTotal,
           });
         },
         onTrace: trace => {
@@ -316,11 +324,20 @@ export default function PasteModal() {
                     })}
                   </p>
                   {pasteProgress && (
-                    <p className="text-xs text-slate-600 dark:text-slate-400">
-                      {pasteProgress.phase === "draining"
-                        ? `Draining final input… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
-                        : `Sending paste batch ${pasteProgress.completed} / ${pasteProgress.total}`}
-                    </p>
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-600 dark:text-slate-400">
+                        {pasteProgress.phase === "draining"
+                          ? `Draining final input… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
+                          : pasteProgress.phase === "pausing"
+                            ? `Pausing to let target catch up… (${pasteProgress.completed} / ${pasteProgress.total} batches submitted)`
+                            : `Sending paste batch ${pasteProgress.completed} / ${pasteProgress.total}`}
+                      </p>
+                      {pasteProgress.chunkTotal > 0 && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-500">
+                          Chunk {pasteProgress.chunkIndex} / {pasteProgress.chunkTotal}
+                        </p>
+                      )}
+                    </div>
                   )}
                   {debugMode && traceLines.length > 0 && (
                     <pre className="max-h-40 overflow-auto rounded-md bg-slate-100 p-2 text-[10px] text-slate-700 dark:bg-slate-900 dark:text-slate-300">

@@ -19,8 +19,11 @@ import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
 import {
   buildPasteMacroBatches,
+  DEFAULT_LARGE_PASTE_POLICY,
   estimateBatchBytes,
+  partitionBatchesByChunkChars,
   type KeyboardLayoutLike,
+  type PasteChunkPlan,
 } from "@/utils/pasteMacro";
 
 const MACRO_RESET_KEYBOARD_STATE = {
@@ -40,6 +43,9 @@ export type MacroSteps = MacroStep[];
 export interface PasteExecutionProgress {
   completedBatches: number;
   totalBatches: number;
+  phase: "sending" | "draining" | "pausing";
+  chunkIndex: number; // 1-based. 0 when chunk mode is off.
+  chunkTotal: number; // 0 when chunk mode is off.
 }
 
 export type PasteExecutionTrace =
@@ -599,7 +605,7 @@ export default function useKeyboard() {
         onTrace,
       } = options;
 
-      const { batches, invalidChars } = buildPasteMacroBatches(
+      const { batches, invalidChars, batchStats } = buildPasteMacroBatches(
         text,
         keyboard,
         delayMs,
@@ -611,7 +617,7 @@ export default function useKeyboard() {
         throw new Error(`Unsupported characters: ${invalidChars.join(", ")}`);
       }
 
-      // Pipeline flow control constants
+      // Pipeline flow control constants. Values untouched in Phase 2.
       const PASTE_LOW_WATERMARK = 64 * 1024;
       const PASTE_HIGH_WATERMARK = 256 * 1024;
 
@@ -624,50 +630,186 @@ export default function useKeyboard() {
       const prevThreshold = channel.bufferedAmountLowThreshold;
       channel.bufferedAmountLowThreshold = PASTE_LOW_WATERMARK;
 
+      // Abort-aware high-watermark drain wait. Phase 2 upgrade over the
+      // pre-existing drainResolve-only pattern: if signal.abort() fires
+      // while the loop is parked on a full channel buffer, the pending
+      // waitForChannelDrain() rejects immediately rather than waiting
+      // for the next bufferedamountlow event. drainReject is the paired
+      // slot; onBufferedDrainAbort is installed alongside the existing
+      // onLow listener. The low-watermark resume path is unchanged —
+      // onLow still fires on bufferedamountlow and resolves the pending
+      // promise exactly as before.
       let drainResolve: (() => void) | null = null;
-      const waitForDrain = () => new Promise<void>(r => { drainResolve = r; });
-      const onLow = () => { drainResolve?.(); };
+      let drainReject: ((err: Error) => void) | null = null;
+      const waitForChannelDrain = () =>
+        new Promise<void>((resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new Error("Paste execution aborted"));
+            return;
+          }
+          drainResolve = resolve;
+          drainReject = reject;
+        });
+      const onLow = () => {
+        const resolver = drainResolve;
+        drainResolve = null;
+        drainReject = null;
+        resolver?.();
+      };
+      const onBufferedDrainAbort = () => {
+        const rejecter = drainReject;
+        drainResolve = null;
+        drainReject = null;
+        rejecter?.(new Error("Paste execution aborted"));
+      };
       channel.addEventListener("bufferedamountlow", onLow);
+      signal?.addEventListener("abort", onBufferedDrainAbort);
+
+      // Phase 2 chunk policy. Chunk mode is automatic above the threshold:
+      // partition batches by source-char budget and drain the backend
+      // between chunks via waitForPasteDrain("required", ...). Below the
+      // threshold, the chunks array is a single synthetic plan covering
+      // all batches, so the outer loop runs once and behavior is identical
+      // to the pre-Phase-2 linear path.
+      const policy = DEFAULT_LARGE_PASTE_POLICY;
+      const chunkMode = text.length >= policy.autoThresholdChars;
+      const chunks: PasteChunkPlan[] = chunkMode
+        ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
+        : [
+            {
+              chunkIndex: 0,
+              batchStartIndex: 0,
+              batchEndIndex: batches.length,
+              sourceChars: text.length,
+            },
+          ];
+      const chunkTotalForProgress = chunkMode ? chunks.length : 0;
 
       try {
-        for (let index = 0; index < batches.length; index++) {
-          if (signal?.aborted) {
-            throw new Error("Paste execution aborted");
+        for (let ci = 0; ci < chunks.length; ci++) {
+          const chunk = chunks[ci];
+          for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
+            if (signal?.aborted) {
+              throw new Error("Paste execution aborted");
+            }
+
+            const batch = batches[b];
+            await executePasteMacro(batch);
+
+            onTrace?.({
+              kind: "batch",
+              batchIndex: b + 1,
+              totalBatches: batches.length,
+              stepCount: batch.length,
+              estimatedBytes: estimateBatchBytes(batch.length),
+              bufferedAmount: channel.bufferedAmount,
+            });
+
+            onProgress?.({
+              completedBatches: b + 1,
+              totalBatches: batches.length,
+              phase: "sending",
+              chunkIndex: chunkMode ? chunk.chunkIndex + 1 : 0,
+              chunkTotal: chunkTotalForProgress,
+            });
+
+            // Pause if channel buffer exceeds high watermark. The wait is
+            // abort-aware: signal.abort() during the pause rejects the
+            // pending promise immediately via onBufferedDrainAbort.
+            if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) {
+              await waitForChannelDrain();
+            }
           }
 
-          const batch = batches[index];
-          await executePasteMacro(batch);
+          // Chunk-boundary work: only in chunk mode. Announce the chunk,
+          // wait for the backend to fully drain (required mode — rejects on
+          // timeout so a chunk-level failure surfaces as an error), then
+          // pause if there are more chunks to come.
+          if (chunkMode) {
+            onTrace?.({
+              kind: "chunk-sent",
+              chunkIndex: chunk.chunkIndex + 1,
+              chunkTotal: chunks.length,
+              sourceChars: chunk.sourceChars,
+              batches: chunk.batchEndIndex - chunk.batchStartIndex,
+            });
 
-          onTrace?.({
-            kind: "batch",
-            batchIndex: index + 1,
-            totalBatches: batches.length,
-            stepCount: batch.length,
-            estimatedBytes: estimateBatchBytes(batch.length),
-            bufferedAmount: channel.bufferedAmount,
-          });
+            onProgress?.({
+              completedBatches: chunk.batchEndIndex,
+              totalBatches: batches.length,
+              phase: "pausing",
+              chunkIndex: chunk.chunkIndex + 1,
+              chunkTotal: chunks.length,
+            });
 
-          onProgress?.({
-            completedBatches: index + 1,
-            totalBatches: batches.length,
-          });
+            // Per-chunk derived drain timeout. A flat constant does not
+            // work here: at reliable-profile pacing on current main
+            // (keyDelayMs=3, 5ms press + 3ms reset per MacroStep, ~66
+            // steps/batch byte-limited, 200ms inter-macro), a 5000-char
+            // chunk takes ~55s end-to-end. The derivation below gives
+            // each chunk ~2x its measured worst case, with a policy
+            // floor for small chunks.
+            //
+            // The derivation reads delayMs directly from
+            // ExecutePasteTextOptions so debug-mode overrides (delayMs up
+            // to 65534) stay within budget. Each frontend MacroStep costs
+            // (5 + delayMs) ms of backend wire work; doubling gives a
+            // 2x safety margin for HID-layer jitter. Inter-macro sleep is
+            // 200ms (pasteInterMacroDrainMs in jsonrpc.go); doubling gives
+            // 400ms per batch. Plus a 5s flat slack. If Phase 3a retunes
+            // any of these, re-verify this formula.
+            const perMacroStepBackendMs = (5 + delayMs) * 2;
+            const perBatchInterMacroMs = 400;
+            let chunkStepCount = 0;
+            for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
+              chunkStepCount += batchStats[b].stepCount;
+            }
+            const chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex;
+            const derivedDrainTimeoutMs =
+              chunkStepCount * perMacroStepBackendMs +
+              chunkNumBatches * perBatchInterMacroMs +
+              5000;
+            const chunkDrainTimeoutMs = Math.max(
+              policy.chunkDrainTimeoutFloorMs,
+              derivedDrainTimeoutMs,
+            );
 
-          // Pause if channel buffer exceeds high watermark
-          if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) {
-            await waitForDrain();
+            const drainStart = performance.now();
+            await waitForPasteDrain("required", chunkDrainTimeoutMs, signal);
+            onTrace?.({
+              kind: "chunk-drained",
+              chunkIndex: chunk.chunkIndex + 1,
+              drainMs: Math.round(performance.now() - drainStart),
+            });
+
+            if (ci < chunks.length - 1) {
+              onTrace?.({
+                kind: "chunk-pause",
+                chunkIndex: chunk.chunkIndex + 1,
+                pauseMs: policy.chunkPauseMs,
+              });
+              await abortableSleep(policy.chunkPauseMs, signal);
+            }
           }
         }
 
-        // Wait for backend to finish draining all queued macros. The helper
-        // subscribes first (no late-start race) and uses an arm window so a
-        // paste that never materialized doesn't block for the full timeout.
-        // bestEffort mode preserves the current final-settle UX — resolves on
-        // timeout, resolves with a settle delay on clean drain, rejects only
-        // on abort.
+        // Final bestEffort drain — preserves existing settle UX. In chunk
+        // mode the last chunk's required drain already confirmed HID-layer
+        // drain; this is a short grace window for any residual settle. In
+        // non-chunk mode this is the existing path verbatim.
+        onProgress?.({
+          completedBatches: batches.length,
+          totalBatches: batches.length,
+          phase: "draining",
+          chunkIndex: chunkMode ? chunks.length : 0,
+          chunkTotal: chunkTotalForProgress,
+        });
+
         const drainTimeoutMs = Math.max(finalSettleMs, batches.length * 1000);
         await waitForPasteDrain("bestEffort", drainTimeoutMs, signal);
       } finally {
         channel.removeEventListener("bufferedamountlow", onLow);
+        signal?.removeEventListener("abort", onBufferedDrainAbort);
         channel.bufferedAmountLowThreshold = prevThreshold;
       }
     },
