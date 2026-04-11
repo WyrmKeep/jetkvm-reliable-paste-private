@@ -21,10 +21,16 @@ export interface PasteMacroBuildResult {
   invalidChars: string[];
 }
 
+export interface PasteBatchStat {
+  stepCount: number;
+  estimatedBytes: number;
+  sourceChars: number;
+}
+
 export interface PasteMacroBatchResult {
   batches: MacroStep[][];
   invalidChars: string[];
-  batchStats: Array<{ stepCount: number; estimatedBytes: number }>;
+  batchStats: PasteBatchStat[];
 }
 
 export function estimateBatchBytes(stepCount: number): number {
@@ -117,9 +123,10 @@ export function buildPasteMacroBatches(
   }
 
   const batches: MacroStep[][] = [];
-  const batchStats: Array<{ stepCount: number; estimatedBytes: number }> = [];
+  const batchStats: PasteBatchStat[] = [];
   const invalidChars = new Set<string>();
   let currentBatch: MacroStep[] = [];
+  let currentBatchSourceChars = 0;
 
   const flushBatch = () => {
     if (currentBatch.length === 0) return;
@@ -127,8 +134,10 @@ export function buildPasteMacroBatches(
     batchStats.push({
       stepCount: currentBatch.length,
       estimatedBytes: estimateBatchBytes(currentBatch.length),
+      sourceChars: currentBatchSourceChars,
     });
     currentBatch = [];
+    currentBatchSourceChars = 0;
   };
 
   for (const char of text) {
@@ -150,6 +159,7 @@ export function buildPasteMacroBatches(
     }
 
     currentBatch.push(...charSteps);
+    currentBatchSourceChars += 1;
   }
 
   flushBatch();
