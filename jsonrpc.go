@@ -1014,6 +1014,13 @@ func rpcSetLocalLoopbackOnly(enabled bool) error {
 // See docs/superpowers/specs/2026-04-08-paste-pipeline-flow-control-design.md.
 const macroQueueDepth = 64
 
+// pasteInterMacroDrainMs is the inter-macro pause inside drainMacroQueue that
+// gives the host USB input queue time to consume pending reports between
+// consecutive macros. PR #41 load-bearing fix — do not retune without a
+// dedicated profiling PR. Phase 2 (#38) adds chunk-boundary pauses on top
+// of this delay, not instead of it.
+const pasteInterMacroDrainMs = 200 * time.Millisecond
+
 // queuedMacro wraps a macro batch with its paste flag and origin session so
 // drainMacroQueue and cancelAndDrainMacroQueue can report state messages back
 // to the session that enqueued the paste, not whichever global currentSession
@@ -1135,7 +1142,7 @@ func drainMacroQueue() {
 		// buffered HID reports before the next macro arrives. Without this,
 		// back-to-back macros overflow the host's USB input queue, causing
 		// character corruption on busy systems.
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(pasteInterMacroDrainMs)
 	}
 }
 
