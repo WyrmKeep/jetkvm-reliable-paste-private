@@ -97,6 +97,24 @@ function assertProfilesReachable(
   profiles: Record<string, PasteProfile>,
 ): void {
   for (const [name, p] of Object.entries(profiles)) {
+    if (!Number.isFinite(p.maxStepsPerBatch) || p.maxStepsPerBatch <= 0) {
+      throw new Error(
+        `PASTE_PROFILES["${name}"]: maxStepsPerBatch must be a positive finite number ` +
+        `(got ${p.maxStepsPerBatch})`,
+      );
+    }
+    if (!Number.isFinite(p.maxBytesPerBatch) || p.maxBytesPerBatch <= 0) {
+      throw new Error(
+        `PASTE_PROFILES["${name}"]: maxBytesPerBatch must be a positive finite number ` +
+        `(got ${p.maxBytesPerBatch})`,
+      );
+    }
+    if (!Number.isFinite(p.keyDelayMs)) {
+      throw new Error(
+        `PASTE_PROFILES["${name}"]: keyDelayMs must be a finite number ` +
+        `(got ${p.keyDelayMs})`,
+      );
+    }
     const bytesAtCap = estimateBatchBytes(p.maxStepsPerBatch);
     if (bytesAtCap > p.maxBytesPerBatch) {
       throw new Error(
@@ -162,7 +180,7 @@ The derived wire-byte counts (2310 for reliable, 4614 for fast) are under 30% of
 
 ### Invariant I-7 — no change to batch-flush logic in `buildPasteMacroBatches`
 
-`pasteMacro.ts:156` still flushes on `projectedStepCount > maxStepsPerBatch || projectedBytes > maxBytesPerBatch`. With the derived byte cap, the second clause becomes structurally unreachable in steady state, which simplifies reasoning but does not change the code. The OR clause is retained as defense-in-depth.
+`pasteMacro.ts:156` still flushes on `projectedStepCount > maxStepsPerBatch || projectedBytes > maxBytesPerBatch`. With the derived byte cap, the byte clause is no longer independently binding at or below `maxStepsPerBatch`; it may still fire in the same iteration as the step clause when a projected batch would overflow the declared step cap (because `estimateBatchBytes(maxStepsPerBatch + 1) > maxBytesPerBatch` when `HEADROOM_BYTES < 18`). The OR clause is retained as defense-in-depth and as a safety net if `estimateBatchBytes` ever grows a variable per-step contribution.
 
 ### Invariant I-8 — Phase 1 paste-depth and Phase 2 chunk-aware invariants remain intact
 
@@ -194,7 +212,7 @@ Maps directly to the issue body:
 
 - [ ] **`fast` produces measurably more steps per batch than `reliable` in a 10k-char test** — satisfied by `fast.maxStepsPerBatch=256` vs `reliable.maxStepsPerBatch=128`. Verified numerically: with a 10k-char paste, reliable produces ~79 batches (10000 / 128 rounded up) and fast produces ~40 batches (10000 / 256 rounded up).
 - [ ] **Profile definitions use derived byte limits (not hardcoded magic numbers)** — satisfied by `deriveProfile(steps, keyDelayMs)` helper which computes `maxBytesPerBatch` from `estimateBatchBytes(steps) + HEADROOM_BYTES`.
-- [ ] **Unit test or CI script catches unreachable step caps** — satisfied by `assertProfilesReachable`, a runtime assertion that fires at module load in both dev and production builds. Alternative per the issue ("one-shot verification script in `ui/scripts/`") is explicitly rejected in favor of the runtime assertion, which catches regressions earlier and does not require `package.json` changes.
+- [ ] **Unit test or CI script catches unreachable step caps** — **partially satisfied.** `assertProfilesReachable` provides runtime fail-fast protection at module load (dev server boot, production bundle evaluation, HMR reload) and rejects non-finite, non-positive, or unreachable profile configs. However, it does **not** satisfy issue #40's literal "unit test or CI script" requirement because Phase 3a's verification path (`tsc --noEmit` + `eslint`) does not execute module code, so the assertion is not invoked during CI. Automated CI regression coverage is deferred to Phase 5 (vitest harness, issue #45), which will add a unit test that imports `PASTE_PROFILES` and exercises the assertion. Phase 3a therefore fixes the profile math and adds fail-fast runtime coverage; the "automated CI gate" portion of AC3 is explicitly deferred.
 - [ ] **No wire-format size exceeds known WebRTC SCTP safe limits in either profile** — satisfied by the 14 % / 28 % share of the 16 KiB cross-browser floor documented in Section 4.2.
 
 ## 8. Verification commands
@@ -217,11 +235,11 @@ go build ./... && go vet ./...
 
 Expected: unchanged from pre-patch (this phase touches zero Go files).
 
-Runtime verification:
+Runtime verification (reproducibility note: the `PasteModal` delay path reads `debugMode ? delay : profile.keyDelayMs`, so meaningful timing comparisons require debug mode OFF; the batch-count math below also assumes a one-wire-step-per-character corpus, which is true for plain ASCII but NOT for decomposed Unicode or dead keys that may expand into multiple MacroSteps):
 
-1. Boot the dev server (`cd ui && npm run dev`) and confirm `pasteBatches.ts` imports without the assertion firing
-2. Paste a 10k-char test string in fast mode and confirm it completes faster than the same string in reliable mode
-3. Verify in browser devtools that fast mode produces roughly half the number of `buildPasteMacroBatches`-emitted batches vs reliable for the same paste size
+1. Boot the dev server (`cd ui && npm run dev`) and confirm `pasteBatches.ts` imports without `assertProfilesReachable` firing
+2. With **debug mode OFF**, paste a corpus of 10,000 ASCII `a` characters. Confirm fast completes sooner than reliable on the same corpus.
+3. In browser devtools, confirm the batch counts emitted by `buildPasteMacroBatches`: reliable should produce ~79 batches (10000 / 128 rounded up) and fast should produce ~40 batches (10000 / 256 rounded up). The fast batch count must be strictly smaller than the reliable batch count.
 
 ## 9. Rollback
 

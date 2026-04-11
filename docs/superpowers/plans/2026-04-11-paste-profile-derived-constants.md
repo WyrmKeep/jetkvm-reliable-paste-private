@@ -71,6 +71,24 @@ function assertProfilesReachable(
   profiles: Record<string, PasteProfile>,
 ): void {
   for (const [name, p] of Object.entries(profiles)) {
+    if (!Number.isFinite(p.maxStepsPerBatch) || p.maxStepsPerBatch <= 0) {
+      throw new Error(
+        `PASTE_PROFILES["${name}"]: maxStepsPerBatch must be a positive finite number ` +
+          `(got ${p.maxStepsPerBatch})`,
+      );
+    }
+    if (!Number.isFinite(p.maxBytesPerBatch) || p.maxBytesPerBatch <= 0) {
+      throw new Error(
+        `PASTE_PROFILES["${name}"]: maxBytesPerBatch must be a positive finite number ` +
+          `(got ${p.maxBytesPerBatch})`,
+      );
+    }
+    if (!Number.isFinite(p.keyDelayMs)) {
+      throw new Error(
+        `PASTE_PROFILES["${name}"]: keyDelayMs must be a finite number ` +
+          `(got ${p.keyDelayMs})`,
+      );
+    }
     const bytesAtCap = estimateBatchBytes(p.maxStepsPerBatch);
     if (bytesAtCap > p.maxBytesPerBatch) {
       throw new Error(
