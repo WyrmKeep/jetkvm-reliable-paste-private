@@ -45,8 +45,8 @@ const MACRO_RESET_KEYBOARD_STATE = {
 // correctness-level guard is this flag.
 //
 // `pasteStateSupportObserved` tracks whether the device this session is
-// connected to has EVER emitted a KeyboardMacroStateMessage with IsPaste
-// true (set in the useHidRpc onMessage handler below).
+// connected to has EVER emitted an active KeyboardMacroStateMessage with
+// IsPaste true (set in the useHidRpc onMessage handler below).
 //
 // `pasteStateSupportNegativeLatched` tracks the opposite result: this JS
 // session tried the first-chunk paste-state probe and no start event arrived
@@ -174,7 +174,9 @@ async function waitForPasteDrain(
       done = true;
       cleanup();
       // Observed drain → host USB settle delay before the caller resumes.
-      setTimeout(resolve, settleMs);
+      // Keep the settle tail abort-aware even after the drain subscription
+      // has been cleaned up.
+      abortableSleep(settleMs, signal).then(resolve, reject);
     };
 
     const resolveImmediate = () => {
@@ -381,15 +383,19 @@ export default function useKeyboard() {
       case KeyboardLedStateMessage:
         setKeyboardLedState((message as KeyboardLedStateMessage).keyboardLedState);
         break;
-      case KeyboardMacroStateMessage:
-        if (!(message as KeyboardMacroStateMessage).isPaste) break;
+      case KeyboardMacroStateMessage: {
+        const macroState = message as KeyboardMacroStateMessage;
+        if (!macroState.isPaste) break;
         // Latch paste-state support the first time we observe a real
-        // paste-state event. Positive evidence clears any earlier
+        // paste-state start event. Positive evidence clears any earlier
         // probe-timeout result from this JS session.
-        pasteStateSupportObserved = true;
-        pasteStateSupportNegativeLatched = false;
-        setPasteModeEnabled((message as KeyboardMacroStateMessage).state);
+        if (macroState.state) {
+          pasteStateSupportObserved = true;
+          pasteStateSupportNegativeLatched = false;
+        }
+        setPasteModeEnabled(macroState.state);
         break;
+      }
       default:
         break;
     }
@@ -768,35 +774,35 @@ export default function useKeyboard() {
         channel.addEventListener("bufferedamountlow", onLow);
         signal?.addEventListener("abort", onBufferedDrainAbort);
 
-        // Phase 3c chunk policy. Chunk mode is automatic above the threshold
-        // on RPC HID unless this JS session has already probed and found no
-        // paste-state support. A fresh modern session no longer needs a prior
-        // non-chunk paste to arm the positive latch.
-        // Legacy/client-side execution is still excluded by rpcHidReady. Older
-        // RPC HID firmware gets one short first-chunk probe; if no paste-state
-        // start arrives, the negative latch sends this paste remainder and
-        // later large pastes through the existing non-chunk path.
-        const policy = DEFAULT_LARGE_PASTE_POLICY;
-        let chunkMode =
-          rpcHidReady &&
-          !pasteStateSupportNegativeLatched &&
-          text.length >= policy.autoThresholdChars;
-        let chunks: PasteChunkPlan[] = chunkMode
-          ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
-          : [
-              {
-                chunkIndex: 0,
-                batchStartIndex: 0,
-                batchEndIndex: batches.length,
-                sourceChars: text.length,
-              },
-            ];
-        let chunkTotalForProgress = chunkMode ? chunks.length : 0;
-        let pasteStateSupportProvenForPaste = pasteStateSupportObserved;
-        let pasteStartProbeOutcome: Promise<{ supported: boolean } | { error: Error }> | null =
-          null;
-
         try {
+          // Phase 3c chunk policy. Chunk mode is automatic above the threshold
+          // on RPC HID unless this JS session has already probed and found no
+          // paste-state support. A fresh modern session no longer needs a prior
+          // non-chunk paste to arm the positive latch.
+          // Legacy/client-side execution is still excluded by rpcHidReady. Older
+          // RPC HID firmware gets one short first-chunk probe; if no paste-state
+          // start arrives, the negative latch sends this paste remainder and
+          // later large pastes through the existing non-chunk path.
+          const policy = DEFAULT_LARGE_PASTE_POLICY;
+          let chunkMode =
+            rpcHidReady &&
+            !pasteStateSupportNegativeLatched &&
+            text.length >= policy.autoThresholdChars;
+          let chunks: PasteChunkPlan[] = chunkMode
+            ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
+            : [
+                {
+                  chunkIndex: 0,
+                  batchStartIndex: 0,
+                  batchEndIndex: batches.length,
+                  sourceChars: text.length,
+                },
+              ];
+          let chunkTotalForProgress = chunkMode ? chunks.length : 0;
+          let pasteStateSupportProvenForPaste = pasteStateSupportObserved;
+          let pasteStartProbeOutcome: Promise<{ supported: boolean } | { error: Error }> | null =
+            null;
+
           for (let ci = 0; ci < chunks.length; ci++) {
             const chunk = chunks[ci];
             for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
