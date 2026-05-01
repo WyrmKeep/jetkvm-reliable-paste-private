@@ -34,7 +34,7 @@ const MACRO_RESET_KEYBOARD_STATE = {
 
 // Module-level guards for the Phase 2 chunk-aware paste path.
 //
-// `executePasteTextInFlight` is the correctness guard against concurrent
+// `executePasteTextInFlightChannel` is the correctness guard against concurrent
 // executePasteText invocations on the same WebRTC channel. It lives at
 // module scope (not inside useKeyboard or PasteModal) so that even if
 // PasteModal unmounts and remounts between chunks — e.g., when
@@ -55,21 +55,45 @@ const MACRO_RESET_KEYBOARD_STATE = {
 // alone is not a reliable indicator of paste-state support. The negative
 // latch keeps those devices on the safe non-chunk path after they pay the
 // probe cost once per browser session.
-let executePasteTextInFlight = false;
-let pasteStateSupportObserved = false;
+let executePasteTextInFlightChannel: RTCDataChannel | null = null;
 let pasteStateSupportChannel: RTCDataChannel | null = null;
+let pasteStateSupportObserved = false;
 let pasteStateSupportNegativeLatched = false;
 let pasteFailureSequence = 0;
 
-function syncPasteStateSupportChannel(channel: RTCDataChannel | null): boolean {
-  if (pasteStateSupportChannel === channel) {
-    return pasteStateSupportObserved;
-  }
+function syncPasteStateSupportChannel(channel: RTCDataChannel): boolean {
+  if (pasteStateSupportChannel === channel) return false;
   pasteStateSupportChannel = channel;
   pasteStateSupportObserved = false;
   pasteStateSupportNegativeLatched = false;
-  useHidStore.getState().setPasteModeEnabled(false);
-  return false;
+  return true;
+}
+
+function isPasteStateSupportObservedForChannel(channel: RTCDataChannel): boolean {
+  return pasteStateSupportChannel === channel && pasteStateSupportObserved;
+}
+
+function isPasteStateSupportNegativeLatchedForChannel(channel: RTCDataChannel): boolean {
+  return pasteStateSupportChannel === channel && pasteStateSupportNegativeLatched;
+}
+
+function markPasteStateSupportObserved(channel: RTCDataChannel) {
+  if (pasteStateSupportChannel !== channel) return;
+  pasteStateSupportObserved = true;
+  pasteStateSupportNegativeLatched = false;
+}
+
+function markPasteStateSupportNegative(channel: RTCDataChannel) {
+  if (pasteStateSupportChannel !== channel) return;
+  if (!pasteStateSupportObserved) {
+    pasteStateSupportNegativeLatched = true;
+  }
+}
+
+function ensurePasteExecutionChannelCurrent(channel: RTCDataChannel) {
+  if (executePasteTextInFlightChannel !== channel) {
+    throw new Error("Paste data channel changed");
+  }
 }
 
 export interface MacroStep {
@@ -326,11 +350,6 @@ async function waitForPasteStartProbe(timeoutMs: number, signal?: AbortSignal): 
       }
     });
 
-    if (useHidStore.getState().isPasteInProgress) {
-      resolveValue(true);
-      return;
-    }
-
     if (signal?.aborted) {
       rejectErr(new Error("Paste execution aborted"));
       return;
@@ -423,12 +442,13 @@ export default function useKeyboard() {
         // paste-state start event. Positive evidence clears any earlier
         // probe-timeout result from this JS session.
         if (macroState.state) {
-          pasteStateSupportObserved = true;
-          pasteStateSupportNegativeLatched = false;
-        } else if (macroState.failed) {
+          markPasteStateSupportObserved(sourceChannel);
+        } else if (pasteStateSupportChannel === sourceChannel && macroState.failed) {
           pasteFailureSequence++;
         }
-        setPasteModeEnabled(macroState.state);
+        if (pasteStateSupportChannel === sourceChannel) {
+          setPasteModeEnabled(macroState.state);
+        }
         break;
       }
       default:
@@ -730,13 +750,17 @@ export default function useKeyboard() {
       // Module-level concurrency guard. PasteModal also has a local
       // in-flight guard for UI responsiveness, but that guard dies
       // when the popover unmounts (e.g., click-outside dismissal during
-      // a chunk boundary). This flag survives component remounts and
+      // a chunk boundary). This channel identity survives component remounts and
       // is the correctness-level guard against interleaved pastes on
       // the same data channel.
-      if (executePasteTextInFlight) {
+      const channel = rpcHidChannel;
+      if (executePasteTextInFlightChannel !== null && executePasteTextInFlightChannel !== channel) {
+        executePasteTextInFlightChannel = null;
+      }
+      if (executePasteTextInFlightChannel !== null) {
         throw new Error("A paste is already in progress");
       }
-      executePasteTextInFlight = true;
+      executePasteTextInFlightChannel = channel;
       try {
         const {
           keyboard,
@@ -767,11 +791,12 @@ export default function useKeyboard() {
         const PASTE_LOW_WATERMARK = 64 * 1024;
         const PASTE_HIGH_WATERMARK = 256 * 1024;
 
-        const channel = rpcHidChannel;
         if (!channel || channel.readyState !== "open") {
           throw new Error("HID data channel not available");
         }
-        const pasteStateSupportedForChannel = syncPasteStateSupportChannel(channel);
+        if (syncPasteStateSupportChannel(channel)) {
+          setPasteModeEnabled(false);
+        }
 
         // Save and set bufferedAmount threshold for paste flow control
         const prevThreshold = channel.bufferedAmountLowThreshold;
@@ -824,7 +849,7 @@ export default function useKeyboard() {
           const policy = DEFAULT_LARGE_PASTE_POLICY;
           let chunkMode =
             rpcHidReady &&
-            !pasteStateSupportNegativeLatched &&
+            !isPasteStateSupportNegativeLatchedForChannel(channel) &&
             text.length >= policy.autoThresholdChars;
           let chunks: PasteChunkPlan[] = chunkMode
             ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
@@ -837,7 +862,7 @@ export default function useKeyboard() {
                 },
               ];
           let chunkTotalForProgress = chunkMode ? chunks.length : 0;
-          let pasteStateSupportProvenForPaste = pasteStateSupportedForChannel;
+          let pasteStateSupportProvenForPaste = isPasteStateSupportObservedForChannel(channel);
           let pasteStartProbeOutcome: Promise<{ supported: boolean } | { error: Error }> | null =
             null;
 
@@ -862,6 +887,7 @@ export default function useKeyboard() {
 
               const batch = batches[b];
               await executePasteMacro(batch);
+              ensurePasteExecutionChannelCurrent(channel);
 
               onTrace?.({
                 kind: "batch",
@@ -882,6 +908,7 @@ export default function useKeyboard() {
 
               if (pasteStartProbeOutcome !== null && !pasteStateSupportProvenForPaste) {
                 const probeResult = await pasteStartProbeOutcome;
+                ensurePasteExecutionChannelCurrent(channel);
                 pasteStartProbeOutcome = null;
                 if ("error" in probeResult) {
                   throw probeResult.error;
@@ -889,9 +916,7 @@ export default function useKeyboard() {
                 if (probeResult.supported) {
                   pasteStateSupportProvenForPaste = true;
                 } else {
-                  if (!pasteStateSupportObserved) {
-                    pasteStateSupportNegativeLatched = true;
-                  }
+                  markPasteStateSupportNegative(channel);
                   chunkMode = false;
                   chunkTotalForProgress = 0;
 
@@ -922,6 +947,7 @@ export default function useKeyboard() {
               // pending promise immediately via onBufferedDrainAbort.
               if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) {
                 await waitForChannelDrain();
+                ensurePasteExecutionChannelCurrent(channel);
               }
             }
 
@@ -1027,6 +1053,7 @@ export default function useKeyboard() {
                   pasteFailureBaseline,
                 );
               }
+              ensurePasteExecutionChannelCurrent(channel);
               onTrace?.({
                 kind: "chunk-drained",
                 chunkIndex: chunk.chunkIndex + 1,
@@ -1051,6 +1078,7 @@ export default function useKeyboard() {
                   pauseMs: policy.chunkPauseMs,
                 });
                 await abortableSleep(policy.chunkPauseMs, signal);
+                ensurePasteExecutionChannelCurrent(channel);
               }
             }
           }
@@ -1076,18 +1104,22 @@ export default function useKeyboard() {
             undefined,
             undefined,
             pasteFailureBaseline,
-            !(rpcHidReady && !chunkMode && batches.length > 0) || pasteStateSupportNegativeLatched,
+            !(rpcHidReady && !chunkMode && batches.length > 0) ||
+              isPasteStateSupportNegativeLatchedForChannel(channel),
           );
+          ensurePasteExecutionChannelCurrent(channel);
         } finally {
           channel.removeEventListener("bufferedamountlow", onLow);
           signal?.removeEventListener("abort", onBufferedDrainAbort);
           channel.bufferedAmountLowThreshold = prevThreshold;
         }
       } finally {
-        executePasteTextInFlight = false;
+        if (executePasteTextInFlightChannel === channel) {
+          executePasteTextInFlightChannel = null;
+        }
       }
     },
-    [executePasteMacro, rpcHidChannel, rpcHidReady],
+    [executePasteMacro, rpcHidChannel, rpcHidReady, setPasteModeEnabled],
   );
 
   const cancelExecuteMacro = useCallback(async () => {
