@@ -314,6 +314,41 @@ func (u *UsbGadget) OpenKeyboardHidFile() error {
 
 var keyboardWriteHidFileLock sync.Mutex
 
+const keyboardReportBufferSize = 2 + hidKeyBufferSize
+
+// KeyboardHidReport is one fully padded USB HID keyboard report plus the delay
+// that must elapse after the report is written.
+type KeyboardHidReport struct {
+	Modifier   byte
+	Keys       [hidKeyBufferSize]byte
+	DelayAfter time.Duration
+}
+
+// NewKeyboardHidReport pads or truncates keys to the HID keyboard report size.
+func NewKeyboardHidReport(modifier byte, keys []byte, delayAfter time.Duration) KeyboardHidReport {
+	report := KeyboardHidReport{
+		Modifier:   modifier,
+		DelayAfter: delayAfter,
+	}
+	copy(report.Keys[:], keys)
+	return report
+}
+
+// KeyboardSequencePartialWriteError reports how many HID reports reached the
+// host before a sequence write failed.
+type KeyboardSequencePartialWriteError struct {
+	Completed int
+	Err       error
+}
+
+func (e *KeyboardSequencePartialWriteError) Error() string {
+	return fmt.Sprintf("keyboard HID sequence failed after %d completed writes: %v", e.Completed, e.Err)
+}
+
+func (e *KeyboardSequencePartialWriteError) Unwrap() error {
+	return e.Err
+}
+
 func (u *UsbGadget) keyboardWriteHidFile(modifier byte, keys []byte) error {
 	keyboardWriteHidFileLock.Lock()
 	defer keyboardWriteHidFileLock.Unlock()
@@ -329,6 +364,125 @@ func (u *UsbGadget) keyboardWriteHidFile(modifier byte, keys []byte) error {
 		return err
 	}
 	u.resetLogSuppressionCounter("keyboardWriteHidFile")
+	return nil
+}
+
+func (u *UsbGadget) keyboardWriteHidReportToOpenFileLocked(report KeyboardHidReport, buf *[keyboardReportBufferSize]byte) error {
+	buf[0] = report.Modifier
+	buf[1] = 0x00
+	copy(buf[2:], report.Keys[:])
+	_, err := u.writeWithTimeout(u.keyboardHidFile, buf[:])
+	if err != nil {
+		u.logWithSuppression("keyboardWriteHidFile", 100, u.log, err, "failed to write to hidg0")
+		u.keyboardHidFile.Close()
+		u.keyboardHidFile = nil
+		return err
+	}
+	u.resetLogSuppressionCounter("keyboardWriteHidFile")
+	return nil
+}
+
+func isClearKeyboardHidReport(report KeyboardHidReport) bool {
+	if report.Modifier != 0 {
+		return false
+	}
+	for _, key := range report.Keys {
+		if key != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (u *UsbGadget) clearKeyboardHidReportLocked(buf *[keyboardReportBufferSize]byte) {
+	clearReport := NewKeyboardHidReport(0, nil, 0)
+	err := u.keyboardWriteHidReportToOpenFileLocked(clearReport, buf)
+	u.RecordWriteResult(err)
+	if err != nil {
+		u.log.Warn().Err(err).Msg("failed to reset keyboard state during sequence cancellation")
+		return
+	}
+	u.UpdateKeysDown(clearReport.Modifier, clearReport.Keys[:])
+	u.resetUserInputTime()
+}
+
+// KeyboardHidReportSequence writes a paste macro as one timed sequence. It
+// preserves per-report delays while holding the write lock across the sequence,
+// preventing other keyboard reports from interleaving mid-paste.
+func (u *UsbGadget) KeyboardHidReportSequence(ctx context.Context, reports []KeyboardHidReport) error {
+	defer u.resetUserInputTime()
+	if len(reports) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	keyboardWriteHidFileLock.Lock()
+	defer keyboardWriteHidFileLock.Unlock()
+
+	var buf [keyboardReportBufferSize]byte
+	if err := u.openKeyboardHidFile(); err != nil {
+		u.RecordWriteResult(err)
+		return err
+	}
+
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	defer timer.Stop()
+
+	wroteReport := false
+	lastReportClear := true
+	for i, report := range reports {
+		if err := ctx.Err(); err != nil {
+			if wroteReport && !lastReportClear {
+				u.clearKeyboardHidReportLocked(&buf)
+			}
+			return err
+		}
+
+		err := u.keyboardWriteHidReportToOpenFileLocked(report, &buf)
+		u.RecordWriteResult(err)
+		if err != nil {
+			u.log.Warn().
+				Uint8("modifier", report.Modifier).
+				Uints8("keys", report.Keys[:]).
+				Msg("Could not write keyboard report sequence item to hidg0")
+			return &KeyboardSequencePartialWriteError{Completed: i, Err: err}
+		}
+
+		u.UpdateKeysDown(report.Modifier, report.Keys[:])
+		u.resetUserInputTime()
+		wroteReport = true
+		lastReportClear = isClearKeyboardHidReport(report)
+
+		if report.DelayAfter <= 0 {
+			continue
+		}
+
+		timer.Reset(report.DelayAfter)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+
+			if !lastReportClear {
+				u.clearKeyboardHidReportLocked(&buf)
+			}
+			return ctx.Err()
+		}
+	}
+
 	return nil
 }
 
