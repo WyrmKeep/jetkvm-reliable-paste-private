@@ -477,10 +477,13 @@ func handleSessionRequest(
 	cloudLogger.Info().Interface("session", session).Msg("new session accepted")
 	cloudLogger.Trace().Interface("session", session).Msg("new session accepted")
 
-	// Cancel any ongoing keyboard macro when session changes
+	currentSession = session
+
+	// Cancel any ongoing keyboard macro when session changes. Assigning the
+	// new current session first makes late HID messages from the old page stale
+	// immediately while queuedMacro.session still routes final paste-state emits.
 	cancelAndDrainMacroQueue()
 
-	currentSession = session
 	_ = wsjson.Write(context.Background(), c, gin.H{"type": "answer", "data": sd})
 	return nil
 }

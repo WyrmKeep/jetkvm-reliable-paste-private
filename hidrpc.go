@@ -36,7 +36,7 @@ func handleHidRPCMessage(message hidrpc.Message, session *Session) {
 		}
 		rpcErr = rpcExecuteKeyboardMacro(session, keyboardMacroReport.Steps, keyboardMacroReport.IsPaste)
 	case hidrpc.TypeCancelKeyboardMacroReport:
-		rpcCancelKeyboardMacro()
+		rpcCancelKeyboardMacro(session)
 		return
 	case hidrpc.TypeKeypressKeepAliveReport:
 		rpcErr = handleHidRPCKeypressKeepAlive(session)

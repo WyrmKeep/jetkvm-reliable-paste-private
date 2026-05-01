@@ -59,7 +59,7 @@ const MACRO_RESET_KEYBOARD_STATE = {
 // pastes — chunkable or not — will observe the flag having flipped
 // true during the first paste's drain messages and use chunk mode if
 // the device supports it.
-let executePasteTextInFlight = false;
+let executePasteTextInFlightChannel: RTCDataChannel | null = null;
 let pasteStateSupportObserved = false;
 let pasteStateSupportChannel: RTCDataChannel | null = null;
 let pasteFailureSequence = 0;
@@ -72,6 +72,16 @@ function syncPasteStateSupportChannel(channel: RTCDataChannel | null): boolean {
   pasteStateSupportObserved = false;
   useHidStore.getState().setPasteModeEnabled(false);
   return false;
+}
+
+function ensurePasteExecutionChannelCurrent(channel: RTCDataChannel): void {
+  if (
+    executePasteTextInFlightChannel !== channel ||
+    useRTCStore.getState().rpcHidChannel !== channel ||
+    channel.readyState !== "open"
+  ) {
+    throw new Error("Paste HID data channel changed");
+  }
 }
 
 export interface MacroStep {
@@ -665,28 +675,33 @@ export default function useKeyboard() {
 
   const executePasteText = useCallback(
     async (text: string, options: ExecutePasteTextOptions) => {
+      const {
+        keyboard,
+        delayMs,
+        maxStepsPerBatch,
+        maxBytesPerBatch,
+        finalSettleMs,
+        signal,
+        onProgress,
+        onTrace,
+      } = options;
+
+      const channel = rpcHidChannel;
+      if (!channel || channel.readyState !== "open") {
+        throw new Error("HID data channel not available");
+      }
+
       // Module-level concurrency guard. PasteModal also has a local
       // in-flight guard for UI responsiveness, but that guard dies
       // when the popover unmounts (e.g., click-outside dismissal during
-      // a chunk boundary). This flag survives component remounts and
-      // is the correctness-level guard against interleaved pastes on
-      // the same data channel.
-      if (executePasteTextInFlight) {
+      // a chunk boundary). This channel identity survives component
+      // remounts and prevents an old async paste loop from continuing
+      // after the HID channel is replaced by refresh/reconnect.
+      if (executePasteTextInFlightChannel === channel) {
         throw new Error("A paste is already in progress");
       }
-      executePasteTextInFlight = true;
+      executePasteTextInFlightChannel = channel;
       try {
-        const {
-          keyboard,
-          delayMs,
-          maxStepsPerBatch,
-          maxBytesPerBatch,
-          finalSettleMs,
-          signal,
-          onProgress,
-          onTrace,
-        } = options;
-
         const { batches, invalidChars, batchStats } = buildPasteMacroBatches(
           text,
           keyboard,
@@ -705,10 +720,6 @@ export default function useKeyboard() {
         const PASTE_LOW_WATERMARK = 64 * 1024;
         const PASTE_HIGH_WATERMARK = 256 * 1024;
 
-        const channel = rpcHidChannel;
-        if (!channel || channel.readyState !== "open") {
-          throw new Error("HID data channel not available");
-        }
         const pasteStateSupportedForChannel = syncPasteStateSupportChannel(channel);
 
         // Save and set bufferedAmount threshold for paste flow control
@@ -802,8 +813,10 @@ export default function useKeyboard() {
                 throw new Error("Paste execution aborted");
               }
 
+              ensurePasteExecutionChannelCurrent(channel);
               const batch = batches[b];
               await executePasteMacro(batch);
+              ensurePasteExecutionChannelCurrent(channel);
 
               onTrace?.({
                 kind: "batch",
@@ -827,6 +840,7 @@ export default function useKeyboard() {
               // pending promise immediately via onBufferedDrainAbort.
               if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) {
                 await waitForChannelDrain();
+                ensurePasteExecutionChannelCurrent(channel);
               }
             }
 
@@ -932,6 +946,7 @@ export default function useKeyboard() {
                   pasteFailureBaseline,
                 );
               }
+              ensurePasteExecutionChannelCurrent(channel);
               onTrace?.({
                 kind: "chunk-drained",
                 chunkIndex: chunk.chunkIndex + 1,
@@ -956,6 +971,7 @@ export default function useKeyboard() {
                   pauseMs: policy.chunkPauseMs,
                 });
                 await abortableSleep(policy.chunkPauseMs, signal);
+                ensurePasteExecutionChannelCurrent(channel);
               }
             }
           }
@@ -983,13 +999,16 @@ export default function useKeyboard() {
             pasteFailureBaseline,
             !(rpcHidReady && !chunkMode && batches.length > 0),
           );
+          ensurePasteExecutionChannelCurrent(channel);
         } finally {
           channel.removeEventListener("bufferedamountlow", onLow);
           signal?.removeEventListener("abort", onBufferedDrainAbort);
           channel.bufferedAmountLowThreshold = prevThreshold;
         }
       } finally {
-        executePasteTextInFlight = false;
+        if (executePasteTextInFlightChannel === channel) {
+          executePasteTextInFlightChannel = null;
+        }
       }
     },
     [executePasteMacro, rpcHidChannel, rpcHidReady],
