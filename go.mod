@@ -8,7 +8,7 @@ require (
 	github.com/beevik/ntp v1.5.0
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/coder/websocket v1.8.14
-	github.com/coreos/go-oidc/v3 v3.16.0
+	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/creack/pty v1.1.24
 	github.com/erikdubbelboer/gspt v0.0.0-20210805194459-ce36a5128377
 	github.com/fsnotify/fsnotify v1.9.0
