@@ -14,7 +14,7 @@ func readRepoFile(t *testing.T, parts ...string) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	return string(data)
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
 }
 
 func requireContains(t *testing.T, source string, want string) {
