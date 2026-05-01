@@ -244,10 +244,13 @@ func handleWebRTCSession(c *gin.Context) {
 		}()
 	}
 
-	// Cancel any ongoing keyboard macro when session changes
+	currentSession = session
+
+	// Cancel any ongoing keyboard macro when session changes. Assigning the
+	// new current session first makes late HID messages from the old page stale
+	// immediately while queuedMacro.session still routes final paste-state emits.
 	cancelAndDrainMacroQueue()
 
-	currentSession = session
 	c.JSON(http.StatusOK, gin.H{"sd": sd})
 }
 

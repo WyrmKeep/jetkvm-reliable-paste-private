@@ -1,34 +1,14 @@
 package regression
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-)
-
-func readRepoFile(t *testing.T, parts ...string) string {
-	t.Helper()
-	path := filepath.Join(append([]string{"..", ".."}, parts...)...)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return strings.ReplaceAll(string(data), "\r\n", "\n")
-}
-
-func requireContains(t *testing.T, source string, want string) {
-	t.Helper()
-	if !strings.Contains(source, want) {
-		t.Fatalf("expected source to contain:\n%s", want)
-	}
-}
+import "testing"
 
 func TestPasteFailureStateIsReportedOnFinalPasteEdge(t *testing.T) {
 	source := readRepoFile(t, "jsonrpc.go")
 
 	requireContains(t, source, "pasteFailures atomic.Int32")
-	requireContains(t, source, "if item.isPaste && !errors.Is(err, context.Canceled) {\n\t\t\t\tpasteFailures.Add(1)\n\t\t\t}")
+	requireContains(t, source, "if item.isPaste {\n\t\t\t\tif errors.Is(err, context.Canceled) {")
+	requireContains(t, source, "forceKeyboardAllKeysUp(\"canceled paste macro\")")
+	requireContains(t, source, "} else {\n\t\t\t\t\tpasteFailures.Add(1)\n\t\t\t\t}")
 	requireContains(t, source, "emitPasteState(item.session, false, pasteFailures.Swap(0) > 0)")
 	requireContains(t, source, "emitPasteState(lastPasteSession, false, pasteFailures.Swap(0) > 0)")
 	requireContains(t, source, "pasteFailures.Store(0)")

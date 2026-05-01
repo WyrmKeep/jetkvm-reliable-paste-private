@@ -1104,6 +1104,22 @@ func emitPasteState(session *Session, state bool, failed bool) {
 	})
 }
 
+func forceKeyboardAllKeysUp(reason string) {
+	if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
+		logger.Warn().Err(err).Str("reason", reason).Msg("failed to force keyboard all-keys-up")
+		return
+	}
+	logger.Debug().Str("reason", reason).Msg("forced keyboard all-keys-up")
+}
+
+func isStalePasteSession(session *Session) bool {
+	return session != nil && session != currentSession
+}
+
+func isStaleQueuedMacro(item queuedMacro) bool {
+	return item.isPaste && isStalePasteSession(item.session)
+}
+
 // drainMacroQueue is the sole consumer of macroQueue. It executes each macro
 // sequentially. Paste-session state transitions (State:true / State:false) are
 // emitted on atomic pasteDepth 0↔1 edges, not per macro — see rpcExecuteKeyboardMacro
@@ -1117,6 +1133,22 @@ func drainMacroQueue() {
 			Bool("is_paste", item.isPaste).
 			Msg("executing queued keyboard macro")
 
+		if isStaleQueuedMacro(item) {
+			logger.Warn().
+				Uint64("macro_id", macroID).
+				Bool("is_paste", item.isPaste).
+				Msg("discarding stale-session queued keyboard macro")
+			if item.isPaste {
+				forceKeyboardAllKeysUp("stale paste macro discard")
+				if pasteDepth.Add(-1) == 0 {
+					logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (stale discard)")
+					emitPasteState(item.session, false, pasteFailures.Swap(0) > 0)
+				}
+			}
+			time.Sleep(pasteInterMacroDrain)
+			continue
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 
 		macroLock.Lock()
@@ -1126,8 +1158,12 @@ func drainMacroQueue() {
 		err := rpcDoExecuteKeyboardMacro(ctx, item.steps)
 		if err != nil {
 			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
-			if item.isPaste && !errors.Is(err, context.Canceled) {
-				pasteFailures.Add(1)
+			if item.isPaste {
+				if errors.Is(err, context.Canceled) {
+					forceKeyboardAllKeysUp("canceled paste macro")
+				} else {
+					pasteFailures.Add(1)
+				}
 			}
 		} else {
 			logger.Info().Uint64("macro_id", macroID).Msg("queued keyboard macro completed")
@@ -1186,6 +1222,8 @@ func cancelAndDrainMacroQueue() {
 	}
 	macroLock.Unlock()
 
+	forceKeyboardAllKeysUp("macro queue cancel")
+
 	// Step 3: Sweep any remaining items out of the channel without running them.
 	// Track the session of the last paste item we saw so that if our sweep closes
 	// the paste session (1→0), we emit State:false to the right session.
@@ -1231,6 +1269,11 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// Ensure queue is started (idempotent)
 	startMacroQueue()
 
+	if isPaste && isStalePasteSession(session) {
+		logger.Warn().Uint64("macro_id", macroID).Msg("rejecting stale-session paste macro")
+		return context.Canceled
+	}
+
 	// Snapshot the current enqueue cancellation context. If
 	// cancelAndDrainMacroQueue rotates the context while we're blocked on
 	// send, the snapshot we hold still fires on the old Cancel and unblocks
@@ -1265,7 +1308,11 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	}
 }
 
-func rpcCancelKeyboardMacro() {
+func rpcCancelKeyboardMacro(session *Session) {
+	if isStalePasteSession(session) {
+		logger.Warn().Msg("ignoring stale-session keyboard macro cancel")
+		return
+	}
 	cancelAndDrainMacroQueue()
 }
 
