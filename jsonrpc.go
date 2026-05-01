@@ -1123,7 +1123,7 @@ func drainMacroQueue() {
 		macroCurrentCancel = cancel
 		macroLock.Unlock()
 
-		err := rpcDoExecuteKeyboardMacro(ctx, item.steps)
+		err := rpcDoExecuteKeyboardMacro(ctx, item.steps, item.isPaste)
 		if err != nil {
 			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
 			if item.isPaste && !errors.Is(err, context.Canceled) {
@@ -1276,9 +1276,29 @@ func isClearKeyStep(step hidrpc.KeyboardMacroStep) bool {
 	return step.Modifier == 0 && bytes.Equal(step.Keys, keyboardClearStateKeys)
 }
 
-func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacroStep) error {
+func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacroStep, isPaste bool) error {
 	logger.Debug().Interface("macro", macro).Msg("Executing keyboard macro")
 
+	if isPaste {
+		return rpcDoExecutePasteKeyboardMacro(ctx, macro)
+	}
+	return rpcDoExecuteKeyboardMacroStepLoop(ctx, macro)
+}
+
+func rpcDoExecutePasteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacroStep) error {
+	reports := make([]usbgadget.KeyboardHidReport, 0, len(macro))
+	for _, step := range macro {
+		reports = append(reports, usbgadget.NewKeyboardHidReport(
+			step.Modifier,
+			step.Keys,
+			time.Duration(step.Delay)*time.Millisecond,
+		))
+	}
+
+	return gadget.KeyboardHidReportSequence(ctx, reports)
+}
+
+func rpcDoExecuteKeyboardMacroStepLoop(ctx context.Context, macro []hidrpc.KeyboardMacroStep) error {
 	timer := time.NewTimer(time.Hour)
 	if !timer.Stop() {
 		select {
