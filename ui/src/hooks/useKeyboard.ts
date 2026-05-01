@@ -34,7 +34,7 @@ const MACRO_RESET_KEYBOARD_STATE = {
 
 // Module-level guards for the Phase 2 chunk-aware paste path.
 //
-// `executePasteTextInFlight` is the correctness guard against concurrent
+// `executePasteTextInFlightChannel` is the correctness guard against concurrent
 // executePasteText invocations on the same WebRTC channel. It lives at
 // module scope (not inside useKeyboard or PasteModal) so that even if
 // PasteModal unmounts and remounts between chunks — e.g., when
@@ -45,33 +45,55 @@ const MACRO_RESET_KEYBOARD_STATE = {
 // correctness-level guard is this flag.
 //
 // `pasteStateSupportObserved` tracks whether the device this session is
-// connected to has EVER emitted a KeyboardMacroStateMessage with IsPaste
-// true (set in the useHidRpc onMessage handler below). Chunk mode
-// relies on observing isPasteInProgress transitions via
-// waitForPasteDrain("required", ...), and that only works on Phase 1+
-// devices that emit paste-state messages. Older v1 firmware without
-// Phase 1 still advertises the same HID RPC protocol version (0x01),
-// so `rpcHidReady` alone is not a reliable indicator of paste-state
-// support. Chunk mode gates on this flag, defaulting to the safe
-// non-chunk path until the device proves it sends paste-state events.
-// Consequence: the first paste of a session always runs non-chunk
-// (byte-for-byte identical to pre-Phase-2 behavior); subsequent
-// pastes — chunkable or not — will observe the flag having flipped
-// true during the first paste's drain messages and use chunk mode if
-// the device supports it.
-let executePasteTextInFlight = false;
-let pasteStateSupportObserved = false;
+// connected to has EVER emitted an active KeyboardMacroStateMessage with
+// IsPaste true (set in the useHidRpc onMessage handler below).
+//
+// `pasteStateSupportNegativeLatched` tracks the opposite result: this JS
+// session tried the first-chunk paste-state probe and no start event arrived
+// before the short probe deadline. Older v1 firmware without Phase 1 still
+// advertises the same HID RPC protocol version (0x01), so `rpcHidReady`
+// alone is not a reliable indicator of paste-state support. The negative
+// latch keeps those devices on the safe non-chunk path after they pay the
+// probe cost once per browser session.
+let executePasteTextInFlightChannel: RTCDataChannel | null = null;
 let pasteStateSupportChannel: RTCDataChannel | null = null;
+let pasteStateSupportObserved = false;
+let pasteStateSupportNegativeLatched = false;
 let pasteFailureSequence = 0;
 
-function syncPasteStateSupportChannel(channel: RTCDataChannel | null): boolean {
-  if (pasteStateSupportChannel === channel) {
-    return pasteStateSupportObserved;
-  }
+function syncPasteStateSupportChannel(channel: RTCDataChannel): boolean {
+  if (pasteStateSupportChannel === channel) return false;
   pasteStateSupportChannel = channel;
   pasteStateSupportObserved = false;
-  useHidStore.getState().setPasteModeEnabled(false);
-  return false;
+  pasteStateSupportNegativeLatched = false;
+  return true;
+}
+
+function isPasteStateSupportObservedForChannel(channel: RTCDataChannel): boolean {
+  return pasteStateSupportChannel === channel && pasteStateSupportObserved;
+}
+
+function isPasteStateSupportNegativeLatchedForChannel(channel: RTCDataChannel): boolean {
+  return pasteStateSupportChannel === channel && pasteStateSupportNegativeLatched;
+}
+
+function markPasteStateSupportObserved(channel: RTCDataChannel) {
+  if (pasteStateSupportChannel !== channel) return;
+  pasteStateSupportObserved = true;
+  pasteStateSupportNegativeLatched = false;
+}
+
+function markPasteStateSupportNegative(channel: RTCDataChannel) {
+  if (pasteStateSupportChannel !== channel) return;
+  if (!pasteStateSupportObserved) {
+    pasteStateSupportNegativeLatched = true;
+  }
+}
+
+function ensurePasteExecutionChannelCurrent(channel: RTCDataChannel) {
+  if (executePasteTextInFlightChannel !== channel) {
+    throw new Error("Paste data channel changed");
+  }
 }
 
 export interface MacroStep {
@@ -132,6 +154,7 @@ type PasteDrainMode = "required" | "bestEffort";
 
 const PASTE_DRAIN_DEFAULT_ARM_WINDOW_MS = 200;
 const PASTE_DRAIN_DEFAULT_SETTLE_MS = 500;
+const PASTE_STATE_SUPPORT_PROBE_TIMEOUT_MS = 2000;
 
 /**
  * Wait for a paste session to drain from the backend macro queue.
@@ -193,7 +216,9 @@ async function waitForPasteDrain(
       done = true;
       cleanup();
       // Observed drain → host USB settle delay before the caller resumes.
-      setTimeout(resolve, settleMs);
+      // Keep the settle tail abort-aware even after the drain subscription
+      // has been cleaned up.
+      abortableSleep(settleMs, signal).then(resolve, reject);
     };
 
     const resolveImmediate = () => {
@@ -282,6 +307,60 @@ async function waitForPasteDrain(
 }
 
 /**
+ * Probe whether the current device emits paste-state start messages.
+ *
+ * This is intentionally start-only, not a full drain. It lets the first large
+ * paste of a fresh modern session enter chunk mode immediately, while legacy
+ * firmware can fall back before any required drain waits on events that will
+ * never arrive.
+ */
+async function waitForPasteStartProbe(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    let done = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = undefined;
+      }
+      signal?.removeEventListener("abort", onAbort);
+      unsubscribe();
+    };
+
+    const resolveValue = (value: boolean) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const rejectErr = (err: Error) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    const onAbort = () => rejectErr(new Error("Paste execution aborted"));
+
+    const unsubscribe = useHidStore.subscribe(state => {
+      if (state.isPasteInProgress) {
+        resolveValue(true);
+      }
+    });
+
+    if (signal?.aborted) {
+      rejectErr(new Error("Paste execution aborted"));
+      return;
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    timeoutHandle = setTimeout(() => resolveValue(false), timeoutMs);
+  });
+}
+
+/**
  * Sleep for `ms` milliseconds, rejecting early if `signal` aborts.
  *
  * Used by Phase 2's chunk-aware paste loop to pause between chunks
@@ -360,13 +439,16 @@ export default function useKeyboard() {
         if (!macroState.isPaste) break;
         syncPasteStateSupportChannel(sourceChannel);
         // Latch paste-state support the first time we observe a real
-        // paste-state event. Chunk mode gates on this to avoid hanging
-        // on older v1 firmware that does not emit paste-state events.
-        pasteStateSupportObserved = true;
-        if (!macroState.state && macroState.failed) {
+        // paste-state start event. Positive evidence clears any earlier
+        // probe-timeout result from this JS session.
+        if (macroState.state) {
+          markPasteStateSupportObserved(sourceChannel);
+        } else if (pasteStateSupportChannel === sourceChannel && macroState.failed) {
           pasteFailureSequence++;
         }
-        setPasteModeEnabled(macroState.state);
+        if (pasteStateSupportChannel === sourceChannel) {
+          setPasteModeEnabled(macroState.state);
+        }
         break;
       }
       default:
@@ -668,13 +750,17 @@ export default function useKeyboard() {
       // Module-level concurrency guard. PasteModal also has a local
       // in-flight guard for UI responsiveness, but that guard dies
       // when the popover unmounts (e.g., click-outside dismissal during
-      // a chunk boundary). This flag survives component remounts and
+      // a chunk boundary). This channel identity survives component remounts and
       // is the correctness-level guard against interleaved pastes on
       // the same data channel.
-      if (executePasteTextInFlight) {
+      const channel = rpcHidChannel;
+      if (executePasteTextInFlightChannel !== null && executePasteTextInFlightChannel !== channel) {
+        executePasteTextInFlightChannel = null;
+      }
+      if (executePasteTextInFlightChannel !== null) {
         throw new Error("A paste is already in progress");
       }
-      executePasteTextInFlight = true;
+      executePasteTextInFlightChannel = channel;
       try {
         const {
           keyboard,
@@ -705,11 +791,12 @@ export default function useKeyboard() {
         const PASTE_LOW_WATERMARK = 64 * 1024;
         const PASTE_HIGH_WATERMARK = 256 * 1024;
 
-        const channel = rpcHidChannel;
         if (!channel || channel.readyState !== "open") {
           throw new Error("HID data channel not available");
         }
-        const pasteStateSupportedForChannel = syncPasteStateSupportChannel(channel);
+        if (syncPasteStateSupportChannel(channel)) {
+          setPasteModeEnabled(false);
+        }
 
         // Save and set bufferedAmount threshold for paste flow control
         const prevThreshold = channel.bufferedAmountLowThreshold;
@@ -750,60 +837,57 @@ export default function useKeyboard() {
         channel.addEventListener("bufferedamountlow", onLow);
         signal?.addEventListener("abort", onBufferedDrainAbort);
 
-        // Phase 2 chunk policy. Chunk mode is automatic above the threshold,
-        // but ONLY when (a) rpcHidReady is true and (b) the current session
-        // has previously observed a real paste-state event from the device
-        // (pasteStateSupportObserved latched at module scope in the
-        // KeyboardMacroStateMessage handler above). Gating on
-        // pasteStateSupportObserved is load-bearing for compatibility:
-        // - On the legacy client-side path (!rpcHidReady), executePasteMacro
-        //   falls through to executeMacroClientSide which never emits
-        //   paste-state messages.
-        // - On older v1 firmware that has not landed Phase 1 paste-state
-        //   semantics, rpcHidReady is true (the HID RPC channel is open
-        //   and protocol version 0x01 is negotiated) but the device never
-        //   emits KeyboardMacroState events with isPaste=true.
-        // - waitForPasteDrain("required", ...) has no arm window (that's
-        //   bestEffort-only) and waits for an isPasteInProgress 0→1→0
-        //   transition. On either of the above paths, that transition
-        //   never arrives, so a chunk-boundary drain would hang until
-        //   the full derived timeout (60s minimum) before rejecting,
-        //   regressing every large paste to a failure.
-        //
-        // Consequence: the FIRST paste of any session always runs the
-        // non-chunk path regardless of size (byte-for-byte identical to
-        // pre-Phase-2 behavior). During that paste, the bestEffort final
-        // drain waits for isPasteInProgress events — if any arrive, the
-        // latch flips true and subsequent pastes in the session use
-        // chunk mode if they exceed the threshold. If no paste-state
-        // events arrive (legacy/old-firmware device), the latch stays
-        // false and all pastes in the session stay on the non-chunk
-        // path for safety.
-        const policy = DEFAULT_LARGE_PASTE_POLICY;
-        const chunkMode =
-          rpcHidReady && pasteStateSupportedForChannel && text.length >= policy.autoThresholdChars;
-        const chunks: PasteChunkPlan[] = chunkMode
-          ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
-          : [
-              {
-                chunkIndex: 0,
-                batchStartIndex: 0,
-                batchEndIndex: batches.length,
-                sourceChars: text.length,
-              },
-            ];
-        const chunkTotalForProgress = chunkMode ? chunks.length : 0;
-
         try {
+          // Phase 3c chunk policy. Chunk mode is automatic above the threshold
+          // on RPC HID unless this JS session has already probed and found no
+          // paste-state support. A fresh modern session no longer needs a prior
+          // non-chunk paste to arm the positive latch.
+          // Legacy/client-side execution is still excluded by rpcHidReady. Older
+          // RPC HID firmware gets one short first-chunk probe; if no paste-state
+          // start arrives, the negative latch sends this paste remainder and
+          // later large pastes through the existing non-chunk path.
+          const policy = DEFAULT_LARGE_PASTE_POLICY;
+          let chunkMode =
+            rpcHidReady &&
+            !isPasteStateSupportNegativeLatchedForChannel(channel) &&
+            text.length >= policy.autoThresholdChars;
+          let chunks: PasteChunkPlan[] = chunkMode
+            ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
+            : [
+                {
+                  chunkIndex: 0,
+                  batchStartIndex: 0,
+                  batchEndIndex: batches.length,
+                  sourceChars: text.length,
+                },
+              ];
+          let chunkTotalForProgress = chunkMode ? chunks.length : 0;
+          let pasteStateSupportProvenForPaste = isPasteStateSupportObservedForChannel(channel);
+          let pasteStartProbeOutcome: Promise<{ supported: boolean } | { error: Error }> | null =
+            null;
+
           for (let ci = 0; ci < chunks.length; ci++) {
             const chunk = chunks[ci];
             for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
-              if (signal?.aborted) {
-                throw new Error("Paste execution aborted");
+              if (
+                chunkMode &&
+                !pasteStateSupportProvenForPaste &&
+                pasteStartProbeOutcome === null
+              ) {
+                pasteStartProbeOutcome = waitForPasteStartProbe(
+                  PASTE_STATE_SUPPORT_PROBE_TIMEOUT_MS,
+                  signal,
+                ).then(
+                  supported => ({ supported }),
+                  error => ({
+                    error: error instanceof Error ? error : new Error(String(error)),
+                  }),
+                );
               }
 
               const batch = batches[b];
               await executePasteMacro(batch);
+              ensurePasteExecutionChannelCurrent(channel);
 
               onTrace?.({
                 kind: "batch",
@@ -822,11 +906,48 @@ export default function useKeyboard() {
                 chunkTotal: chunkTotalForProgress,
               });
 
+              if (pasteStartProbeOutcome !== null && !pasteStateSupportProvenForPaste) {
+                const probeResult = await pasteStartProbeOutcome;
+                ensurePasteExecutionChannelCurrent(channel);
+                pasteStartProbeOutcome = null;
+                if ("error" in probeResult) {
+                  throw probeResult.error;
+                }
+                if (probeResult.supported) {
+                  pasteStateSupportProvenForPaste = true;
+                } else {
+                  markPasteStateSupportNegative(channel);
+                  chunkMode = false;
+                  chunkTotalForProgress = 0;
+
+                  const remainingBatchStartIndex = b + 1;
+                  if (remainingBatchStartIndex < batches.length) {
+                    let remainingSourceChars = 0;
+                    for (let rb = remainingBatchStartIndex; rb < batches.length; rb++) {
+                      remainingSourceChars += batchStats[rb].sourceChars;
+                    }
+                    chunks = [
+                      {
+                        chunkIndex: 0,
+                        batchStartIndex: remainingBatchStartIndex,
+                        batchEndIndex: batches.length,
+                        sourceChars: remainingSourceChars,
+                      },
+                    ];
+                  } else {
+                    chunks = [];
+                  }
+                  ci = -1;
+                  break;
+                }
+              }
+
               // Pause if channel buffer exceeds high watermark. The wait is
               // abort-aware: signal.abort() during the pause rejects the
               // pending promise immediately via onBufferedDrainAbort.
               if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) {
                 await waitForChannelDrain();
+                ensurePasteExecutionChannelCurrent(channel);
               }
             }
 
@@ -834,7 +955,7 @@ export default function useKeyboard() {
             // wait for the backend to fully drain (required mode — rejects on
             // timeout so a chunk-level failure surfaces as an error), then
             // pause if there are more chunks to come.
-            if (chunkMode) {
+            if (chunkMode && pasteStateSupportProvenForPaste) {
               onTrace?.({
                 kind: "chunk-sent",
                 chunkIndex: chunk.chunkIndex + 1,
@@ -932,6 +1053,7 @@ export default function useKeyboard() {
                   pasteFailureBaseline,
                 );
               }
+              ensurePasteExecutionChannelCurrent(channel);
               onTrace?.({
                 kind: "chunk-drained",
                 chunkIndex: chunk.chunkIndex + 1,
@@ -956,6 +1078,7 @@ export default function useKeyboard() {
                   pauseMs: policy.chunkPauseMs,
                 });
                 await abortableSleep(policy.chunkPauseMs, signal);
+                ensurePasteExecutionChannelCurrent(channel);
               }
             }
           }
@@ -981,18 +1104,22 @@ export default function useKeyboard() {
             undefined,
             undefined,
             pasteFailureBaseline,
-            !(rpcHidReady && !chunkMode && batches.length > 0),
+            !(rpcHidReady && !chunkMode && batches.length > 0) ||
+              isPasteStateSupportNegativeLatchedForChannel(channel),
           );
+          ensurePasteExecutionChannelCurrent(channel);
         } finally {
           channel.removeEventListener("bufferedamountlow", onLow);
           signal?.removeEventListener("abort", onBufferedDrainAbort);
           channel.bufferedAmountLowThreshold = prevThreshold;
         }
       } finally {
-        executePasteTextInFlight = false;
+        if (executePasteTextInFlightChannel === channel) {
+          executePasteTextInFlightChannel = null;
+        }
       }
     },
-    [executePasteMacro, rpcHidChannel, rpcHidReady],
+    [executePasteMacro, rpcHidChannel, rpcHidReady, setPasteModeEnabled],
   );
 
   const cancelExecuteMacro = useCallback(async () => {
