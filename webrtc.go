@@ -173,28 +173,58 @@ func (s *Session) initQueues() {
 	}
 }
 
-func (s *Session) handleQueues(index int) {
-	for msg := range s.hidQueue[index] {
+func (s *Session) handleQueues(queue <-chan hidQueueMessage) {
+	for msg := range queue {
 		onHidMessage(msg, s)
 	}
+}
+
+func (s *Session) enqueueHIDQueueMessage(queueIndex int, msg hidQueueMessage) (int, bool) {
+	s.hidQueueLock.Lock()
+	defer s.hidQueueLock.Unlock()
+
+	if queueIndex >= len(s.hidQueue) || queueIndex < 0 {
+		queueIndex = 3
+	}
+	if queueIndex >= len(s.hidQueue) {
+		return queueIndex, false
+	}
+
+	queue := s.hidQueue[queueIndex]
+	if queue == nil {
+		return queueIndex, false
+	}
+
+	queue <- msg
+	return queueIndex, true
 }
 
 const keysDownStateQueueSize = 64
 
 func (s *Session) initKeysDownStateQueue() {
 	// serialise outbound key state reports so unreliable links can't stall input handling
-	s.keysDownStateQueue = make(chan usbgadget.KeysDownState, keysDownStateQueueSize)
-	go s.handleKeysDownStateQueue()
+	s.hidQueueLock.Lock()
+	queue := make(chan usbgadget.KeysDownState, keysDownStateQueueSize)
+	s.keysDownStateQueue = queue
+	s.hidQueueLock.Unlock()
+	go s.handleKeysDownStateQueue(queue)
 }
 
-func (s *Session) handleKeysDownStateQueue() {
-	for state := range s.keysDownStateQueue {
+func (s *Session) handleKeysDownStateQueue(queue <-chan usbgadget.KeysDownState) {
+	for state := range queue {
 		s.reportHidRPCKeysDownState(state)
 	}
 }
 
 func (s *Session) enqueueKeysDownState(state usbgadget.KeysDownState) {
-	if s == nil || s.keysDownStateQueue == nil {
+	if s == nil {
+		return
+	}
+
+	s.hidQueueLock.Lock()
+	defer s.hidQueueLock.Unlock()
+
+	if s.keysDownStateQueue == nil {
 		return
 	}
 
@@ -203,6 +233,23 @@ func (s *Session) enqueueKeysDownState(state usbgadget.KeysDownState) {
 	default:
 		hidRPCLogger.Warn().Msg("dropping keys down state update; queue full")
 	}
+}
+
+func (s *Session) closeHIDQueues() {
+	s.hidQueueLock.Lock()
+	defer s.hidQueueLock.Unlock()
+
+	for i := 0; i < len(s.hidQueue); i++ {
+		if s.hidQueue[i] != nil {
+			close(s.hidQueue[i])
+		}
+		s.hidQueue[i] = nil
+	}
+
+	if s.keysDownStateQueue != nil {
+		close(s.keysDownStateQueue)
+	}
+	s.keysDownStateQueue = nil
 }
 
 func getOnHidMessageHandler(session *Session, scopedLogger *zerolog.Logger, channel string) func(msg webrtc.DataChannelMessage) {
@@ -230,36 +277,15 @@ func getOnHidMessageHandler(session *Session, scopedLogger *zerolog.Logger, chan
 
 		// Enqueue to ensure ordered processing
 		queueIndex := hidrpc.GetQueueIndex(hidrpc.MessageType(msg.Data[0]))
-		if queueIndex >= len(session.hidQueue) || queueIndex < 0 {
+		actualQueueIndex, enqueued := session.enqueueHIDQueueMessage(queueIndex, hidQueueMessage{
+			DataChannelMessage: msg,
+			channel:            channel,
+		})
+		if actualQueueIndex != queueIndex {
 			l.Warn().Int("queueIndex", queueIndex).Msg("received data in HID RPC message handler, but queue index not found")
-			queueIndex = 3
 		}
-
-		queue := session.hidQueue[queueIndex]
-		if queue != nil {
-			// Defensive: session teardown closes session.hidQueue[i] at
-			// webrtc.go:440-443 without holding hidQueueLock, while the pion
-			// readLoop goroutine may deliver one last buffered message from
-			// the wire after the close. The unsynchronized close-vs-send race
-			// produces "send on closed channel". Recover here so a late
-			// message during teardown drops with a warning instead of
-			// panicking the whole app. Proper fix is to serialize close and
-			// send under hidQueueLock — tracked as a follow-up.
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						l.Warn().
-							Interface("recover", r).
-							Msg("hidQueue send panicked (channel closed during session teardown); message dropped")
-					}
-				}()
-				queue <- hidQueueMessage{
-					DataChannelMessage: msg,
-					channel:            channel,
-				}
-			}()
-		} else {
-			l.Warn().Int("queueIndex", queueIndex).Msg("received data in HID RPC message handler, but queue is nil")
+		if !enqueued {
+			l.Warn().Int("queueIndex", actualQueueIndex).Msg("received data in HID RPC message handler, but queue is nil or unavailable")
 			return
 		}
 	}
@@ -343,8 +369,11 @@ func newSession(config SessionConfig) (*Session, error) {
 		}
 	}()
 
-	for i := 0; i < len(session.hidQueue); i++ {
-		go session.handleQueues(i)
+	session.hidQueueLock.Lock()
+	hidQueues := append([]chan hidQueueMessage(nil), session.hidQueue...)
+	session.hidQueueLock.Unlock()
+	for _, queue := range hidQueues {
+		go session.handleQueues(queue)
 	}
 
 	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
@@ -454,13 +483,7 @@ func newSession(config SessionConfig) (*Session, error) {
 			}
 
 			// Stop HID RPC processor
-			for i := 0; i < len(session.hidQueue); i++ {
-				close(session.hidQueue[i])
-				session.hidQueue[i] = nil
-			}
-
-			close(session.keysDownStateQueue)
-			session.keysDownStateQueue = nil
+			session.closeHIDQueues()
 
 			if session.shouldUmountVirtualMedia {
 				if err := rpcUnmountImage(); err != nil {
