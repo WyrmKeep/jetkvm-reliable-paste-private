@@ -486,7 +486,13 @@ export interface KeysDownState {
   keys: number[];
 }
 
-export type USBStates = "configured" | "attached" | "not attached" | "suspended" | "addressed" | "unknown";
+export type USBStates =
+  | "configured"
+  | "attached"
+  | "not attached"
+  | "suspended"
+  | "addressed"
+  | "unknown";
 
 export interface HidState {
   keyboardLedState: KeyboardLedState;
