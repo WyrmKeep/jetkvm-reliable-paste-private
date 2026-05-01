@@ -21,11 +21,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "allowSyntheticDefaultImports": true,
-    "composite": true,
+    "composite": true
   },
-  "include": [
-    "vite.config.ts",
-    "playwright.config.ts",
-    "e2e/**/*.ts"
-  ]
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "e2e/**/*.ts"]
 }

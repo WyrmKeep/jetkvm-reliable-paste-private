@@ -31,14 +31,6 @@ const fromInt32toUint8 = (n: number) => {
   return new Uint8Array([(n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]);
 };
 
-const fromUint16toUint8 = (n: number) => {
-  if (n > 65535 || n < 0) {
-    throw new Error(`Number ${n} is not within the uint16 range`);
-  }
-
-  return new Uint8Array([(n >> 8) & 0xff, n & 0xff]);
-};
-
 const fromUint32toUint8 = (n: number) => {
   if (n > 4294967295 || n < 0) {
     throw new Error(`Number ${n} is not within the uint32 range`);
@@ -241,8 +233,6 @@ export class KeyboardMacroReportMessage extends RpcMessage {
       const keys = step.keys;
       if (keys.length > this.KEYS_LENGTH) {
         throw new Error(`Keys ${keys} is not within the hidKeyBufferSize range`);
-      } else if (keys.length < this.KEYS_LENGTH) {
-        keys.push(...Array(this.KEYS_LENGTH - keys.length).fill(0));
       }
 
       for (const key of keys) {
@@ -251,13 +241,16 @@ export class KeyboardMacroReportMessage extends RpcMessage {
         }
       }
 
-      const macroBinary = new Uint8Array([
-        step.modifier,
-        ...keys,
-        ...fromUint16toUint8(step.delay),
-      ]);
+      if (step.delay > 65535 || step.delay < 0) {
+        throw new Error(`Number ${step.delay} is not within the uint16 range`);
+      }
 
-      data.set(macroBinary, offset);
+      data[offset] = step.modifier;
+      for (let k = 0; k < keys.length; k++) {
+        data[offset + 1 + k] = keys[k];
+      }
+      data[offset + 7] = (step.delay >> 8) & 0xff;
+      data[offset + 8] = step.delay & 0xff;
       offset += 9;
     }
 
