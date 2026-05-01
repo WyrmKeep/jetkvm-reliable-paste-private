@@ -1050,6 +1050,12 @@ var (
 	// transition. Non-paste macros never touch this counter.
 	pasteDepth atomic.Int32
 
+	// pasteFailures counts non-cancel execution failures observed during the
+	// current paste-depth session. The final 1->0 paste-state emit reports
+	// whether any macro in the session failed so the frontend can reject the
+	// paste instead of treating State:false as success.
+	pasteFailures atomic.Int32
+
 	// macroEnqueueCtx is the cancellation context for blocking enqueues.
 	// It is owned by the macro queue (not by any handler or session) and is
 	// rotated by cancelAndDrainMacroQueue so that enqueuers blocked on a full
@@ -1087,13 +1093,14 @@ func currentEnqueueCtx() context.Context {
 // respectively). If the session is nil (origin session torn down between
 // enqueue and drain), this silently no-ops — the frontend on the new
 // session will reconcile state through its own fresh subscription.
-func emitPasteState(session *Session, state bool) {
+func emitPasteState(session *Session, state bool, failed bool) {
 	if session == nil {
 		return
 	}
 	session.reportHidRPCKeyboardMacroState(hidrpc.KeyboardMacroState{
 		State:   state,
 		IsPaste: true,
+		Failed:  failed,
 	})
 }
 
@@ -1119,6 +1126,9 @@ func drainMacroQueue() {
 		err := rpcDoExecuteKeyboardMacro(ctx, item.steps)
 		if err != nil {
 			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
+			if item.isPaste && !errors.Is(err, context.Canceled) {
+				pasteFailures.Add(1)
+			}
 		} else {
 			logger.Info().Uint64("macro_id", macroID).Msg("queued keyboard macro completed")
 		}
@@ -1134,7 +1144,7 @@ func drainMacroQueue() {
 		if item.isPaste {
 			if pasteDepth.Add(-1) == 0 {
 				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (drain complete)")
-				emitPasteState(item.session, false)
+				emitPasteState(item.session, false, pasteFailures.Swap(0) > 0)
 			}
 		}
 
@@ -1205,7 +1215,7 @@ func cancelAndDrainMacroQueue() {
 		logger.Debug().Int32("discarded_paste", discardedPaste).Msg("cancel sweep discarded paste macros")
 		if pasteDepth.Add(-discardedPaste) == 0 {
 			logger.Debug().Msg("paste-depth 1->0 (cancel sweep)")
-			emitPasteState(lastPasteSession, false)
+			emitPasteState(lastPasteSession, false, pasteFailures.Swap(0) > 0)
 		}
 	}
 }
@@ -1231,8 +1241,9 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// Emit State:true if this Add is the 0→1 transition.
 	if isPaste {
 		if pasteDepth.Add(1) == 1 {
+			pasteFailures.Store(0)
 			logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 0->1 (enqueue)")
-			emitPasteState(session, true)
+			emitPasteState(session, true, false)
 		}
 	}
 
@@ -1247,7 +1258,7 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 		if isPaste {
 			if pasteDepth.Add(-1) == 0 {
 				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (enqueue rollback)")
-				emitPasteState(session, false)
+				emitPasteState(session, false, pasteFailures.Swap(0) > 0)
 			}
 		}
 		return ctx.Err()
