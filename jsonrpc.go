@@ -1268,6 +1268,15 @@ func isClearKeyStep(step hidrpc.KeyboardMacroStep) bool {
 func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacroStep) error {
 	logger.Debug().Interface("macro", macro).Msg("Executing keyboard macro")
 
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	defer timer.Stop()
+
 	for i, step := range macro {
 		delay := time.Duration(step.Delay) * time.Millisecond
 
@@ -1283,10 +1292,17 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 		}
 
 		// Use context-aware sleep that can be cancelled
+		timer.Reset(delay)
 		select {
-		case <-time.After(delay):
+		case <-timer.C:
 			// Sleep completed normally
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			// make sure keyboard state is reset
 			err := rpcKeyboardReport(0, keyboardClearStateKeys)
 			if err != nil {
