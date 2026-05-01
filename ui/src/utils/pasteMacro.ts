@@ -16,6 +16,17 @@ export interface KeyboardLayoutLike {
   chars: Record<string, KeyboardCharMapping | undefined>;
 }
 
+const MODS_SHIFT = Object.freeze(["ShiftLeft"]);
+const MODS_ALT_RIGHT = Object.freeze(["AltRight"]);
+const MODS_SHIFT_ALT_RIGHT = Object.freeze(["ShiftLeft", "AltRight"]);
+
+function pickModifiers(shift?: boolean, altRight?: boolean): MacroStep["modifiers"] {
+  if (shift && altRight) return MODS_SHIFT_ALT_RIGHT as string[];
+  if (shift) return MODS_SHIFT as string[];
+  if (altRight) return MODS_ALT_RIGHT as string[];
+  return null;
+}
+
 export interface PasteMacroBuildResult {
   steps: MacroStep[];
   invalidChars: string[];
@@ -55,24 +66,16 @@ export function buildStepsForChar(
   const steps: MacroStep[] = [];
 
   if (accentKey) {
-    const accentModifiers: string[] = [];
-    if (accentKey.shift) accentModifiers.push("ShiftLeft");
-    if (accentKey.altRight) accentModifiers.push("AltRight");
-
     steps.push({
       keys: [String(accentKey.key)],
-      modifiers: accentModifiers.length > 0 ? accentModifiers : null,
+      modifiers: pickModifiers(accentKey.shift, accentKey.altRight),
       delay,
     });
   }
 
-  const modifiers: string[] = [];
-  if (shift) modifiers.push("ShiftLeft");
-  if (altRight) modifiers.push("AltRight");
-
   steps.push({
     keys: [String(key)],
-    modifiers: modifiers.length > 0 ? modifiers : null,
+    modifiers: pickModifiers(shift, altRight),
     delay,
   });
 
@@ -90,16 +93,18 @@ export function buildPasteMacroSteps(
 ): PasteMacroBuildResult {
   const steps: MacroStep[] = [];
   const invalidChars = new Set<string>();
+  const normalizedText = text.normalize("NFC");
 
-  for (const char of text) {
-    const normalizedChar = char.normalize("NFC");
-    const charSteps = buildStepsForChar(normalizedChar, keyboard, delay);
+  for (const char of normalizedText) {
+    const charSteps = buildStepsForChar(char, keyboard, delay);
     if (!charSteps) {
-      invalidChars.add(normalizedChar);
+      invalidChars.add(char);
       continue;
     }
 
-    steps.push(...charSteps);
+    for (const step of charSteps) {
+      steps.push(step);
+    }
   }
 
   return {
@@ -127,6 +132,7 @@ export function buildPasteMacroBatches(
   const invalidChars = new Set<string>();
   let currentBatch: MacroStep[] = [];
   let currentBatchSourceChars = 0;
+  const normalizedText = text.normalize("NFC");
 
   const flushBatch = () => {
     if (currentBatch.length === 0) return;
@@ -140,11 +146,10 @@ export function buildPasteMacroBatches(
     currentBatchSourceChars = 0;
   };
 
-  for (const char of text) {
-    const normalizedChar = char.normalize("NFC");
-    const charSteps = buildStepsForChar(normalizedChar, keyboard, delay);
+  for (const char of normalizedText) {
+    const charSteps = buildStepsForChar(char, keyboard, delay);
     if (!charSteps) {
-      invalidChars.add(normalizedChar);
+      invalidChars.add(char);
       continue;
     }
 
@@ -158,7 +163,9 @@ export function buildPasteMacroBatches(
       flushBatch();
     }
 
-    currentBatch.push(...charSteps);
+    for (const step of charSteps) {
+      currentBatch.push(step);
+    }
     currentBatchSourceChars += 1;
   }
 
