@@ -159,7 +159,9 @@ export function doRpcHidHandshake(
   }
 }
 
-export function useHidRpc(onHidRpcMessage?: (payload: RpcMessage) => void) {
+export function useHidRpc(
+  onHidRpcMessage?: (payload: RpcMessage, channel: RTCDataChannel) => void,
+) {
   const {
     rpcHidChannel,
     rpcHidUnreliableChannel,
@@ -299,7 +301,7 @@ export function useHidRpc(onHidRpcMessage?: (payload: RpcMessage) => void) {
       // setting `esbuild.pure` doesn't work
       /* @__PURE__ */ logger.debug("Received message", message);
 
-      onHidRpcMessage?.(message);
+      onHidRpcMessage?.(message, rpcHidChannel);
     };
 
     const errorHandler = (e: Event) => {

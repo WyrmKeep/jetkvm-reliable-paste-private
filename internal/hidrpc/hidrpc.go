@@ -107,13 +107,16 @@ func NewKeydownStateMessage(state usbgadget.KeysDownState) *Message {
 }
 
 // NewKeyboardMacroStateMessage creates a new keyboard macro state message.
-func NewKeyboardMacroStateMessage(state bool, isPaste bool) *Message {
-	data := make([]byte, 2)
+func NewKeyboardMacroStateMessage(state bool, isPaste bool, failed bool) *Message {
+	data := make([]byte, 3)
 	if state {
 		data[0] = 1
 	}
 	if isPaste {
 		data[1] = 1
+	}
+	if failed {
+		data[2] = 1
 	}
 
 	return &Message{

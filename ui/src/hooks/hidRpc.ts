@@ -261,23 +261,30 @@ export class KeyboardMacroReportMessage extends RpcMessage {
 export class KeyboardMacroStateMessage extends RpcMessage {
   state: boolean;
   isPaste: boolean;
+  failed: boolean;
 
-  constructor(state: boolean, isPaste: boolean) {
+  constructor(state: boolean, isPaste: boolean, failed = false) {
     super(HID_RPC_MESSAGE_TYPES.KeyboardMacroState);
     this.state = state;
     this.isPaste = isPaste;
+    this.failed = failed;
   }
 
   marshal(): Uint8Array {
-    return new Uint8Array([this.messageType, this.state ? 1 : 0, this.isPaste ? 1 : 0]);
+    return new Uint8Array([
+      this.messageType,
+      this.state ? 1 : 0,
+      this.isPaste ? 1 : 0,
+      this.failed ? 1 : 0,
+    ]);
   }
 
   public static unmarshal(data: Uint8Array): KeyboardMacroStateMessage | undefined {
-    if (data.length < 1) {
+    if (data.length < 2) {
       throw new Error(`Invalid keyboard macro state report message length: ${data.length}`);
     }
 
-    return new KeyboardMacroStateMessage(data[0] === 1, data[1] === 1);
+    return new KeyboardMacroStateMessage(data[0] === 1, data[1] === 1, data[2] === 1);
   }
 }
 
