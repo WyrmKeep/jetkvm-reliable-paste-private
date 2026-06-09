@@ -858,12 +858,12 @@ export default function useKeyboard() {
               });
 
               // Per-chunk derived drain timeout. A flat constant does not
-              // work here: at reliable-profile pacing on current main
-              // (keyDelayMs=3, 5ms press + 3ms reset per MacroStep, ~66
-              // steps/batch byte-limited, 200ms inter-macro), a 5000-char
-              // chunk takes ~55s end-to-end. The derivation below gives
-              // each chunk ~2x its measured worst case, with a policy
-              // floor for small chunks.
+              // work here: at reliable-profile pacing (keyDelayMs=5, 5ms
+              // press + 5ms reset per MacroStep, uniform deadline pacing,
+              // no inter-macro drain for paste), a 5000-char chunk takes
+              // ~50s end-to-end. The derivation below gives each chunk
+              // ~2x its measured worst case, with a policy floor for
+              // small chunks.
               //
               // The derivation reads delayMs from ExecutePasteTextOptions
               // and applies the SAME `|| 25` fallback that executeMacroRemote
