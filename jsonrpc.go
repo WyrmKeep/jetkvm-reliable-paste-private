@@ -1014,12 +1014,46 @@ func rpcSetLocalLoopbackOnly(enabled bool) error {
 // See docs/superpowers/specs/2026-04-08-paste-pipeline-flow-control-design.md.
 const macroQueueDepth = 64
 
-// pasteInterMacroDrain is the inter-macro pause inside drainMacroQueue that
-// gives the host USB input queue time to consume pending reports between
-// consecutive macros. PR #41 load-bearing fix — do not retune without a
-// dedicated profiling PR. Phase 2 (#38) adds chunk-boundary pauses on top
-// of this delay, not instead of it.
+// pasteInterMacroDrain is the inter-macro pause inside drainMacroQueue,
+// applied to NON-paste macros only since the 2026-06-09 profiling work.
+// Paste macros are uniformly paced per-step at measured-safe rates and get
+// no inter-macro gap (gaps were shown not to protect the host: loss tracks
+// instantaneous burst rate, not average — see
+// docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md).
+// This supersedes PR #41, which tuned for the old burst-shaped pipeline.
 const pasteInterMacroDrain = 200 * time.Millisecond
+
+// Paste wake preflight. Windows swallows keyboard input that arrives while
+// its display is waking from sleep — measured 2026-06-09: a paste started
+// against a sleeping display lost exactly its first 6 keystrokes (see
+// docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md,
+// measurement log). Before the first macro of a paste that follows real
+// keyboard idle, tap Shift (types nothing; unlike Alt it activates no menus)
+// and give the host time to wake. Single taps spaced ≥ the idle threshold
+// can never trigger Windows Sticky Keys (which needs 5 rapid presses).
+const (
+	pasteWakeIdleThreshold = 10 * time.Second
+	pasteWakeSettle        = 500 * time.Millisecond
+)
+
+// wakeTargetForPaste sends the wake tap if the keyboard has been idle. The
+// idle gate makes this self-limiting: after the first batch of a paste,
+// lastKeyboardReportTime is fresh and subsequent batches skip the tap.
+func wakeTargetForPaste() {
+	last := lastKeyboardReportTime.Load()
+	if last != 0 && time.Since(time.Unix(0, last)) < pasteWakeIdleThreshold {
+		return
+	}
+	logger.Debug().Msg("paste wake: tapping shift and settling before first batch")
+	if err := rpcKeyboardReport(0x02, keyboardClearStateKeys); err != nil {
+		logger.Warn().Err(err).Msg("paste wake tap failed")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
+		logger.Warn().Err(err).Msg("paste wake release failed")
+	}
+	time.Sleep(pasteWakeSettle)
+}
 
 // queuedMacro wraps a macro batch with its paste flag and origin session so
 // drainMacroQueue and cancelAndDrainMacroQueue can report state messages back
@@ -1117,6 +1151,10 @@ func drainMacroQueue() {
 			Bool("is_paste", item.isPaste).
 			Msg("executing queued keyboard macro")
 
+		if item.isPaste {
+			wakeTargetForPaste()
+		}
+
 		ctx, cancel := context.WithCancel(context.Background())
 
 		macroLock.Lock()
@@ -1148,11 +1186,18 @@ func drainMacroQueue() {
 			}
 		}
 
-		// Inter-macro drain delay: gives the host USB stack time to process
-		// buffered HID reports before the next macro arrives. Without this,
-		// back-to-back macros overflow the host's USB input queue, causing
-		// character corruption on busy systems.
-		time.Sleep(pasteInterMacroDrain)
+		// Inter-macro drain delay for NON-paste macros only. Paste macros are
+		// uniformly paced per-step at a measured-safe rate, and uniform pacing
+		// carries through batch boundaries because the final reset step's delay
+		// is slept inside rpcDoExecuteKeyboardMacro — adding a gap here would
+		// just cut throughput. The 2026-06-09 rate-sweep measurements showed
+		// inter-macro gaps do not protect the host anyway: keystroke loss
+		// tracks the burst's instantaneous rate, not the average (burst test
+		// r9: 255 cps bursts with 250ms gaps still lost 12%). This supersedes
+		// PR #41's burst-era tuning; see the 2026-06-09 spec for the data.
+		if !item.isPaste {
+			time.Sleep(pasteInterMacroDrain)
+		}
 	}
 }
 
@@ -1288,8 +1333,16 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 	}
 	defer timer.Stop()
 
+	// Absolute-deadline pacing: each step's delay advances a deadline derived
+	// from the previous deadline, not from time.Now() after the write. The
+	// previous timer.Reset(delay)-after-write pattern accumulated ~1ms of
+	// timer overshoot per step on this kernel (~20% rate error at paste
+	// pacing), so configured profile rates undershot unpredictably. Exact
+	// uniform pacing is what makes the measured-safe profile rates meaningful.
+	// See docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md.
+	next := time.Now()
 	for i, step := range macro {
-		delay := time.Duration(step.Delay) * time.Millisecond
+		next = next.Add(time.Duration(step.Delay) * time.Millisecond)
 
 		err := rpcKeyboardReport(step.Modifier, step.Keys)
 		if err != nil {
@@ -1302,8 +1355,23 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 			gadget.UpdateKeysDown(0, keyboardClearStateKeys)
 		}
 
-		// Use context-aware sleep that can be cancelled
-		timer.Reset(delay)
+		// Context-aware sleep until this step's deadline. If the write ran
+		// past the deadline (slow HID write), skip the sleep but still honor
+		// cancellation before the next step.
+		wait := time.Until(next)
+		if wait <= 0 {
+			select {
+			case <-ctx.Done():
+				if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
+					logger.Warn().Err(err).Msg("failed to reset keyboard state")
+				}
+				logger.Debug().Int("step", i).Msg("Keyboard macro cancelled between steps")
+				return ctx.Err()
+			default:
+			}
+			continue
+		}
+		timer.Reset(wait)
 		select {
 		case <-timer.C:
 			// Sleep completed normally

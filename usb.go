@@ -1,10 +1,16 @@
 package kvm
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/jetkvm/kvm/internal/usbgadget"
 )
+
+// lastKeyboardReportTime is the unix-nano timestamp of the most recent
+// keyboard HID report written through the app (interactive or macro).
+// Used by wakeTargetForPaste to detect an idle host before a paste.
+var lastKeyboardReportTime atomic.Int64
 
 var gadget *usbgadget.UsbGadget
 var usbMonitorInstance *usbMonitor
@@ -62,6 +68,7 @@ func initUsbGadget() {
 }
 
 func rpcKeyboardReport(modifier byte, keys []byte) error {
+	lastKeyboardReportTime.Store(time.Now().UnixNano())
 	return gadget.KeyboardReport(modifier, keys)
 }
 
