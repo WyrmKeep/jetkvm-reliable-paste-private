@@ -41,7 +41,8 @@ Go tests: `./dev_deploy.sh -r <IP> --run-go-tests`. E2E: `make test_e2e DEVICE_I
 - **Flow control lives in the hook**: `PASTE_LOW_WATERMARK`/`PASTE_HIGH_WATERMARK` watermarks and the `isPasteInProgress` drain subscription are in `executePasteText` because they need the WebRTC channel ref. Don't extract them.
 - **Paste completion is edge-triggered on `pasteDepth atomic.Int32`** (PR #49). State emits fire only on 0↔1 transitions. Decisions use `Add()` return value, never `Load`. Non-paste macros don't touch it. `queuedMacro.session` carries the origin `*Session` — emits go to that session, not global `currentSession`.
 - **Don't merge PR #37 wholesale** — built for pre-pipeline ACK-per-batch. #34 ✓ PR #49. Still pending cherry-pick: #33 leak, #35 timer reuse.
-- **`drainMacroQueue`'s 200ms inter-macro `time.Sleep`** is PR #41's load-bearing fix — preserve verbatim in any drain refactor.
+- **`drainMacroQueue`'s 200ms inter-macro `time.Sleep`** applies to NON-paste macros only as of the 2026-06-09 profiling work (`docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md`). Paste macros are uniformly deadline-paced per-step at measured-safe rates; gaps were measured NOT to protect the host (loss tracks instantaneous burst rate, not average). This supersedes PR #41's burst-era guidance. Keep the 200ms for non-paste macros.
+- **`rpcDoExecuteKeyboardMacro` uses absolute-deadline pacing** — per-step `timer.Reset(delay)`-after-write accumulates ~1ms/step overshoot (~20% rate error). Don't revert to sleep-after-write; profile rates are calibrated as exact.
 - **`waitForPasteDrain("required", ...)` ships with zero call sites** — reserved for #38 Phase 2 chunk boundaries. Don't delete as dead code.
 
 ## Phased paste patch rollout
