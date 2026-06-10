@@ -367,23 +367,34 @@ export default function PasteModal() {
         // non-fatal — boundaries fall back to manual confirmation.
         let ocrCal: CounterCalibration | null = null;
         const videoEl = document.querySelector("video");
-        if (
+        const autoVerifyRequested =
           autoVerify &&
           totalChars - startOffset >= DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars &&
-          videoEl instanceof HTMLVideoElement
-        ) {
-          try {
-            ocrCal = await findCounter(videoEl);
-          } catch {
-            ocrCal = null;
+          videoEl instanceof HTMLVideoElement;
+        if (autoVerifyRequested) {
+          // findCounter (whole-strip search) is flakier than the fixed-region
+          // read, so retry a few times before giving up — a single miss used
+          // to silently disable verification for the whole paste.
+          for (let attempt = 0; attempt < 3 && !ocrCal; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 600));
+            try {
+              ocrCal = await findCounter(videoEl as HTMLVideoElement);
+            } catch {
+              ocrCal = null;
+            }
           }
           setTraceLinesPersisted(current => [
             ...current,
             ocrCal
               ? `ocr-calibrate: counter=${ocrCal.value}`
-              : "ocr-calibrate: counter not found — chunk boundaries will ask for manual confirmation",
+              : "ocr-calibrate: counter not found — falling back to manual chunk confirmation",
           ]);
         }
+        // When auto-verify was requested but the counter couldn't be located,
+        // fall back to manual per-chunk confirmation rather than silently
+        // pasting without any verification (the previous behaviour left the
+        // user with neither auto-checks nor prompts).
+        const manualFallback = autoVerifyRequested && !ocrCal;
 
         // LED-echo preflight for long pastes (see LED_PREFLIGHT_THRESHOLD_CHARS).
         // Runs after the trace reset above so its result stays in this run's
@@ -465,9 +476,11 @@ export default function PasteModal() {
               totalChars,
             };
           },
-          // Manual confirm UI as a Promise (also the fallback for auto mode).
+          // Manual confirm UI as a Promise. Used for pure-manual verify mode
+          // AND as the fallback when auto-verify was requested but the counter
+          // couldn't be calibrated (manualFallback).
           waitForChunkConfirm:
-            verifyChunks && !autoVerify
+            (verifyChunks && !autoVerify) || manualFallback
               ? info =>
                   manualConfirm(abortController, {
                     chunkIndex: info.chunkIndex,
