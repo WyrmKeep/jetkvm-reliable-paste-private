@@ -173,6 +173,12 @@ export interface ExecutePasteTextOptions {
     backspace: (n: number) => Promise<void>;
     retype: () => Promise<void>;
   }) => Promise<void>;
+  // Override the chunk size (source chars per chunk). Auto-verify/repair uses
+  // a smaller chunk than the default so a repair re-type is short enough to
+  // usually land in a clean window and converge — a full default-size re-type
+  // re-introduces too much loss to ever reach an exact count. Ignored unless
+  // chunk mode is active.
+  chunkCharsOverride?: number;
 }
 
 type PasteDrainMode = "required" | "bestEffort";
@@ -735,6 +741,7 @@ export default function useKeyboard() {
           onChunkCommitted,
           waitForChunkConfirm,
           verifyChunk,
+          chunkCharsOverride,
         } = options;
 
         const { batches, invalidChars, batchStats } = buildPasteMacroBatches(
@@ -833,8 +840,10 @@ export default function useKeyboard() {
         const policy = DEFAULT_LARGE_PASTE_POLICY;
         const chunkMode =
           rpcHidReady && pasteStateSupportedForChannel && text.length >= policy.autoThresholdChars;
+        const effectiveChunkChars =
+          chunkCharsOverride && chunkCharsOverride > 0 ? chunkCharsOverride : policy.chunkChars;
         const chunks: PasteChunkPlan[] = chunkMode
-          ? partitionBatchesByChunkChars(batchStats, policy.chunkChars)
+          ? partitionBatchesByChunkChars(batchStats, effectiveChunkChars)
           : [
               {
                 chunkIndex: 0,

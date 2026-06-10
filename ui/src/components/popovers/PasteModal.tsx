@@ -433,6 +433,9 @@ export default function PasteModal() {
           maxBytesPerBatch: profile.maxBytesPerBatch,
           finalSettleMs: 3000,
           signal: abortController.signal,
+          // Auto-verify/repair uses smaller chunks so a repair re-type is
+          // short enough to usually land in a clean window and converge.
+          chunkCharsOverride: autoVerify ? 1500 : undefined,
           onProgress: progress => {
             setPasteProgress({
               completed: progress.completedBatches,
@@ -526,7 +529,7 @@ export default function PasteModal() {
                     return;
                   }
                   if (autoRepair && cur !== null && cur > checkpoint && cur < expected) {
-                    for (let attempt = 1; attempt <= 2 && cur !== expected; attempt++) {
+                    for (let attempt = 1; attempt <= 4 && cur !== expected; attempt++) {
                       if (abortController.signal.aborted)
                         throw new Error("Paste execution aborted");
                       setTraceLinesPersisted(c => [
