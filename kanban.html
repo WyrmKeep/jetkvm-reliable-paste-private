@@ -27,7 +27,7 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 11:30 (BST)",
+  updated: "2026-06-10 12:00 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
@@ -41,16 +41,15 @@ const BOARD = {
     {
       name: "In Progress",
       cls: "inprogress",
-      items: [
-        { id: "PASTE-006", title: "Auto-verified paste: closed-loop OCR on the video counter",
-          note: "Spike proven: tesseract.js reads the Notepad counter 8/8 exact from KVM video crops. P1: region select + per-chunk OCR auto-confirm. P2: auto-repair (backspace deficit to checkpoint, re-type chunk).",
-          doc: "docs/tickets/PASTE-006.md" },
-      ],
+      items: [],
     },
     {
       name: "Done",
       cls: "done",
       items: [
+        { id: "PASTE-006", title: "Auto-verified paste (P1): closed-loop OCR on the video counter",
+          note: "Zero-touch validated: counter auto-located, 4/4 chunk boundaries OCR-confirmed exactly (baseline-relative on a non-empty doc), pauses=0. Each match doubles as a zero-loss proof. P2 (auto-repair) designed in the ticket.",
+          doc: "docs/tickets/PASTE-006.md" },
         { id: "PASTE-004", title: "LED-echo preflight for long pastes",
           note: "NumLock tap + LED echo check before pastes ≥10k; soft amber warning when the host isn't acknowledging input. Validated: 'led-preflight: ok' through the real pipeline; lock state restored.",
           doc: "docs/tickets/PASTE-004.md" },

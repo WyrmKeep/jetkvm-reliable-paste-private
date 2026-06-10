@@ -1,6 +1,25 @@
 # PASTE-006 — Auto-verified paste: closed-loop integrity via on-video OCR
 
-**Status:** In Progress (spike validated 2026-06-10)
+**Status:** P1 Done & validated (2026-06-10); P2 (auto-repair) designed, not built
+
+## P1 validation (zero-touch, machine 2, on top of a 21,165-char document)
+
+```
+ocr-calibrate: counter=21165
+ocr-verify chunk 1/5: 26157 ok   (= baseline + 4,992 exactly)
+ocr-verify chunk 2/5: 31149 ok
+ocr-verify chunk 3/5: 36141 ok
+ocr-verify chunk 4/5: 41133 ok
+done: chars=21200 — pauses=0 (no human interaction)
+```
+
+Counter auto-located in the frame, baseline-relative math validated on a
+non-empty target document, every boundary self-verified — and each OCR
+match doubles as a zero-loss proof for the preceding chunk. Known P1
+limitations / follow-ups: the LAST chunk has no confirm boundary, so the
+tail isn't OCR-checked yet (add a final read to the completion summary);
+the summary's expected-count display assumes an empty starting document
+(OCR math doesn't); tesseract.js assets load from CDN (bundle for offline).
 
 ## Motivation
 
