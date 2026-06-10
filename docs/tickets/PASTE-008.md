@@ -173,10 +173,18 @@ the counter at 6k, missed it at 100k. (The very first 100k soak ALSO had an
 auto-reboot near the end — a second, now-removed confound — but the verify
 failure is the calibration flakiness, not the reboot.)
 
-**Net:** the detect→repair loop WORKS (6k byte-perfect proves it), but it only
-engages when `findCounter` happens to locate the counter — a coin-flip at the
-calibration step. When calibration misses, the paste silently runs unverified.
-This is the #1 thing to harden for a trustworthy large-paste catch.
+**Net (corrected for real-user behaviour):** the detect→repair loop WORKS (6k
+byte-perfect proves it), but it only engages AUTOMATICALLY when `findCounter`
+locates the counter — a coin-flip at the calibration step. Crucially, calibration
+failure does **NOT** silently paste unverified for a real user: `manualFallback`
+sets `waitForChunkConfirm` (PasteModal ~L492-500) so the paste PAUSES at every
+chunk and asks the user to glance at the target's own counter before continuing.
+My `e2e-codeverify` harness auto-clicks "Continue" through those prompts (which
+is why its byte-diff showed 97.58% "unverified") — a real user would be prompted
+to verify each chunk. So the flakiness degrades the EXPERIENCE (full automation →
+~70 manual chunk-confirms on a 100k paste), not the SAFETY (the user is always
+given a verification path). Still the #1 thing to harden so large pastes stay
+hands-off.
 
 **Fix direction (PASTE-006 hardening):** the Notepad counter sits at a STABLE
 screen position (bottom status strip). Calibration should seed the read region
