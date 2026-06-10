@@ -633,7 +633,17 @@ export default function useKeyboard() {
           .reduce((acc, val) => acc + val, 0);
 
         if (keyValues.length > 0 || modifierMask > 0) {
-          macro.push({ keys: keyValues, modifier: modifierMask, delay: 5 });
+          // PASTE-009: hold MODIFIED keys (Shift/AltGr + key) longer than
+          // plain keys. The byte-exact 100k surfaced a same-length case race
+          // (`Quick`→`quick`) — the host sampled the key without its modifier
+          // from a too-brief report. A modified press held ~2x longer gives
+          // the host more USB polls to register the modifier together with
+          // the key, reducing these substitution races. Plain (unmodified)
+          // keys keep the short hold, so the slowdown is confined to the
+          // shifted/AltGr minority of characters. This only REDUCES the race
+          // (it can't be content-verified for code — see PASTE-008).
+          const pressHoldMs = modifierMask > 0 ? 10 : 5;
+          macro.push({ keys: keyValues, modifier: modifierMask, delay: pressHoldMs });
           macro.push({ ...MACRO_RESET_KEYBOARD_STATE, delay: step.delay || 25 });
         }
       }
