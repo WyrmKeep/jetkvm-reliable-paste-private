@@ -149,3 +149,33 @@ cost is size-dependent. Chunk pauses already let the input queue drain between
 chunks (the raw run has none), so the chunked product path should beat 99.2%
 on drops; a 100k product-path soak (chunked + verify + repair, byte-diffed) is
 the next validation.
+
+## Catch mechanism PROVEN end-to-end on code (2026-06-10)
+
+Product-path test (chunked + auto-verify OCR + auto-repair), byte-diffed, on
+the **stable** device (after disabling auto-update — see below):
+
+- **6k code, BYTE-PERFECT.** `ocr-calibrate: counter=0` (calibration succeeds —
+  the Notepad counter IS readable), then auto-repair fired on all 5 chunks
+  (each lost 5–13 chars at an elevated ~0.7%/chunk post-reboot rate), detected
+  the deficit via the counter OCR, rolled back, re-typed, and converged:
+  `sent=6021 recv=6021 delta=0, lines ok=84 damaged=0 missing=0`. **This is the
+  detect→rollback→retype→byte-perfect loop working on code.**
+
+**The earlier "98.4%, 0 verify events" 100k soak was a false negative** — it was
+confounded by the cloud auto-updater downloading a release and **auto-rebooting
+the device mid-run**, which dropped the WebRTC video so OCR couldn't read the
+counter (→ manual fallback, which the test harness auto-continued → unverified
+delivery). Not a mechanism failure. Root-caused and fixed (auto-update disabled;
+see below). A clean 100k product soak on the stable device is running.
+
+### Build-persistence root cause (the recurring "reverts to baseline")
+- `RkLunch.sh` promotes a staged build with an unconditional `mv -f` and has NO
+  rollback/failsafe — so `dev_deploy -i` IS permanent at the boot level.
+- The reverts were the **cloud auto-updater** (`auto_update_enabled: true`,
+  api.jetkvm.com): it downloads the official release, stages `jetkvm_app.update`,
+  and auto-reboots → the next boot's `mv -f` overwrites the custom build.
+- **Fix:** disable auto-update (web UI → Settings → General → Auto Update; flips
+  `auto_update_enabled` to false, persists in `/userdata/kvm_config.json`,
+  survives reboot). Confirmed: feature build now persists across reboot with
+  en-US layout intact. (Official docs: jetkvm.com/docs/advanced-usage/ota-updates.)
