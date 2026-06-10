@@ -195,7 +195,12 @@ export interface LargePastePolicy {
 export const DEFAULT_LARGE_PASTE_POLICY: LargePastePolicy = {
   autoThresholdChars: 5000,
   chunkChars: 5000,
-  chunkPauseMs: 2000,
+  // 2000ms when chunks were burst-shaped (the pause was the target's
+  // catch-up window). With uniform deadline pacing at measured-safe rates
+  // (2026-06-09 spec) the host never accumulates backlog, so the pause is
+  // only boundary-jitter insurance. On a 100k-char paste (20 chunks) the
+  // old value added ~38s of pure dead time.
+  chunkPauseMs: 250,
   chunkDrainTimeoutFloorMs: 60000,
 };
 

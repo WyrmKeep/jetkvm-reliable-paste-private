@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Reliable Paste — Kanban</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #0b1220; color: #e2e8f0; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #94a3b8; font-size: 12px; margin-bottom: 20px; }
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start; }
+  .col { background: #111a2e; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+  .col h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin: 4px 4px 12px; }
+  .card { background: #16213a; border: 1px solid #27354f; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .card .id { font-size: 11px; color: #60a5fa; font-weight: 600; }
+  .card .title { font-size: 14px; font-weight: 600; margin: 2px 0 4px; }
+  .card .note { font-size: 12px; color: #94a3b8; line-height: 1.45; }
+  .card .doc { font-size: 11px; margin-top: 6px; }
+  .card .doc a { color: #34d399; text-decoration: none; }
+  .done .card { opacity: 0.85; border-color: #14532d; }
+  .inprogress .card { border-color: #92400e; }
+</style>
+</head>
+<body>
+<h1>Reliable Paste — feature board</h1>
+<div class="sub" id="updated"></div>
+<div class="board" id="board"></div>
+<script>
+const BOARD = {
+  updated: "2026-06-10 10:25 (BST)",
+  goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
+  columns: [
+    {
+      name: "Backlog",
+      cls: "",
+      items: [
+        { id: "PASTE-003", title: "Per-target rate calibration (adaptability)",
+          note: "Guided calibration: paste a self-verifying pattern at increasing rates, user visually confirms via KVM video, result persisted per device. No network feedback allowed — pure HID + human-in-the-loop." },
+        { id: "PASTE-004", title: "LED-echo preflight for long pastes",
+          note: "NumLock toggle + LED OUT-report echo before pastes ≥10k chars; warn if the host isn't processing input before an 18-minute commitment. Design sketch in docs/superpowers/specs/2026-06-10-large-paste-ux.md." },
+        { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
+          note: "Validate profiles on additional Windows targets; document per-sink expectations (Notepad vs editors vs terminals)." },
+      ],
+    },
+    {
+      name: "In Progress",
+      cls: "inprogress",
+      items: [
+        { id: "PASTE-002", title: "100k file-upload paste at scale",
+          note: "Real workflow: 103,880-key corpus via file upload, Reliable profile (~19min). Validates sustained large-doc behavior + chunk/drain machinery at scale. Running on machine 2." },
+      ],
+    },
+    {
+      name: "Done",
+      cls: "done",
+      items: [
+        { id: "PASTE-001", title: "Validate resumable paste (20k, cancel → resume)",
+          note: "Mechanism validated on machine 2: chunk mode on first paste (capability RPC), checkpoint banner exact (9,984/21,200), resume completed. Found: host loss is machine- and time-varying (post-boot churn) → PASTE-003 matters.",
+          doc: "docs/tickets/PASTE-001.md" },
+        { id: "PASTE-000A", title: "Uniform deadline pacing + measured-safe profiles + wake tap",
+          note: "USB-bus theory refuted by measurement; burst+drain replaced with uniform pacing; reliable=91cps zero-loss validated; PR #70.",
+          doc: "docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md" },
+        { id: "PASTE-000B", title: "Large-paste UX: ETA, resume checkpoints, pause retune, capability RPC",
+          note: "Pre-paste + live ETA; chunk-boundary resume; 2000→250ms chunk pause; getPasteCapabilities fixes first-paste-never-chunked latch.",
+          doc: "docs/superpowers/specs/2026-06-10-large-paste-ux.md" },
+      ],
+    },
+  ],
+};
+document.getElementById("updated").textContent =
+  "Updated " + BOARD.updated + " — " + BOARD.goal;
+const board = document.getElementById("board");
+for (const col of BOARD.columns) {
+  const div = document.createElement("div");
+  div.className = "col " + col.cls;
+  div.innerHTML = "<h2>" + col.name + " (" + col.items.length + ")</h2>";
+  for (const item of col.items) {
+    const c = document.createElement("div");
+    c.className = "card";
+    c.innerHTML =
+      '<div class="id">' + item.id + '</div>' +
+      '<div class="title">' + item.title + "</div>" +
+      '<div class="note">' + item.note + "</div>" +
+      (item.doc ? '<div class="doc"><a href="' + item.doc + '">' + item.doc + "</a></div>" : "");
+    div.appendChild(c);
+  }
+  board.appendChild(div);
+}
+</script>
+</body>
+</html>

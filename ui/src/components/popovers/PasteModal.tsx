@@ -15,7 +15,7 @@ import { m } from "@localizations/messages.js";
 import { cx } from "@/cva.config";
 import { useHidStore, useSettingsStore, useUiStore } from "@hooks/stores";
 import { JsonRpcResponse, useJsonRpc } from "@hooks/useJsonRpc";
-import useKeyboard, { type KeyboardLayoutLike } from "@hooks/useKeyboard";
+import useKeyboard, { markPasteStateCapability, type KeyboardLayoutLike } from "@hooks/useKeyboard";
 import useKeyboardLayout from "@hooks/useKeyboardLayout";
 import notifications from "@/notifications";
 import { Button } from "@components/Button";
@@ -23,10 +23,74 @@ import { GridCard } from "@components/Card";
 import { InputFieldWithLabel } from "@components/InputField";
 import { TextAreaWithLabel } from "@components/TextArea";
 import { PASTE_PROFILES, type PasteProfileName } from "@/utils/pasteBatches";
+import { DEFAULT_LARGE_PASTE_POLICY } from "@/utils/pasteMacro";
 
 // uint32 max value / 4
 const pasteMaxLength = 1073741824;
 const defaultDelay = 20;
+
+// ----- Resumable paste checkpoint -----
+// Module scope so the checkpoint survives popover unmount (click-outside
+// dismissal mid-failure), mirroring the executePasteTextInFlight pattern.
+// The checkpoint holds the FULL normalized source text independently of
+// the textarea/file inputs, so resume works even after those reset.
+interface PendingResumeState {
+  key: string; // hashPasteContent of the normalized text
+  text: string; // full normalized (CRLF→LF, NFC) source text
+  committedChars: number; // code points confirmed flushed (chunk drain boundaries)
+  totalChars: number; // code points in text
+}
+let pendingResumeGlobal: PendingResumeState | null = null;
+
+function hashPasteContent(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  return `${h.toString(36)}:${text.length}`;
+}
+
+function countCodePoints(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; n++) {
+    const code = text.codePointAt(i) ?? 0;
+    i += code > 0xffff ? 2 : 1;
+  }
+  return n;
+}
+
+// onChunkCommitted counts source chars as code points of the normalized
+// text; String.prototype.slice indexes UTF-16 units, so convert before
+// slicing. Identical for ASCII, diverges on astral-plane characters.
+function sliceFromCodePoint(text: string, count: number): string {
+  if (count <= 0) return text;
+  let idx = 0;
+  let seen = 0;
+  for (const ch of text) {
+    if (seen >= count) break;
+    idx += ch.length;
+    seen += 1;
+  }
+  return text.slice(idx);
+}
+
+// ----- Duration estimate -----
+// Uniform deadline pacing makes paste time deterministic: (5ms press +
+// keyDelayMs reset) per char, plus inter-chunk pauses and ~2s of wake-tap/
+// settle overhead. See the 2026-06-09 throughput spec.
+function estimatePasteSeconds(chars: number, keyDelayMs: number): number {
+  if (chars <= 0) return 0;
+  const chunkCount =
+    chars >= DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars
+      ? Math.ceil(chars / DEFAULT_LARGE_PASTE_POLICY.chunkChars)
+      : 1;
+  const pausesMs = Math.max(0, chunkCount - 1) * DEFAULT_LARGE_PASTE_POLICY.chunkPauseMs;
+  return (chars * (5 + keyDelayMs) + pausesMs) / 1000 + 2;
+}
+
+function formatDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
 
 interface PasteProgressState {
   completed: number;
@@ -115,6 +179,9 @@ export default function PasteModal() {
   const [traceLines, setTraceLines] = useState<string[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileText, setFileText] = useState<string | null>(null);
+  const [textareaCharCount, setTextareaCharCount] = useState(0);
+  const [resumeState, setResumeState] = useState<PendingResumeState | null>(pendingResumeGlobal);
+  const [pasteEtaSeconds, setPasteEtaSeconds] = useState<number | null>(null);
   const activeProfileOption = useMemo(
     () =>
       pasteProfileOptions.find(option => option.value === pasteProfile) ?? pasteProfileOptions[0],
@@ -164,6 +231,16 @@ export default function PasteModal() {
       if ("error" in resp) return;
       setKeyboardLayout(resp.result as string);
     });
+    // Deterministic chunk-mode capability: backends with this RPC emit
+    // paste-state events, so the first paste of the session can use chunk
+    // mode (and resume checkpoints). Older firmware errors → observation
+    // latch fallback in useKeyboard handles it.
+    send("getPasteCapabilities", {}, (resp: JsonRpcResponse) => {
+      if ("error" in resp) return;
+      if ((resp.result as { pasteState?: boolean })?.pasteState) {
+        markPasteStateCapability();
+      }
+    });
   }, [send, setKeyboardLayout]);
 
   const onCancelPasteMode = useCallback(() => {
@@ -177,87 +254,156 @@ export default function PasteModal() {
     setFileText(null);
   }, [setDisableVideoFocusTrap, cancelExecuteMacro]);
 
+  // Shared paste runner for fresh pastes (startOffset 0) and resumes
+  // (startOffset = a committed chunk boundary). fullText must already be
+  // CRLF→LF and NFC normalized so code-point offsets are stable.
+  const runPaste = useCallback(
+    async (fullText: string, startOffset: number) => {
+      if (!selectedKeyboard) return;
+      // Synchronous guard: ref is checked BEFORE React has a chance to
+      // re-render the disabled button, so a rapid double-click on Paste
+      // is blocked even within the same event loop turn. The state below
+      // drives the button's disabled prop for subsequent renders.
+      if (pasteActiveRef.current) return;
+      pasteActiveRef.current = true;
+      setPasteActive(true);
+
+      const key = hashPasteContent(fullText);
+      const totalChars = countCodePoints(fullText);
+      const textToType = sliceFromCodePoint(fullText, startOffset);
+      const runStart = performance.now();
+      setPasteEtaSeconds(null);
+
+      try {
+        const profile = PASTE_PROFILES[pasteProfile];
+        const effectiveDelay = debugMode ? delay : profile.keyDelayMs;
+        const abortController = new AbortController();
+        pasteAbortControllerRef.current = abortController;
+        setTraceLinesPersisted([
+          `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : "textarea"} chars=${totalChars}${startOffset > 0 ? ` resume_from=${startOffset}` : ""}`,
+        ]);
+
+        await executePasteText(textToType, {
+          keyboard: selectedKeyboard as KeyboardLayoutLike,
+          delayMs: effectiveDelay,
+          maxStepsPerBatch: profile.maxStepsPerBatch,
+          maxBytesPerBatch: profile.maxBytesPerBatch,
+          finalSettleMs: 3000,
+          signal: abortController.signal,
+          onProgress: progress => {
+            setPasteProgress({
+              completed: progress.completedBatches,
+              total: progress.totalBatches,
+              phase: progress.phase,
+              chunkIndex: progress.chunkIndex,
+              chunkTotal: progress.chunkTotal,
+            });
+            // Live ETA, extrapolated from observed batch throughput — it
+            // self-corrects for real channel/drain overhead rather than
+            // assuming the theoretical rate.
+            if (progress.phase === "sending" && progress.completedBatches > 0) {
+              const f = progress.completedBatches / progress.totalBatches;
+              const elapsed = (performance.now() - runStart) / 1000;
+              setPasteEtaSeconds(f >= 1 ? 0 : (elapsed * (1 - f)) / f);
+            }
+          },
+          onTrace: trace => {
+            let line: string;
+            switch (trace.kind) {
+              case "batch":
+                line = `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`;
+                break;
+              case "chunk-sent":
+                line = `chunk ${trace.chunkIndex}/${trace.chunkTotal} sent: chars=${trace.sourceChars} batches=${trace.batches}`;
+                break;
+              case "chunk-drained":
+                line = `chunk ${trace.chunkIndex} drained in ${trace.drainMs}ms`;
+                break;
+              case "chunk-pause":
+                line = `chunk ${trace.chunkIndex} pause ${trace.pauseMs}ms`;
+                break;
+            }
+            setTraceLinesPersisted(current => [...current, line]);
+          },
+          onChunkCommitted: committed => {
+            pendingResumeGlobal = {
+              key,
+              text: fullText,
+              committedChars: startOffset + committed,
+              totalChars,
+            };
+          },
+        });
+
+        // Success: the checkpoint for this content is no longer needed.
+        if (pendingResumeGlobal?.key === key) pendingResumeGlobal = null;
+        setResumeState(null);
+        const elapsedSec = (performance.now() - runStart) / 1000;
+        const typedChars = totalChars - startOffset;
+        setTraceLinesPersisted(current => [
+          ...current,
+          `done: chars=${typedChars} elapsed=${elapsedSec.toFixed(1)}s effective=${(
+            typedChars / Math.max(elapsedSec, 0.001)
+          ).toFixed(1)}cps`,
+        ]);
+
+        pasteAbortControllerRef.current = null;
+        setPasteProgress(null);
+        setPasteEtaSeconds(null);
+      } catch (error) {
+        pasteAbortControllerRef.current = null;
+        setPasteProgress(null);
+        setPasteEtaSeconds(null);
+        // Surface the checkpoint (if any chunk committed) so the user can
+        // resume from the last verified boundary instead of starting over.
+        if (
+          pendingResumeGlobal?.key === key &&
+          pendingResumeGlobal.committedChars > 0 &&
+          pendingResumeGlobal.committedChars < totalChars
+        ) {
+          setResumeState({ ...pendingResumeGlobal });
+        }
+        console.error("Failed to paste text:", error);
+        notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
+      } finally {
+        // Always clear the in-flight guard so the submit button re-enables
+        // after the operation completes (success, error, or abort). Phase 2
+        // relies on this to prevent a stuck-disabled button on errors.
+        pasteActiveRef.current = false;
+        setPasteActive(false);
+      }
+    },
+    [
+      selectedKeyboard,
+      executePasteText,
+      delay,
+      pasteProfile,
+      debugMode,
+      selectedFile,
+      setTraceLinesPersisted,
+    ],
+  );
+
   const onConfirmPaste = useCallback(async () => {
     if (!TextAreaRef.current || !selectedKeyboard) return;
-    // Synchronous guard: ref is checked BEFORE React has a chance to
-    // re-render the disabled button, so a rapid double-click on Paste
-    // is blocked even within the same event loop turn. The state below
-    // drives the button's disabled prop for subsequent renders.
-    if (pasteActiveRef.current) return;
-    pasteActiveRef.current = true;
-    setPasteActive(true);
+    const fullText = normalizePasteText(fileText ?? TextAreaRef.current.value).normalize("NFC");
+    // A fresh confirm always starts from zero and invalidates any prior
+    // checkpoint — resuming different content would corrupt the target.
+    pendingResumeGlobal = null;
+    setResumeState(null);
+    await runPaste(fullText, 0);
+  }, [selectedKeyboard, fileText, runPaste]);
 
-    const text = normalizePasteText(fileText ?? TextAreaRef.current.value);
+  const onResumePaste = useCallback(async () => {
+    const resume = resumeState;
+    if (!resume) return;
+    await runPaste(resume.text, resume.committedChars);
+  }, [resumeState, runPaste]);
 
-    try {
-      const profile = PASTE_PROFILES[pasteProfile];
-      const effectiveDelay = debugMode ? delay : profile.keyDelayMs;
-      const abortController = new AbortController();
-      pasteAbortControllerRef.current = abortController;
-      setTraceLinesPersisted([
-        `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : "textarea"} chars=${text.length}`,
-      ]);
-
-      await executePasteText(text, {
-        keyboard: selectedKeyboard as KeyboardLayoutLike,
-        delayMs: effectiveDelay,
-        maxStepsPerBatch: profile.maxStepsPerBatch,
-        maxBytesPerBatch: profile.maxBytesPerBatch,
-        finalSettleMs: 3000,
-        signal: abortController.signal,
-        onProgress: progress => {
-          setPasteProgress({
-            completed: progress.completedBatches,
-            total: progress.totalBatches,
-            phase: progress.phase,
-            chunkIndex: progress.chunkIndex,
-            chunkTotal: progress.chunkTotal,
-          });
-        },
-        onTrace: trace => {
-          let line: string;
-          switch (trace.kind) {
-            case "batch":
-              line = `batch ${trace.batchIndex}/${trace.totalBatches}: steps=${trace.stepCount} bytes=${trace.estimatedBytes} buffered=${trace.bufferedAmount}`;
-              break;
-            case "chunk-sent":
-              line = `chunk ${trace.chunkIndex}/${trace.chunkTotal} sent: chars=${trace.sourceChars} batches=${trace.batches}`;
-              break;
-            case "chunk-drained":
-              line = `chunk ${trace.chunkIndex} drained in ${trace.drainMs}ms`;
-              break;
-            case "chunk-pause":
-              line = `chunk ${trace.chunkIndex} pause ${trace.pauseMs}ms`;
-              break;
-          }
-          setTraceLinesPersisted(current => [...current, line]);
-        },
-      });
-
-      pasteAbortControllerRef.current = null;
-      setPasteProgress(null);
-    } catch (error) {
-      pasteAbortControllerRef.current = null;
-      setPasteProgress(null);
-      console.error("Failed to paste text:", error);
-      notifications.error(m.paste_modal_failed_paste({ error: String(error) }));
-    } finally {
-      // Always clear the in-flight guard so the submit button re-enables
-      // after the operation completes (success, error, or abort). Phase 2
-      // relies on this to prevent a stuck-disabled button on errors.
-      pasteActiveRef.current = false;
-      setPasteActive(false);
-    }
-  }, [
-    selectedKeyboard,
-    executePasteText,
-    delay,
-    pasteProfile,
-    debugMode,
-    selectedFile,
-    fileText,
-    setTraceLinesPersisted,
-  ]);
+  const onDismissResume = useCallback(() => {
+    pendingResumeGlobal = null;
+    setResumeState(null);
+  }, []);
 
   useEffect(() => {
     if (TextAreaRef.current) {
@@ -337,6 +483,7 @@ export default function PasteModal() {
               }}
               onChange={e => {
                 const value = normalizePasteText(e.target.value);
+                setTextareaCharCount(value.length);
                 const invalidChars = [
                   ...new Set(
                     // @ts-expect-error TS doesn't recognize Intl.Segmenter in some environments
@@ -473,6 +620,20 @@ export default function PasteModal() {
                 );
               })}
             </div>
+            {(fileText !== null ? fileText.length : textareaCharCount) > 0 && (
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                {(() => {
+                  const chars = fileText !== null ? fileText.length : textareaCharCount;
+                  const reliableEta = formatDuration(
+                    estimatePasteSeconds(chars, PASTE_PROFILES.reliable.keyDelayMs),
+                  );
+                  const fastEta = formatDuration(
+                    estimatePasteSeconds(chars, PASTE_PROFILES.fast.keyDelayMs),
+                  );
+                  return `${chars.toLocaleString()} characters — ≈${reliableEta} on Reliable, ≈${fastEta} on Fast`;
+                })()}
+              </p>
+            )}
           </div>
 
           <div className={cx("text-xs text-slate-600 dark:text-slate-400", delayClassName)}>
@@ -519,7 +680,12 @@ export default function PasteModal() {
               >
                 <div className="flex items-center justify-between gap-3 text-xs font-medium">
                   <span>{getPasteProgressLabel(pasteProgress)}</span>
-                  <span>{pasteProgressPercent}%</span>
+                  <span>
+                    {pasteEtaSeconds !== null && pasteEtaSeconds > 1
+                      ? `~${formatDuration(pasteEtaSeconds)} left · `
+                      : ""}
+                    {pasteProgressPercent}%
+                  </span>
                 </div>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/70 dark:bg-slate-950/40">
                   <div
@@ -537,6 +703,31 @@ export default function PasteModal() {
                     Chunk {pasteProgress.chunkIndex} / {pasteProgress.chunkTotal}
                   </p>
                 )}
+              </div>
+            )}
+            {resumeState && !pasteActive && (
+              <div className="space-y-2 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
+                <p className="text-xs font-medium">
+                  Previous paste stopped at {resumeState.committedChars.toLocaleString()} /{" "}
+                  {resumeState.totalChars.toLocaleString()} characters (
+                  {Math.round((resumeState.committedChars / resumeState.totalChars) * 100)}%).
+                </p>
+                <p className="text-[11px] leading-4 opacity-80">
+                  Everything before that point was delivered to the target. Text after it may have
+                  partially arrived — check the tail on the target and remove any partial text
+                  before resuming.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="XS"
+                    theme="primary"
+                    text={`Resume from ${Math.round(
+                      (resumeState.committedChars / resumeState.totalChars) * 100,
+                    )}%`}
+                    onClick={onResumePaste}
+                  />
+                  <Button size="XS" theme="light" text="Dismiss" onClick={onDismissResume} />
+                </div>
               </div>
             )}
             {debugMode && traceLines.length > 0 && (

@@ -1314,6 +1314,19 @@ func rpcCancelKeyboardMacro() {
 	cancelAndDrainMacroQueue()
 }
 
+// PasteCapabilities reports paste-related backend features so the frontend
+// can enable chunk mode deterministically instead of having to observe
+// paste-state events mid-paste (which forced the first paste of every
+// session onto the non-chunk path — no chunking and no resume checkpoints
+// for exactly the large first paste that needs them most).
+type PasteCapabilities struct {
+	PasteState bool `json:"pasteState"`
+}
+
+func rpcGetPasteCapabilities() PasteCapabilities {
+	return PasteCapabilities{PasteState: true}
+}
+
 var keyboardClearStateKeys = make([]byte, hidrpc.HidKeyBufferSize)
 var keyboardMacroSequence atomic.Uint64
 
@@ -1409,6 +1422,7 @@ var rpcHandlers = map[string]RPCHandler{
 	"getKeyboardLedState":        {Func: rpcGetKeyboardLedState},
 	"getKeyDownState":            {Func: rpcGetKeysDownState},
 	"keyboardReport":             {Func: rpcKeyboardReport, Params: []string{"modifier", "keys"}},
+	"getPasteCapabilities":       {Func: rpcGetPasteCapabilities},
 	"keypressReport":             {Func: rpcKeypressReport, Params: []string{"key", "press"}},
 	"absMouseReport":             {Func: rpcAbsMouseReport, Params: []string{"x", "y", "buttons"}},
 	"relMouseReport":             {Func: rpcRelMouseReport, Params: []string{"dx", "dy", "buttons"}},

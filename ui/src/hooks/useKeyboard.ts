@@ -64,6 +64,19 @@ let pasteStateSupportObserved = false;
 let pasteStateSupportChannel: RTCDataChannel | null = null;
 let pasteFailureSequence = 0;
 
+// Deterministic capability latch, set when the getPasteCapabilities RPC
+// confirms the backend emits paste-state events. The observation latch
+// above forced the FIRST paste of every session onto the non-chunk path —
+// no chunking and no resume checkpoints for exactly the large first paste
+// that needs them most. Capability is device-level (not per-channel) and
+// only ever flips true; older firmware without the RPC returns an error
+// and we fall back to the observation latch unchanged.
+let pasteStateSupportCapability = false;
+
+export function markPasteStateCapability() {
+  pasteStateSupportCapability = true;
+}
+
 function syncPasteStateSupportChannel(channel: RTCDataChannel | null): boolean {
   if (pasteStateSupportChannel === channel) {
     return pasteStateSupportObserved;
@@ -126,6 +139,13 @@ export interface ExecutePasteTextOptions {
   signal?: AbortSignal;
   onProgress?: (progress: PasteExecutionProgress) => void;
   onTrace?: (trace: PasteExecutionTrace) => void;
+  // Fires after each chunk's required drain resolves, with the CUMULATIVE
+  // count of source characters (code points of the NFC-normalized text)
+  // confirmed flushed through the backend (pasteDepth hit 0). A committed
+  // prefix is a safe resume boundary: everything before it has been typed;
+  // anything after it is in an unknown partial state. Only fires in chunk
+  // mode — small pastes have no required drains and report no commits.
+  onChunkCommitted?: (committedSourceChars: number) => void;
 }
 
 type PasteDrainMode = "required" | "bestEffort";
@@ -685,6 +705,7 @@ export default function useKeyboard() {
           signal,
           onProgress,
           onTrace,
+          onChunkCommitted,
         } = options;
 
         const { batches, invalidChars, batchStats } = buildPasteMacroBatches(
@@ -709,7 +730,8 @@ export default function useKeyboard() {
         if (!channel || channel.readyState !== "open") {
           throw new Error("HID data channel not available");
         }
-        const pasteStateSupportedForChannel = syncPasteStateSupportChannel(channel);
+        const pasteStateSupportedForChannel =
+          syncPasteStateSupportChannel(channel) || pasteStateSupportCapability;
 
         // Save and set bufferedAmount threshold for paste flow control
         const prevThreshold = channel.bufferedAmountLowThreshold;
@@ -795,6 +817,7 @@ export default function useKeyboard() {
         const chunkTotalForProgress = chunkMode ? chunks.length : 0;
 
         try {
+          let committedSourceChars = 0;
           for (let ci = 0; ci < chunks.length; ci++) {
             const chunk = chunks[ci];
             for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
@@ -937,6 +960,12 @@ export default function useKeyboard() {
                 chunkIndex: chunk.chunkIndex + 1,
                 drainMs: Math.round(performance.now() - drainStart),
               });
+
+              // The required drain resolved: every batch in this chunk has
+              // been flushed through the backend. Commit the prefix as a
+              // safe resume boundary.
+              committedSourceChars += chunk.sourceChars;
+              onChunkCommitted?.(committedSourceChars);
 
               if (ci < chunks.length - 1) {
                 // "pausing" progress fires here, right before the explicit
