@@ -68,7 +68,11 @@ interface OcrWord {
 export async function findCounter(video: HTMLVideoElement): Promise<CounterCalibration | null> {
   if (!video.videoWidth || !video.videoHeight) return null;
   const worker = await getWorker();
-  const SCALE = 1.5;
+  // PASTE-013: the status-bar text is small (~14px at 1080p); at the old
+  // SCALE=1.5 a slightly soft H.264 frame made Tesseract miss it ~half the
+  // time (whole-strip search is unforgiving). Up-sample more aggressively so
+  // the glyphs are large enough to read reliably from a single frame.
+  const SCALE = 3;
   const strip: CounterRegion = {
     x: 0,
     y: Math.floor(video.videoHeight * 0.6),
@@ -113,6 +117,55 @@ export async function findCounter(video: HTMLVideoElement): Promise<CounterCalib
     };
   }
   return null;
+}
+
+// PASTE-013: persist a located region across pastes. The flaky part is
+// LOCATING the counter (whole-strip findCounter); once located it sits at a
+// stable position that the deterministic fixed-region readCounter reads
+// reliably. Caching the region means findCounter only has to succeed ONCE per
+// window layout — every later paste reuses it and is immune to per-frame OCR
+// flakiness. Keyed by video dimensions so a resolution change invalidates it.
+const REGION_CACHE_KEY = "jetkvm_counter_region_v1";
+
+function loadCachedRegion(video: HTMLVideoElement): CounterRegion | null {
+  try {
+    const raw = localStorage.getItem(REGION_CACHE_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as { vw: number; vh: number; region: CounterRegion };
+    if (c.vw !== video.videoWidth || c.vh !== video.videoHeight) return null;
+    return c.region;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedRegion(video: HTMLVideoElement, region: CounterRegion): void {
+  try {
+    localStorage.setItem(
+      REGION_CACHE_KEY,
+      JSON.stringify({ vw: video.videoWidth, vh: video.videoHeight, region }),
+    );
+  } catch {
+    // localStorage unavailable / quota — non-fatal, just skip caching.
+  }
+}
+
+// Reliable calibration entry point. Try the cached region first (deterministic
+// readCounter); only fall back to the flaky whole-strip findCounter when there
+// is no usable cached region — and persist whatever it locates for next time.
+// Self-healing: if the window moved, the cached read returns null and we
+// re-locate + re-cache.
+export async function calibrateCounter(
+  video: HTMLVideoElement,
+): Promise<CounterCalibration | null> {
+  const cached = loadCachedRegion(video);
+  if (cached) {
+    const value = await readCounter(video, cached).catch(() => null);
+    if (value !== null) return { region: cached, value };
+  }
+  const found = await findCounter(video);
+  if (found) saveCachedRegion(video, found.region);
+  return found;
 }
 
 // Read the counter from a previously located region. Returns null when the
