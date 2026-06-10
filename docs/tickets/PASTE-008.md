@@ -66,3 +66,41 @@ harness completion fixed to key on the app's `done:` trace):
 - Also fixed the test harness: completion now keys on the `done:` trace line,
   not the Confirm button (which flipped between chunks and caused an earlier
   partial-save artifact).
+
+## Code consistency band — raw channel, calm host (2026-06-10)
+
+Three byte-exact code runs (20,059 chars after norm, en-US, `code20k.txt`)
+on a **calm host (0 CPU spikes >40% all three runs)**, typed via the
+standalone `hidtype` test binary (2ms atomic modifier+key hold — this path
+does **NOT** include PASTE-009's 10ms hold, so it's a clean *baseline* of the
+underlying channel, not a PASTE-009 validation):
+
+| Run | Chars lost | Accuracy | Single-char drops | Same-length subs |
+|---|---|---|---|---|
+| cd1 | 8  | 99.96% | 8  | — (per-line detail lost to a stale diff regex; char count authoritative) |
+| cd2 | 10 | 99.95% | 10 | 1 — `?? 0`→`/? 0` (Shift dropped on `/`) |
+| cd3 | 14 | 99.93% | 14 | 2 — `=> v`→`+> v` (Shift stuck → `=`/`+`), `?? 0`→`/? 0` |
+
+**Band: 99.93–99.96% raw, ~8–14 sparse drops per 20k.** Tight and
+host-correlated (matches prose; not code-specific). Two error classes:
+
+1. **Single-char drops (the bulk):** every one is **length-changing**, so the
+   product's count-verify (PASTE-006) detects and the slow-retype repair fixes
+   all of them. This is the "mechanism to catch it" — drops never survive
+   silently end-to-end.
+2. **Same-length Shift races (0–2 per 20k):** `??`→`/?`, `=`→`+`. Length
+   unchanged → **count-verify is blind** (the documented code ceiling above).
+   Seen even with atomic mod+key reports at 2ms hold; PASTE-009's 10ms hold
+   targets exactly this and should reduce the rate (built, calm-host product
+   soak still pending — these baseline runs bypass it).
+
+**Bottom line for code:** drops are fully catchable (count-verify + repair);
+the residual is ~0–2 unverifiable same-length Shift races per 20k chars
+(≈1 per 10–20k), reduced but not eliminated by PASTE-009. Byte-exact harness
+(`exact-diff.js`) is the only way to surface those — by design they can't be
+caught through the video/OCR channel on symbol-heavy code.
+
+- Fixed `exact-diff.js` line-key regex (`/^(L\d{4})/`→`/(L\d{4})/`): corpus
+  lines start with `//L####`, so the anchored form matched nothing and flagged
+  every line as "mangled" (the cd1 `damagedLines=275` artifact). Char-count
+  delta was always authoritative; per-line detail is now correct too.

@@ -27,7 +27,7 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 18:20 (BST)",
+  updated: "2026-06-10 19:25 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
@@ -65,6 +65,9 @@ const BOARD = {
         { id: "PASTE-010", title: "Code/special-symbol benchmark → found layout mismatch",
           note: "20k code file via real UI, byte-exact diff. en-UK setting swapped @↔\" (counts proved it: @ 104→603, \" 612→103) = US/UK mismatch. Switched device to en-US → symbols correct, only sparse host-races remain. Special-symbol corruption was a LAYOUT config issue, not paste loss. Recommend surfacing layout in the paste UI.",
           doc: "docs/tickets/PASTE-010.md" },
+        { id: "PASTE-008c", title: "Code consistency band measured (calm host)",
+          note: "3× byte-exact 20k code runs on a calm host: 99.93–99.96% raw (8/10/14 sparse single-char drops). Two error classes: (1) drops — all length-changing → fully caught by count-verify+repair; (2) same-length Shift races (0–2/20k: ??→/?, =→+) — count-blind residual, the documented code ceiling, reduced by PASTE-009. Raw hidtype baseline (2ms hold, no PASTE-009). Fixed exact-diff.js line-key regex.",
+          doc: "docs/tickets/PASTE-008.md" },
         { id: "PASTE-006", title: "Auto-verified paste (OCR on the video counter)",
           note: "P1 auto-verify validated (counter auto-located, OCR == truth, reads now poll until stable to avoid host-queue-lag false deficits). P2 auto-repair implemented but default-OFF/experimental: whole-chunk retype can't converge under persistent loss. Recommended path = Reliable + auto-verify + manual resume.",
           doc: "docs/tickets/PASTE-006.md" },
