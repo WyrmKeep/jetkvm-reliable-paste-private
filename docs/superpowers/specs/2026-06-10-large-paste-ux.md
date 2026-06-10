@@ -83,3 +83,7 @@ legitimately never report LED state). Result traced as
 | 2026-06-10 | Machine 2 exact-diff @91cps under induced Defender QuickScan | **0 missing** (CPU <40% throughout — quick scan isn't enough churn on this hardware) |
 | 2026-06-10 | Machine 2 exact-diff @143cps (Fast) | 11 missing (0.05%) — usable with auto-verify |
 | 2026-06-10 | Machine 2 exact-diff @200cps | 1,279 missing (6%), bursty whole-line drops — **overload loss (queue overflow) is a distinct mechanism from churn loss (sparse single chars)** |
+| 2026-06-10 | UI Reliable run during quiet host | byte-perfect / near-perfect |
+| 2026-06-10 | UI Reliable runs during CHURNY host (SearchIndexer active) | ~0.6% loss (126–132 chars), **growing per chunk** — confirms host loss is time-varying; no rate fixes it |
+| 2026-06-10 | Auto-verify (P1) during the churny runs | **detected the deficit at every chunk boundary** (read < expected) — detection works; OCR occasionally misreads one frame (saw 958), covered by manual fallback |
+| 2026-06-10 | OCR read timing | reads must poll until the counter is STABLE — the host keeps draining its input queue after the backend drain; a fixed sleep reads a still-climbing count |
