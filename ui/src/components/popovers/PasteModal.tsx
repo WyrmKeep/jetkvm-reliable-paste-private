@@ -216,6 +216,7 @@ export default function PasteModal() {
     lines: number;
     elapsedSec: number;
     cps: number;
+    ocrVerified?: { read: number | null; expected: number } | null;
   } | null>(null);
   const [preflightNoEcho, setPreflightNoEcho] = useState(false);
   const activeProfileOption = useMemo(
@@ -501,11 +502,32 @@ export default function PasteModal() {
         setResumeState(null);
         const elapsedSec = (performance.now() - runStart) / 1000;
         const typedChars = totalChars - startOffset;
+
+        // Final OCR check: chunk boundaries verified everything except the
+        // last chunk's tail, so read the counter once more after the final
+        // drain. Failure here is informational, never an error.
+        let ocrFinal: { read: number | null; expected: number } | null = null;
+        if (ocrCal && videoEl instanceof HTMLVideoElement) {
+          const expected = ocrCal.value + typedChars;
+          await new Promise(r => setTimeout(r, 1200));
+          let read = await readCounter(videoEl, ocrCal.region).catch(() => null);
+          if (read !== expected) {
+            await new Promise(r => setTimeout(r, 800));
+            read = await readCounter(videoEl, ocrCal.region).catch(() => null);
+          }
+          ocrFinal = { read, expected };
+          setTraceLinesPersisted(current => [
+            ...current,
+            `ocr-final: read=${read ?? "unreadable"} expected=${expected}${read === expected ? " ok" : ""}`,
+          ]);
+        }
+
         setCompletionSummary({
           chars: totalChars,
           lines: (fullText.match(/\n/g)?.length ?? 0) + 1,
           elapsedSec,
           cps: typedChars / Math.max(elapsedSec, 0.001),
+          ocrVerified: ocrFinal,
         });
         setTraceLinesPersisted(current => [
           ...current,
@@ -967,6 +989,22 @@ export default function PasteModal() {
                   Paste complete in {formatDuration(completionSummary.elapsedSec)} (
                   {completionSummary.cps.toFixed(0)} chars/sec).
                 </p>
+                {completionSummary.ocrVerified &&
+                  (completionSummary.ocrVerified.read === completionSummary.ocrVerified.expected ? (
+                    <p className="text-[11px] leading-4 font-semibold">
+                      ✓ Verified on target: counter reads{" "}
+                      {completionSummary.ocrVerified.expected.toLocaleString()}.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] leading-4 font-semibold text-amber-700 dark:text-amber-300">
+                      ⚠ Counter reads{" "}
+                      {completionSummary.ocrVerified.read !== null
+                        ? completionSummary.ocrVerified.read.toLocaleString()
+                        : "unreadable"}
+                      , expected {completionSummary.ocrVerified.expected.toLocaleString()} — check
+                      the target.
+                    </p>
+                  ))}
                 <p className="text-[11px] leading-4 opacity-90">
                   The target should show{" "}
                   <span className="font-bold">{completionSummary.chars.toLocaleString()}</span>{" "}
