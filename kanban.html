@@ -27,7 +27,7 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 19:25 (BST)",
+  updated: "2026-06-10 19:55 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
@@ -37,9 +37,12 @@ const BOARD = {
         { id: "PASTE-008b", title: "Prose content-verify mode (true 100% for plain text)",
           note: "Feasibility proven: OCR reads prose EXACTLY incl. case, so content-verify+repair gives true byte-perfect for plain text. Does NOT help code (symbol OCR too noisy). Build pending user call. See docs/tickets/PASTE-008.md.",
           doc: "docs/tickets/PASTE-008.md" },
-        { id: "PASTE-007", title: "Adaptive backoff (the real 'adaptable' fix)",
-          note: "When auto-verify detects loss, re-type lossy chunks at a guaranteed-low-loss rate (≤50cps) — already implemented as slow-retype repair in PASTE-006. Open: slow subsequent pacing on sustained loss. UX decision.",
-          doc: "docs/tickets/PASTE-006.md" },
+        { id: "PASTE-007", title: "Document-size adaptive pacing (NEW justification from 100k code soak)",
+          note: "100k code soak proved loss ACCELERATES with target document size (drops by file-third 39→105→325, calm host, send rate steady) — Notepad's single buffer has O(n) insert cost, so a fixed pace is wrong for large pastes. Fix: ease rate / lengthen chunk pauses as the doc grows. Slow-retype repair (PASTE-006) already mops up; this attacks the cause. See docs/tickets/PASTE-008.md §100k.",
+          doc: "docs/tickets/PASTE-008.md" },
+        { id: "PASTE-011", title: "100k code product-path soak (chunked + verify + repair, byte-diff)",
+          note: "Raw continuous 91cps into Notepad at 100k = 99.20% (degrades with doc size; 493 length-errors + 51 silent same-length subs). Product chunks with 250ms pauses that drain the input queue + verifies/repairs per chunk → should beat raw on drops. Validate the real end-to-end 100k code number. Long run (~1h with repair).",
+          doc: "docs/tickets/PASTE-008.md" },
         { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
           note: "Validate on additional Windows targets — BLOCKED on more hardware (only one target available). Document per-sink expectations (Notepad vs editors vs terminals)." },
       ],
