@@ -390,6 +390,13 @@ export default function PasteModal() {
               : "ocr-calibrate: counter not found — falling back to manual chunk confirmation",
           ]);
         }
+        // Rollback floor = the ACTUAL on-target count verified at the end of
+        // the previous chunk, carried forward. Using the theoretical
+        // (baseline + committed) floor instead corrupts: if a chunk ends 1
+        // short and we continue, the next chunk would roll back to a position
+        // 1 above reality and "converge" to the right COUNT over wrong CONTENT.
+        // Starts at the calibration baseline.
+        let lastVerifiedActual = ocrCal ? ocrCal.value : 0;
         // When auto-verify was requested but the counter couldn't be located,
         // fall back to manual per-chunk confirmation rather than silently
         // pasting without any verification (the previous behaviour left the
@@ -504,7 +511,14 @@ export default function PasteModal() {
                   const v = videoEl;
                   const tag = `${ctx.chunkIndex}/${ctx.chunkTotal}`;
                   const expected = cal.value + ctx.committedSourceChars;
-                  const checkpoint = expected - ctx.chunkSourceChars; // count before this chunk
+                  // Rollback floor = the ACTUAL verified end of the previous
+                  // chunk (carried forward), not the theoretical
+                  // (expected − chunkSourceChars). If a prior chunk ended
+                  // short, the theoretical floor sits above reality and a
+                  // rollback to it leaves the doc misaligned — the count can
+                  // reach `expected` over corrupted content. The actual floor
+                  // keeps rollback aligned with what's really on screen.
+                  const checkpoint = lastVerifiedActual;
                   // Read the counter until it STABILISES. The backend drain
                   // (pasteDepth→0) only means JetKVM finished sending; the
                   // Windows host can still be draining its own USB input queue,
@@ -526,6 +540,7 @@ export default function PasteModal() {
                   let cur = await read();
                   if (cur === expected) {
                     setTraceLinesPersisted(c => [...c, `ocr-verify chunk ${tag}: ${cur} ok`]);
+                    lastVerifiedActual = cur;
                     return;
                   }
                   if (autoRepair && cur !== null && cur > checkpoint && cur < expected) {
@@ -564,6 +579,7 @@ export default function PasteModal() {
                         ...c,
                         `ocr-repair chunk ${tag}: fixed → ${cur}`,
                       ]);
+                      lastVerifiedActual = cur;
                       return;
                     }
                   }
@@ -577,6 +593,10 @@ export default function PasteModal() {
                     committedSourceChars: expected,
                     ocrNote: `Automatic check: counter reads ${cur !== null ? cur.toLocaleString() : "unreadable"}, expected ${expected.toLocaleString()}.`,
                   });
+                  // User accepted (Continue) at this boundary — carry the
+                  // actual on-screen count forward so later rollbacks stay
+                  // aligned even though this chunk didn't reach `expected`.
+                  if (cur !== null) lastVerifiedActual = cur;
                 }
               : undefined,
         });

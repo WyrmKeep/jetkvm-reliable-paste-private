@@ -126,6 +126,30 @@ Reliable ~0.6%) *per pass*, so a retype at the same rate re-loses ~2.8% and
 never converges, regardless of chunk size. (OCR confirmed accurate throughout
 — it is not crying wolf; the loss is real.)
 
+### Rate-adaptive repair WORKS — milestone (2026-06-10)
+
+Implemented: repair backspaces AND re-types at ~40 cps (slow, near-lossless),
+rebuilding the chunk's source slice at that rate, instead of re-typing at the
+paste's profile rate. **It converges:** in a 6k run with the fault injector,
+chunks 1 and 3 went `read=1245 → fixed → 1291` and `3815 → fixed → 3851` in a
+single repair pass. This proves the rate-adaptive approach is correct — the
+prior non-convergence was purely that the retype ran at the same lossy rate.
+
+Two residual issues, now under investigation:
+1. **Deterministic off-by-one.** Chunks 2 and 4 stuck exactly 1 short
+   (`2570` vs `2571`) across all 4 retries — the rollback+slow-retype lands on
+   the same value every time, so it's systematic (a slice/rollback boundary
+   off-by-one or a consistently-dropped boundary char), not random loss.
+   Needs byte-level content inspection (file-bound target) to locate the
+   missing char — counts alone can't tell content-misplacement from a true
+   drop. NEXT TASK.
+2. **Checkpoint must carry forward the ACTUAL count, not the theoretical one.**
+   FIXED: rolling back to `expected − chunkSourceChars` when a prior chunk
+   ended short left the doc misaligned and "converged" to the right COUNT over
+   wrong CONTENT (chunk 3's "fixed → 3851" was a false positive). Now the
+   rollback floor is the actual verified end of the previous chunk, carried
+   forward; a short chunk is reported honestly instead of masking corruption.
+
 **The actual fix, if repair is pursued:** make the repair retype RATE-ADAPTIVE
 — re-type a lossy chunk at a guaranteed-low-loss rate (e.g. ≤50 cps) rather
 than the paste's rate, so the retype itself is ~lossless and converges in one
