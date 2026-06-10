@@ -87,3 +87,25 @@ legitimately never report LED state). Result traced as
 | 2026-06-10 | UI Reliable runs during CHURNY host (SearchIndexer active) | ~0.6% loss (126–132 chars), **growing per chunk** — confirms host loss is time-varying; no rate fixes it |
 | 2026-06-10 | Auto-verify (P1) during the churny runs | **detected the deficit at every chunk boundary** (read < expected) — detection works; OCR occasionally misreads one frame (saw 958), covered by manual fallback |
 | 2026-06-10 | OCR read timing | reads must poll until the counter is STABLE — the host keeps draining its input queue after the backend drain; a fixed sleep reads a still-climbing count |
+| 2026-06-10 | **BYTE-EXACT 100k at Reliable** (103,880 keys, hidtype→file→SSH line-diff, calm host) | **99.994% — 6 errors, NOT byte-perfect:** 3 dropped 't' (he/the), 1 dropped ';', 1 mangled line-prefix, 1 CASE error (quick/Quick = a Shift race). Actual rate ran ~85cps (slower than 91 set). |
+
+## Definitive 100k finding (the honest answer to "can we do 100k?")
+
+A full byte-exact 100k paste at the Reliable profile on a CALM Windows host is
+**~99.99% accurate, not byte-perfect** — about 6 errors per 103,880 chars.
+The errors are host-side input races: sparse single-char drops, a dropped
+punctuation, a broken line prefix, and a Shift-modifier race (correct char,
+wrong case — notable because length-preserving errors are invisible to a
+character COUNT and only a content diff catches them).
+
+Implications:
+- **"100k at scale" works** in that the paste completes reliably and is
+  99.99% correct — but **true byte-perfect 100k is not achievable by pacing
+  alone** on a real Windows host; a few input races are inherent over 100k
+  keystrokes.
+- Therefore the **verify + repair layer is not optional polish — it's the
+  only path to byte-perfect 100k.** Auto-verify (P1) detects the count
+  deficits; a content-aware check would be needed to catch the case-race
+  (count-equal) errors.
+- The wake-tap, profiles, and resume are all validated; the residual ~0.006%
+  is the floor that verification must close.

@@ -27,13 +27,17 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 12:00 (BST)",
+  updated: "2026-06-10 16:45 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
       name: "Backlog",
       cls: "",
       items: [
+        { id: "PASTE-009", title: "Reduce Shift/modifier races (case errors)",
+          note: "Byte-exact 100k found a 'quick' vs 'Quick' case error — a Shift-modifier race (Shift not registered for one keypress). Length-preserving, so count-based verify can't catch it. Mitigate by holding modifiers longer / separate modifier-settle before keypress." },
+        { id: "PASTE-008", title: "Content verification (catch count-invisible errors)",
+          note: "OCR counter verify catches DROPS but not substitutions/case-races (same length). True byte-perfect needs content check — but no network sharing allowed. Option: read back via OCR of the text region, or a checksum-line appended to the paste and visually/OCR-confirmed." },
         { id: "PASTE-007", title: "Adaptive backoff (the real 'adaptable' fix)",
           note: "When auto-verify detects loss, attack the loss RATE: re-type lossy chunks at a guaranteed-low-loss rate (≤50cps) and/or slow subsequent pacing. Proven necessary — small-chunk retype-at-same-rate can't converge under host churn (Fast lost 2.8%/pass). UX decision: slower on busy hosts. See PASTE-006 ticket.",
           doc: "docs/tickets/PASTE-006.md" },
