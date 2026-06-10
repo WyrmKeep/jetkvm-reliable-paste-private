@@ -51,3 +51,18 @@ out of scope by constraint.
 The count-verify + slow-retype repair (PASTE-006) already delivers
 byte-perfect for all length errors; the above is purely about the rare
 same-length substitution on code.
+
+## PASTE-009 soak (2026-06-10)
+
+Clean byte-exact code-paste (20,060 chars, en-US + modifier-hold, via UI,
+harness completion fixed to key on the app's `done:` trace):
+- Symbols correct, **no swaps** (@ 104→103, " 612→603, # 70→70, \ 238→238 —
+  shortfalls are sparse drops, not layout).
+- ~99.1% chars this run (−174) — host moderately churny; errors are sparse
+  host-races (drops, an `=`→`+` shift-stuck). Same host-dependent variance as
+  plaintext; **not a regression, not layout**.
+- PASTE-009 confirmed **non-regressive**. Case-race reduction not directly
+  measurable in one churn-dominated run (rare event), but low-risk + sound.
+- Also fixed the test harness: completion now keys on the `done:` trace line,
+  not the Confirm button (which flipped between chunks and caused an earlier
+  partial-save artifact).
