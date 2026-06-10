@@ -41,7 +41,11 @@ const BOARD = {
     {
       name: "In Progress",
       cls: "inprogress",
-      items: [],
+      items: [
+        { id: "PASTE-006", title: "Auto-verified paste: closed-loop OCR on the video counter",
+          note: "Spike proven: tesseract.js reads the Notepad counter 8/8 exact from KVM video crops. P1: region select + per-chunk OCR auto-confirm. P2: auto-repair (backspace deficit to checkpoint, re-type chunk).",
+          doc: "docs/tickets/PASTE-006.md" },
+      ],
     },
     {
       name: "Done",
