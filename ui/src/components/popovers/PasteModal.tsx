@@ -24,6 +24,7 @@ import { InputFieldWithLabel } from "@components/InputField";
 import { TextAreaWithLabel } from "@components/TextArea";
 import { PASTE_PROFILES, type PasteProfileName } from "@/utils/pasteBatches";
 import { DEFAULT_LARGE_PASTE_POLICY } from "@/utils/pasteMacro";
+import { findCounter, readCounter, type CounterCalibration } from "@/utils/counterOcr";
 
 // uint32 max value / 4
 const pasteMaxLength = 1073741824;
@@ -49,6 +50,7 @@ interface PendingChunkConfirm {
   chunkIndex: number;
   chunkTotal: number;
   committedSourceChars: number;
+  ocrNote?: string;
   resolve: () => void;
   reject: (e: Error) => void;
 }
@@ -203,6 +205,7 @@ export default function PasteModal() {
   const [resumeState, setResumeState] = useState<PendingResumeState | null>(pendingResumeGlobal);
   const [pasteEtaSeconds, setPasteEtaSeconds] = useState<number | null>(null);
   const [verifyChunks, setVerifyChunks] = useState(false);
+  const [autoVerify, setAutoVerify] = useState(false);
   // Hydrate from module scope so a remounted popover mid-pause still shows
   // the Continue/Stop controls for the in-flight paste.
   const [chunkConfirm, setChunkConfirm] = useState<PendingChunkConfirm | null>(
@@ -318,6 +321,29 @@ export default function PasteModal() {
           `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : "textarea"} chars=${totalChars}${startOffset > 0 ? ` resume_from=${startOffset}` : ""}`,
         ]);
 
+        // PASTE-006: locate the target's character counter in the video frame
+        // so chunk boundaries can self-verify by OCR. Calibration failure is
+        // non-fatal — boundaries fall back to manual confirmation.
+        let ocrCal: CounterCalibration | null = null;
+        const videoEl = document.querySelector("video");
+        if (
+          autoVerify &&
+          totalChars - startOffset >= DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars &&
+          videoEl instanceof HTMLVideoElement
+        ) {
+          try {
+            ocrCal = await findCounter(videoEl);
+          } catch {
+            ocrCal = null;
+          }
+          setTraceLinesPersisted(current => [
+            ...current,
+            ocrCal
+              ? `ocr-calibrate: counter=${ocrCal.value}`
+              : "ocr-calibrate: counter not found — chunk boundaries will ask for manual confirmation",
+          ]);
+        }
+
         // LED-echo preflight for long pastes (see LED_PREFLIGHT_THRESHOLD_CHARS).
         // Runs after the trace reset above so its result stays in this run's
         // trace.
@@ -398,36 +424,76 @@ export default function PasteModal() {
               totalChars,
             };
           },
-          waitForChunkConfirm: verifyChunks
-            ? info =>
-                new Promise<void>((resolve, reject) => {
-                  const onAbort = () => {
-                    cleanup();
-                    reject(new Error("Paste execution aborted"));
-                  };
-                  const cleanup = () => {
-                    abortController.signal.removeEventListener("abort", onAbort);
-                    pendingChunkConfirmGlobal = null;
-                    setChunkConfirm(null);
-                  };
-                  abortController.signal.addEventListener("abort", onAbort);
-                  const pending: PendingChunkConfirm = {
-                    chunkIndex: info.chunkIndex,
-                    chunkTotal: info.chunkTotal,
-                    committedSourceChars: startOffset + info.committedSourceChars,
-                    resolve: () => {
+          waitForChunkConfirm:
+            verifyChunks || autoVerify
+              ? info =>
+                  new Promise<void>((resolve, reject) => {
+                    const onAbort = () => {
                       cleanup();
-                      resolve();
-                    },
-                    reject: (e: Error) => {
-                      cleanup();
-                      reject(e);
-                    },
-                  };
-                  pendingChunkConfirmGlobal = pending;
-                  setChunkConfirm(pending);
-                })
-            : undefined,
+                      reject(new Error("Paste execution aborted"));
+                    };
+                    const cleanup = () => {
+                      abortController.signal.removeEventListener("abort", onAbort);
+                      pendingChunkConfirmGlobal = null;
+                      setChunkConfirm(null);
+                    };
+                    abortController.signal.addEventListener("abort", onAbort);
+                    const showManual = (ocrNote?: string) => {
+                      const pending: PendingChunkConfirm = {
+                        chunkIndex: info.chunkIndex,
+                        chunkTotal: info.chunkTotal,
+                        committedSourceChars: startOffset + info.committedSourceChars,
+                        ocrNote,
+                        resolve: () => {
+                          cleanup();
+                          resolve();
+                        },
+                        reject: (e: Error) => {
+                          cleanup();
+                          reject(e);
+                        },
+                      };
+                      pendingChunkConfirmGlobal = pending;
+                      setChunkConfirm(pending);
+                    };
+                    if (ocrCal && videoEl instanceof HTMLVideoElement) {
+                      // Auto path: read the counter; matching count continues
+                      // without any human pause. info.committedSourceChars is
+                      // run-relative, and the calibration baseline was read at
+                      // run start, so this also holds for resumed runs and
+                      // targets whose document wasn't empty.
+                      const cal = ocrCal;
+                      void (async () => {
+                        const expected = cal.value + info.committedSourceChars;
+                        await new Promise(r => setTimeout(r, 900));
+                        let read = await readCounter(videoEl, cal.region).catch(() => null);
+                        if (read !== expected) {
+                          await new Promise(r => setTimeout(r, 800));
+                          read = await readCounter(videoEl, cal.region).catch(() => null);
+                        }
+                        if (abortController.signal.aborted) return;
+                        if (read === expected) {
+                          setTraceLinesPersisted(current => [
+                            ...current,
+                            `ocr-verify chunk ${info.chunkIndex}/${info.chunkTotal}: ${read} ok`,
+                          ]);
+                          cleanup();
+                          resolve();
+                          return;
+                        }
+                        setTraceLinesPersisted(current => [
+                          ...current,
+                          `ocr-verify chunk ${info.chunkIndex}: read=${read ?? "unreadable"} expected=${expected} — manual confirm`,
+                        ]);
+                        showManual(
+                          `Automatic check: counter reads ${read !== null ? read.toLocaleString() : "unreadable"}, expected ${expected.toLocaleString()}.`,
+                        );
+                      })();
+                    } else {
+                      showManual();
+                    }
+                  })
+              : undefined,
         });
 
         // Success: the checkpoint for this content is no longer needed.
@@ -483,6 +549,7 @@ export default function PasteModal() {
       debugMode,
       selectedFile,
       verifyChunks,
+      autoVerify,
       setTraceLinesPersisted,
     ],
   );
@@ -755,6 +822,27 @@ export default function PasteModal() {
                 </span>
               </label>
             )}
+            {(fileText !== null ? fileText.length : textareaCharCount) >=
+              DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars && (
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={autoVerify}
+                  onChange={e => setAutoVerify(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">
+                    Auto-verify via the target&apos;s counter (OCR, experimental)
+                  </span>
+                  <span className="block text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                    Reads the character counter in the video after each chunk and continues
+                    automatically when it matches; asks you only on a mismatch. Needs a visible
+                    counter on the target (e.g. Notepad&apos;s status bar).
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
 
           <div className={cx("text-xs text-slate-600 dark:text-slate-400", delayClassName)}>
@@ -843,6 +931,9 @@ export default function PasteModal() {
                   </span>{" "}
                   characters.
                 </p>
+                {chunkConfirm.ocrNote && (
+                  <p className="text-[11px] leading-4 font-medium">{chunkConfirm.ocrNote}</p>
+                )}
                 <p className="text-[11px] leading-4 opacity-80">
                   Glance at the target&apos;s character counter (e.g. Notepad&apos;s status bar). If
                   it matches, continue. If it doesn&apos;t, stop here — you can trim the tail on the
