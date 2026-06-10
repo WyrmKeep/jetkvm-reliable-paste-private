@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Reliable Paste — Kanban</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #0b1220; color: #e2e8f0; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #94a3b8; font-size: 12px; margin-bottom: 20px; }
+  .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: start; }
+  .col { background: #111a2e; border: 1px solid #1e293b; border-radius: 10px; padding: 12px; }
+  .col h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; margin: 4px 4px 12px; }
+  .card { background: #16213a; border: 1px solid #27354f; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .card .id { font-size: 11px; color: #60a5fa; font-weight: 600; }
+  .card .title { font-size: 14px; font-weight: 600; margin: 2px 0 4px; }
+  .card .note { font-size: 12px; color: #94a3b8; line-height: 1.45; }
+  .card .doc { font-size: 11px; margin-top: 6px; }
+  .card .doc a { color: #34d399; text-decoration: none; }
+  .done .card { opacity: 0.85; border-color: #14532d; }
+  .inprogress .card { border-color: #92400e; }
+</style>
+</head>
+<body>
+<h1>Reliable Paste — feature board</h1>
+<div class="sub" id="updated"></div>
+<div class="board" id="board"></div>
+<script>
+const BOARD = {
+  updated: "2026-06-10 17:15 (BST)",
+  goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
+  columns: [
+    {
+      name: "Backlog",
+      cls: "",
+      items: [
+        { id: "PASTE-009", title: "Reduce Shift/modifier races (case errors)",
+          note: "Byte-exact 100k found a 'quick' vs 'Quick' case error — a Shift-modifier race (Shift not registered for one keypress). Length-preserving, so count-based verify can't catch it. Mitigate by holding modifiers longer / separate modifier-settle before keypress." },
+        { id: "PASTE-008", title: "Content verification (catch count-invisible errors)",
+          note: "OCR counter verify catches DROPS but not substitutions/case-races (same length). True byte-perfect needs content check — but no network sharing allowed. Option: read back via OCR of the text region, or a checksum-line appended to the paste and visually/OCR-confirmed." },
+        { id: "PASTE-007", title: "Adaptive backoff (the real 'adaptable' fix)",
+          note: "When auto-verify detects loss, attack the loss RATE: re-type lossy chunks at a guaranteed-low-loss rate (≤50cps) and/or slow subsequent pacing. Proven necessary — small-chunk retype-at-same-rate can't converge under host churn (Fast lost 2.8%/pass). UX decision: slower on busy hosts. See PASTE-006 ticket.",
+          doc: "docs/tickets/PASTE-006.md" },
+        { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
+          note: "Validate profiles on additional Windows targets (needs more target machines); document per-sink expectations (Notepad vs editors vs terminals)." },
+      ],
+    },
+    {
+      name: "In Progress",
+      cls: "inprogress",
+      items: [],
+    },
+    {
+      name: "Done",
+      cls: "done",
+      items: [
+        { id: "PASTE-010", title: "Code/special-symbol benchmark → found layout mismatch",
+          note: "20k code file via real UI, byte-exact diff. en-UK setting swapped @↔\" (counts proved it: @ 104→603, \" 612→103) = US/UK mismatch. Switched device to en-US → symbols correct, only sparse host-races remain. Special-symbol corruption was a LAYOUT config issue, not paste loss. Recommend surfacing layout in the paste UI.",
+          doc: "docs/tickets/PASTE-010.md" },
+        { id: "PASTE-006", title: "Auto-verified paste (OCR on the video counter)",
+          note: "P1 auto-verify validated (counter auto-located, OCR == truth, reads now poll until stable to avoid host-queue-lag false deficits). P2 auto-repair implemented but default-OFF/experimental: whole-chunk retype can't converge under persistent loss. Recommended path = Reliable + auto-verify + manual resume.",
+          doc: "docs/tickets/PASTE-006.md" },
+        { id: "PASTE-004", title: "LED-echo preflight for long pastes",
+          note: "NumLock tap + LED echo check before pastes ≥10k; soft amber warning when the host isn't acknowledging input. Validated: 'led-preflight: ok' through the real pipeline; lock state restored.",
+          doc: "docs/tickets/PASTE-004.md" },
+        { id: "PASTE-003", title: "Verified paste mode + completion integrity summary",
+          note: "Per-chunk pause with expected counts (opt-in) + always-on completion summary (expected chars/line). Stop at a bad chunk → trim + resume from the verified boundary. Validated on machine 2; popover-dismiss-during-pause hang fixed.",
+          doc: "docs/tickets/PASTE-003.md" },
+        { id: "PASTE-002", title: "100k file-upload paste at scale",
+          note: "103,730/103,880 (99.86%) in 19m12s — ETA predicted within 2s. Loss is churn-window noise, not pacing: same machine clean at 91cps in short runs. Verification, not slowness, is the answer.",
+          doc: "docs/tickets/PASTE-002.md" },
+        { id: "PASTE-001", title: "Validate resumable paste (20k, cancel → resume)",
+          note: "Mechanism validated on machine 2: chunk mode on first paste (capability RPC), checkpoint banner exact (9,984/21,200), resume completed. Found: host loss is machine- and time-varying (post-boot churn) → PASTE-003 matters.",
+          doc: "docs/tickets/PASTE-001.md" },
+        { id: "PASTE-000A", title: "Uniform deadline pacing + measured-safe profiles + wake tap",
+          note: "USB-bus theory refuted by measurement; burst+drain replaced with uniform pacing; reliable=91cps zero-loss validated; PR #70.",
+          doc: "docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md" },
+        { id: "PASTE-000B", title: "Large-paste UX: ETA, resume checkpoints, pause retune, capability RPC",
+          note: "Pre-paste + live ETA; chunk-boundary resume; 2000→250ms chunk pause; getPasteCapabilities fixes first-paste-never-chunked latch.",
+          doc: "docs/superpowers/specs/2026-06-10-large-paste-ux.md" },
+      ],
+    },
+  ],
+};
+document.getElementById("updated").textContent =
+  "Updated " + BOARD.updated + " — " + BOARD.goal;
+const board = document.getElementById("board");
+for (const col of BOARD.columns) {
+  const div = document.createElement("div");
+  div.className = "col " + col.cls;
+  div.innerHTML = "<h2>" + col.name + " (" + col.items.length + ")</h2>";
+  for (const item of col.items) {
+    const c = document.createElement("div");
+    c.className = "card";
+    c.innerHTML =
+      '<div class="id">' + item.id + '</div>' +
+      '<div class="title">' + item.title + "</div>" +
+      '<div class="note">' + item.note + "</div>" +
+      (item.doc ? '<div class="doc"><a href="' + item.doc + '">' + item.doc + "</a></div>" : "");
+    div.appendChild(c);
+  }
+  board.appendChild(div);
+}
+</script>
+</body>
+</html>
