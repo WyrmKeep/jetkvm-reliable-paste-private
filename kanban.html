@@ -47,8 +47,8 @@ const BOARD = {
       name: "Done",
       cls: "done",
       items: [
-        { id: "PASTE-006", title: "Auto-verified paste (P1): closed-loop OCR on the video counter",
-          note: "Zero-touch validated: counter auto-located, 4/4 chunk boundaries OCR-confirmed exactly (baseline-relative on a non-empty doc), pauses=0. Each match doubles as a zero-loss proof. P2 (auto-repair) designed in the ticket.",
+        { id: "PASTE-006", title: "Auto-verified paste (OCR on the video counter)",
+          note: "P1 auto-verify validated (counter auto-located, OCR == truth, reads now poll until stable to avoid host-queue-lag false deficits). P2 auto-repair implemented but default-OFF/experimental: whole-chunk retype can't converge under persistent loss. Recommended path = Reliable + auto-verify + manual resume.",
           doc: "docs/tickets/PASTE-006.md" },
         { id: "PASTE-004", title: "LED-echo preflight for long pastes",
           note: "NumLock tap + LED echo check before pastes ≥10k; soft amber warning when the host isn't acknowledging input. Validated: 'led-preflight: ok' through the real pipeline; lock state restored.",

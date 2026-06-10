@@ -87,9 +87,32 @@ repair*, not just warn.
 - **P1 ✓ done & validated:** zero-setup counter auto-location + per-chunk
   OCR auto-confirm (continues on match, manual only on mismatch/unreadable),
   + final-chunk OCR check in the completion summary.
-- **P2 (building):** auto-repair. On a verified deficit, roll the document
-  back to the last verified count (Backspace × (currentOCR − checkpointOCR)),
-  re-read OCR to confirm the rollback landed on the checkpoint, re-type the
-  chunk, re-verify. Self-checking: if rollback OCR doesn't hit the checkpoint
-  (backspaces themselves can drop), bail to manual. Bounded retries, then
-  manual. Behind its own toggle.
+- **P2 ⚠ implemented, NOT reliable — default OFF (experimental):** auto-repair
+  (backspace landed part of chunk → re-type → re-verify, bounded + self-checked).
+
+## P2 findings (2026-06-10, fault-injector validation)
+
+Built a clean keystroke-drop fault injector (`JETKVM_PASTE_DROP=N`, off by
+default) to inject *sparse* loss without the CPU stress that also degrades
+video/OCR. Testing exposed two real problems:
+
+1. **Verify fired too early.** The backend drain (pasteDepth→0) only means
+   JetKVM finished *sending*; the Windows host keeps draining its USB input
+   queue afterwards, so the on-screen counter is still climbing when OCR read
+   it. A fixed post-drain sleep manufactured a phantom deficit → spurious
+   repairs, and the multi-pass rollback backspaced *while the count was still
+   settling* and over-deleted into prior committed content (observed: rolled
+   back to 899 when the floor was 4,864). **Fixed:** read now polls until the
+   counter is stable (two equal reads) before comparing.
+2. **Whole-chunk retype can't converge under *persistent* loss.** The injector
+   (and real Fast-profile loss) drops during the retype too, so a 4,864-char
+   re-type rarely lands clean — repair oscillates and bails. Repair only
+   converges when per-pass loss is near-zero (i.e. the Reliable profile, where
+   it's also barely needed).
+
+**Conclusion / recommended path:** the reliable answer for 100k is **Reliable
+profile (byte-perfect, validated) + auto-verify (P1) for detection + manual
+resume on the rare real miss**, NOT auto-repair. P2 stays in the tree behind
+an opt-in toggle (default off) with the stabilise-read fix; revisiting it
+well would mean much smaller repair-mode chunks (cheap, likely-clean retypes)
+or targeted single-char repair, which needs position info OCR can't give.

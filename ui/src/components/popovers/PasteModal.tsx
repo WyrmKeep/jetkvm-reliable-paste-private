@@ -238,7 +238,11 @@ export default function PasteModal() {
   const [pasteEtaSeconds, setPasteEtaSeconds] = useState<number | null>(null);
   const [verifyChunks, setVerifyChunks] = useState(false);
   const [autoVerify, setAutoVerify] = useState(false);
-  const [autoRepair, setAutoRepair] = useState(true);
+  // Auto-repair defaults OFF: whole-chunk backspace+retype can't reliably
+  // converge when loss is persistent (the retype drops too), and is only
+  // safe paired with a near-lossless profile. Auto-verify (detect + warn) is
+  // the reliable default; repair is opt-in/experimental.
+  const [autoRepair, setAutoRepair] = useState(false);
   // Hydrate from module scope so a remounted popover mid-pause still shows
   // the Continue/Stop controls for the in-flight paste.
   const [chunkConfirm, setChunkConfirm] = useState<PendingChunkConfirm | null>(
@@ -485,14 +489,23 @@ export default function PasteModal() {
                   const tag = `${ctx.chunkIndex}/${ctx.chunkTotal}`;
                   const expected = cal.value + ctx.committedSourceChars;
                   const checkpoint = expected - ctx.chunkSourceChars; // count before this chunk
+                  // Read the counter until it STABILISES. The backend drain
+                  // (pasteDepth→0) only means JetKVM finished sending; the
+                  // Windows host can still be draining its own USB input queue,
+                  // so the on-screen count keeps climbing for a while after.
+                  // A fixed sleep then reads a transient low value and
+                  // manufactures a phantom deficit (the bug behind spurious
+                  // repairs and over-deletion). Poll until two consecutive
+                  // reads agree, or give up.
                   const read = async () => {
-                    await new Promise(r => setTimeout(r, 900));
-                    let n = await readCounter(v, cal.region).catch(() => null);
-                    if (n === null) {
-                      await new Promise(r => setTimeout(r, 800));
-                      n = await readCounter(v, cal.region).catch(() => null);
+                    let last: number | null = null;
+                    for (let i = 0; i < 8; i++) {
+                      await new Promise(r => setTimeout(r, 700));
+                      const n = await readCounter(v, cal.region).catch(() => null);
+                      if (n !== null && n === last) return n; // stable
+                      last = n;
                     }
-                    return n;
+                    return last;
                   };
                   let cur = await read();
                   if (cur === expected) {
@@ -503,19 +516,28 @@ export default function PasteModal() {
                     for (let attempt = 1; attempt <= 2 && cur !== expected; attempt++) {
                       if (abortController.signal.aborted)
                         throw new Error("Paste execution aborted");
-                      const landed = (cur as number) - checkpoint;
                       setTraceLinesPersisted(c => [
                         ...c,
-                        `ocr-repair chunk ${tag} attempt ${attempt}: read=${cur} expected=${expected}, rolling back ${landed}`,
+                        `ocr-repair chunk ${tag} attempt ${attempt}: read=${cur} expected=${expected}, rolling back to ${checkpoint}`,
                       ]);
-                      await ctx.backspace(landed);
-                      const back = await read();
-                      if (back !== checkpoint) {
+                      // Converging rollback: a backspace burst can itself drop
+                      // keystrokes (proven under load), leaving a residual above
+                      // the checkpoint. Re-read and re-backspace the remainder
+                      // until the counter sits exactly on the checkpoint, the
+                      // count stops falling, or we run out of tries.
+                      let rb = 0;
+                      let prev = Number.POSITIVE_INFINITY;
+                      while (cur !== null && cur > checkpoint && rb < 5 && cur < prev) {
+                        prev = cur;
+                        await ctx.backspace(cur - checkpoint);
+                        cur = await read();
+                        rb++;
+                      }
+                      if (cur !== checkpoint) {
                         setTraceLinesPersisted(c => [
                           ...c,
-                          `ocr-repair chunk ${tag}: rollback landed at ${back ?? "unreadable"}, expected ${checkpoint} — manual`,
+                          `ocr-repair chunk ${tag}: rollback stuck at ${cur ?? "unreadable"}, expected ${checkpoint} — manual`,
                         ]);
-                        cur = back;
                         break;
                       }
                       await ctx.retype();
@@ -555,11 +577,14 @@ export default function PasteModal() {
         let ocrFinal: { read: number | null; expected: number } | null = null;
         if (ocrCal && videoEl instanceof HTMLVideoElement) {
           const expected = ocrCal.value + typedChars;
-          await new Promise(r => setTimeout(r, 1200));
-          let read = await readCounter(videoEl, ocrCal.region).catch(() => null);
-          if (read !== expected) {
-            await new Promise(r => setTimeout(r, 800));
-            read = await readCounter(videoEl, ocrCal.region).catch(() => null);
+          // Stabilise (host input queue may still be draining), same as the
+          // per-chunk verify.
+          let read: number | null = null;
+          for (let i = 0; i < 8; i++) {
+            await new Promise(r => setTimeout(r, 700));
+            const n = await readCounter(videoEl, ocrCal.region).catch(() => null);
+            if (n !== null && n === read) break;
+            read = n;
           }
           ocrFinal = { read, expected };
           setTraceLinesPersisted(current => [
