@@ -78,3 +78,8 @@ legitimately never report LED state). Result traced as
 
 | Date | What | Result |
 |------|------|--------|
+| 2026-06-10 | Byte-exact harness online (SSH to test target: paste → Ctrl+S to bound recv.txt → read file → diff) | round-trip byte-perfect |
+| 2026-06-10 | Machine 2 exact-diff @91cps, 21,200 keys, steady state | **0 missing** |
+| 2026-06-10 | Machine 2 exact-diff @91cps under induced Defender QuickScan | **0 missing** (CPU <40% throughout — quick scan isn't enough churn on this hardware) |
+| 2026-06-10 | Machine 2 exact-diff @143cps (Fast) | 11 missing (0.05%) — usable with auto-verify |
+| 2026-06-10 | Machine 2 exact-diff @200cps | 1,279 missing (6%), bursty whole-line drops — **overload loss (queue overflow) is a distinct mechanism from churn loss (sparse single chars)** |
