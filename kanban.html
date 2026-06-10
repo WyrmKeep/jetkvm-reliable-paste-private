@@ -27,7 +27,7 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 16:45 (BST)",
+  updated: "2026-06-10 17:15 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
@@ -54,6 +54,9 @@ const BOARD = {
       name: "Done",
       cls: "done",
       items: [
+        { id: "PASTE-010", title: "Code/special-symbol benchmark → found layout mismatch",
+          note: "20k code file via real UI, byte-exact diff. en-UK setting swapped @↔\" (counts proved it: @ 104→603, \" 612→103) = US/UK mismatch. Switched device to en-US → symbols correct, only sparse host-races remain. Special-symbol corruption was a LAYOUT config issue, not paste loss. Recommend surfacing layout in the paste UI.",
+          doc: "docs/tickets/PASTE-010.md" },
         { id: "PASTE-006", title: "Auto-verified paste (OCR on the video counter)",
           note: "P1 auto-verify validated (counter auto-located, OCR == truth, reads now poll until stable to avoid host-queue-lag false deficits). P2 auto-repair implemented but default-OFF/experimental: whole-chunk retype can't converge under persistent loss. Recommended path = Reliable + auto-verify + manual resume.",
           doc: "docs/tickets/PASTE-006.md" },
