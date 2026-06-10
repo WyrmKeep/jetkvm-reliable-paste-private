@@ -751,6 +751,26 @@ export default function PasteModal() {
           </div>
         </div>
 
+        {/* Keyboard-layout awareness. A layout mismatch between this setting
+            and the target's active layout silently corrupts every shifted
+            symbol (measured: en-UK vs a US-decoding target swaps @ and ") —
+            the #1 cause of "paste typed the wrong characters". Surfacing it
+            here lets the user catch it before a large code paste. */}
+        {selectedKeyboard && (
+          <div className="flex items-start gap-2 rounded-sm border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs text-blue-900 dark:border-blue-400/30 dark:bg-blue-950/30 dark:text-blue-200">
+            <ExclamationCircleIcon className="mt-0.5 h-4 w-4 shrink-0 opacity-70" />
+            <span>
+              Typing as{" "}
+              <span className="font-semibold">
+                {selectedKeyboard.name} ({selectedKeyboard.isoCode})
+              </span>
+              . Special characters (<code>@ &quot; # ~ \ |</code>) are mapped for this layout — if
+              they come out wrong on the target, change the layout in Settings &rarr; Keyboard to
+              match the target&apos;s active layout.
+            </span>
+          </div>
+        )}
+
         <div
           className="animate-fadeIn space-y-4 opacity-0"
           style={{
