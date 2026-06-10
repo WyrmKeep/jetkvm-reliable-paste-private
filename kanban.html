@@ -27,17 +27,15 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 11:20 (BST)",
+  updated: "2026-06-10 11:30 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
       name: "Backlog",
       cls: "",
       items: [
-        { id: "PASTE-004", title: "LED-echo preflight for long pastes",
-          note: "NumLock toggle + LED OUT-report echo before pastes ≥10k chars; warn if the host isn't processing input before a 19-minute commitment. Design sketch in docs/superpowers/specs/2026-06-10-large-paste-ux.md." },
         { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
-          note: "Validate profiles on additional Windows targets; document per-sink expectations (Notepad vs editors vs terminals)." },
+          note: "Validate profiles on additional Windows targets (needs more target machines); document per-sink expectations (Notepad vs editors vs terminals)." },
       ],
     },
     {
@@ -49,6 +47,9 @@ const BOARD = {
       name: "Done",
       cls: "done",
       items: [
+        { id: "PASTE-004", title: "LED-echo preflight for long pastes",
+          note: "NumLock tap + LED echo check before pastes ≥10k; soft amber warning when the host isn't acknowledging input. Validated: 'led-preflight: ok' through the real pipeline; lock state restored.",
+          doc: "docs/tickets/PASTE-004.md" },
         { id: "PASTE-003", title: "Verified paste mode + completion integrity summary",
           note: "Per-chunk pause with expected counts (opt-in) + always-on completion summary (expected chars/line). Stop at a bad chunk → trim + resume from the verified boundary. Validated on machine 2; popover-dismiss-during-pause hang fixed.",
           doc: "docs/tickets/PASTE-003.md" },

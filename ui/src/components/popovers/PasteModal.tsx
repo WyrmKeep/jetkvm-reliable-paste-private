@@ -166,6 +166,14 @@ function getPasteProgressLabel(progress: PasteProgressState): string {
 
 const PASTE_TRACE_STORAGE_KEY = "jetkvm_reliable_paste_trace";
 
+// PASTE-004: LED-echo preflight threshold. NumLock's lock-LED echo is the
+// only host→device feedback USB HID provides; a missing echo means the host
+// isn't processing keyboard input at all (dead/suspended USB stack, BIOS
+// that doesn't report LEDs) — worth knowing before a 19-minute paste. Soft
+// check only: some hosts legitimately never send LED reports, so we warn
+// and continue rather than block.
+const LED_PREFLIGHT_THRESHOLD_CHARS = 10000;
+
 export default function PasteModal() {
   const TextAreaRef = useRef<HTMLTextAreaElement>(null);
   const pasteAbortControllerRef = useRef<AbortController | null>(null);
@@ -182,7 +190,7 @@ export default function PasteModal() {
   const { setDisableVideoFocusTrap } = useUiStore();
 
   const { send } = useJsonRpc();
-  const { executePasteText, cancelExecuteMacro } = useKeyboard();
+  const { executePasteText, cancelExecuteMacro, executeMacro } = useKeyboard();
 
   const [invalidChars, setInvalidChars] = useState<string[]>([]);
   const [delayValue, setDelayValue] = useState(defaultDelay);
@@ -206,6 +214,7 @@ export default function PasteModal() {
     elapsedSec: number;
     cps: number;
   } | null>(null);
+  const [preflightNoEcho, setPreflightNoEcho] = useState(false);
   const activeProfileOption = useMemo(
     () =>
       pasteProfileOptions.find(option => option.value === pasteProfile) ?? pasteProfileOptions[0],
@@ -298,6 +307,7 @@ export default function PasteModal() {
       const runStart = performance.now();
       setPasteEtaSeconds(null);
       setCompletionSummary(null);
+      setPreflightNoEcho(false);
 
       try {
         const profile = PASTE_PROFILES[pasteProfile];
@@ -307,6 +317,36 @@ export default function PasteModal() {
         setTraceLinesPersisted([
           `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : "textarea"} chars=${totalChars}${startOffset > 0 ? ` resume_from=${startOffset}` : ""}`,
         ]);
+
+        // LED-echo preflight for long pastes (see LED_PREFLIGHT_THRESHOLD_CHARS).
+        // Runs after the trace reset above so its result stays in this run's
+        // trace.
+        if (totalChars - startOffset >= LED_PREFLIGHT_THRESHOLD_CHARS) {
+          let echoes = 0;
+          const unsubscribe = useHidStore.subscribe((state, prev) => {
+            if (state.keyboardLedState !== prev.keyboardLedState) echoes++;
+          });
+          try {
+            await executeMacro([{ keys: ["NumLock"], modifiers: null, delay: 30 }]);
+            const t0 = performance.now();
+            while (performance.now() - t0 < 1000 && echoes === 0) {
+              await new Promise(r => setTimeout(r, 50));
+            }
+            const ok = echoes > 0;
+            // Toggle back to restore the host's lock state.
+            await executeMacro([{ keys: ["NumLock"], modifiers: null, delay: 30 }]);
+            await new Promise(r => setTimeout(r, 250));
+            setPreflightNoEcho(!ok);
+            setTraceLinesPersisted(current => [
+              ...current,
+              `led-preflight: ${ok ? "ok" : "no-echo"}`,
+            ]);
+          } catch {
+            // Preflight is best-effort; never block the paste on it.
+          } finally {
+            unsubscribe();
+          }
+        }
 
         await executePasteText(textToType, {
           keyboard: selectedKeyboard as KeyboardLayoutLike,
@@ -437,6 +477,7 @@ export default function PasteModal() {
     [
       selectedKeyboard,
       executePasteText,
+      executeMacro,
       delay,
       pasteProfile,
       debugMode,
@@ -783,6 +824,13 @@ export default function PasteModal() {
                     Chunk {pasteProgress.chunkIndex} / {pasteProgress.chunkTotal}
                   </p>
                 )}
+              </div>
+            )}
+            {preflightNoEcho && (
+              <div className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
+                No keyboard LED echo from the target — it may be locked, asleep, in BIOS/UEFI, or
+                not processing input. The paste is continuing, but check that the first lines
+                actually arrive before walking away.
               </div>
             )}
             {chunkConfirm && (

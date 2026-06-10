@@ -64,17 +64,15 @@ the pause is only boundary-jitter insurance now. Saves ~35s per 100k paste.
 On success the trace gains `done: chars=N elapsed=Xs effective=Ycps` so a
 completed run documents its own throughput (trace persists in localStorage).
 
-## Deferred: LED-echo preflight
+## LED-echo preflight (implemented as PASTE-004, 2026-06-10)
 
-Design sketch, deliberately not implemented yet: before pastes ≥10k chars,
-toggle NumLock twice and require two `keyboardLedState` events (plumbing
-exists end-to-end: f_hid OUT report → gadget callback →
-`reportHidRPCKeyboardLedState` → FE store). No echo ⇒ warn "target is not
-acknowledging keyboard input" before an 18-minute commitment.
-Why deferred: some targets (BIOS, some VMs) never report LED state, so the
-warning would false-positive on every paste there; the wake-tap (2026-06-09)
-already covers the sleeping-display case, which was the measured failure.
-Revisit if dead-host pastes show up in practice.
+Before pastes ≥10k chars, NumLock is tapped twice (state-restoring) and the
+modal watches for `keyboardLedState` changes (plumbing end-to-end: f_hid OUT
+report → gadget callback → `reportHidRPCKeyboardLedState` → FE store).
+No echo ⇒ soft amber warning, never a block (some targets — BIOS, some VMs —
+legitimately never report LED state). Result traced as
+`led-preflight: ok|no-echo`. Validated through the real pipeline; see
+`docs/tickets/PASTE-004.md`.
 
 ## Validation log
 
