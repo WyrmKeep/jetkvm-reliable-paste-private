@@ -113,6 +113,25 @@ video/OCR. Testing exposed two real problems:
 **Conclusion / recommended path:** the reliable answer for 100k is **Reliable
 profile (byte-perfect, validated) + auto-verify (P1) for detection + manual
 resume on the rare real miss**, NOT auto-repair. P2 stays in the tree behind
-an opt-in toggle (default off) with the stabilise-read fix; revisiting it
-well would mean much smaller repair-mode chunks (cheap, likely-clean retypes)
-or targeted single-char repair, which needs position info OCR can't give.
+an opt-in toggle (default off) with the stabilise-read fix.
+
+### Small-chunk repair tried & measured (2026-06-10) — still insufficient
+
+Reduced auto-verify chunks to 1,500 chars and raised retries to 4, reasoning
+a short retype lands in a clean window more often. Validated against the
+fault injector AND cross-checked byte-exact (OCR 20,613 == real 20,613, with
+a visible dropped 'b' in "brown"). Result: **chunk size is not the limiter —
+the host loss RATE is.** On a churny host the Fast pipeline lost ~2.8% (and
+Reliable ~0.6%) *per pass*, so a retype at the same rate re-loses ~2.8% and
+never converges, regardless of chunk size. (OCR confirmed accurate throughout
+— it is not crying wolf; the loss is real.)
+
+**The actual fix, if repair is pursued:** make the repair retype RATE-ADAPTIVE
+— re-type a lossy chunk at a guaranteed-low-loss rate (e.g. ≤50 cps) rather
+than the paste's rate, so the retype itself is ~lossless and converges in one
+pass. More generally, **adaptive backoff**: when auto-verify detects loss,
+slow subsequent pacing (attack the loss rate) instead of retrying at the same
+rate. This is the principled "adaptable" direction and the natural next
+ticket; it changes UX (slower on busy hosts) so it's a product decision.
+Deferred pending that call — and not validatable while the test host is in a
+degraded high-loss state.

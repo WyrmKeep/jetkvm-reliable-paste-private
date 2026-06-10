@@ -34,6 +34,9 @@ const BOARD = {
       name: "Backlog",
       cls: "",
       items: [
+        { id: "PASTE-007", title: "Adaptive backoff (the real 'adaptable' fix)",
+          note: "When auto-verify detects loss, attack the loss RATE: re-type lossy chunks at a guaranteed-low-loss rate (≤50cps) and/or slow subsequent pacing. Proven necessary — small-chunk retype-at-same-rate can't converge under host churn (Fast lost 2.8%/pass). UX decision: slower on busy hosts. See PASTE-006 ticket.",
+          doc: "docs/tickets/PASTE-006.md" },
         { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
           note: "Validate profiles on additional Windows targets (needs more target machines); document per-sink expectations (Notepad vs editors vs terminals)." },
       ],
