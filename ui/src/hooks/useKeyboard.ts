@@ -1010,8 +1010,6 @@ export default function useKeyboard() {
               // chunk's batches so it can roll back and re-type on a detected
               // deficit.
               if (verifyChunk) {
-                const startIdx = chunk.batchStartIndex;
-                const endIdx = chunk.batchEndIndex;
                 const drainAfterRepair = () =>
                   waitForPasteDrain(
                     "required",
@@ -1021,6 +1019,13 @@ export default function useKeyboard() {
                     undefined,
                     pasteFailureBaseline,
                   );
+                // Repair typing runs SLOW (≈40 cps: 5ms press + 20ms reset),
+                // not at the paste's profile rate. The whole point of repair
+                // is to recover from loss; re-typing at the same rate that
+                // just lost characters re-loses ~as many and never converges.
+                // A near-lossless slow re-type converges in one pass. Repairs
+                // are rare (only lossy chunks), so the slowdown is bounded.
+                const SLOW_REPAIR_DELAY_MS = 20;
                 const backspace = async (n: number) => {
                   let remaining = Math.max(0, Math.floor(n));
                   while (remaining > 0) {
@@ -1028,7 +1033,11 @@ export default function useKeyboard() {
                     const take = Math.min(remaining, maxStepsPerBatch);
                     const steps: MacroStep[] = [];
                     for (let k = 0; k < take; k++)
-                      steps.push({ keys: ["Backspace"], modifiers: null, delay: delayMs });
+                      steps.push({
+                        keys: ["Backspace"],
+                        modifiers: null,
+                        delay: SLOW_REPAIR_DELAY_MS,
+                      });
                     await executePasteMacro(steps);
                     remaining -= take;
                     if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) await waitForChannelDrain();
@@ -1036,9 +1045,22 @@ export default function useKeyboard() {
                   await drainAfterRepair();
                 };
                 const retype = async () => {
-                  for (let b = startIdx; b < endIdx; b++) {
+                  // Rebuild this chunk's source slice at the slow repair rate
+                  // rather than re-sending the profile-rate batches.
+                  const chunkStart = committedSourceChars - chunk.sourceChars;
+                  const chunkText = Array.from(text)
+                    .slice(chunkStart, chunkStart + chunk.sourceChars)
+                    .join("");
+                  const rebuilt = buildPasteMacroBatches(
+                    chunkText,
+                    keyboard,
+                    SLOW_REPAIR_DELAY_MS,
+                    maxStepsPerBatch,
+                    maxBytesPerBatch,
+                  );
+                  for (const batch of rebuilt.batches) {
                     if (signal?.aborted) throw new Error("Paste execution aborted");
-                    await executePasteMacro(batches[b]);
+                    await executePasteMacro(batch);
                     if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) await waitForChannelDrain();
                   }
                   await drainAfterRepair();
