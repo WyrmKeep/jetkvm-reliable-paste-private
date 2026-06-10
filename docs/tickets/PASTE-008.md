@@ -194,6 +194,36 @@ silently (force the manual "Verify each chunk" count-pause, which needs no OCR
 locate). The robust always-on path today is manual "Verify each chunk" (human
 reads the target's own counter at each pause).
 
+## PASTE-013 outcome + the 100k auto-verify scalability wall (2026-06-10)
+
+PASTE-013 shipped (calibrateCounter: cache the located region in localStorage +
+bump findCounter SCALE 1.5→3 + 6 retries; PasteModal uses it). Result:
+- **6k product run: BYTE-PERFECT, twice** — calibration engages (`counter=0`),
+  auto-repair fixes all 5 chunks, delta=0. The region cache persists across
+  pastes for a real user. PASTE-013 makes auto-verify reliable at small/medium
+  size. CONFIRMED WIN.
+- **100k product run: still not viable.** Three attempts now, each blocked a
+  different way: (1) cloud auto-reboot mid-run; (2) calibration flake (pre-013);
+  (3) post-013, the run stalled — Notepad showed only ~9 lines (<1 chunk) after
+  ~60 min, process alive, no progress in the trace. Killed.
+
+**The 100k wall (honest, with the open ambiguity):** a 100k auto-verify+repair
+paste is impractical via this path. Per-chunk it does up to 8×700ms OCR
+stabilization reads (≈5–11s) PLUS repair retypes, ×~70 chunks (auto-verify uses
+1500-char chunks) — so even when working it's ~hour-scale, and over that long a
+window the WebRTC/video link is fragile. The 3rd attempt's stall was EITHER a
+chunk-1 delivery hang OR a KVM video-encoder freeze (which would make the ~9-line
+screenshot a stale frame while the paste actually crept on) — couldn't
+disambiguate remotely. A 20–30k verified run (watched to completion) would tell
+us "slow-but-linear" vs "hangs"; not yet done.
+
+**Net for the goal:** auto-verify+repair = hands-off byte-perfect for small/medium
+code (proven). For 100k code the practical options are (a) fast chunked delivery
+(~99.2%, ~20min) + manual/count spot-check, or (b) redesign verify to scale —
+far fewer, larger verify chunks + a bounded OCR budget so per-chunk overhead
+doesn't dominate, and a watchdog that fails fast instead of stalling. Item:
+PASTE-014 (scale-aware verify) before claiming hands-off byte-perfect at 100k.
+
 ### Build-persistence root cause (the recurring "reverts to baseline")
 - `RkLunch.sh` promotes a staged build with an unconditional `mv -f` and has NO
   rollback/failsafe — so `dev_deploy -i` IS permanent at the boot level.
