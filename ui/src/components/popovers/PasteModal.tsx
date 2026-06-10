@@ -239,12 +239,14 @@ export default function PasteModal() {
   const [verifyChunks, setVerifyChunks] = useState(false);
   const [autoVerify, setAutoVerify] = useState(false);
   const [autoRepair, setAutoRepair] = useState(true);
-  const manualConfirm = useMemo(() => makeManualConfirm(setChunkConfirm), []);
   // Hydrate from module scope so a remounted popover mid-pause still shows
   // the Continue/Stop controls for the in-flight paste.
   const [chunkConfirm, setChunkConfirm] = useState<PendingChunkConfirm | null>(
     pendingChunkConfirmGlobal,
   );
+  // Declared after setChunkConfirm — its factory captures that setter, so it
+  // must not be referenced before the useState above (TDZ).
+  const manualConfirm = useMemo(() => makeManualConfirm(setChunkConfirm), []);
   const [completionSummary, setCompletionSummary] = useState<{
     chars: number;
     lines: number;
