@@ -162,12 +162,29 @@ the **stable** device (after disabling auto-update — see below):
   `sent=6021 recv=6021 delta=0, lines ok=84 damaged=0 missing=0`. **This is the
   detect→rollback→retype→byte-perfect loop working on code.**
 
-**The earlier "98.4%, 0 verify events" 100k soak was a false negative** — it was
-confounded by the cloud auto-updater downloading a release and **auto-rebooting
-the device mid-run**, which dropped the WebRTC video so OCR couldn't read the
-counter (→ manual fallback, which the test harness auto-continued → unverified
-delivery). Not a mechanism failure. Root-caused and fixed (auto-update disabled;
-see below). A clean 100k product soak on the stable device is running.
+**But OCR CALIBRATION IS FLAKY — the real reliability gap.** A clean 100k
+product soak on the stable device (no reboot, 28min uptime, auto-update off)
+STILL failed calibration: `ocr-calibrate: counter not found` after 3 retries →
+0 verify events → unverified delivery at **97.58%** (sent 103891 / recv 101378).
+Identical empty-Notepad starting state as the 6k run that succeeded — so this is
+non-deterministic OCR flakiness in `findCounter` (whole-strip search), which the
+PasteModal code itself flags as "flakier than the fixed-region read." It found
+the counter at 6k, missed it at 100k. (The very first 100k soak ALSO had an
+auto-reboot near the end — a second, now-removed confound — but the verify
+failure is the calibration flakiness, not the reboot.)
+
+**Net:** the detect→repair loop WORKS (6k byte-perfect proves it), but it only
+engages when `findCounter` happens to locate the counter — a coin-flip at the
+calibration step. When calibration misses, the paste silently runs unverified.
+This is the #1 thing to harden for a trustworthy large-paste catch.
+
+**Fix direction (PASTE-006 hardening):** the Notepad counter sits at a STABLE
+screen position (bottom status strip). Calibration should seed the read region
+from the video geometry (deterministic) instead of OCR-searching the whole strip
+for the word "characters" each run — or, failing calibration, refuse to proceed
+silently (force the manual "Verify each chunk" count-pause, which needs no OCR
+locate). The robust always-on path today is manual "Verify each chunk" (human
+reads the target's own counter at each pause).
 
 ### Build-persistence root cause (the recurring "reverts to baseline")
 - `RkLunch.sh` promotes a staged build with an unconditional `mv -f` and has NO

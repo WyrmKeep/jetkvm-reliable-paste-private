@@ -27,7 +27,7 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 20:45 (BST)",
+  updated: "2026-06-10 21:05 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
@@ -40,8 +40,11 @@ const BOARD = {
         { id: "PASTE-007", title: "Document-size adaptive pacing (NEW justification from 100k code soak)",
           note: "100k code soak proved loss ACCELERATES with target document size (drops by file-third 39→105→325, calm host, send rate steady) — Notepad's single buffer has O(n) insert cost, so a fixed pace is wrong for large pastes. Fix: ease rate / lengthen chunk pauses as the doc grows. Slow-retype repair (PASTE-006) already mops up; this attacks the cause. See docs/tickets/PASTE-008.md §100k.",
           doc: "docs/tickets/PASTE-008.md" },
-        { id: "PASTE-011", title: "100k code product-path soak — clean run IN PROGRESS",
-          note: "Catch mechanism PROVEN on code: 6k product run = BYTE-PERFECT (calibrate ok, auto-repair fixed all 5 chunks, delta=0). First 100k soak's '98.4%/no-verify' was a FALSE NEGATIVE — cloud auto-update rebooted the device mid-run, dropping video so OCR couldn't read the counter. Now fixed (auto-update off, device stable); clean 100k run typing now.",
+        { id: "PASTE-011", title: "100k code product soak → catch mechanism works, but OCR calibration is FLAKY",
+          note: "Detect→repair loop PROVEN: 6k product run = BYTE-PERFECT (calibrate ok, repair fixed all 5 chunks). BUT clean 100k run (no reboot, stable device) FAILED calibration: 'counter not found' → 0 verify events → unverified 97.58%. findCounter (whole-strip OCR) is a coin-flip at the calibration step — engages at 6k, misses at 100k. When it misses, the paste silently runs unverified. THE gap to harden.",
+          doc: "docs/tickets/PASTE-008.md" },
+        { id: "PASTE-013", title: "Harden OCR calibration (seed counter region from video geometry)",
+          note: "findCounter whole-strip search is non-deterministic (fails ~half the time). Fix: seed the read region from stable video geometry (Notepad status strip is at a fixed position) instead of OCR-searching for the word 'characters'; and on calibration failure, force the manual count-verify pause rather than silently pasting unverified. Robust path today = manual 'Verify each chunk'.",
           doc: "docs/tickets/PASTE-008.md" },
         { id: "PASTE-012", title: "Build persistence root-caused + FIXED (auto-update was clobbering)",
           note: "The recurring 'reverts to baseline on reboot' = cloud auto-updater (auto_update_enabled=true) downloading the official release + auto-rebooting, not a failsafe. RkLunch promotes via mv -f with no rollback, so dev_deploy -i IS permanent. Fix: disabled Auto Update in Settings → General (persists in /userdata/kvm_config.json, survives reboot). Feature build + en-US now stick across reboot.",
