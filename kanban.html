@@ -27,33 +27,41 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 17:15 (BST)",
+  updated: "2026-06-10 18:20 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
       name: "Backlog",
       cls: "",
       items: [
-        { id: "PASTE-009", title: "Reduce Shift/modifier races (case errors)",
-          note: "Byte-exact 100k found a 'quick' vs 'Quick' case error — a Shift-modifier race (Shift not registered for one keypress). Length-preserving, so count-based verify can't catch it. Mitigate by holding modifiers longer / separate modifier-settle before keypress." },
-        { id: "PASTE-008", title: "Content verification (catch count-invisible errors)",
-          note: "OCR counter verify catches DROPS but not substitutions/case-races (same length). True byte-perfect needs content check — but no network sharing allowed. Option: read back via OCR of the text region, or a checksum-line appended to the paste and visually/OCR-confirmed." },
+        { id: "PASTE-008b", title: "Prose content-verify mode (true 100% for plain text)",
+          note: "Feasibility proven: OCR reads prose EXACTLY incl. case, so content-verify+repair gives true byte-perfect for plain text. Does NOT help code (symbol OCR too noisy). Build pending user call. See docs/tickets/PASTE-008.md.",
+          doc: "docs/tickets/PASTE-008.md" },
         { id: "PASTE-007", title: "Adaptive backoff (the real 'adaptable' fix)",
-          note: "When auto-verify detects loss, attack the loss RATE: re-type lossy chunks at a guaranteed-low-loss rate (≤50cps) and/or slow subsequent pacing. Proven necessary — small-chunk retype-at-same-rate can't converge under host churn (Fast lost 2.8%/pass). UX decision: slower on busy hosts. See PASTE-006 ticket.",
+          note: "When auto-verify detects loss, re-type lossy chunks at a guaranteed-low-loss rate (≤50cps) — already implemented as slow-retype repair in PASTE-006. Open: slow subsequent pacing on sustained loss. UX decision.",
           doc: "docs/tickets/PASTE-006.md" },
         { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
-          note: "Validate profiles on additional Windows targets (needs more target machines); document per-sink expectations (Notepad vs editors vs terminals)." },
+          note: "Validate on additional Windows targets — BLOCKED on more hardware (only one target available). Document per-sink expectations (Notepad vs editors vs terminals)." },
       ],
     },
     {
       name: "In Progress",
       cls: "inprogress",
-      items: [],
+      items: [
+        { id: "PASTE-009", title: "Reduce Shift/case races at source (built; soak pending)",
+          note: "Modified keys (Shift/AltGr) now held 10ms vs 5ms so the host registers the modifier with the key — reduces the same-length case race (Quick→quick) that count-verify can't catch. Built on branch paste/008-content-verification; needs a calm-host soak to merge.",
+          doc: "docs/tickets/PASTE-008.md" },
+      ],
     },
     {
       name: "Done",
       cls: "done",
       items: [
+        { id: "PR #70", title: "✅ MERGED to main — full paste reliability suite",
+          note: "Uniform pacing + measured-safe profiles + wake-tap + ETA + resumable chunks + completion summary + LED preflight + capability RPC + OCR auto-verify + layout fix/banner. Squash-merged 2026-06-10." },
+        { id: "PASTE-008", title: "Content-verify feasibility → prose yes, code no",
+          note: "Decisive spike: OCR reads prose exactly (incl. case) but is too noisy on code symbols. So verified byte-perfect is achievable for prose, NOT for code via video-only (network sharing disallowed). Code ceiling = count-verify + layout-correct + resume; residual = rare same-length race, reduced by PASTE-009.",
+          doc: "docs/tickets/PASTE-008.md" },
         { id: "PASTE-010", title: "Code/special-symbol benchmark → found layout mismatch",
           note: "20k code file via real UI, byte-exact diff. en-UK setting swapped @↔\" (counts proved it: @ 104→603, \" 612→103) = US/UK mismatch. Switched device to en-US → symbols correct, only sparse host-races remain. Special-symbol corruption was a LAYOUT config issue, not paste loss. Recommend surfacing layout in the paste UI.",
           doc: "docs/tickets/PASTE-010.md" },
