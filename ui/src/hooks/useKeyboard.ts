@@ -146,6 +146,16 @@ export interface ExecutePasteTextOptions {
   // anything after it is in an unknown partial state. Only fires in chunk
   // mode — small pastes have no required drains and report no commits.
   onChunkCommitted?: (committedSourceChars: number) => void;
+  // Verified mode: when provided, the chunk loop awaits this after each
+  // committed chunk (except the last) before sending more. The modal uses
+  // it to pause with "expected N chars on target" so the user can glance at
+  // the target's own counter. Reject (or abort via signal) to stop at the
+  // verified boundary — the resume checkpoint already points there.
+  waitForChunkConfirm?: (info: {
+    chunkIndex: number;
+    chunkTotal: number;
+    committedSourceChars: number;
+  }) => Promise<void>;
 }
 
 type PasteDrainMode = "required" | "bestEffort";
@@ -706,6 +716,7 @@ export default function useKeyboard() {
           onProgress,
           onTrace,
           onChunkCommitted,
+          waitForChunkConfirm,
         } = options;
 
         const { batches, invalidChars, batchStats } = buildPasteMacroBatches(
@@ -966,6 +977,24 @@ export default function useKeyboard() {
               // safe resume boundary.
               committedSourceChars += chunk.sourceChars;
               onChunkCommitted?.(committedSourceChars);
+
+              // Verified mode: hold at this boundary until the caller
+              // confirms (or rejects, surfacing as a normal failure whose
+              // resume checkpoint is exactly this boundary).
+              if (waitForChunkConfirm && ci < chunks.length - 1) {
+                onProgress?.({
+                  completedBatches: chunk.batchEndIndex,
+                  totalBatches: batches.length,
+                  phase: "pausing",
+                  chunkIndex: chunk.chunkIndex + 1,
+                  chunkTotal: chunks.length,
+                });
+                await waitForChunkConfirm({
+                  chunkIndex: chunk.chunkIndex + 1,
+                  chunkTotal: chunks.length,
+                  committedSourceChars,
+                });
+              }
 
               if (ci < chunks.length - 1) {
                 // "pausing" progress fires here, right before the explicit

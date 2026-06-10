@@ -27,17 +27,15 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 10:25 (BST)",
+  updated: "2026-06-10 11:20 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
       name: "Backlog",
       cls: "",
       items: [
-        { id: "PASTE-003", title: "Per-target rate calibration (adaptability)",
-          note: "Guided calibration: paste a self-verifying pattern at increasing rates, user visually confirms via KVM video, result persisted per device. No network feedback allowed — pure HID + human-in-the-loop." },
         { id: "PASTE-004", title: "LED-echo preflight for long pastes",
-          note: "NumLock toggle + LED OUT-report echo before pastes ≥10k chars; warn if the host isn't processing input before an 18-minute commitment. Design sketch in docs/superpowers/specs/2026-06-10-large-paste-ux.md." },
+          note: "NumLock toggle + LED OUT-report echo before pastes ≥10k chars; warn if the host isn't processing input before a 19-minute commitment. Design sketch in docs/superpowers/specs/2026-06-10-large-paste-ux.md." },
         { id: "PASTE-005", title: "Multi-system validation + profile guidance docs",
           note: "Validate profiles on additional Windows targets; document per-sink expectations (Notepad vs editors vs terminals)." },
       ],
@@ -45,15 +43,18 @@ const BOARD = {
     {
       name: "In Progress",
       cls: "inprogress",
-      items: [
-        { id: "PASTE-002", title: "100k file-upload paste at scale",
-          note: "Real workflow: 103,880-key corpus via file upload, Reliable profile (~19min). Validates sustained large-doc behavior + chunk/drain machinery at scale. Running on machine 2." },
-      ],
+      items: [],
     },
     {
       name: "Done",
       cls: "done",
       items: [
+        { id: "PASTE-003", title: "Verified paste mode + completion integrity summary",
+          note: "Per-chunk pause with expected counts (opt-in) + always-on completion summary (expected chars/line). Stop at a bad chunk → trim + resume from the verified boundary. Validated on machine 2; popover-dismiss-during-pause hang fixed.",
+          doc: "docs/tickets/PASTE-003.md" },
+        { id: "PASTE-002", title: "100k file-upload paste at scale",
+          note: "103,730/103,880 (99.86%) in 19m12s — ETA predicted within 2s. Loss is churn-window noise, not pacing: same machine clean at 91cps in short runs. Verification, not slowness, is the answer.",
+          doc: "docs/tickets/PASTE-002.md" },
         { id: "PASTE-001", title: "Validate resumable paste (20k, cancel → resume)",
           note: "Mechanism validated on machine 2: chunk mode on first paste (capability RPC), checkpoint banner exact (9,984/21,200), resume completed. Found: host loss is machine- and time-varying (post-boot churn) → PASTE-003 matters.",
           doc: "docs/tickets/PASTE-001.md" },

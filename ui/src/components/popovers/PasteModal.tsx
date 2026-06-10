@@ -42,6 +42,18 @@ interface PendingResumeState {
 }
 let pendingResumeGlobal: PendingResumeState | null = null;
 
+// Pending verify-pause, module scope: if the popover is dismissed during a
+// chunk-confirm pause, the promise must stay reachable so a remounted modal
+// can still Continue/Stop — otherwise the paste hangs unrecoverably.
+interface PendingChunkConfirm {
+  chunkIndex: number;
+  chunkTotal: number;
+  committedSourceChars: number;
+  resolve: () => void;
+  reject: (e: Error) => void;
+}
+let pendingChunkConfirmGlobal: PendingChunkConfirm | null = null;
+
 function hashPasteContent(text: string): string {
   let h = 5381;
   for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
@@ -182,6 +194,18 @@ export default function PasteModal() {
   const [textareaCharCount, setTextareaCharCount] = useState(0);
   const [resumeState, setResumeState] = useState<PendingResumeState | null>(pendingResumeGlobal);
   const [pasteEtaSeconds, setPasteEtaSeconds] = useState<number | null>(null);
+  const [verifyChunks, setVerifyChunks] = useState(false);
+  // Hydrate from module scope so a remounted popover mid-pause still shows
+  // the Continue/Stop controls for the in-flight paste.
+  const [chunkConfirm, setChunkConfirm] = useState<PendingChunkConfirm | null>(
+    pendingChunkConfirmGlobal,
+  );
+  const [completionSummary, setCompletionSummary] = useState<{
+    chars: number;
+    lines: number;
+    elapsedSec: number;
+    cps: number;
+  } | null>(null);
   const activeProfileOption = useMemo(
     () =>
       pasteProfileOptions.find(option => option.value === pasteProfile) ?? pasteProfileOptions[0],
@@ -273,6 +297,7 @@ export default function PasteModal() {
       const textToType = sliceFromCodePoint(fullText, startOffset);
       const runStart = performance.now();
       setPasteEtaSeconds(null);
+      setCompletionSummary(null);
 
       try {
         const profile = PASTE_PROFILES[pasteProfile];
@@ -333,6 +358,36 @@ export default function PasteModal() {
               totalChars,
             };
           },
+          waitForChunkConfirm: verifyChunks
+            ? info =>
+                new Promise<void>((resolve, reject) => {
+                  const onAbort = () => {
+                    cleanup();
+                    reject(new Error("Paste execution aborted"));
+                  };
+                  const cleanup = () => {
+                    abortController.signal.removeEventListener("abort", onAbort);
+                    pendingChunkConfirmGlobal = null;
+                    setChunkConfirm(null);
+                  };
+                  abortController.signal.addEventListener("abort", onAbort);
+                  const pending: PendingChunkConfirm = {
+                    chunkIndex: info.chunkIndex,
+                    chunkTotal: info.chunkTotal,
+                    committedSourceChars: startOffset + info.committedSourceChars,
+                    resolve: () => {
+                      cleanup();
+                      resolve();
+                    },
+                    reject: (e: Error) => {
+                      cleanup();
+                      reject(e);
+                    },
+                  };
+                  pendingChunkConfirmGlobal = pending;
+                  setChunkConfirm(pending);
+                })
+            : undefined,
         });
 
         // Success: the checkpoint for this content is no longer needed.
@@ -340,6 +395,12 @@ export default function PasteModal() {
         setResumeState(null);
         const elapsedSec = (performance.now() - runStart) / 1000;
         const typedChars = totalChars - startOffset;
+        setCompletionSummary({
+          chars: totalChars,
+          lines: (fullText.match(/\n/g)?.length ?? 0) + 1,
+          elapsedSec,
+          cps: typedChars / Math.max(elapsedSec, 0.001),
+        });
         setTraceLinesPersisted(current => [
           ...current,
           `done: chars=${typedChars} elapsed=${elapsedSec.toFixed(1)}s effective=${(
@@ -380,6 +441,7 @@ export default function PasteModal() {
       pasteProfile,
       debugMode,
       selectedFile,
+      verifyChunks,
       setTraceLinesPersisted,
     ],
   );
@@ -634,6 +696,24 @@ export default function PasteModal() {
                 })()}
               </p>
             )}
+            {(fileText !== null ? fileText.length : textareaCharCount) >=
+              DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars && (
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={verifyChunks}
+                  onChange={e => setVerifyChunks(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Verify each chunk</span>
+                  <span className="block text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                    Pause after every chunk and show the expected character count, so you can glance
+                    at the target&apos;s own counter before continuing. Best for very large pastes.
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
 
           <div className={cx("text-xs text-slate-600 dark:text-slate-400", delayClassName)}>
@@ -703,6 +783,59 @@ export default function PasteModal() {
                     Chunk {pasteProgress.chunkIndex} / {pasteProgress.chunkTotal}
                   </p>
                 )}
+              </div>
+            )}
+            {chunkConfirm && (
+              <div className="space-y-2 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
+                <p className="text-xs font-medium">
+                  Chunk {chunkConfirm.chunkIndex} / {chunkConfirm.chunkTotal} delivered — the target
+                  should now show{" "}
+                  <span className="font-bold">
+                    {chunkConfirm.committedSourceChars.toLocaleString()}
+                  </span>{" "}
+                  characters.
+                </p>
+                <p className="text-[11px] leading-4 opacity-80">
+                  Glance at the target&apos;s character counter (e.g. Notepad&apos;s status bar). If
+                  it matches, continue. If it doesn&apos;t, stop here — you can trim the tail on the
+                  target and resume from this verified point.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    size="XS"
+                    theme="primary"
+                    text="Continue"
+                    onClick={() => {
+                      chunkConfirm.resolve();
+                      setChunkConfirm(null);
+                    }}
+                  />
+                  <Button
+                    size="XS"
+                    theme="light"
+                    text="Stop here"
+                    onClick={() => {
+                      chunkConfirm.reject(new Error("Stopped at verified chunk boundary"));
+                      setChunkConfirm(null);
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            {completionSummary && !pasteActive && (
+              <div className="space-y-1 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-emerald-800 dark:border-emerald-400/40 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <p className="text-xs font-medium">
+                  Paste complete in {formatDuration(completionSummary.elapsedSec)} (
+                  {completionSummary.cps.toFixed(0)} chars/sec).
+                </p>
+                <p className="text-[11px] leading-4 opacity-90">
+                  The target should show{" "}
+                  <span className="font-bold">{completionSummary.chars.toLocaleString()}</span>{" "}
+                  characters / cursor on line{" "}
+                  <span className="font-bold">{completionSummary.lines.toLocaleString()}</span>.
+                  Compare with the target&apos;s own counter (e.g. Notepad&apos;s status bar) to
+                  confirm integrity at a glance.
+                </p>
               </div>
             )}
             {resumeState && !pasteActive && (
