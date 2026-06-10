@@ -63,9 +63,33 @@ video (2x scale), ground truth known from this session's runs:
 - Backspace==1 char per press matches the counter semantics measured on
   both machines (newline counts as 1).
 
+## OCR-reads-truth validation (2026-06-10, dual-SSH)
+
+A live verified run came back with OCR reporting 6,342 vs 6,360 expected and
+falling back to manual. Cross-checked against the target's real status bar
+(high-res KVM screenshot): the document genuinely contained **6,342**
+characters — cursor on Ln 119 not 121, and a visible dropped char
+(`Quick bown Fox`). So:
+
+- **OCR == truth** (6,342 = 6,342): the on-video counter is trustworthy
+  ground truth.
+- Auto-verify correctly **detected a real ~0.3% churn loss** and fell back
+  to manual — a true positive, not an OCR artifact.
+- The region-geometry fix (anchor stable left edge, extend right ~360px)
+  resolved the earlier `unreadable` reads; calibrate-on-zero + grow-right
+  now reads cleanly as the count climbs.
+
+This is the green light for P2: since OCR reads truth, it can *drive
+repair*, not just warn.
+
 ## Phases
 
-- **P1:** region selector + per-chunk OCR auto-confirm (pauses self-confirm
-  on match; manual only on mismatch/unreadable). No destructive repair.
-- **P2:** auto-repair (backspace + re-type) behind its own toggle, after P1
-  proves OCR stability across chunk boundaries in live runs.
+- **P1 ✓ done & validated:** zero-setup counter auto-location + per-chunk
+  OCR auto-confirm (continues on match, manual only on mismatch/unreadable),
+  + final-chunk OCR check in the completion summary.
+- **P2 (building):** auto-repair. On a verified deficit, roll the document
+  back to the last verified count (Backspace × (currentOCR − checkpointOCR)),
+  re-read OCR to confirm the rollback landed on the checkpoint, re-type the
+  chunk, re-verify. Self-checking: if rollback OCR doesn't hit the checkpoint
+  (backspaces themselves can drop), bail to manual. Bounded retries, then
+  manual. Behind its own toggle.

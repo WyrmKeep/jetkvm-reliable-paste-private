@@ -56,6 +56,38 @@ interface PendingChunkConfirm {
 }
 let pendingChunkConfirmGlobal: PendingChunkConfirm | null = null;
 
+// Shared manual chunk-confirm: surfaces the pause UI (module-scope so it
+// survives popover unmount) and resolves on Continue / rejects on Stop.
+function makeManualConfirm(setChunkConfirm: (c: PendingChunkConfirm | null) => void) {
+  return (abort: AbortController, info: Omit<PendingChunkConfirm, "resolve" | "reject">) =>
+    new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        cleanup();
+        reject(new Error("Paste execution aborted"));
+      };
+      const cleanup = () => {
+        abort.signal.removeEventListener("abort", onAbort);
+        pendingChunkConfirmGlobal = null;
+        setChunkConfirm(null);
+      };
+      if (abort.signal.aborted) return reject(new Error("Paste execution aborted"));
+      abort.signal.addEventListener("abort", onAbort);
+      const pending: PendingChunkConfirm = {
+        ...info,
+        resolve: () => {
+          cleanup();
+          resolve();
+        },
+        reject: (e: Error) => {
+          cleanup();
+          reject(e);
+        },
+      };
+      pendingChunkConfirmGlobal = pending;
+      setChunkConfirm(pending);
+    });
+}
+
 function hashPasteContent(text: string): string {
   let h = 5381;
   for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
@@ -206,6 +238,8 @@ export default function PasteModal() {
   const [pasteEtaSeconds, setPasteEtaSeconds] = useState<number | null>(null);
   const [verifyChunks, setVerifyChunks] = useState(false);
   const [autoVerify, setAutoVerify] = useState(false);
+  const [autoRepair, setAutoRepair] = useState(true);
+  const manualConfirm = useMemo(() => makeManualConfirm(setChunkConfirm), []);
   // Hydrate from module scope so a remounted popover mid-pause still shows
   // the Continue/Stop controls for the in-flight paste.
   const [chunkConfirm, setChunkConfirm] = useState<PendingChunkConfirm | null>(
@@ -425,75 +459,85 @@ export default function PasteModal() {
               totalChars,
             };
           },
+          // Manual confirm UI as a Promise (also the fallback for auto mode).
           waitForChunkConfirm:
-            verifyChunks || autoVerify
+            verifyChunks && !autoVerify
               ? info =>
-                  new Promise<void>((resolve, reject) => {
-                    const onAbort = () => {
-                      cleanup();
-                      reject(new Error("Paste execution aborted"));
-                    };
-                    const cleanup = () => {
-                      abortController.signal.removeEventListener("abort", onAbort);
-                      pendingChunkConfirmGlobal = null;
-                      setChunkConfirm(null);
-                    };
-                    abortController.signal.addEventListener("abort", onAbort);
-                    const showManual = (ocrNote?: string) => {
-                      const pending: PendingChunkConfirm = {
-                        chunkIndex: info.chunkIndex,
-                        chunkTotal: info.chunkTotal,
-                        committedSourceChars: startOffset + info.committedSourceChars,
-                        ocrNote,
-                        resolve: () => {
-                          cleanup();
-                          resolve();
-                        },
-                        reject: (e: Error) => {
-                          cleanup();
-                          reject(e);
-                        },
-                      };
-                      pendingChunkConfirmGlobal = pending;
-                      setChunkConfirm(pending);
-                    };
-                    if (ocrCal && videoEl instanceof HTMLVideoElement) {
-                      // Auto path: read the counter; matching count continues
-                      // without any human pause. info.committedSourceChars is
-                      // run-relative, and the calibration baseline was read at
-                      // run start, so this also holds for resumed runs and
-                      // targets whose document wasn't empty.
-                      const cal = ocrCal;
-                      void (async () => {
-                        const expected = cal.value + info.committedSourceChars;
-                        await new Promise(r => setTimeout(r, 900));
-                        let read = await readCounter(videoEl, cal.region).catch(() => null);
-                        if (read !== expected) {
-                          await new Promise(r => setTimeout(r, 800));
-                          read = await readCounter(videoEl, cal.region).catch(() => null);
-                        }
-                        if (abortController.signal.aborted) return;
-                        if (read === expected) {
-                          setTraceLinesPersisted(current => [
-                            ...current,
-                            `ocr-verify chunk ${info.chunkIndex}/${info.chunkTotal}: ${read} ok`,
-                          ]);
-                          cleanup();
-                          resolve();
-                          return;
-                        }
-                        setTraceLinesPersisted(current => [
-                          ...current,
-                          `ocr-verify chunk ${info.chunkIndex}: read=${read ?? "unreadable"} expected=${expected} — manual confirm`,
-                        ]);
-                        showManual(
-                          `Automatic check: counter reads ${read !== null ? read.toLocaleString() : "unreadable"}, expected ${expected.toLocaleString()}.`,
-                        );
-                      })();
-                    } else {
-                      showManual();
-                    }
+                  manualConfirm(abortController, {
+                    chunkIndex: info.chunkIndex,
+                    chunkTotal: info.chunkTotal,
+                    committedSourceChars: startOffset + info.committedSourceChars,
                   })
+              : undefined,
+          // Auto-verify (+ optional auto-repair) for every chunk including the
+          // last. OCR reads the on-target counter (validated as truth, see
+          // PASTE-006); on a deficit with auto-repair on, roll back the landed
+          // part of this chunk and re-type it, self-checking the rollback. Bail
+          // to the manual confirm UI when OCR is unreadable or repair can't
+          // converge.
+          verifyChunk:
+            autoVerify && ocrCal && videoEl instanceof HTMLVideoElement
+              ? async ctx => {
+                  const cal = ocrCal;
+                  const v = videoEl;
+                  const tag = `${ctx.chunkIndex}/${ctx.chunkTotal}`;
+                  const expected = cal.value + ctx.committedSourceChars;
+                  const checkpoint = expected - ctx.chunkSourceChars; // count before this chunk
+                  const read = async () => {
+                    await new Promise(r => setTimeout(r, 900));
+                    let n = await readCounter(v, cal.region).catch(() => null);
+                    if (n === null) {
+                      await new Promise(r => setTimeout(r, 800));
+                      n = await readCounter(v, cal.region).catch(() => null);
+                    }
+                    return n;
+                  };
+                  let cur = await read();
+                  if (cur === expected) {
+                    setTraceLinesPersisted(c => [...c, `ocr-verify chunk ${tag}: ${cur} ok`]);
+                    return;
+                  }
+                  if (autoRepair && cur !== null && cur > checkpoint && cur < expected) {
+                    for (let attempt = 1; attempt <= 2 && cur !== expected; attempt++) {
+                      if (abortController.signal.aborted)
+                        throw new Error("Paste execution aborted");
+                      const landed = (cur as number) - checkpoint;
+                      setTraceLinesPersisted(c => [
+                        ...c,
+                        `ocr-repair chunk ${tag} attempt ${attempt}: read=${cur} expected=${expected}, rolling back ${landed}`,
+                      ]);
+                      await ctx.backspace(landed);
+                      const back = await read();
+                      if (back !== checkpoint) {
+                        setTraceLinesPersisted(c => [
+                          ...c,
+                          `ocr-repair chunk ${tag}: rollback landed at ${back ?? "unreadable"}, expected ${checkpoint} — manual`,
+                        ]);
+                        cur = back;
+                        break;
+                      }
+                      await ctx.retype();
+                      cur = await read();
+                    }
+                    if (cur === expected) {
+                      setTraceLinesPersisted(c => [
+                        ...c,
+                        `ocr-repair chunk ${tag}: fixed → ${cur}`,
+                      ]);
+                      return;
+                    }
+                  }
+                  setTraceLinesPersisted(c => [
+                    ...c,
+                    `ocr-verify chunk ${tag}: read=${cur ?? "unreadable"} expected=${expected} — manual confirm`,
+                  ]);
+                  await manualConfirm(abortController, {
+                    chunkIndex: ctx.chunkIndex,
+                    chunkTotal: ctx.chunkTotal,
+                    committedSourceChars: expected,
+                    ocrNote: `Automatic check: counter reads ${cur !== null ? cur.toLocaleString() : "unreadable"}, expected ${expected.toLocaleString()}.`,
+                  });
+                }
               : undefined,
         });
 
@@ -572,6 +616,8 @@ export default function PasteModal() {
       selectedFile,
       verifyChunks,
       autoVerify,
+      autoRepair,
+      manualConfirm,
       setTraceLinesPersisted,
     ],
   );
@@ -865,6 +911,26 @@ export default function PasteModal() {
                 </span>
               </label>
             )}
+            {autoVerify &&
+              (fileText !== null ? fileText.length : textareaCharCount) >=
+                DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars && (
+                <label className="ml-6 flex cursor-pointer items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={autoRepair}
+                    onChange={e => setAutoRepair(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Auto-repair on mismatch</span>
+                    <span className="block text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                      If the counter is short, automatically delete the unverified part of the chunk
+                      and re-type it (self-checked). Falls back to asking you if it can&apos;t
+                      reconcile.
+                    </span>
+                  </span>
+                </label>
+              )}
           </div>
 
           <div className={cx("text-xs text-slate-600 dark:text-slate-400", delayClassName)}>

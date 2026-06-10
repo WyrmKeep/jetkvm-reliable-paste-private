@@ -156,6 +156,23 @@ export interface ExecutePasteTextOptions {
     chunkTotal: number;
     committedSourceChars: number;
   }) => Promise<void>;
+  // Auto-verify/repair mode (PASTE-006 P2). When provided it is awaited after
+  // EVERY committed chunk (including the last, so the tail is checked too) and
+  // fully owns the verify decision. The OCR read lives caller-side (it needs
+  // the video element + region); the typing primitives live here because they
+  // need the chunk's batches. `backspace(n)` types n Backspaces and drains;
+  // `retype()` re-sends this chunk's batches and drains — together they roll a
+  // lossy chunk back to its start checkpoint and re-type it. Return to
+  // continue; throw to stop at the (verified) chunk boundary.
+  verifyChunk?: (ctx: {
+    chunkIndex: number;
+    chunkTotal: number;
+    isLast: boolean;
+    committedSourceChars: number;
+    chunkSourceChars: number;
+    backspace: (n: number) => Promise<void>;
+    retype: () => Promise<void>;
+  }) => Promise<void>;
 }
 
 type PasteDrainMode = "required" | "bestEffort";
@@ -717,6 +734,7 @@ export default function useKeyboard() {
           onTrace,
           onChunkCommitted,
           waitForChunkConfirm,
+          verifyChunk,
         } = options;
 
         const { batches, invalidChars, batchStats } = buildPasteMacroBatches(
@@ -978,10 +996,66 @@ export default function useKeyboard() {
               committedSourceChars += chunk.sourceChars;
               onChunkCommitted?.(committedSourceChars);
 
-              // Verified mode: hold at this boundary until the caller
-              // confirms (or rejects, surfacing as a normal failure whose
-              // resume checkpoint is exactly this boundary).
-              if (waitForChunkConfirm && ci < chunks.length - 1) {
+              // Auto-verify/repair mode owns the boundary for every chunk
+              // (including the last). It gets typing primitives bound to this
+              // chunk's batches so it can roll back and re-type on a detected
+              // deficit.
+              if (verifyChunk) {
+                const startIdx = chunk.batchStartIndex;
+                const endIdx = chunk.batchEndIndex;
+                const drainAfterRepair = () =>
+                  waitForPasteDrain(
+                    "required",
+                    chunkDrainTimeoutMs,
+                    signal,
+                    isLastChunk ? undefined : 0,
+                    undefined,
+                    pasteFailureBaseline,
+                  );
+                const backspace = async (n: number) => {
+                  let remaining = Math.max(0, Math.floor(n));
+                  while (remaining > 0) {
+                    if (signal?.aborted) throw new Error("Paste execution aborted");
+                    const take = Math.min(remaining, maxStepsPerBatch);
+                    const steps: MacroStep[] = [];
+                    for (let k = 0; k < take; k++)
+                      steps.push({ keys: ["Backspace"], modifiers: null, delay: delayMs });
+                    await executePasteMacro(steps);
+                    remaining -= take;
+                    if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) await waitForChannelDrain();
+                  }
+                  await drainAfterRepair();
+                };
+                const retype = async () => {
+                  for (let b = startIdx; b < endIdx; b++) {
+                    if (signal?.aborted) throw new Error("Paste execution aborted");
+                    await executePasteMacro(batches[b]);
+                    if (channel.bufferedAmount >= PASTE_HIGH_WATERMARK) await waitForChannelDrain();
+                  }
+                  await drainAfterRepair();
+                };
+                if (!isLastChunk) {
+                  onProgress?.({
+                    completedBatches: chunk.batchEndIndex,
+                    totalBatches: batches.length,
+                    phase: "pausing",
+                    chunkIndex: chunk.chunkIndex + 1,
+                    chunkTotal: chunks.length,
+                  });
+                }
+                await verifyChunk({
+                  chunkIndex: chunk.chunkIndex + 1,
+                  chunkTotal: chunks.length,
+                  isLast: isLastChunk,
+                  committedSourceChars,
+                  chunkSourceChars: chunk.sourceChars,
+                  backspace,
+                  retype,
+                });
+              } else if (waitForChunkConfirm && ci < chunks.length - 1) {
+                // Manual verified mode: hold at this boundary until the caller
+                // confirms (or rejects, surfacing as a normal failure whose
+                // resume checkpoint is exactly this boundary).
                 onProgress?.({
                   completedBatches: chunk.batchEndIndex,
                   totalBatches: batches.length,

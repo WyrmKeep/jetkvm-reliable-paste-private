@@ -86,22 +86,28 @@ export async function findCounter(video: HTMLVideoElement): Promise<CounterCalib
     const numText = words[i - 1].text.replace(/[^\d,]/g, "");
     const value = parseInt(numText.replace(/,/g, ""), 10);
     if (!Number.isFinite(value)) continue;
-    const b0 = words[i - 1].bbox;
-    const b1 = words[i].bbox;
-    const pad = 10;
-    // Widen generously to the left so the region survives the count gaining
-    // digits as the paste grows (e.g. 2,448 → 103,880).
-    const leftPad = 90;
-    const x0 = Math.min(b0.x0, b1.x0) / SCALE + strip.x - leftPad;
-    const y0 = Math.min(b0.y0, b1.y0) / SCALE + strip.y - pad;
-    const x1 = Math.max(b0.x1, b1.x1) / SCALE + strip.x + pad;
-    const y1 = Math.max(b0.y1, b1.y1) / SCALE + strip.y + pad;
+    const b0 = words[i - 1].bbox; // the number
+    const b1 = words[i].bbox; // the word "characters"
+    const padY = 12;
+    // In a left-aligned status-bar segment the NUMBER's left edge is fixed;
+    // as the count grows it extends rightward and pushes "characters" right.
+    // So calibrating tightly on the initial (often "0 characters") value and
+    // reusing that box loses the right side once the count grows — the actual
+    // bug observed in the field. Anchor on the stable left edge and extend
+    // the region generously to the right (enough for "9,999,999 characters")
+    // so every later read still contains the full "N characters" string.
+    const smallLeftPad = 18;
+    const rightExtent = 360; // native px past the number's left edge
+    const xLeft = b0.x0 / SCALE + strip.x - smallLeftPad;
+    const x0 = Math.max(0, xLeft);
+    const y0 = Math.max(0, Math.min(b0.y0, b1.y0) / SCALE + strip.y - padY);
+    const y1 = Math.max(b0.y1, b1.y1) / SCALE + strip.y + padY;
     return {
       region: {
-        x: Math.max(0, Math.round(x0)),
-        y: Math.max(0, Math.round(y0)),
-        w: Math.round(x1 - Math.max(0, x0)),
-        h: Math.round(y1 - Math.max(0, y0)),
+        x: Math.round(x0),
+        y: Math.round(y0),
+        w: Math.round(rightExtent + (xLeft - x0)),
+        h: Math.round(y1 - y0),
       },
       value,
     };
