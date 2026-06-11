@@ -27,13 +27,16 @@
 <div class="board" id="board"></div>
 <script>
 const BOARD = {
-  updated: "2026-06-10 22:55 (BST)",
+  updated: "2026-06-11 00:50 (BST)",
   goal: "Best possible paste experience: 100k at scale, adaptable across Windows systems, paste-tool only (no network sharing).",
   columns: [
     {
       name: "Backlog",
       cls: "",
       items: [
+        { id: "PASTE-015", title: "★ Close the product-vs-raw DELIVERY gap (the real bottleneck)",
+          note: "3× 30k product runs (calm host): ~39-40min each, 64-121 repair ops, only 1/3 finished in budget (1 stalled, 1 timed out, 1 byte-perfect). ROOT CAUSE: product/WebRTC path drops ~2-3%/chunk vs raw hidtype's 0.05% at the SAME 91cps/calm host — ~40x lossier. Repair is a band-aid over lossy delivery. Hypothesis: WebRTC 128-step batch gaps → host-perceived burst-then-gap → drops (burst-vs-uniform at the delivery layer). Fix delivery → repair rarely fires → fast+reliable at scale. Dominates PASTE-014.",
+          doc: "docs/tickets/PASTE-008.md" },
         { id: "PASTE-008b", title: "Prose content-verify mode (true 100% for plain text)",
           note: "Feasibility proven: OCR reads prose EXACTLY incl. case, so content-verify+repair gives true byte-perfect for plain text. Does NOT help code (symbol OCR too noisy). Build pending user call. See docs/tickets/PASTE-008.md.",
           doc: "docs/tickets/PASTE-008.md" },

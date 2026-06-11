@@ -224,6 +224,48 @@ far fewer, larger verify chunks + a bounded OCR budget so per-chunk overhead
 doesn't dominate, and a watchdog that fails fast instead of stalling. Item:
 PASTE-014 (scale-aware verify) before claiming hands-off byte-perfect at 100k.
 
+## 3× 30k product-path runs — the real bottleneck is DELIVERY loss (2026-06-11)
+
+Three 30k code runs, product path (chunked + auto-verify + auto-repair), calm
+Windows host (verified 2–8% CPU), cached calibration (engaged all 3):
+
+| Run | Outcome | Reached | Time | Repair ops | Byte result |
+|---|---|---|---|---|---|
+| 1 | stalled (killed) | chunk 17/22 | ~35m | 64 | repair non-converge on a −103 chunk |
+| 2 | timed out @40m cap | chunk 20/22 | 40m | 121 | 89.3% (26804/30001), 43 lines short |
+| 3 | completed | chunk 22/22 | 39m | 111 | delta=0, byte-perfect (1 same-len sub) |
+
+**Findings:**
+1. **The detect→repair loop is SOUND** — run 3 reached byte-perfect at 30k.
+2. **But it's impractically slow + unreliable at 30k:** ~39–40min (≈13 cps
+   effective), 64–121 repair operations, and only 1 of 3 finished within the
+   40-min budget (1 stalled, 1 timed out). 100k would be hours (plus the
+   separate 100k chunk-1 delivery stall).
+3. **ROOT CAUSE — the product/WebRTC paste path is ~40–50× lossier than the raw
+   channel.** Reliable profile = 5+6ms = 91 cps, the EXACT rate hidtype used to
+   get 0.05% loss. Same rate, same calm host, same device — yet the product
+   drops ~2–3%/chunk (every chunk needs repair). So repair isn't the problem;
+   it's a band-aid over a delivery path that loses 40× more than it should.
+4. The repair also can't converge when a chunk's deficit is large or when the
+   slow retype itself drops (chunks stick 1 short, e.g. read=28159/expected
+   28160, burning all 4 attempts → manual bail).
+
+**Leading hypothesis for the delivery gap:** hidtype streams keystrokes from a
+local pipe at a continuous deadline-paced 91 cps; the product sends 128-step
+WebRTC batches with flow-control gaps between them, so even though the device
+deadline-paces each step, the host may perceive batch-gap-then-burst delivery
+and drop during bursts (the burst-vs-uniform issue from PASTE-000A, reintroduced
+at the WebRTC-delivery layer rather than the device-pacing layer). Needs
+instrumentation: log device-side inter-keystroke timing during a product paste
+vs hidtype.
+
+**Highest-leverage next step (PASTE-015): close the product-vs-raw delivery
+gap.** If product delivery matched hidtype (0.05%), repair would rarely fire and
+30k/100k verified pastes would be fast + reliable. This dominates PASTE-014
+(scale-aware verify) — fixing delivery removes most of the verify/repair load.
+Until then, the BEST large-paste experience is the raw-style fast chunked path
+(~99.2% @100k, ~20min) + count/manual spot-check, NOT full auto-repair.
+
 ### Build-persistence root cause (the recurring "reverts to baseline")
 - `RkLunch.sh` promotes a staged build with an unconditional `mv -f` and has NO
   rollback/failsafe — so `dev_deploy -i` IS permanent at the boot level.
