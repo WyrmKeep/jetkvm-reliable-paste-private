@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"syscall"
 	"testing"
@@ -124,6 +127,32 @@ func TestClearOptionLeavesZeroReportBeforeText(t *testing.T) {
 	}
 	if writer.reports[len(writer.reports)-1] != clearReport() {
 		t.Fatalf("last report = %#v, want all-zero", writer.reports[len(writer.reports)-1])
+	}
+}
+
+func TestHidTeeWritesReportJsonLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "jetkvm-hid-tee.log")
+	tee, err := newHidTee(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tee.close()
+
+	writer := &recordingWriter{}
+	out := &hidOutput{writer: writer, tee: tee, stats: &stats{}}
+	out.write(keyReport(leftShift, 0x04))
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record hidTeeRecord
+	if err := json.Unmarshal(content, &record); err != nil {
+		t.Fatalf("tee record is not JSON: %v\n%s", err, content)
+	}
+	if record.Modifier != leftShift || !slices.Equal(record.Keys, []int{0x04, 0, 0, 0, 0, 0}) || record.Result != "ok" {
+		t.Fatalf("record = %+v, want shifted KeyA ok", record)
 	}
 }
 

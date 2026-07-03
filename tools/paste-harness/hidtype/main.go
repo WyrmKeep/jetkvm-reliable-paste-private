@@ -34,6 +34,11 @@ const (
 	layoutUS = "us"
 )
 
+const (
+	hidTeeEnv     = "JETKVM_HID_TEE"
+	hidTeeLogPath = "/tmp/jetkvm-hid-tee.log"
+)
+
 var errUnsupportedLayout = errors.New("layout must be uk or us")
 
 func buildKeymap(layout string) (map[rune]hidKey, error) {
@@ -134,6 +139,7 @@ type hidOutput struct {
 	writer reportWriter
 	lat    *[]int64
 	stats  *stats
+	tee    *hidTee
 }
 
 func (h *hidOutput) write(report [8]byte) {
@@ -145,6 +151,15 @@ func (h *hidOutput) write(report [8]byte) {
 	us := time.Since(t).Microseconds()
 	if h.lat != nil {
 		*h.lat = append(*h.lat, us)
+	}
+	if h.tee != nil {
+		result := "ok"
+		if werr != nil {
+			result = werr.Error()
+		} else if n != len(report) {
+			result = fmt.Sprintf("short-write:%d", n)
+		}
+		h.tee.write(report, result)
 	}
 	if h.stats == nil {
 		return
@@ -165,6 +180,65 @@ func (h *hidOutput) write(report [8]byte) {
 			h.stats.FirstStalls = append(h.stats.FirstStalls, h.stats.CharsTyped)
 		}
 	}
+}
+
+type hidTee struct {
+	mu    sync.Mutex
+	file  *os.File
+	start time.Time
+}
+
+type hidTeeRecord struct {
+	MonotonicNS int64  `json:"monotonic_ns"`
+	WallNS      int64  `json:"wall_ns"`
+	Modifier    byte   `json:"modifier"`
+	Keys        []int  `json:"keys"`
+	Result      string `json:"result"`
+}
+
+func newHidTee(path string) (*hidTee, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	return &hidTee{file: file, start: time.Now()}, nil
+}
+
+func newHidTeeFromEnv() (*hidTee, error) {
+	switch os.Getenv(hidTeeEnv) {
+	case "1", "true", "TRUE", "yes", "YES", "on", "ON":
+		return newHidTee(hidTeeLogPath)
+	default:
+		return nil, nil
+	}
+}
+
+func (t *hidTee) write(report [8]byte, result string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	record := hidTeeRecord{
+		MonotonicNS: time.Since(t.start).Nanoseconds(),
+		WallNS:      time.Now().UnixNano(),
+		Modifier:    report[0],
+		Keys:        reportKeys(report),
+		Result:      result,
+	}
+	_ = json.NewEncoder(t.file).Encode(record)
+}
+
+func (t *hidTee) close() {
+	if t == nil {
+		return
+	}
+	_ = t.file.Close()
+}
+
+func reportKeys(report [8]byte) []int {
+	keys := make([]int, 6)
+	for index, key := range report[2:8] {
+		keys[index] = int(key)
+	}
+	return keys
 }
 
 func clearReport() [8]byte {
@@ -368,7 +442,13 @@ func main() {
 
 	var lat []int64
 	st := stats{}
-	out := &hidOutput{writer: f, lat: &lat, stats: &st}
+	tee, err := newHidTeeFromEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "open tee:", err)
+		os.Exit(1)
+	}
+	defer tee.close()
+	out := &hidOutput{writer: f, lat: &lat, stats: &st, tee: tee}
 	installSignalClear(out)
 
 	elapsed := typeInput(out, runOptions{

@@ -14,12 +14,19 @@
     "ledger:lint": "node ledger-lint.js",
     "dashboard": "node dashboard.js",
     "orchestrator": "node run-orchestrator.js",
-    "tee:pacing": "node tee-pacing.js"
+    "hidrpc": "node hidrpc-client.js",
+    "tee:pacing": "node tee-pacing.js",
+    "tee:compare": "node tee-compare.js"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "node-datachannel": "^0.32.3",
+    "ws": "^8.21.0"
   }
 }

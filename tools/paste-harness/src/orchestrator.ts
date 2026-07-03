@@ -13,6 +13,10 @@ import {
   type RunRawHidtypeOptions,
 } from "./hidtype.js";
 import {
+  DEFAULT_HIDRPC_DELAY_MS,
+  runHidRpcText,
+} from "./hidrpcClient.js";
+import {
   HARNESS_VERSION,
   LedgerWriter,
   parseLedgerText,
@@ -112,6 +116,7 @@ export interface OrchestratorOptions {
   hidtypeLayout?: HidtypeLayout;
   hidtypeRate?: number;
   hidtypeClear?: boolean;
+  hidrpcDelayMs?: number;
   forceChurnTelemetry?: boolean;
 }
 
@@ -300,6 +305,9 @@ export async function createRealDeps(options: OrchestratorOptions, env?: RigEnv)
       if (options.injectionPath === "raw" || options.injectionPath === "hidtype") {
         return runHidtypeInjection(rigEnv, options, args);
       }
+      if (options.injectionPath === "hidrpc") {
+        return runHidRpcInjection(rigEnv, options, args);
+      }
       return runSyntheticInjection(args, options.syntheticDurationMs ?? DEFAULT_SYNTHETIC_DURATION_MS);
     },
   };
@@ -345,6 +353,36 @@ async function runHidtypeInjection(
     hidtypeOptions.timeoutMs = options.watchdogMs;
   }
   const result = await runRawHidtypeInjection(env, options.corpusText, hidtypeOptions);
+  args.onProgress(1);
+  return { hidOutputReports: result.hidOutputReports };
+}
+
+async function runHidRpcInjection(
+  env: RigEnv,
+  options: OrchestratorOptions,
+  args: InjectionRunArgs,
+): Promise<InjectionRunResult> {
+  if (options.corpusText === undefined) {
+    throw new Error("hidrpc injection requires corpusText");
+  }
+  if (args.signal.aborted) {
+    throw args.signal.reason instanceof Error ? args.signal.reason : new Error("aborted");
+  }
+  args.onProgress(0);
+  const result = await runHidRpcText(env, options.corpusText, {
+    delayMs: options.hidrpcDelayMs ?? DEFAULT_HIDRPC_DELAY_MS,
+    timeoutMs: options.watchdogMs,
+    clearBefore: true,
+    saveAfter: true,
+    signal: args.signal,
+    onProgress: args.onProgress,
+  });
+  if (!result.handshakeAck) {
+    throw new Error("HIDRPC handshake was not acknowledged");
+  }
+  if (!result.completed || result.failed) {
+    throw new Error("HIDRPC macro did not complete successfully");
+  }
   args.onProgress(1);
   return { hidOutputReports: result.hidOutputReports };
 }

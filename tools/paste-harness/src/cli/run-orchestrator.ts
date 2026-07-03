@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
 import { generateCorpus, generateUkCharsetCorpus, type CorpusClass } from "../corpus.js";
+import { DEFAULT_HIDRPC_DELAY_MS } from "../hidrpcClient.js";
 import { installNucBoxRigScripts, pinUkLayout, resetNotepad } from "../rig.js";
 import { runOrchestrator } from "../orchestrator.js";
 import type { OrchestratorOptions } from "../orchestrator.js";
@@ -41,7 +42,9 @@ async function main(): Promise<void> {
   const corpusText = corpus.text;
   const corpusHash = await sha256(corpusText);
   const injectionPath = optionalString(args, "path") ?? "synthetic";
-  const watchdogDefault = injectionPath === "raw" || injectionPath === "hidtype" ? 180_000 : 30_000;
+  const physicalTypingPath = injectionPath === "raw" || injectionPath === "hidtype" || injectionPath === "hidrpc";
+  const watchdogDefault = physicalTypingPath ? 180_000 : 30_000;
+  const focusPollDefault = physicalTypingPath ? 600_000 : 1_000;
 
   const orchestratorOptions: OrchestratorOptions = {
     ledgerPath,
@@ -57,7 +60,7 @@ async function main(): Promise<void> {
     },
     corpusText,
     watchdogMs: optionalInteger(args, "watchdog-ms", watchdogDefault),
-    focusPollMs: optionalInteger(args, "focus-poll-ms", 1_000),
+    focusPollMs: optionalInteger(args, "focus-poll-ms", focusPollDefault),
     syntheticDurationMs: optionalInteger(args, "synthetic-duration-ms", 250),
     forceChurnTelemetry: args.flags.has("force-churn"),
   };
@@ -73,6 +76,7 @@ async function main(): Promise<void> {
   if (args.flags.has("no-hidtype-clear")) {
     orchestratorOptions.hidtypeClear = false;
   }
+  orchestratorOptions.hidrpcDelayMs = optionalInteger(args, "hidrpc-delay-ms", DEFAULT_HIDRPC_DELAY_MS);
   const expectedBuildIdentity = optionalString(args, "expected-build");
   if (expectedBuildIdentity !== undefined) {
     orchestratorOptions.expectedBuildIdentity = expectedBuildIdentity;
