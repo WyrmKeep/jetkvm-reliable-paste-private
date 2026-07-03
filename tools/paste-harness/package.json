@@ -1,0 +1,23 @@
+{
+  "name": "jetkvm-paste-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.21.1"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "self-validate": "node classifier-self-test.js",
+    "ledger:lint": "node ledger-lint.js",
+    "dashboard": "node dashboard.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  }
+}
