@@ -7,6 +7,7 @@ import {
   UK_REACHABLE_TEXT_CHARS,
   extractLineKeys,
   generateCorpus,
+  generateUkCharsetCorpus,
   validateCorpusText,
 } from "./corpus.js";
 
@@ -59,6 +60,19 @@ describe("corpus generator", () => {
       for (const char of [...corpus]) {
         expect(allowed.has(char), `${corpusClass} emitted ${JSON.stringify(char)}`).toBe(true);
       }
+    }
+  });
+
+  test("builds a keyed UK charset corpus with every reachable char repeated", () => {
+    const corpus = generateUkCharsetCorpus({ repetitions: 20 });
+
+    expect(validateCorpusText(corpus).ok).toBe(true);
+    const lines = corpus.split("\n");
+    expect(lines).toHaveLength(UK_REACHABLE_TEXT_CHARS.length);
+    expect(new Set(extractLineKeys(corpus)).size).toBe(UK_REACHABLE_TEXT_CHARS.length);
+
+    for (const [index, char] of UK_REACHABLE_TEXT_CHARS.entries()) {
+      expect(lines[index]).toBe(`L${String(index).padStart(4, "0")} ${char.repeat(20)}`);
     }
   });
 

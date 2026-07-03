@@ -20,6 +20,10 @@ export interface GenerateCorpusOptions {
   seed: SeedInput;
 }
 
+export interface GenerateUkCharsetCorpusOptions {
+  repetitions?: number;
+}
+
 export interface CorpusValidationResult {
   ok: boolean;
   invalidCharacters: Array<{ char: string; index: number }>;
@@ -145,6 +149,22 @@ export function validateCorpusText(corpus: string): CorpusValidationResult {
     missingKeyLines,
     hasCr: corpus.includes("\r"),
   };
+}
+
+export function generateUkCharsetCorpus(options: GenerateUkCharsetCorpusOptions = {}): string {
+  const repetitions = options.repetitions ?? 20;
+  if (!Number.isInteger(repetitions) || repetitions < 1) {
+    throw new Error("repetitions must be a positive integer");
+  }
+
+  const corpus = UK_REACHABLE_TEXT_CHARS.map(
+    (char, index) => `${formatLineKey(index)} ${char.repeat(repetitions)}`,
+  ).join("\n");
+  const validation = validateCorpusText(corpus);
+  if (!validation.ok) {
+    throw new Error(`internal charset corpus validation failed: ${JSON.stringify(validation)}`);
+  }
+  return corpus;
 }
 
 function formatLineKey(lineNumber: number): string {

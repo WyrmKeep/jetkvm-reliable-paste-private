@@ -2,10 +2,16 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import {
+  classifyDifference,
   CLASSIFIER_VERSION,
   emptyErrorVector,
   type ErrorVector,
 } from "./classifier.js";
+import {
+  runRawHidtypeInjection,
+  type HidtypeLayout,
+  type RunRawHidtypeOptions,
+} from "./hidtype.js";
 import {
   HARNESS_VERSION,
   LedgerWriter,
@@ -97,11 +103,15 @@ export interface OrchestratorOptions {
   purpose: string;
   cellId: string;
   corpus: CorpusLedgerInfo & { size?: number };
+  corpusText?: string;
   watchdogMs?: number;
   focusPollMs?: number;
   syntheticDurationMs?: number;
   expectedBuildIdentity?: string;
   hostDecodeLayout?: string;
+  hidtypeLayout?: HidtypeLayout;
+  hidtypeRate?: number;
+  hidtypeClear?: boolean;
   forceChurnTelemetry?: boolean;
 }
 
@@ -285,12 +295,58 @@ export async function createRealDeps(options: OrchestratorOptions, env?: RigEnv)
     },
     readRecvSnapshot: async () => (await readRecvSnapshot(rigEnv)).bytes,
     fetchTeeLog: () => fetchTeeLog(rigEnv),
-    classifyRun: async () => ({
+    classifyRun: async ({ recvSnapshot }) => classifyRecvSnapshot(options.corpusText, recvSnapshot),
+    runInjection: (args) => {
+      if (options.injectionPath === "raw" || options.injectionPath === "hidtype") {
+        return runHidtypeInjection(rigEnv, options, args);
+      }
+      return runSyntheticInjection(args, options.syntheticDurationMs ?? DEFAULT_SYNTHETIC_DURATION_MS);
+    },
+  };
+}
+
+function classifyRecvSnapshot(corpusText: string | undefined, recvSnapshot: Buffer): ClassificationSummary {
+  if (corpusText === undefined) {
+    return {
       per_class_error_vector: emptyErrorVector(),
       garble_events_pre_repair: 0,
-    }),
-    runInjection: (args) => runSyntheticInjection(args, options.syntheticDurationMs ?? DEFAULT_SYNTHETIC_DURATION_MS),
+    };
+  }
+  const result = classifyDifference(corpusText, recvSnapshot);
+  return {
+    per_class_error_vector: result.errorVector,
+    garble_events_pre_repair:
+      result.errorVector["layout-swap-signature"] + result.errorVector["stuck-modifier-run"],
   };
+}
+
+async function runHidtypeInjection(
+  env: RigEnv,
+  options: OrchestratorOptions,
+  args: InjectionRunArgs,
+): Promise<InjectionRunResult> {
+  if (options.corpusText === undefined) {
+    throw new Error("raw hidtype injection requires corpusText");
+  }
+  if (args.signal.aborted) {
+    throw args.signal.reason instanceof Error ? args.signal.reason : new Error("aborted");
+  }
+  args.onProgress(0);
+  const hidtypeOptions: RunRawHidtypeOptions = {
+    layout: options.hidtypeLayout ?? "uk",
+  };
+  if (options.hidtypeRate !== undefined) {
+    hidtypeOptions.rate = options.hidtypeRate;
+  }
+  if (options.hidtypeClear !== undefined) {
+    hidtypeOptions.clear = options.hidtypeClear;
+  }
+  if (options.watchdogMs !== undefined) {
+    hidtypeOptions.timeoutMs = options.watchdogMs;
+  }
+  const result = await runRawHidtypeInjection(env, options.corpusText, hidtypeOptions);
+  args.onProgress(1);
+  return { hidOutputReports: result.hidOutputReports };
 }
 
 export function calculateClockOffsetMs(sample: {

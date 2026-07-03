@@ -1,11 +1,31 @@
-import { CORPUS_CLASSES, generateCorpus, type CorpusClass } from "../corpus.js";
+import {
+  CORPUS_CLASSES,
+  generateCorpus,
+  generateUkCharsetCorpus,
+  type CorpusClass,
+} from "../corpus.js";
 
-import { failCli, optionalString, parseArgs, requiredString, writeStdoutOrFile } from "./common.js";
+import {
+  failCli,
+  optionalInteger,
+  optionalString,
+  parseArgs,
+  requiredString,
+  writeStdoutOrFile,
+} from "./common.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if (args.flags.has("list")) {
-    process.stdout.write(`${CORPUS_CLASSES.join("\n")}\n`);
+    process.stdout.write(`${[...CORPUS_CLASSES, "uk-charset"].join("\n")}\n`);
+    return;
+  }
+
+  if (args.flags.has("uk-charset")) {
+    const corpus = generateUkCharsetCorpus({
+      repetitions: optionalInteger(args, "repetitions", 20),
+    });
+    await writeStdoutOrFile(corpus, optionalString(args, "output"));
     return;
   }
 

@@ -10,6 +10,7 @@ static/*
 
 device-tests.tar.gz
 node_modules
+tools/paste-harness/hidtype/hidtype
 
 # generated during the build process
 #internal/native/include

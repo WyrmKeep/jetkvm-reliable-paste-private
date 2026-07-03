@@ -1,7 +1,7 @@
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 
-import { generateCorpus, type CorpusClass } from "../corpus.js";
+import { generateCorpus, generateUkCharsetCorpus, type CorpusClass } from "../corpus.js";
 import { installNucBoxRigScripts, pinUkLayout, resetNotepad } from "../rig.js";
 import { runOrchestrator } from "../orchestrator.js";
 import type { OrchestratorOptions } from "../orchestrator.js";
@@ -37,29 +37,42 @@ async function main(): Promise<void> {
   }
 
   await mkdir(artifactsRoot, { recursive: true });
-  const corpusClass = (optionalString(args, "class") ?? "mixed-case") as CorpusClass;
-  const size = optionalInteger(args, "size", 200);
-  const seed = optionalString(args, "seed") ?? "f2";
-  const corpusText = generateCorpus({ corpusClass, size, seed });
+  const corpus = await loadCorpus(args);
+  const corpusText = corpus.text;
   const corpusHash = await sha256(corpusText);
+  const injectionPath = optionalString(args, "path") ?? "synthetic";
+  const watchdogDefault = injectionPath === "raw" || injectionPath === "hidtype" ? 180_000 : 30_000;
 
   const orchestratorOptions: OrchestratorOptions = {
     ledgerPath,
     artifactsRoot,
-    injectionPath: optionalString(args, "path") ?? "synthetic",
+    injectionPath,
     purpose: optionalString(args, "purpose") ?? "f2_probe",
     cellId: optionalString(args, "cell-id") ?? "F2-RIG-CONTROL",
     corpus: {
-      id: `${corpusClass}:seed=${seed}:size=${size}`,
+      id: corpus.id,
       hash: `sha256:${corpusHash}`,
-      path: "synthetic://generated",
-      size,
+      path: corpus.path,
+      size: corpusText.length,
     },
-    watchdogMs: optionalInteger(args, "watchdog-ms", 30_000),
+    corpusText,
+    watchdogMs: optionalInteger(args, "watchdog-ms", watchdogDefault),
     focusPollMs: optionalInteger(args, "focus-poll-ms", 1_000),
     syntheticDurationMs: optionalInteger(args, "synthetic-duration-ms", 250),
     forceChurnTelemetry: args.flags.has("force-churn"),
   };
+  const hidtypeLayout = optionalString(args, "hidtype-layout");
+  if (hidtypeLayout !== undefined) {
+    if (hidtypeLayout !== "uk" && hidtypeLayout !== "us") {
+      throw new Error("--hidtype-layout must be uk or us");
+    }
+    orchestratorOptions.hidtypeLayout = hidtypeLayout;
+  }
+  const hidtypeRate = optionalInteger(args, "hidtype-rate", 91);
+  orchestratorOptions.hidtypeRate = hidtypeRate;
+  if (args.flags.has("no-hidtype-clear")) {
+    orchestratorOptions.hidtypeClear = false;
+  }
   const expectedBuildIdentity = optionalString(args, "expected-build");
   if (expectedBuildIdentity !== undefined) {
     orchestratorOptions.expectedBuildIdentity = expectedBuildIdentity;
@@ -72,6 +85,36 @@ async function main(): Promise<void> {
   const result = await runOrchestrator(orchestratorOptions);
 
   process.stdout.write(`${JSON.stringify({ ok: result.outcome === "completed", ...result }, null, 2)}\n`);
+}
+
+async function loadCorpus(args: ReturnType<typeof parseArgs>): Promise<{ id: string; path: string; text: string }> {
+  const textFile = optionalString(args, "text-file");
+  if (textFile !== undefined) {
+    const resolved = resolve(textFile);
+    return {
+      id: `file:${basename(resolved)}`,
+      path: resolved,
+      text: await readFile(resolved, "utf8"),
+    };
+  }
+
+  if (args.flags.has("uk-charset")) {
+    const repetitions = optionalInteger(args, "repetitions", 20);
+    return {
+      id: `uk-charset:repetitions=${repetitions}`,
+      path: "synthetic://uk-charset",
+      text: generateUkCharsetCorpus({ repetitions }),
+    };
+  }
+
+  const corpusClass = (optionalString(args, "class") ?? "mixed-case") as CorpusClass;
+  const size = optionalInteger(args, "size", 200);
+  const seed = optionalString(args, "seed") ?? "f2";
+  return {
+    id: `${corpusClass}:seed=${seed}:size=${size}`,
+    path: "synthetic://generated",
+    text: generateCorpus({ corpusClass, size, seed }),
+  };
 }
 
 async function sha256(text: string): Promise<string> {
