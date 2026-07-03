@@ -23,20 +23,22 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <tbody>
 <tr><th>Runs</th><td>54</td></tr>
 <tr><th>Steps</th><td>163</td></tr>
-<tr><th>Total run duration</th><td>3657314 ms</td></tr>
-<tr><th>Excluded from thresholds</th><td>10</td></tr>
+<tr><th>Annotations</th><td>2</td></tr>
+<tr><th>Threshold-eligible run duration</th><td>1919153 ms</td></tr>
+<tr><th>Excluded from thresholds</th><td>12</td></tr>
+<tr><th>Threshold-eligible runs</th><td>42</td></tr>
 </tbody>
 </table>
-<h2>Per-class error rates</h2>
+<h2>Threshold-eligible per-class error rates</h2>
 <table>
 <thead><tr><th>Class</th><th>Errors</th><th>Rate</th></tr></thead>
 <tbody>
-<tr><td>drop</td><td>17492</td><td>13.2572%</td></tr>
-<tr><td>insertion</td><td>17014</td><td>12.8950%</td></tr>
-<tr><td>same-length-substitution</td><td>188</td><td>0.1425%</td></tr>
-<tr><td>case-error</td><td>159</td><td>0.1205%</td></tr>
+<tr><td>drop</td><td>13767</td><td>11.9329%</td></tr>
+<tr><td>insertion</td><td>13689</td><td>11.8653%</td></tr>
+<tr><td>same-length-substitution</td><td>167</td><td>0.1448%</td></tr>
+<tr><td>case-error</td><td>155</td><td>0.1344%</td></tr>
 <tr><td>stuck-modifier-run</td><td>0</td><td>0.0000%</td></tr>
-<tr><td>layout-swap-signature</td><td>12</td><td>0.0091%</td></tr>
+<tr><td>layout-swap-signature</td><td>12</td><td>0.0104%</td></tr>
 </tbody>
 </table>
 <h2>Runs</h2>
@@ -270,6 +272,14 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <tr><td><a href="#run-20260703191153730-w1ujt4">20260703191153730-w1ujt4</a></td><td>1783107498143-triangulation</td><td>triangulation</td><td>complete</td><td>2026-07-03T19:38:18.143Z</td><td>0 ms</td></tr>
 </tbody>
 </table>
+<h2>Annotations</h2>
+<table>
+<thead><tr><th>Run</th><th>Type</th><th>Timestamp</th><th>Reason</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td><a href="#run-20260703190840598-q9q5me">20260703190840598-q9q5me</a></td><td>manual_exclusion</td><td>2026-07-03T21:43:06.533Z</td><td>contaminated by stale Notepad content after prior product no-done runs; excluded by F8 campaign summary</td><td>F9b-classifier-fix</td></tr>
+<tr><td><a href="#run-20260703191710394-735kpg">20260703191710394-735kpg</a></td><td>manual_exclusion</td><td>2026-07-03T21:43:06.640Z</td><td>contaminated by stale product-240 no-done residue from 20260703191320547-z3gesv; recv line 1 inflated insertion count</td><td>F9b-classifier-fix</td></tr>
+</tbody>
+</table>
 
 <h2>Run details</h2>
 <section id="run-20260703180008814-nn6sd4">
@@ -314,7 +324,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-403.067 ms</li>
 <li>Telemetry: calm=true, max CPU=2.55</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703180222223-hk6dq3/tee.log">artifacts/20260703180222223-hk6dq3/tee.log</a>, <a href="artifacts/20260703180222223-hk6dq3/recv.txt">artifacts/20260703180222223-hk6dq3/recv.txt</a></li>
 <li>HID output reports: 12009, focus events: 3</li>
 </ul>
@@ -330,7 +340,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-398.646 ms</li>
 <li>Telemetry: calm=true, max CPU=0.79</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703180336945-70vg2x/tee.log">artifacts/20260703180336945-70vg2x/tee.log</a>, <a href="artifacts/20260703180336945-70vg2x/recv.txt">artifacts/20260703180336945-70vg2x/recv.txt</a></li>
 <li>HID output reports: 12009, focus events: 3</li>
 </ul>
@@ -762,7 +772,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-838.247 ms</li>
 <li>Telemetry: calm=true, max CPU=18.33</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703184741315-1uhncb/tee.log">artifacts/20260703184741315-1uhncb/tee.log</a>, <a href="artifacts/20260703184741315-1uhncb/recv.txt">artifacts/20260703184741315-1uhncb/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -778,7 +788,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-821.125 ms</li>
 <li>Telemetry: calm=true, max CPU=6.44</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703185058316-uzxz5b/tee.log">artifacts/20260703185058316-uzxz5b/tee.log</a>, <a href="artifacts/20260703185058316-uzxz5b/recv.txt">artifacts/20260703185058316-uzxz5b/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -794,7 +804,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-792.851 ms</li>
 <li>Telemetry: calm=true, max CPU=7.8</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703185415665-nsophx/tee.log">artifacts/20260703185415665-nsophx/tee.log</a>, <a href="artifacts/20260703185415665-nsophx/recv.txt">artifacts/20260703185415665-nsophx/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -810,7 +820,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-791.078 ms</li>
 <li>Telemetry: calm=true, max CPU=9.53</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703185734074-1h9914/tee.log">artifacts/20260703185734074-1h9914/tee.log</a>, <a href="artifacts/20260703185734074-1h9914/recv.txt">artifacts/20260703185734074-1h9914/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -826,7 +836,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-812.884 ms</li>
 <li>Telemetry: calm=true, max CPU=7.31</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703190051228-3ngt6q/tee.log">artifacts/20260703190051228-3ngt6q/tee.log</a>, <a href="artifacts/20260703190051228-3ngt6q/recv.txt">artifacts/20260703190051228-3ngt6q/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -842,7 +852,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-807.860 ms</li>
 <li>Telemetry: calm=true, max CPU=5.32</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703190408342-oc8n2p/tee.log">artifacts/20260703190408342-oc8n2p/tee.log</a>, <a href="artifacts/20260703190408342-oc8n2p/recv.txt">artifacts/20260703190408342-oc8n2p/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -858,7 +868,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-816.391 ms</li>
 <li>Telemetry: calm=true, max CPU=22.98</li>
-<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>contaminated by stale Notepad content after prior product no-done runs; excluded by F8 campaign summary</code></li>
 <li>Artifacts: <a href="artifacts/20260703190840598-q9q5me/tee.log">artifacts/20260703190840598-q9q5me/tee.log</a>, <a href="artifacts/20260703190840598-q9q5me/recv.txt">artifacts/20260703190840598-q9q5me/recv.txt</a></li>
 <li>HID output reports: 118, focus events: 3</li>
 </ul>
@@ -1018,7 +1028,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-827.010 ms</li>
 <li>Telemetry: calm=true, max CPU=5.83</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703191320547-z3gesv/tee.log">artifacts/20260703191320547-z3gesv/tee.log</a>, <a href="artifacts/20260703191320547-z3gesv/recv.txt">artifacts/20260703191320547-z3gesv/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -1034,7 +1044,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-824.030 ms</li>
 <li>Telemetry: calm=true, max CPU=22.9</li>
-<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>contaminated by stale product-240 no-done residue from 20260703191320547-z3gesv; recv line 1 inflated insertion count</code></li>
 <li>Artifacts: <a href="artifacts/20260703191710394-735kpg/tee.log">artifacts/20260703191710394-735kpg/tee.log</a>, <a href="artifacts/20260703191710394-735kpg/recv.txt">artifacts/20260703191710394-735kpg/recv.txt</a></li>
 <li>HID output reports: 2079, focus events: 3</li>
 </ul>
@@ -1130,7 +1140,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.0</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-218.139 ms</li>
 <li>Telemetry: calm=true, max CPU=9.73</li>
-<li>Garble events pre-repair: 0, excluded=true</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
 <li>Artifacts: <a href="artifacts/20260703192823519-3spctv/tee.log">artifacts/20260703192823519-3spctv/tee.log</a>, <a href="artifacts/20260703192823519-3spctv/recv.txt">artifacts/20260703192823519-3spctv/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>

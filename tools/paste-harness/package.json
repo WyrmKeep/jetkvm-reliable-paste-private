@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "self-validate": "node classifier-self-test.js",
     "ledger:lint": "node ledger-lint.js",
+    "ledger:annotate": "node ledger-annotate.js",
     "dashboard": "node dashboard.js",
     "orchestrator": "node run-orchestrator.js",
     "hidrpc": "node hidrpc-client.js",

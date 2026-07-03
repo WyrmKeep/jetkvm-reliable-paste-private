@@ -56,6 +56,48 @@ describe("classifier", () => {
     expect(stuck.errorVector["case-error"]).toBe(0);
   });
 
+  test("keeps stuck-modifier runs when adjacent to non-shift substitutions", () => {
+    const cases = [
+      {
+        name: "leading adjacent substitution",
+        expected: "xab",
+        actual: "zAB",
+        sameLengthSubstitutions: 1,
+        stuckModifierChars: 2,
+      },
+      {
+        name: "trailing adjacent substitution",
+        expected: "abx",
+        actual: "ABz",
+        sameLengthSubstitutions: 1,
+        stuckModifierChars: 2,
+      },
+      {
+        name: "substitutions on both sides",
+        expected: "xabx",
+        actual: "zABz",
+        sameLengthSubstitutions: 2,
+        stuckModifierChars: 2,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = classifyDifference(testCase.expected, testCase.actual);
+
+      expect(result.labels, testCase.name).toEqual([
+        "same-length-substitution",
+        "stuck-modifier-run",
+      ]);
+      expect(result.errorVector["same-length-substitution"], testCase.name).toBe(
+        testCase.sameLengthSubstitutions,
+      );
+      expect(result.errorVector["stuck-modifier-run"], testCase.name).toBe(
+        testCase.stuckModifierChars,
+      );
+      expect(result.errorVector["case-error"], testCase.name).toBe(0);
+    }
+  });
+
   test("requires a systematic layout count crossover before labeling layout swaps", () => {
     const oneOff = classifyDifference('L0001 @ sentinel', 'L0001 " sentinel');
     const systematic = classifyDifference('L0001 @ " # £', 'L0001 " @ £ #');

@@ -1,6 +1,6 @@
 import { compareNormalizedText } from "./normalize.js";
 
-export const CLASSIFIER_VERSION = "paste-harness-classifier/1.0.0";
+export const CLASSIFIER_VERSION = "paste-harness-classifier/1.0.1";
 
 export const FAULT_LABELS = [
   "drop",
@@ -169,6 +169,10 @@ function classifyOps(ops: DiffOp[]): DifferenceEvent[] {
     const first = substitutions[index];
     if (!first) {
       break;
+    }
+    if (!isWrongShift(first.op.expected, first.op.actual)) {
+      index += 1;
+      continue;
     }
     const run = [first];
     let cursor = index + 1;

@@ -1,0 +1,1048 @@
+{
+  "artifact": "f8-reclassified-summary",
+  "artifact_version": 1,
+  "generated_at": "2026-07-03T21:46:06.516Z",
+  "campaign_dir": "campaigns/f8-replication-campaign-20260703",
+  "classifier_version": "paste-harness-classifier/1.0.1",
+  "evidence_source": "recv snapshots only; stale early raw tee logs were not used",
+  "clean_row_scope": "baseline_rate75, groups with completed>0, layout_probe, layout_mismatch, and layout_matched from campaign-summary.json",
+  "checked_rows": 28,
+  "changed_rows": [],
+  "spec_update_required": false,
+  "manual_exclusions": [
+    {
+      "run_id": "20260703190840598-q9q5me",
+      "excluded_reason": "contaminated by stale Notepad content after prior product no-done runs; excluded by F8 campaign summary",
+      "source": "F9b-classifier-fix"
+    },
+    {
+      "run_id": "20260703191710394-735kpg",
+      "excluded_reason": "contaminated by stale product-240 no-done residue from 20260703191320547-z3gesv; recv line 1 inflated insertion count",
+      "source": "F9b-classifier-fix"
+    }
+  ],
+  "groups": [
+    {
+      "label": "baseline rate75 accepted rows",
+      "source": "campaign-summary.json baseline_rate75",
+      "n": 3,
+      "chars": 18000,
+      "vector": {
+        "drop": 3,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 6,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703182636516-amrcq7",
+        "20260703182855170-8zt5pb",
+        "20260703183027462-wfq3ey"
+      ]
+    },
+    {
+      "label": "raw angle-dense 2k, rate75",
+      "source": "campaign-summary.json groups[completed>0]",
+      "n": 3,
+      "chars": 6000,
+      "vector": {
+        "drop": 493,
+        "insertion": 492,
+        "same-length-substitution": 9,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703183755273-tehtbt",
+        "20260703183834136-y0voci",
+        "20260703183912982-eb7siz"
+      ]
+    },
+    {
+      "label": "raw shifted-symbol 2k, rate75",
+      "source": "campaign-summary.json groups[completed>0]",
+      "n": 3,
+      "chars": 6000,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703183951810-ld41xr",
+        "20260703184030601-3huqvv",
+        "20260703184109500-8d2utr"
+      ]
+    },
+    {
+      "label": "hidrpc angle-dense 2k, 11ms delay",
+      "source": "campaign-summary.json groups[completed>0]",
+      "n": 3,
+      "chars": 6000,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 3,
+        "case-error": 6,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703184212026-tdzjzm",
+        "20260703184300548-80v3gl",
+        "20260703184348826-2fnhjn"
+      ]
+    },
+    {
+      "label": "hidrpc shifted-symbol 2k, 11ms delay",
+      "source": "campaign-summary.json groups[completed>0]",
+      "n": 4,
+      "chars": 8000,
+      "vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703184437197-h4r8bq",
+        "20260703184530845-9ua5ye",
+        "20260703184624446-jqxm52",
+        "20260703192607422-q2y58a"
+      ]
+    },
+    {
+      "label": "product angle-dense single-batch",
+      "source": "campaign-summary.json groups[completed>0]",
+      "n": 3,
+      "chars": 165,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703190900575-hqhyby",
+        "20260703190920099-8rigjx",
+        "20260703192248428-6kk6nh"
+      ]
+    },
+    {
+      "label": "product shifted-symbol single-batch",
+      "source": "campaign-summary.json groups[completed>0]",
+      "n": 4,
+      "chars": 204,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703190939291-bkinyy",
+        "20260703190958780-rm25xj",
+        "20260703191018709-hyjqf5",
+        "20260703192701004-d29m0p"
+      ]
+    },
+    {
+      "label": "layout probe",
+      "source": "campaign-summary.json layout_probe",
+      "n": 1,
+      "chars": 167,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703180008814-nn6sd4"
+      ]
+    },
+    {
+      "label": "layout mismatch",
+      "source": "campaign-summary.json layout_mismatch",
+      "n": 1,
+      "chars": 167,
+      "vector": {
+        "drop": 6,
+        "insertion": 1,
+        "same-length-substitution": 15,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 12
+      },
+      "garble_class_count": 12,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703191153730-w1ujt4"
+      ]
+    },
+    {
+      "label": "layout matched controls",
+      "source": "campaign-summary.json layout_matched",
+      "n": 3,
+      "chars": 501,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble_class_count": 0,
+      "changed_rows": [],
+      "run_ids": [
+        "20260703191208103-gr0x8k",
+        "20260703191222706-zq3not",
+        "20260703191237177-46xxht"
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "run_id": "20260703182636516-amrcq7",
+      "cell_id": "A-E0-DIAG-RATE75",
+      "purpose": "F8-baseline-diagnostic-rate75",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703182636516-amrcq7/recv.txt"
+    },
+    {
+      "run_id": "20260703182855170-8zt5pb",
+      "cell_id": "A-E0-BASELINE-RATE75-2",
+      "purpose": "F8-baseline-diagnostic-rate75",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703182855170-8zt5pb/recv.txt"
+    },
+    {
+      "run_id": "20260703183027462-wfq3ey",
+      "cell_id": "A-E0-BASELINE-RATE75-3",
+      "purpose": "F8-baseline-diagnostic-rate75",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703183027462-wfq3ey/recv.txt"
+    },
+    {
+      "run_id": "20260703183755273-tehtbt",
+      "cell_id": "A-E1-RAW-ANGLE-1",
+      "purpose": "F8-replication-angle-dense",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 164,
+        "insertion": 164,
+        "same-length-substitution": 3,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 164,
+        "insertion": 164,
+        "same-length-substitution": 3,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703183755273-tehtbt/recv.txt"
+    },
+    {
+      "run_id": "20260703183834136-y0voci",
+      "cell_id": "A-E1-RAW-ANGLE-2",
+      "purpose": "F8-replication-angle-dense",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 164,
+        "insertion": 164,
+        "same-length-substitution": 3,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 164,
+        "insertion": 164,
+        "same-length-substitution": 3,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703183834136-y0voci/recv.txt"
+    },
+    {
+      "run_id": "20260703183912982-eb7siz",
+      "cell_id": "A-E1-RAW-ANGLE-3",
+      "purpose": "F8-replication-angle-dense",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 165,
+        "insertion": 164,
+        "same-length-substitution": 3,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 165,
+        "insertion": 164,
+        "same-length-substitution": 3,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703183912982-eb7siz/recv.txt"
+    },
+    {
+      "run_id": "20260703183951810-ld41xr",
+      "cell_id": "A-E1-RAW-SHIFTED-1",
+      "purpose": "F8-replication-shifted-symbol",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703183951810-ld41xr/recv.txt"
+    },
+    {
+      "run_id": "20260703184030601-3huqvv",
+      "cell_id": "A-E1-RAW-SHIFTED-2",
+      "purpose": "F8-replication-shifted-symbol",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184030601-3huqvv/recv.txt"
+    },
+    {
+      "run_id": "20260703184109500-8d2utr",
+      "cell_id": "A-E1-RAW-SHIFTED-3",
+      "purpose": "F8-replication-shifted-symbol",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184109500-8d2utr/recv.txt"
+    },
+    {
+      "run_id": "20260703184212026-tdzjzm",
+      "cell_id": "A-E1-HIDRPC-ANGLE-1",
+      "purpose": "F8-replication-angle-dense",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184212026-tdzjzm/recv.txt"
+    },
+    {
+      "run_id": "20260703184300548-80v3gl",
+      "cell_id": "A-E1-HIDRPC-ANGLE-2",
+      "purpose": "F8-replication-angle-dense",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184300548-80v3gl/recv.txt"
+    },
+    {
+      "run_id": "20260703184348826-2fnhjn",
+      "cell_id": "A-E1-HIDRPC-ANGLE-3",
+      "purpose": "F8-replication-angle-dense",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184348826-2fnhjn/recv.txt"
+    },
+    {
+      "run_id": "20260703184437197-h4r8bq",
+      "cell_id": "A-E1-HIDRPC-SHIFTED-1",
+      "purpose": "F8-replication-shifted-symbol",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184437197-h4r8bq/recv.txt"
+    },
+    {
+      "run_id": "20260703184530845-9ua5ye",
+      "cell_id": "A-E1-HIDRPC-SHIFTED-2",
+      "purpose": "F8-replication-shifted-symbol",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184530845-9ua5ye/recv.txt"
+    },
+    {
+      "run_id": "20260703184624446-jqxm52",
+      "cell_id": "A-E1-HIDRPC-SHIFTED-3",
+      "purpose": "F8-replication-shifted-symbol",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703184624446-jqxm52/recv.txt"
+    },
+    {
+      "run_id": "20260703192607422-q2y58a",
+      "cell_id": "A-E1-HIDRPC-TEE-SHIFTED-1",
+      "purpose": "F8-replication-shifted-symbol-tee-current",
+      "injection_path": "hidrpc",
+      "outcome": "completed",
+      "corpus_size": 2000,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703192607422-q2y58a/recv.txt"
+    },
+    {
+      "run_id": "20260703190900575-hqhyby",
+      "cell_id": "A-E1-PRODUCT-SINGLE-ANGLE-2",
+      "purpose": "F8-replication-product-single-angle-dense",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 55,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703190900575-hqhyby/recv.txt"
+    },
+    {
+      "run_id": "20260703190920099-8rigjx",
+      "cell_id": "A-E1-PRODUCT-SINGLE-ANGLE-3",
+      "purpose": "F8-replication-product-single-angle-dense",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 55,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703190920099-8rigjx/recv.txt"
+    },
+    {
+      "run_id": "20260703192248428-6kk6nh",
+      "cell_id": "A-E1-PRODUCT-SINGLE-ANGLE-4",
+      "purpose": "F8-replication-product-single-angle-dense",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 55,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703192248428-6kk6nh/recv.txt"
+    },
+    {
+      "run_id": "20260703190939291-bkinyy",
+      "cell_id": "A-E1-PRODUCT-SINGLE-SHIFTED-1",
+      "purpose": "F8-replication-product-single-shifted-symbol",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 51,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703190939291-bkinyy/recv.txt"
+    },
+    {
+      "run_id": "20260703190958780-rm25xj",
+      "cell_id": "A-E1-PRODUCT-SINGLE-SHIFTED-2",
+      "purpose": "F8-replication-product-single-shifted-symbol",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 51,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703190958780-rm25xj/recv.txt"
+    },
+    {
+      "run_id": "20260703191018709-hyjqf5",
+      "cell_id": "A-E1-PRODUCT-SINGLE-SHIFTED-3",
+      "purpose": "F8-replication-product-single-shifted-symbol",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 51,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703191018709-hyjqf5/recv.txt"
+    },
+    {
+      "run_id": "20260703192701004-d29m0p",
+      "cell_id": "A-E1-PRODUCT-TEE-SHIFTED-1",
+      "purpose": "F8-replication-product-single-shifted-symbol-tee-current",
+      "injection_path": "product",
+      "outcome": "completed",
+      "corpus_size": 51,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703192701004-d29m0p/recv.txt"
+    },
+    {
+      "run_id": "20260703180008814-nn6sd4",
+      "cell_id": "A-E2-LAYOUT-PROBE",
+      "purpose": "F8-layout-probe",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 167,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703180008814-nn6sd4/recv.txt"
+    },
+    {
+      "run_id": "20260703191153730-w1ujt4",
+      "cell_id": "A-E2-MISMATCH-1",
+      "purpose": "F8-layout-mismatch",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 167,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 6,
+        "insertion": 1,
+        "same-length-substitution": 15,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 12
+      },
+      "reclassified_vector": {
+        "drop": 6,
+        "insertion": 1,
+        "same-length-substitution": 15,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 12
+      },
+      "changed": false,
+      "garble_class_count": 12,
+      "recv_snapshot": "artifacts/20260703191153730-w1ujt4/recv.txt"
+    },
+    {
+      "run_id": "20260703191208103-gr0x8k",
+      "cell_id": "A-E2-MATCHED-1",
+      "purpose": "F8-layout-matched",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 167,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703191208103-gr0x8k/recv.txt"
+    },
+    {
+      "run_id": "20260703191222706-zq3not",
+      "cell_id": "A-E2-MATCHED-2",
+      "purpose": "F8-layout-matched",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 167,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703191222706-zq3not/recv.txt"
+    },
+    {
+      "run_id": "20260703191237177-46xxht",
+      "cell_id": "A-E2-MATCHED-3",
+      "purpose": "F8-layout-matched",
+      "injection_path": "raw",
+      "outcome": "completed",
+      "corpus_size": 167,
+      "previous_classifier_version": "paste-harness-classifier/1.0.0",
+      "reclassified_classifier_version": "paste-harness-classifier/1.0.1",
+      "previous_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "reclassified_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "changed": false,
+      "garble_class_count": 0,
+      "recv_snapshot": "artifacts/20260703191237177-46xxht/recv.txt"
+    }
+  ]
+}

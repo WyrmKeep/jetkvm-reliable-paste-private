@@ -9,8 +9,12 @@ import { renderDashboardHtml, writeDashboardFromLedger } from "./dashboard.js";
 import {
   HARNESS_VERSION,
   LedgerWriter,
+  collectManualExclusions,
+  createManualExclusionAnnotation,
+  isRunExcludedFromThresholds,
   lintLedgerRecords,
   parseLedgerText,
+  thresholdExclusionReason,
   type LedgerRecord,
   type RunLedgerRecord,
 } from "./ledger.js";
@@ -88,9 +92,17 @@ const sampleStep: LedgerRecord = {
   },
 };
 
+const sampleManualExclusion = createManualExclusionAnnotation({
+  runId: "run-001",
+  excludedReason: "contaminated by stale sink content",
+  source: "unit-test",
+  timestamp: "2026-07-03T10:00:00.500Z",
+  annotationId: "manual-exclusion:run-001:test",
+});
+
 describe("ledger and dashboard", () => {
   test("validates required run and step schema fields", () => {
-    const valid = [sampleRun(), sampleStep];
+    const valid = [sampleRun(), sampleStep, sampleManualExclusion];
     const invalid = [sampleRun({ classifier_version: "" })];
 
     expect(lintLedgerRecords(valid)).toEqual([]);
@@ -107,14 +119,27 @@ describe("ledger and dashboard", () => {
 
       await writer.append(sampleRun());
       await writer.append(sampleStep);
+      await writer.append(sampleManualExclusion);
 
       const text = await readFile(ledgerPath, "utf8");
       expect(text.endsWith("\n")).toBe(true);
-      expect(text.trimEnd().split("\n")).toHaveLength(2);
-      expect(parseLedgerText(text).records).toHaveLength(2);
+      expect(text.trimEnd().split("\n")).toHaveLength(3);
+      expect(parseLedgerText(text).records).toHaveLength(3);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("applies append-only manual exclusion annotations to threshold eligibility", () => {
+    const run = sampleRun({ excluded_from_thresholds: false });
+    const records: LedgerRecord[] = [run, sampleManualExclusion];
+    const manualExclusions = collectManualExclusions(records);
+
+    expect(lintLedgerRecords(records)).toEqual([]);
+    expect(isRunExcludedFromThresholds(run, manualExclusions)).toBe(true);
+    expect(thresholdExclusionReason(run, manualExclusions)).toBe(
+      "contaminated by stale sink content",
+    );
   });
 
   test("renders deterministic self-contained dashboard HTML from ledger records alone", async () => {
@@ -123,7 +148,9 @@ describe("ledger and dashboard", () => {
       const ledgerPath = join(dir, "ledger.jsonl");
       const firstHtml = join(dir, "first.html");
       const secondHtml = join(dir, "second.html");
-      const ledgerText = `${JSON.stringify(sampleRun())}\n${JSON.stringify(sampleStep)}\n`;
+      const ledgerText = `${JSON.stringify(sampleRun())}\n${JSON.stringify(
+        sampleStep,
+      )}\n${JSON.stringify(sampleManualExclusion)}\n`;
       await writeFile(ledgerPath, ledgerText, "utf8");
 
       await writeDashboardFromLedger(ledgerPath, firstHtml);
@@ -134,7 +161,8 @@ describe("ledger and dashboard", () => {
       expect(first).toBe(second);
       expect(first).not.toMatch(/<script\b|https?:\/\//i);
       expect(first).toContain("run-001");
-      expect(first).toContain("Per-class error rates");
+      expect(first).toContain("Threshold-eligible per-class error rates");
+      expect(first).toContain("contaminated by stale sink content");
       expect(first).toContain("#run-run-001");
       expect(renderDashboardHtml(parseLedgerText(ledgerText).records)).toBe(first);
     } finally {

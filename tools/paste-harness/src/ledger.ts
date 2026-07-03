@@ -85,7 +85,29 @@ export interface StepLedgerRecord {
   [key: string]: unknown;
 }
 
-export type LedgerRecord = RunLedgerRecord | StepLedgerRecord;
+export interface ManualExclusionAnnotationRecord {
+  schema_version: 1;
+  record_type: "annotation";
+  annotation_type: "manual_exclusion";
+  annotation_id: string;
+  run_id: string;
+  timestamp: string;
+  duration_ms: 0;
+  excluded_from_thresholds: true;
+  excluded_reason: string;
+  source: string;
+  [key: string]: unknown;
+}
+
+export type LedgerRecord = RunLedgerRecord | StepLedgerRecord | ManualExclusionAnnotationRecord;
+
+export interface CreateManualExclusionAnnotationOptions {
+  runId: string;
+  excludedReason: string;
+  source: string;
+  timestamp?: string;
+  annotationId?: string;
+}
 
 export interface LedgerParseResult {
   records: LedgerRecord[];
@@ -116,6 +138,55 @@ export class LedgerWriter {
 
 export async function appendLedgerRecord(ledgerPath: string, record: LedgerRecord): Promise<void> {
   await new LedgerWriter(ledgerPath).append(record);
+}
+
+export function createManualExclusionAnnotation(
+  options: CreateManualExclusionAnnotationOptions,
+): ManualExclusionAnnotationRecord {
+  const timestamp = options.timestamp ?? new Date().toISOString();
+  return {
+    schema_version: 1,
+    record_type: "annotation",
+    annotation_type: "manual_exclusion",
+    annotation_id:
+      options.annotationId ?? `manual-exclusion:${options.runId}:${timestamp.replace(/[:.]/g, "")}`,
+    run_id: options.runId,
+    timestamp,
+    duration_ms: 0,
+    excluded_from_thresholds: true,
+    excluded_reason: options.excludedReason,
+    source: options.source,
+  };
+}
+
+export function collectManualExclusions(
+  records: readonly LedgerRecord[],
+): Map<string, ManualExclusionAnnotationRecord> {
+  const exclusions = new Map<string, ManualExclusionAnnotationRecord>();
+  for (const record of records) {
+    if (record.record_type === "annotation" && record.annotation_type === "manual_exclusion") {
+      exclusions.set(record.run_id, record);
+    }
+  }
+  return exclusions;
+}
+
+export function isRunExcludedFromThresholds(
+  run: RunLedgerRecord,
+  manualExclusions: ReadonlyMap<string, ManualExclusionAnnotationRecord> = new Map(),
+): boolean {
+  return run.excluded_from_thresholds || manualExclusions.has(run.run_id);
+}
+
+export function thresholdExclusionReason(
+  run: RunLedgerRecord,
+  manualExclusions: ReadonlyMap<string, ManualExclusionAnnotationRecord> = new Map(),
+): string | undefined {
+  const manual = manualExclusions.get(run.run_id);
+  if (manual !== undefined) {
+    return manual.excluded_reason;
+  }
+  return run.excluded_from_thresholds ? "auto: excluded_from_thresholds=true" : undefined;
 }
 
 export async function parseLedgerFile(ledgerPath: string): Promise<LedgerParseResult> {
@@ -178,11 +249,13 @@ export function lintLedgerRecords(records: readonly unknown[]): LedgerViolation[
       lintRunRecord(record, violations, recordIndex);
     } else if (record.record_type === "step") {
       lintStepRecord(record, violations, recordIndex);
+    } else if (record.record_type === "annotation") {
+      lintAnnotationRecord(record, violations, recordIndex);
     } else {
       violations.push({
         recordIndex,
         field: "record_type",
-        message: "record_type must be run or step",
+        message: "record_type must be run, step, or annotation",
       });
     }
   });
@@ -340,6 +413,30 @@ function lintStepRecord(
 ): void {
   for (const field of ["run_id", "step_id", "name", "outcome"]) {
     requireString(record, field, violations, recordIndex);
+  }
+}
+
+function lintAnnotationRecord(
+  record: Record<string, unknown>,
+  violations: LedgerViolation[],
+  recordIndex: number,
+): void {
+  for (const field of ["annotation_id", "annotation_type", "run_id", "excluded_reason", "source"]) {
+    requireString(record, field, violations, recordIndex);
+  }
+  if (record.annotation_type !== "manual_exclusion") {
+    violations.push({
+      recordIndex,
+      field: "annotation_type",
+      message: "annotation_type must be manual_exclusion",
+    });
+  }
+  if (record.excluded_from_thresholds !== true) {
+    violations.push({
+      recordIndex,
+      field: "excluded_from_thresholds",
+      message: "manual exclusion annotations must set excluded_from_thresholds=true",
+    });
   }
 }
 

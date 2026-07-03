@@ -11,7 +11,7 @@ This spec turns the F8 replication campaign into the M2 and M3 acceptance contra
 
 Binding rules for this spec:
 
-- Use only the clean F8 rows named in `campaign-summary.md` for thresholds. The stale-Notepad product angle row `20260703190840598-q9q5me` is explicitly excluded.
+- Use only the clean F8 rows named in `campaign-summary.md` for thresholds. The stale-Notepad product angle row `20260703190840598-q9q5me` and contaminated trigger row `20260703191710394-735kpg` are explicitly excluded by append-only ledger annotations.
 - Garble-class events must be zero everywhere: layout-swap signatures, stuck-modifier runs, insertion/autorepeat storms, and any corruption after a `<>` region.
 - Reliable thresholds are no looser than 2x the measured F8 band for the comparable size and sink.
 - Fast thresholds use their own measured profile band: 0.05% to 0.12% loss is expected, and >0.24% is a failure.
@@ -35,10 +35,12 @@ The fix plan therefore separates garble-class bugs from bounded loss and race-cl
 Primary files:
 
 - F8 summary: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/campaign-summary.md`
+- F8 reclassified summary: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/campaign-summary-reclassified.md`
 - F8 ledger: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/ledger.jsonl`
 - F8 dashboard: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/dashboard.html`
 - F8 triangulation: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/artifacts/20260703191153730-w1ujt4/triangulation.md`
 - Classifier validation: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/classifier-self-validation.json`
+- Classifier 1.0.1 validation: `tools/paste-harness/campaigns/f8-replication-campaign-20260703/classifier-self-validation-1.0.1.json`
 
 Code suspects and invariants:
 
@@ -50,6 +52,8 @@ Code suspects and invariants:
 - Upstream candidates: jetkvm/kvm#1369, #1438, #1387, #1364. Do not port #1339 and do not rebase wholesale.
 
 ## F8 measured data
+
+F9b re-ran the fixed classifier (`paste-harness-classifier/1.0.1`) over the clean F8 recv snapshots named in `campaign-summary.md`. No per-class vectors used by this spec changed, so the numeric threshold tables below remain unchanged. The reclassified artifact records the checked row set and the append-only manual exclusions.
 
 ### Baseline re-anchor and rate sensitivity
 
@@ -85,6 +89,7 @@ The accepted M1 baseline is raw hidtype at rate75, not the older 91cps assumptio
 ### Excluded and diagnostic rows
 
 - `20260703190840598-q9q5me` is excluded from thresholds. It is a product angle single-batch row with 2870 inserted chars over a 55-char expected corpus. F8 traced this to stale unsaved Notepad content after prior product no-`done:` failures. The clean replacement rows are the three product angle rows listed above.
+- `20260703191710394-735kpg` is excluded from thresholds. It is an A-E8 trigger row whose recv snapshot retained stale product-240 no-`done:` residue from `20260703191320547-z3gesv`, inflating insertion=219.
 - Product 500-char multi-batch rows in `campaign-summary.md` are no-`done:` diagnostics, not accuracy threshold rows. They are excluded from pass/fail bands until A-F11/F12b is fixed.
 
 ### Layout mismatch and triangulation

@@ -1,7 +1,16 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 import { FAULT_LABELS, type FaultLabel } from "./classifier.js";
-import { parseLedgerText, type LedgerRecord, type RunLedgerRecord, type StepLedgerRecord } from "./ledger.js";
+import {
+  collectManualExclusions,
+  isRunExcludedFromThresholds,
+  parseLedgerText,
+  thresholdExclusionReason,
+  type LedgerRecord,
+  type ManualExclusionAnnotationRecord,
+  type RunLedgerRecord,
+  type StepLedgerRecord,
+} from "./ledger.js";
 
 export interface DashboardOptions {
   warnings?: string[];
@@ -22,8 +31,13 @@ export function renderDashboardHtml(
 ): string {
   const runs = records.filter((record): record is RunLedgerRecord => record.record_type === "run");
   const steps = records.filter((record): record is StepLedgerRecord => record.record_type === "step");
+  const annotations = records.filter(
+    (record): record is ManualExclusionAnnotationRecord => record.record_type === "annotation",
+  );
+  const manualExclusions = collectManualExclusions(records);
   const incompleteRunIds = findIncompleteRunIds(runs, steps);
-  const totals = summarizeTotals(runs);
+  const thresholdEligibleRuns = runs.filter((run) => !isRunExcludedFromThresholds(run, manualExclusions));
+  const totals = summarizeTotals(thresholdEligibleRuns);
   const warnings = options.warnings ?? [];
 
   return `<!doctype html>
@@ -51,11 +65,15 @@ ${warnings.map((warning) => `<div class="warning">${escapeHtml(warning)}</div>`)
 <tbody>
 <tr><th>Runs</th><td>${runs.length}</td></tr>
 <tr><th>Steps</th><td>${steps.length}</td></tr>
-<tr><th>Total run duration</th><td>${formatDuration(totals.durationMs)}</td></tr>
-<tr><th>Excluded from thresholds</th><td>${runs.filter((run) => run.excluded_from_thresholds).length}</td></tr>
+<tr><th>Annotations</th><td>${annotations.length}</td></tr>
+<tr><th>Threshold-eligible run duration</th><td>${formatDuration(totals.durationMs)}</td></tr>
+<tr><th>Excluded from thresholds</th><td>${runs.filter((run) =>
+    isRunExcludedFromThresholds(run, manualExclusions),
+  ).length}</td></tr>
+<tr><th>Threshold-eligible runs</th><td>${thresholdEligibleRuns.length}</td></tr>
 </tbody>
 </table>
-<h2>Per-class error rates</h2>
+<h2>Threshold-eligible per-class error rates</h2>
 <table>
 <thead><tr><th>Class</th><th>Errors</th><th>Rate</th></tr></thead>
 <tbody>
@@ -86,9 +104,10 @@ ${runs.map(renderRunRow).join("\n")}
 ${steps.map(renderStepRow).join("\n")}
 </tbody>
 </table>
+${renderAnnotations(annotations)}
 ${renderIncompleteRuns(incompleteRunIds, steps)}
 <h2>Run details</h2>
-${runs.map((run) => renderRunDetail(run, steps.filter((step) => step.run_id === run.run_id))).join("\n")}
+${runs.map((run) => renderRunDetail(run, steps.filter((step) => step.run_id === run.run_id), manualExclusions)).join("\n")}
 </body>
 </html>
 `;
@@ -113,7 +132,12 @@ function renderStepRow(step: StepLedgerRecord): string {
   )}</td><td>${escapeHtml(step.timestamp)}</td><td>${formatDuration(step.duration_ms)}</td></tr>`;
 }
 
-function renderRunDetail(run: RunLedgerRecord, steps: StepLedgerRecord[]): string {
+function renderRunDetail(
+  run: RunLedgerRecord,
+  steps: StepLedgerRecord[],
+  manualExclusions: ReadonlyMap<string, ManualExclusionAnnotationRecord>,
+): string {
+  const exclusionReason = thresholdExclusionReason(run, manualExclusions);
   return `<section id="run-${escapeAttribute(run.run_id)}">
 <h3>${escapeHtml(run.run_id)}</h3>
 <ul>
@@ -131,8 +155,8 @@ function renderRunDetail(run: RunLedgerRecord, steps: StepLedgerRecord[]): strin
   )}, capsLockOff=${String(run.preflight.caps_lock_off)}, offset=${run.device_clock_offset_ms.toFixed(3)} ms</li>
 <li>Telemetry: calm=${String(run.telemetry_summary.calm)}, max CPU=${run.telemetry_summary.max_cpu_percent}</li>
 <li>Garble events pre-repair: ${run.garble_events_pre_repair}, excluded=${String(
-    run.excluded_from_thresholds,
-  )}</li>
+    isRunExcludedFromThresholds(run, manualExclusions),
+  )}${exclusionReason ? `, excluded reason: <code>${escapeHtml(exclusionReason)}</code>` : ""}</li>
 <li>Artifacts: <a href="${escapeAttribute(run.artifacts.tee_log_path)}">${escapeHtml(
     run.artifacts.tee_log_path,
   )}</a>, <a href="${escapeAttribute(run.artifacts.recv_txt_path)}">${escapeHtml(
@@ -144,6 +168,30 @@ function renderRunDetail(run: RunLedgerRecord, steps: StepLedgerRecord[]): strin
     " ",
   )}</p>
 </section>`;
+}
+
+function renderAnnotations(annotations: ManualExclusionAnnotationRecord[]): string {
+  if (annotations.length === 0) {
+    return "";
+  }
+  return `<h2>Annotations</h2>
+<table>
+<thead><tr><th>Run</th><th>Type</th><th>Timestamp</th><th>Reason</th><th>Source</th></tr></thead>
+<tbody>
+${annotations
+  .map(
+    (annotation) =>
+      `<tr><td><a href="#run-${escapeAttribute(annotation.run_id)}">${escapeHtml(
+        annotation.run_id,
+      )}</a></td><td>${escapeHtml(annotation.annotation_type)}</td><td>${escapeHtml(
+        annotation.timestamp,
+      )}</td><td>${escapeHtml(annotation.excluded_reason)}</td><td>${escapeHtml(
+        annotation.source,
+      )}</td></tr>`,
+  )
+  .join("\n")}
+</tbody>
+</table>`;
 }
 
 function findIncompleteRunIds(runs: RunLedgerRecord[], steps: StepLedgerRecord[]): string[] {
