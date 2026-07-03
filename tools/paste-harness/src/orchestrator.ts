@@ -17,6 +17,12 @@ import {
   runHidRpcText,
 } from "./hidrpcClient.js";
 import {
+  buildProductPathLedgerDetails,
+  runProductPathText,
+  type ProductPathProfile,
+  type ProductPathRunOptions,
+} from "./productPath.js";
+import {
   HARNESS_VERSION,
   LedgerWriter,
   parseLedgerText,
@@ -78,6 +84,7 @@ export interface InjectionRunArgs {
 
 export interface InjectionRunResult {
   hidOutputReports: number;
+  details?: Record<string, unknown>;
 }
 
 export interface ClassificationSummary {
@@ -117,6 +124,7 @@ export interface OrchestratorOptions {
   hidtypeRate?: number;
   hidtypeClear?: boolean;
   hidrpcDelayMs?: number;
+  productProfile?: ProductPathProfile;
   forceChurnTelemetry?: boolean;
 }
 
@@ -140,6 +148,7 @@ interface RunState {
   focus: FocusResult;
   focusEvents: FocusGuardEvent[];
   hidOutputReports: number;
+  injectionDetails: Record<string, unknown>;
   artifactSummary: ArtifactSummary;
   recvSnapshot: Buffer;
   teeLog: string;
@@ -251,6 +260,7 @@ export async function runOrchestrator(
         focus,
         focusEvents,
         hidOutputReports: injection.hidOutputReports,
+        injectionDetails: injection.injectionDetails,
         artifactSummary: artifacts.summary,
         recvSnapshot: artifacts.recvSnapshot,
         teeLog: artifacts.teeLog,
@@ -308,6 +318,9 @@ export async function createRealDeps(options: OrchestratorOptions, env?: RigEnv)
       if (options.injectionPath === "hidrpc") {
         return runHidRpcInjection(rigEnv, options, args);
       }
+        if (options.injectionPath === "product") {
+          return runProductPathInjection(rigEnv, options, args);
+        }
       return runSyntheticInjection(args, options.syntheticDurationMs ?? DEFAULT_SYNTHETIC_DURATION_MS);
     },
   };
@@ -387,6 +400,45 @@ async function runHidRpcInjection(
   return { hidOutputReports: result.hidOutputReports };
 }
 
+async function runProductPathInjection(
+  env: RigEnv,
+  options: OrchestratorOptions,
+  args: InjectionRunArgs,
+): Promise<InjectionRunResult> {
+  if (options.corpusText === undefined) {
+    throw new Error("product path injection requires corpusText");
+  }
+  if (args.signal.aborted) {
+    throw args.signal.reason instanceof Error ? args.signal.reason : new Error("aborted");
+  }
+  args.onProgress(0);
+  const productOptions: ProductPathRunOptions = {
+    profile: options.productProfile ?? "reliable",
+    clearBefore: true,
+    saveAfter: true,
+    signal: args.signal,
+    onProgress: args.onProgress,
+  };
+  if (options.watchdogMs !== undefined) {
+    productOptions.timeoutMs = options.watchdogMs;
+  }
+  const result = await runProductPathText(env, options.corpusText, productOptions);
+  if (!result.completed) {
+    throw new Error("product path paste did not complete successfully");
+  }
+  args.onProgress(1);
+  return {
+    hidOutputReports: result.hidOutputReports,
+    details: {
+      product_path: buildProductPathLedgerDetails({
+        doneLine: result.doneLine,
+        manualConfirmContinuations: result.manualConfirmContinuations,
+        traceLineCount: result.traceLines.length,
+      }),
+    },
+  };
+}
+
 export function calculateClockOffsetMs(sample: {
   beforeNs: bigint;
   deviceNs: bigint;
@@ -400,12 +452,18 @@ async function runInjectionWithGuards(
   options: OrchestratorOptions,
   deps: OrchestratorDeps,
   focusEvents: FocusGuardEvent[],
-): Promise<{ outcome: RunOutcome; failureReason: string; hidOutputReports: number }> {
+): Promise<{
+  outcome: RunOutcome;
+  failureReason: string;
+  hidOutputReports: number;
+  injectionDetails: Record<string, unknown>;
+}> {
   const controller = new AbortController();
   const watchdogMs = options.watchdogMs ?? DEFAULT_WATCHDOG_MS;
   const focusPollMs = options.focusPollMs ?? DEFAULT_FOCUS_POLL_MS;
   let lastProgressAt = Date.now();
   let hidOutputReports = 0;
+  let injectionDetails: Record<string, unknown> = {};
   let abortOutcome: RunOutcome | undefined;
   let abortReason = "";
   let focusProbeInFlight = false;
@@ -454,15 +512,17 @@ async function runInjectionWithGuards(
       },
     });
     hidOutputReports = result.hidOutputReports;
-    return { outcome: "completed", failureReason: "", hidOutputReports };
+    injectionDetails = result.details ?? {};
+    return { outcome: "completed", failureReason: "", hidOutputReports, injectionDetails };
   } catch (error) {
     if (abortOutcome !== undefined) {
-      return { outcome: abortOutcome, failureReason: abortReason, hidOutputReports };
+      return { outcome: abortOutcome, failureReason: abortReason, hidOutputReports, injectionDetails };
     }
     return {
       outcome: "failed",
       failureReason: error instanceof Error ? error.message : String(error),
       hidOutputReports,
+      injectionDetails,
     };
   } finally {
     clearInterval(watchdog);
@@ -504,6 +564,7 @@ async function makeState(args: {
   focus: FocusResult;
   focusEvents: FocusGuardEvent[];
   hidOutputReports: number;
+  injectionDetails?: Record<string, unknown>;
   artifactSummary: ArtifactSummary;
   recvSnapshot: Buffer;
   teeLog: string;
@@ -515,6 +576,7 @@ async function makeState(args: {
     focus: args.focus,
     focusEvents: args.focusEvents,
     hidOutputReports: args.hidOutputReports,
+    injectionDetails: args.injectionDetails ?? {},
     artifactSummary: args.artifactSummary,
     recvSnapshot: args.recvSnapshot,
     teeLog: args.teeLog,
@@ -543,6 +605,7 @@ async function fallbackState(
     focus: emptyFocus("not_checked"),
     focusEvents: [],
     hidOutputReports: 0,
+    injectionDetails: {},
     artifactSummary: artifacts.summary,
     recvSnapshot: artifacts.recvSnapshot,
     teeLog: artifacts.teeLog,
@@ -563,7 +626,7 @@ function buildRunRecord(args: {
     !args.state.telemetry.calm ||
     !isFreshSink(args.state.sink) ||
     args.outcome !== "completed";
-  return {
+  const record: RunLedgerRecord = {
     schema_version: 1,
     record_type: "run",
     run_id: args.runId,
@@ -599,6 +662,14 @@ function buildRunRecord(args: {
     hid_output_reports: args.state.hidOutputReports,
     sink: args.state.sink,
   };
+  const productPathDetails = args.state.injectionDetails.product_path;
+  if (isRecord(productPathDetails)) {
+    record.product_path = productPathDetails;
+  }
+  if (Object.keys(args.state.injectionDetails).length > 0) {
+    record.injection_details = args.state.injectionDetails;
+  }
+  return record;
 }
 
 async function appendStep(
@@ -654,6 +725,10 @@ function emptyFocus(reason: string): FocusResult {
 function normalizeRelativePath(relativePath: string, runId: string): string {
   const normalized = relativePath.split("\\").join("/");
   return normalized.startsWith(runId) ? `artifacts/${normalized}` : normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function newRunId(): string {

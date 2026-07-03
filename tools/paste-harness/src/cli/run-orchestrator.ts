@@ -42,7 +42,11 @@ async function main(): Promise<void> {
   const corpusText = corpus.text;
   const corpusHash = await sha256(corpusText);
   const injectionPath = optionalString(args, "path") ?? "synthetic";
-  const physicalTypingPath = injectionPath === "raw" || injectionPath === "hidtype" || injectionPath === "hidrpc";
+  const physicalTypingPath =
+    injectionPath === "raw" ||
+    injectionPath === "hidtype" ||
+    injectionPath === "hidrpc" ||
+    injectionPath === "product";
   const watchdogDefault = physicalTypingPath ? 180_000 : 30_000;
   const focusPollDefault = physicalTypingPath ? 600_000 : 1_000;
 
@@ -77,6 +81,13 @@ async function main(): Promise<void> {
     orchestratorOptions.hidtypeClear = false;
   }
   orchestratorOptions.hidrpcDelayMs = optionalInteger(args, "hidrpc-delay-ms", DEFAULT_HIDRPC_DELAY_MS);
+  const productProfile = optionalString(args, "product-profile");
+  if (productProfile !== undefined) {
+    if (productProfile !== "reliable" && productProfile !== "fast") {
+      throw new Error("--product-profile must be reliable or fast");
+    }
+    orchestratorOptions.productProfile = productProfile;
+  }
   const expectedBuildIdentity = optionalString(args, "expected-build");
   if (expectedBuildIdentity !== undefined) {
     orchestratorOptions.expectedBuildIdentity = expectedBuildIdentity;

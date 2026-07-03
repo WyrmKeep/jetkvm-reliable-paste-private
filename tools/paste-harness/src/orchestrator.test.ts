@@ -14,6 +14,7 @@ import {
   type OrchestratorDeps,
   type OrchestratorOptions,
 } from "./orchestrator.js";
+import { buildProductPathLedgerDetails } from "./productPath.js";
 
 function baseOptions(dir: string): OrchestratorOptions {
   return {
@@ -287,6 +288,49 @@ describe("run orchestrator", () => {
       const html = renderDashboardHtml(parsed.records);
       expect(JSON.stringify(parsed.records)).toContain('"excluded_from_thresholds":true');
       expect(html).toContain("artifacts/run-unit/tee.log");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("records product path completion and verification details on run rows", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paste-orch-product-"));
+    try {
+      const result = await runOrchestrator(
+        {
+          ...baseOptions(dir),
+          injectionPath: "product",
+          purpose: "a-h4-product-path",
+          cellId: "A-H4",
+        },
+        makeDeps({
+          runInjection: async ({ onProgress }) => {
+            onProgress(1);
+            return {
+              hidOutputReports: 24,
+              details: {
+                product_path: buildProductPathLedgerDetails({
+                  doneLine: "done: chars=12 elapsed=1.0s effective=12.0cps",
+                  manualConfirmContinuations: 0,
+                  traceLineCount: 4,
+                }),
+              },
+            };
+          },
+        }),
+      );
+
+      expect(result.outcome).toBe("completed");
+      const parsed = parseLedgerText(await readFile(baseOptions(dir).ledgerPath, "utf8"));
+      const run = parsed.records.find(record => record.record_type === "run");
+      expect(run).toMatchObject({
+        injection_path: "product",
+        product_path: {
+          completion_signal: "done-trace",
+          verification_mode: "auto-verify-off",
+          manual_confirm_continuations: 0,
+        },
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

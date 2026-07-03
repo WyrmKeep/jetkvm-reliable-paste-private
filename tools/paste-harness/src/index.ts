@@ -5,6 +5,7 @@ export * from "./hidrpcClient.js";
 export * from "./ledger.js";
 export * from "./normalize.js";
 export * from "./orchestrator.js";
+export * from "./productPath.js";
 export * from "./rig.js";
 export * from "./selfValidation.js";
 export * from "./ssh.js";
