@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "self-validate": "node classifier-self-test.js",
     "ledger:lint": "node ledger-lint.js",
-    "dashboard": "node dashboard.js"
+    "dashboard": "node dashboard.js",
+    "orchestrator": "node run-orchestrator.js"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

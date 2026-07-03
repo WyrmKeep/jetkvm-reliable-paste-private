@@ -51,6 +51,25 @@ function sampleRun(overrides: Partial<RunLedgerRecord> = {}): RunLedgerRecord {
     garble_events_pre_repair: 0,
     excluded_from_thresholds: false,
     classifier_version: CLASSIFIER_VERSION,
+    preflight: {
+      ok: true,
+      reason: "ok",
+      device: {
+        ok: true,
+        buildIdentity: "abcdef123456",
+        expectedBuildIdentity: "abcdef123456",
+        autoUpdateEnabled: false,
+        deviceLayout: "en-UK",
+      },
+      caps_lock_off: true,
+      focus_guard_confirmed: true,
+    },
+    artifacts: {
+      tee_log_path: "artifacts/run-001/tee.log",
+      recv_txt_path: "artifacts/run-001/recv.txt",
+    },
+    focus_guard_events: [],
+    hid_output_reports: 0,
     ...overrides,
   };
 }

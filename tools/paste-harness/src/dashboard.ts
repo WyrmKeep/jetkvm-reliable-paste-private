@@ -22,6 +22,7 @@ export function renderDashboardHtml(
 ): string {
   const runs = records.filter((record): record is RunLedgerRecord => record.record_type === "run");
   const steps = records.filter((record): record is StepLedgerRecord => record.record_type === "step");
+  const incompleteRunIds = findIncompleteRunIds(runs, steps);
   const totals = summarizeTotals(runs);
   const warnings = options.warnings ?? [];
 
@@ -85,6 +86,7 @@ ${runs.map(renderRunRow).join("\n")}
 ${steps.map(renderStepRow).join("\n")}
 </tbody>
 </table>
+${renderIncompleteRuns(incompleteRunIds, steps)}
 <h2>Run details</h2>
 ${runs.map((run) => renderRunDetail(run, steps.filter((step) => step.run_id === run.run_id))).join("\n")}
 </body>
@@ -124,15 +126,52 @@ function renderRunDetail(run: RunLedgerRecord, steps: StepLedgerRecord[]): strin
 <li>Harness: <code>${escapeHtml(run.harness_version)}</code>, classifier <code>${escapeHtml(
     run.classifier_version,
   )}</code></li>
+<li>Preflight: ok=${String(run.preflight.ok)}, auto-update=${String(
+    run.preflight.device.autoUpdateEnabled,
+  )}, capsLockOff=${String(run.preflight.caps_lock_off)}, offset=${run.device_clock_offset_ms.toFixed(3)} ms</li>
 <li>Telemetry: calm=${String(run.telemetry_summary.calm)}, max CPU=${run.telemetry_summary.max_cpu_percent}</li>
 <li>Garble events pre-repair: ${run.garble_events_pre_repair}, excluded=${String(
     run.excluded_from_thresholds,
   )}</li>
+<li>Artifacts: <a href="${escapeAttribute(run.artifacts.tee_log_path)}">${escapeHtml(
+    run.artifacts.tee_log_path,
+  )}</a>, <a href="${escapeAttribute(run.artifacts.recv_txt_path)}">${escapeHtml(
+    run.artifacts.recv_txt_path,
+  )}</a></li>
+<li>HID output reports: ${run.hid_output_reports}, focus events: ${run.focus_guard_events.length}</li>
 </ul>
 <p>Steps: ${steps.map((step) => `<code>${escapeHtml(step.name)}:${formatDuration(step.duration_ms)}</code>`).join(
     " ",
   )}</p>
 </section>`;
+}
+
+function findIncompleteRunIds(runs: RunLedgerRecord[], steps: StepLedgerRecord[]): string[] {
+  const completeRunIds = new Set(runs.map((run) => run.run_id));
+  return [...new Set(steps.map((step) => step.run_id))]
+    .filter((runId) => !completeRunIds.has(runId))
+    .sort();
+}
+
+function renderIncompleteRuns(runIds: string[], steps: StepLedgerRecord[]): string {
+  if (runIds.length === 0) {
+    return "";
+  }
+  return `<h2>Incomplete runs</h2>
+<table>
+<thead><tr><th>Run</th><th>Observed steps</th><th>Last outcome</th></tr></thead>
+<tbody>
+${runIds
+  .map((runId) => {
+    const runSteps = steps.filter((step) => step.run_id === runId);
+    const lastStep = runSteps[runSteps.length - 1];
+    return `<tr><td><code>${escapeHtml(runId)}</code></td><td>${runSteps.length}</td><td>${escapeHtml(
+      lastStep?.outcome ?? "unknown",
+    )}</td></tr>`;
+  })
+  .join("\n")}
+</tbody>
+</table>`;
 }
 
 function summarizeTotals(runs: RunLedgerRecord[]): {

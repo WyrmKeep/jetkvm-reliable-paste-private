@@ -3,4 +3,7 @@ export * from "./corpus.js";
 export * from "./dashboard.js";
 export * from "./ledger.js";
 export * from "./normalize.js";
+export * from "./orchestrator.js";
+export * from "./rig.js";
 export * from "./selfValidation.js";
+export * from "./ssh.js";

@@ -19,6 +19,29 @@ export interface TelemetrySummary {
   [key: string]: unknown;
 }
 
+export interface PreflightLedgerInfo {
+  ok: boolean;
+  reason: string;
+  device: {
+    ok: boolean;
+    buildIdentity: string;
+    expectedBuildIdentity: string;
+    autoUpdateEnabled: boolean;
+    deviceLayout: string;
+    reason?: string;
+    [key: string]: unknown;
+  };
+  caps_lock_off: boolean;
+  focus_guard_confirmed: boolean;
+  [key: string]: unknown;
+}
+
+export interface RunArtifactsInfo {
+  tee_log_path: string;
+  recv_txt_path: string;
+  [key: string]: unknown;
+}
+
 export interface RunLedgerRecord {
   schema_version: 1;
   record_type: "run";
@@ -42,6 +65,10 @@ export interface RunLedgerRecord {
   garble_events_pre_repair: number;
   excluded_from_thresholds: boolean;
   classifier_version: string;
+  preflight: PreflightLedgerInfo;
+  artifacts: RunArtifactsInfo;
+  focus_guard_events: unknown[];
+  hid_output_reports: number;
   [key: string]: unknown;
 }
 
@@ -185,6 +212,7 @@ function lintRunRecord(
   requireNumber(record, "sink_rss_bytes", violations, recordIndex);
   requireNumber(record, "device_clock_offset_ms", violations, recordIndex);
   requireNumber(record, "garble_events_pre_repair", violations, recordIndex);
+  requireNumber(record, "hid_output_reports", violations, recordIndex);
   requireBoolean(record, "excluded_from_thresholds", violations, recordIndex);
 
   if (!isRecord(record.corpus)) {
@@ -211,6 +239,79 @@ function lintRunRecord(
       "telemetry_summary.max_cpu_percent",
     );
     requireBoolean(record.telemetry_summary, "calm", violations, recordIndex, "telemetry_summary.calm");
+  }
+
+  if (!isRecord(record.preflight)) {
+    violations.push({ recordIndex, field: "preflight", message: "preflight must be an object" });
+  } else {
+    requireBoolean(record.preflight, "ok", violations, recordIndex, "preflight.ok");
+    requireString(record.preflight, "reason", violations, recordIndex, "preflight.reason");
+    requireBoolean(
+      record.preflight,
+      "caps_lock_off",
+      violations,
+      recordIndex,
+      "preflight.caps_lock_off",
+    );
+    requireBoolean(
+      record.preflight,
+      "focus_guard_confirmed",
+      violations,
+      recordIndex,
+      "preflight.focus_guard_confirmed",
+    );
+    if (!isRecord(record.preflight.device)) {
+      violations.push({
+        recordIndex,
+        field: "preflight.device",
+        message: "preflight.device must be an object",
+      });
+    } else {
+      requireBoolean(record.preflight.device, "ok", violations, recordIndex, "preflight.device.ok");
+      requireString(
+        record.preflight.device,
+        "buildIdentity",
+        violations,
+        recordIndex,
+        "preflight.device.buildIdentity",
+      );
+      requireString(
+        record.preflight.device,
+        "expectedBuildIdentity",
+        violations,
+        recordIndex,
+        "preflight.device.expectedBuildIdentity",
+      );
+      requireBoolean(
+        record.preflight.device,
+        "autoUpdateEnabled",
+        violations,
+        recordIndex,
+        "preflight.device.autoUpdateEnabled",
+      );
+      requireString(
+        record.preflight.device,
+        "deviceLayout",
+        violations,
+        recordIndex,
+        "preflight.device.deviceLayout",
+      );
+    }
+  }
+
+  if (!isRecord(record.artifacts)) {
+    violations.push({ recordIndex, field: "artifacts", message: "artifacts must be an object" });
+  } else {
+    requireString(record.artifacts, "tee_log_path", violations, recordIndex, "artifacts.tee_log_path");
+    requireString(record.artifacts, "recv_txt_path", violations, recordIndex, "artifacts.recv_txt_path");
+  }
+
+  if (!Array.isArray(record.focus_guard_events)) {
+    violations.push({
+      recordIndex,
+      field: "focus_guard_events",
+      message: "focus_guard_events must be an array",
+    });
   }
 
   if (!isRecord(record.per_class_error_vector)) {
