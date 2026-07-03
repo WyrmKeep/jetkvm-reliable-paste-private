@@ -80,6 +80,9 @@ async function main(): Promise<void> {
   if (args.flags.has("no-hidtype-clear")) {
     orchestratorOptions.hidtypeClear = false;
   }
+  if (args.flags.has("tee")) {
+    orchestratorOptions.enableTee = true;
+  }
   orchestratorOptions.hidrpcDelayMs = optionalInteger(args, "hidrpc-delay-ms", DEFAULT_HIDRPC_DELAY_MS);
   const productProfile = optionalString(args, "product-profile");
   if (productProfile !== undefined) {

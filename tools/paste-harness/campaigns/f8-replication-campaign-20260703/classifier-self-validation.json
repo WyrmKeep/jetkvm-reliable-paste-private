@@ -1,0 +1,2939 @@
+{
+  "artifact": "classifier-self-validation",
+  "artifact_version": 1,
+  "classifier_version": "paste-harness-classifier/1.0.0",
+  "seedStart": 1,
+  "seedCount": 20,
+  "ok": true,
+  "singleFaultCases": [
+    {
+      "seed": 1,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 1,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 1,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 1,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 1,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 1,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 2,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 2,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 2,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 2,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 2,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 2,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 3,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 3,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 3,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 3,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 3,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 3,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 4,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 4,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 4,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 4,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 4,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 4,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 5,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 5,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 5,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 5,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 5,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 5,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 6,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 6,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 6,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 6,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 6,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 6,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 7,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 7,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 7,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 7,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 7,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 7,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 8,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 8,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 8,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 8,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 8,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 8,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 9,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 9,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 9,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 9,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 9,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 9,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 10,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 10,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 10,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 10,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 10,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 10,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 11,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 11,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 11,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 11,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 11,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 11,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 12,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 12,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 12,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 12,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 12,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 12,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 13,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 13,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 13,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 13,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 13,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 13,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 14,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 14,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 14,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 14,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 14,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 14,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 15,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 15,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 15,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 15,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 15,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 15,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 16,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 16,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 16,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 16,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 16,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 16,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 17,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 17,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 17,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 17,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 17,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 17,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 18,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 18,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 18,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 18,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 18,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 18,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 19,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 19,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 19,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 19,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 19,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 19,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 20,
+      "fault": "drop",
+      "truth": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "drop"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 20,
+      "fault": "insertion",
+      "truth": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 1,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "insertion"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 20,
+      "fault": "same-length-substitution",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 1,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "same-length-substitution"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 20,
+      "fault": "case-error",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "case-error"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 20,
+      "fault": "stuck-modifier-run",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 2,
+        "layout-swap-signature": 0
+      },
+      "labels": [
+        "stuck-modifier-run"
+      ],
+      "ok": true
+    },
+    {
+      "seed": 20,
+      "fault": "layout-swap-signature",
+      "truth": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "observed": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 4
+      },
+      "labels": [
+        "layout-swap-signature"
+      ],
+      "ok": true
+    }
+  ],
+  "mixed": {
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "truth": {
+      "drop": 1,
+      "insertion": 1,
+      "same-length-substitution": 1,
+      "case-error": 1,
+      "stuck-modifier-run": 2,
+      "layout-swap-signature": 4
+    },
+    "observed": {
+      "drop": 1,
+      "insertion": 1,
+      "same-length-substitution": 1,
+      "case-error": 1,
+      "stuck-modifier-run": 2,
+      "layout-swap-signature": 4
+    },
+    "labels": [
+      "drop",
+      "insertion",
+      "same-length-substitution",
+      "case-error",
+      "stuck-modifier-run",
+      "layout-swap-signature"
+    ],
+    "ok": true
+  }
+}

@@ -25,6 +25,12 @@ describe("hidtype raw injector helpers", () => {
     ).toBe("'/userdata/hidtype test' '-layout' 'us' '-dev' '/dev/hidg0' '-rate' '50'");
   });
 
+  test("prefixes hidtype with the tee environment when requested", () => {
+    expect(buildHidtypeRemoteCommand({ enableTee: true })).toBe(
+      "'env' 'JETKVM_HID_TEE=1' '/userdata/hidtype' '-layout' 'uk' '-dev' '/dev/hidg0' '-rate' '91' '-clear'",
+    );
+  });
+
   test("builds the Ctrl+S save chord as press then all-zero release", () => {
     expect(buildSaveChordCommand()).toBe(
       "printf '\\001\\000\\026\\000\\000\\000\\000\\000' > '/dev/hidg0'; sleep 0.08; printf '\\000\\000\\000\\000\\000\\000\\000\\000' > '/dev/hidg0'",

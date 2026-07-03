@@ -1,0 +1,338 @@
+{
+  "generated_at": "2026-07-03T19:38:18.143Z",
+  "layout_probe": {
+    "run_id": "20260703180008814-nn6sd4",
+    "host_decode_layout": "en-UK",
+    "vector": {
+      "drop": 0,
+      "insertion": 0,
+      "same-length-substitution": 0,
+      "case-error": 0,
+      "stuck-modifier-run": 0,
+      "layout-swap-signature": 0
+    }
+  },
+  "baseline_rate75": [
+    {
+      "run_id": "20260703182636516-amrcq7",
+      "vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "rss": 176910336,
+      "excluded": false
+    },
+    {
+      "run_id": "20260703182855170-8zt5pb",
+      "vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "rss": 176820224,
+      "excluded": false
+    },
+    {
+      "run_id": "20260703183027462-wfq3ey",
+      "vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "rss": 175968256,
+      "excluded": false
+    }
+  ],
+  "groups": [
+    {
+      "label": "raw angle-dense 2k, rate75",
+      "n": 3,
+      "completed": 3,
+      "chars": 6000,
+      "vector": {
+        "drop": 493,
+        "insertion": 492,
+        "same-length-substitution": 9,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703183755273-tehtbt",
+        "20260703183834136-y0voci",
+        "20260703183912982-eb7siz"
+      ]
+    },
+    {
+      "label": "raw shifted-symbol 2k, rate75",
+      "n": 3,
+      "completed": 3,
+      "chars": 6000,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703183951810-ld41xr",
+        "20260703184030601-3huqvv",
+        "20260703184109500-8d2utr"
+      ]
+    },
+    {
+      "label": "hidrpc angle-dense 2k, 11ms delay",
+      "n": 3,
+      "completed": 3,
+      "chars": 6000,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 3,
+        "case-error": 6,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703184212026-tdzjzm",
+        "20260703184300548-80v3gl",
+        "20260703184348826-2fnhjn"
+      ]
+    },
+    {
+      "label": "hidrpc shifted-symbol 2k, 11ms delay",
+      "n": 4,
+      "completed": 4,
+      "chars": 8000,
+      "vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703184437197-h4r8bq",
+        "20260703184530845-9ua5ye",
+        "20260703184624446-jqxm52",
+        "20260703192607422-q2y58a"
+      ]
+    },
+    {
+      "label": "product angle-dense single-batch",
+      "n": 3,
+      "completed": 3,
+      "chars": 165,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703190900575-hqhyby",
+        "20260703190920099-8rigjx",
+        "20260703192248428-6kk6nh"
+      ]
+    },
+    {
+      "label": "product shifted-symbol single-batch",
+      "n": 4,
+      "completed": 4,
+      "chars": 204,
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703190939291-bkinyy",
+        "20260703190958780-rm25xj",
+        "20260703191018709-hyjqf5",
+        "20260703192701004-d29m0p"
+      ]
+    },
+    {
+      "label": "product angle-dense 500 multi-batch no-done",
+      "n": 3,
+      "completed": 0,
+      "chars": 1500,
+      "vector": {
+        "drop": 1500,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703184741315-1uhncb",
+        "20260703185058316-uzxz5b",
+        "20260703185415665-nsophx"
+      ]
+    },
+    {
+      "label": "product shifted-symbol 500 multi-batch no-done",
+      "n": 3,
+      "completed": 0,
+      "chars": 1500,
+      "vector": {
+        "drop": 1500,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0,
+      "run_ids": [
+        "20260703185734074-1h9914",
+        "20260703190051228-3ngt6q",
+        "20260703190408342-oc8n2p"
+      ]
+    }
+  ],
+  "layout_mismatch": {
+    "run_id": "20260703191153730-w1ujt4",
+    "vector": {
+      "drop": 6,
+      "insertion": 1,
+      "same-length-substitution": 15,
+      "case-error": 0,
+      "stuck-modifier-run": 0,
+      "layout-swap-signature": 12
+    },
+    "garble": 12,
+    "details": {
+      "hidtype": {
+        "layout": "us",
+        "rate": 75,
+        "tee_enabled": true
+      }
+    }
+  },
+  "layout_matched": [
+    {
+      "run_id": "20260703191208103-gr0x8k",
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0
+    },
+    {
+      "run_id": "20260703191222706-zq3not",
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0
+    },
+    {
+      "run_id": "20260703191237177-46xxht",
+      "vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "garble": 0
+    }
+  ],
+  "product_two_batch_diagnostics": [
+    {
+      "run_id": "20260703191320547-z3gesv",
+      "build_sha": "worklaptopjetkvm:0b66afc5aef2",
+      "outcome": "failed",
+      "reason": "product path paste did not emit done trace within 180000ms; trace_tail=profile=reliable source=textarea chars=240 | batch 1/2: steps=128 bytes=2310 buffered=2310 | batch 2/2: steps=112 bytes=2022 buffered=4332",
+      "tee_lines": 0
+    },
+    {
+      "run_id": "20260703192823519-3spctv",
+      "build_sha": "worklaptopjetkvm:c7dda26bedec",
+      "outcome": "failed",
+      "reason": "product path paste did not emit done trace within 180000ms; trace_tail=profile=reliable source=textarea chars=240 | batch 1/2: steps=128 bytes=2310 buffered=2310 | batch 2/2: steps=112 bytes=2022 buffered=4332",
+      "tee_lines": 482
+    }
+  ],
+  "tee_coverage": [
+    {
+      "path": "raw",
+      "run_id": "20260703183755273-tehtbt",
+      "tee_lines": 4007
+    },
+    {
+      "path": "hidrpc",
+      "run_id": "20260703192607422-q2y58a",
+      "tee_lines": 4008
+    },
+    {
+      "path": "product",
+      "run_id": "20260703192701004-d29m0p",
+      "tee_lines": 104
+    }
+  ],
+  "trigger_corpora": [
+    {
+      "file": "ae8-trigger-compact-layout.txt",
+      "bytes": 598,
+      "chars": 598,
+      "sha256": "sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544"
+    },
+    {
+      "file": "ae8-trigger-layout-sentinel.txt",
+      "bytes": 568,
+      "chars": 568,
+      "sha256": "sha256:b4d318a0e022d390810557d27cf2485588a0b43a17a8b50833d07274bfe54728"
+    },
+    {
+      "file": "ae8-trigger-sentinel.txt",
+      "bytes": 1041,
+      "chars": 1038,
+      "sha256": "sha256:fd398f93f6a5f6970ed5a563fde5f4a53893652dea331488e5092f891e8cd6b7"
+    }
+  ],
+  "triangulation": {
+    "run_id": "20260703191153730-w1ujt4",
+    "verdict": "host-mangled",
+    "report": "artifacts/20260703191153730-w1ujt4/triangulation.md"
+  }
+}

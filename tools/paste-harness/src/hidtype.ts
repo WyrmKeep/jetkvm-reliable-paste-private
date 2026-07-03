@@ -9,6 +9,7 @@ export interface HidtypeCommandOptions {
   layout?: HidtypeLayout;
   rate?: number;
   clear?: boolean;
+  enableTee?: boolean;
 }
 
 export interface RunRawHidtypeOptions extends HidtypeCommandOptions {
@@ -48,6 +49,9 @@ export function buildHidtypeRemoteCommand(options: HidtypeCommandOptions = {}): 
     "-rate",
     String(rate),
   ];
+  if (options.enableTee === true) {
+    parts.unshift("env", "JETKVM_HID_TEE=1");
+  }
   if (options.clear ?? true) {
     parts.push("-clear");
   }

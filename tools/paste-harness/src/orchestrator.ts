@@ -123,6 +123,7 @@ export interface OrchestratorOptions {
   hidtypeLayout?: HidtypeLayout;
   hidtypeRate?: number;
   hidtypeClear?: boolean;
+  enableTee?: boolean;
   hidrpcDelayMs?: number;
   productProfile?: ProductPathProfile;
   forceChurnTelemetry?: boolean;
@@ -362,12 +363,24 @@ async function runHidtypeInjection(
   if (options.hidtypeClear !== undefined) {
     hidtypeOptions.clear = options.hidtypeClear;
   }
+  if (options.enableTee !== undefined) {
+    hidtypeOptions.enableTee = options.enableTee;
+  }
   if (options.watchdogMs !== undefined) {
     hidtypeOptions.timeoutMs = options.watchdogMs;
   }
   const result = await runRawHidtypeInjection(env, options.corpusText, hidtypeOptions);
   args.onProgress(1);
-  return { hidOutputReports: result.hidOutputReports };
+  return {
+    hidOutputReports: result.hidOutputReports,
+    details: {
+      hidtype: {
+        layout: hidtypeOptions.layout,
+        rate: hidtypeOptions.rate ?? 91,
+        tee_enabled: hidtypeOptions.enableTee === true,
+      },
+    },
+  };
 }
 
 async function runHidRpcInjection(

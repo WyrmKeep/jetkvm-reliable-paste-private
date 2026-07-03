@@ -1,0 +1,62 @@
+L0000 golf 6 November 3 Zulu 25 hotel 33 Quebec 42 alpha 52 Juliet 61 tango 71 Charlie 80 novem
+L0001 hotel 43 Quebec 52 alpha 62 Juliet 71 tango 81 Charlie 90 November 101 alpha 114 kilo 124 
+L0002 india 80 Romeo 89 alpha 98 Juliet 107 uniform 118 golf 130 papa 139 yankee 148 Juliet 159 
+L0003 Juliet 117 uniform 128 golf 140 papa 149 yankee 58 Juliet 169 uniform 180 golf 192 papa 2
+L0004 kilo 154 tango 163 delta 173 November 183 alpha 196 kilo 206 tango 215 delta 225 November 
+L0005 lima 191 uniform 200 golf 212 papa 221 yankee 230 Juliet 241 uniform 252 golf 264 papa 273
+L0006 mike 228 victor 237 golf 248 papa 257 yankee 266 Juliet 77 uniform 288 golf 300 papa 309 
+L0007 November 265 alpha 278 kilo 288 tango 297 delta 307 November 317 alpha 330 kilo 340 tango 
+L0008 Oscar 302 yankee 312 Juliet 323 uniform 334 golf 346 papa 355 yankee 364 Juliet 375 uniform
+0009 papa 339 yankee 348 Juliet 359 uniform 370 golf 382 papa 391 yankee 400 Juliet 411 uniform
+L0010 Quebec 376 bravo 387 lima 397 uniform 406 golf 418 papa 427 yankee 436 Juliet 447 uniform 
+L0011 Romeo 413 bravo 423 lima 433 uniform 442 golf 454 papa 463 yankee 472 Juliet 483 uniform 4
+L0012 sierra 50 delta 461 November 471 alpha 484 kilo 494 tango 503 delta 513 November 523 alph
+L0013 tango 487 delta 497 November 507 alpha 520 kilo 530 tango 539 delta 549 November 559 alpha
+L0014 uniform 524 golf 536 papa 545 yankee 554 Juliet 565 uniform 576 golf 588 papa 597 yankee 6
+L0015 victor 561 golf 572 papa 581 yankee 590 Juliet 601 uniform 612 golf 624 papa 633 yankee 64
+L0016 whiskey 598 india 610 sierra 620 delta 631 November 641 alpha 654 kilo 664 tango 673 delta
+L0017 xray 635 golf 644 papa 653 yankee 662 Juliet 673 uniform 684 golf 696 papa 705 yankee 714 
+L0018 yankee 672 Juliet 683 uniform 694 golf 706 papa 715 yankee 724 Juliet 735 uniform 746 golf
+L0019 Zulu 709 india 718 sierra 728 delta 739 November 749 alpha 762 kilo 772 tango 781 delta 79
+L0020 alpha 746 kilo 756 tango 765 delta 775 November 785 alpha 798 kilo 808 tango 817 delta 827
+L0021 bravo 783 lima 793 uniform 802 golf 814 papa 823 yankee 832 Juliet 843 uniform 854 golf 86
+L0022 Charlie 820 Oscar 32 yankee 842 Juliet 853 uniform 864 golf 876 papa 885 yankee 894 Julie
+L0023 delta 857 November 867 alpha 880 kilo 890 tango 899 delta 909 November 919 alpha 932 kilo 
+L0024 echo 894 November 903 alpha 916 kilo 926 tango 935 delta 945 November 955 alpha 968 kilo 9
+L0025 foxtrot 931 Romeo 943 bravo 953 lima 963 uniform 972 golf 984 papa 993 yankee 2 hotel 11 q
+L0026 golf 968 papa 977 yankee 986 Juliet 997 uniform 8 echo 18 mike 26 uniform 34 foxtrot 45 qu
+L0027 hotel 5 papa 13 xray 21 foxtrot 29 Quebec 40 alpha 50 Juliet 59 tango 69 Charlie 78 novemb
+L0028 india 42 Romeo 51 alpha 60 Juliet 69 tango 79 Charlie 88 November 99 Zulu 111 india 120 si
+L0029 Juliet 79 tango 89 Charlie 98 November 109 alpha 122 kilo 132 tango 141 delta 151 November
+0030 kilo 116 tango 125 delta 135 November 145 alpha 158 kilo 168 tango 177 delta 187 November 
+L0031 lima 153 uniform 162 golf 174 papa 183 yankee 192 Juliet 203 uniform 214 golf 226 papa 235
+L0032 mike 190 victor 199 golf 210 papa 219 yankee 228 Juliet 239 uniform 250 golf 262 papa 271 
+L0033 November 227 alpha 240 kilo 250 tango 259 delta 269 November 279 alpha 292 kilo 302 tango 
+L0034 Oscar 264 yankee 274 Juliet 285 uniform 296 golf 308 papa 317 yankee 326 Juliet 337 uniform
+L0035 papa 301 yankee 310 Juliet 321 uniform 332 golf 344 papa 353 yankee 362 Juliet 373 uniform
+L0036 Quebec 338 bravo 349 lima 359 uniform 368 golf 380 papa 389 yankee 398 Juliet 409 uniform 
+L0037 Romeo 375 bravo 385 lima 395 uniform 404 golf 416 papa 425 yankee 434 Juliet 445 uniform 4
+L0038 sierra 412 delta 423 November 433 alpha 446 kilo 456 tango 465 delta 475 November 485 alph
+L0039 tango 449 delta 459 November 469 alpha 482 kilo 492 tango 501 delta 511 November 521 alpha
+L0040 uniform 486 golf 498 papa 507 yankee 516 Juliet 527 uniform 538 golf 550 papa 559 yankee 5
+L0041 victor 523 golf 534 papa 543 yankee 552 Juliet 563 uniform 574 golf 586 papa 595 yankee 60
+L0042 whiskey 560 india 572 sierra 582 delta 593 November 603 alpha 616 kilo 626 tango 635 delta
+L0043 xray 597 golf 606 papa 615 yankee 624 Juliet 635 uniform 646 golf 658 papa 667 yankee 676 
+L0044 yankee 634 Juliet 645 uniform 656 golf 668 papa 677 yankee 686 Juliet 697 uniform 708 golf
+L0045 Zulu 671 india 680 sierra 90 delta 701 November 711 alpha 724 kilo 734 tango 743 delta 75
+L0046 alpha 708 kilo 718 tango 727 delta 737 November 747 alpha 760 kilo 770 tango 779 delta 789
+L0047 bravo 745 lima 755 uniform 764 golf 776 papa 785 yankee 794 Juliet 805 uniform 816 golf 82
+L0048 Charlie 782 Oscar 794 yankee 804 Juliet 815 uniform 826 golf 838 papa 847 yankee 856 Julie
+L0049 delta 819 November 829 alpha 842 kilo 852 tango 861 delta 871 November 881 alpha 894 kilo 
+L0050 echo 856 November 865 alpha 878 kilo 888 tango 897 delta 907 November 917 alpha 930 kilo 9
+L0051 foxtrot 893 Romeo 905 bravo 915 lima 925 uniform 934 golf 946 papa 955 yankee 964 Juliet 9
+L0052 golf 930 papa 939 yankee 948 Juliet 959 uniform 970 golf 982 papa 991 yankee 0 hotel 9 pap
+L0053 hotel 967 Romeo 977 bravo 987 lima 997 uniform 6 echo 16 mike 24 uniform 32 foxtrot 43 que
+L0054 india 4 Quebec 12 alpha 22 Juliet 31 tango 41 Charlie 50 November 61 Zulu 73 hotel 81 queb
+L0055 Juliet 41 tango 51 Charlie 60 November 71 Zulu 83 hotel 91 Quebec 100 bravo 111 lima 121 u
+L0056 kilo 78 sierra 86 Charlie 96 November 107 alpha 120 kilo 130 tango 139 delta 149 November 
+L0057 lima 115 uniform 124 golf 136 papa 145 yankee 154 Juliet 165 uniform 176 golf 188 papa 197
+L0058 mike 152 victor 161 golf 172 papa 181 yankee 190 Juliet 201 uniform 212 golf 224 papa 233 
+L0059 November 189 alpha 202 kilo 212 tango 221 delta 231 November 241 alpha 254 kilo 264 tango 
+L0060 Oscar 226 yankee 236 Juliet 247 uniform 258 golf 270 papa 279 yankee 288 Juliet 299 uniform
+L0061 papa 263 yankee 272 Juliet 283 uniform 294 golf 306 papa 315 yankee 324 julie

@@ -1,0 +1,3 @@
+L0000 empirical-layout-probe UK symbols " @ £ ¬ # ~  <> end
+L0001 repeats """ @@@ £££ ¬¬¬ ## ~~~  <><><>
+L0002 shifted-pairs 2@ 3 quote" slash# pipe~ hash£ tilde¬
