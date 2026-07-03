@@ -74,9 +74,9 @@ describe("NucBox rig control helpers", () => {
     expect(snapshot.lastWriteTimeUtc).toBe("2026-07-03T10:00:00.000Z");
   });
 
-  test("fresh sink requires one small Notepad process", () => {
-    expect(isFreshSink({ processCount: 1, maxWorkingSetBytes: 99_000_000 })).toBe(true);
+  test("fresh sink accepts one newly launched Win11 Store Notepad below 250MB", () => {
+    expect(isFreshSink({ processCount: 1, maxWorkingSetBytes: 249_000_000 })).toBe(true);
     expect(isFreshSink({ processCount: 2, maxWorkingSetBytes: 10_000_000 })).toBe(false);
-    expect(isFreshSink({ processCount: 1, maxWorkingSetBytes: 101_000_000 })).toBe(false);
+    expect(isFreshSink({ processCount: 1, maxWorkingSetBytes: 250_000_000 })).toBe(false);
   });
 });

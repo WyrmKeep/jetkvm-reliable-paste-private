@@ -10,3 +10,4 @@ export * from "./rig.js";
 export * from "./selfValidation.js";
 export * from "./ssh.js";
 export * from "./teeCompare.js";
+export * from "./virtualHostDecoder.js";

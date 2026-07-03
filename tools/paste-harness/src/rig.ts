@@ -17,7 +17,7 @@ export const RESET_TASK_NAME = "PasteRigResetNotepad";
 export const LAYOUT_TASK_NAME = "PasteRigLayoutPin";
 export const INTERACTIVE_PRINCIPAL = "NUCBOX_K15\\Robert";
 export const CPU_CALM_THRESHOLD_PERCENT = 40;
-export const FRESH_SINK_MAX_RSS_BYTES = 100_000_000;
+export const FRESH_SINK_MAX_RSS_BYTES = 250_000_000;
 
 export interface FocusGuardEvent {
   type: string;
