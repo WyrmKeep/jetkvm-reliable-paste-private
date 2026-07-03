@@ -688,7 +688,8 @@ async function measureDeviceClockOffset(env: RigEnv): Promise<number> {
 }
 
 async function fetchTeeLog(env: RigEnv): Promise<string> {
-  const command = "latest=$(ls -t /tmp/jetkvm-hid-tee* 2>/dev/null | head -1); if [ -n \"$latest\" ]; then cat \"$latest\"; fi";
+  const command =
+    'for f in /tmp/jetkvm-hid-tee.log.1 /tmp/jetkvm-hid-tee.log; do [ -f "$f" ] && cat "$f"; done';
   const result = await runSshCommand(kvmTarget(env.KVM_PRIMARY), command, { timeoutMs: 10_000 });
   if (result.exitCode !== 0) {
     return "";

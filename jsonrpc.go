@@ -1162,6 +1162,7 @@ func drainMacroQueue() {
 		macroLock.Unlock()
 
 		err := rpcDoExecuteKeyboardMacro(ctx, item.steps)
+		flushKeyboardHIDTee()
 		if err != nil {
 			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
 			if item.isPaste && !errors.Is(err, context.Canceled) {

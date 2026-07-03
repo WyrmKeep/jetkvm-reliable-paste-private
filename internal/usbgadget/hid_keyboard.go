@@ -318,6 +318,9 @@ func (u *UsbGadget) keyboardWriteHidFile(modifier byte, keys []byte) error {
 	keyboardWriteHidFileLock.Lock()
 	defer keyboardWriteHidFileLock.Unlock()
 	if err := u.openKeyboardHidFile(); err != nil {
+		if u.keyboardHIDTee != nil {
+			u.keyboardHIDTee.Record(modifier, keys, err)
+		}
 		return err
 	}
 
@@ -326,9 +329,15 @@ func (u *UsbGadget) keyboardWriteHidFile(modifier byte, keys []byte) error {
 		u.logWithSuppression("keyboardWriteHidFile", 100, u.log, err, "failed to write to hidg0")
 		u.keyboardHidFile.Close()
 		u.keyboardHidFile = nil
+		if u.keyboardHIDTee != nil {
+			u.keyboardHIDTee.Record(modifier, keys, err)
+		}
 		return err
 	}
 	u.resetLogSuppressionCounter("keyboardWriteHidFile")
+	if u.keyboardHIDTee != nil {
+		u.keyboardHIDTee.Record(modifier, keys, nil)
+	}
 	return nil
 }
 

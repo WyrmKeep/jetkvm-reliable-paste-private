@@ -104,6 +104,15 @@ func rpcKeyboardReport(modifier byte, keys []byte) error {
 	return gadget.KeyboardReport(modifier, keys)
 }
 
+func flushKeyboardHIDTee() {
+	if gadget == nil {
+		return
+	}
+	if err := gadget.FlushKeyboardHIDTee(); err != nil {
+		usbLogger.Warn().Err(err).Msg("failed to flush keyboard HID tee")
+	}
+}
+
 func rpcKeypressReport(key byte, press bool) error {
 	return gadget.KeypressReport(key, press)
 }
