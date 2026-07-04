@@ -163,7 +163,16 @@ func (u *UsbGadget) SetOnKeepAliveReset(f func()) {
 // DefaultAutoReleaseDuration is the default duration for auto-release of a key.
 const DefaultAutoReleaseDuration = 100 * time.Millisecond
 
+func isKeyboardModifierKey(key byte) bool {
+	_, exists := KeyCodeToMaskMap[key]
+	return exists
+}
+
 func (u *UsbGadget) scheduleAutoRelease(key byte) {
+	if isKeyboardModifierKey(key) {
+		return
+	}
+
 	u.kbdAutoReleaseLock.Lock()
 	defer unlockWithLog(&u.kbdAutoReleaseLock, u.log, "autoRelease scheduled")
 
@@ -192,6 +201,18 @@ func (u *UsbGadget) cancelAutoRelease(key byte) {
 		if u.onKeepAliveReset != nil {
 			(*u.onKeepAliveReset)()
 		}
+	}
+}
+
+func (u *UsbGadget) cancelAllAutoReleaseTimers() {
+	u.kbdAutoReleaseLock.Lock()
+	defer unlockWithLog(&u.kbdAutoReleaseLock, u.log, "autoRelease timers cancelled")
+
+	for key, timer := range u.kbdAutoReleaseTimers {
+		if timer != nil {
+			timer.Stop()
+		}
+		delete(u.kbdAutoReleaseTimers, key)
 	}
 }
 
@@ -315,6 +336,14 @@ func (u *UsbGadget) OpenKeyboardHidFile() error {
 var keyboardWriteHidFileLock sync.Mutex
 
 func (u *UsbGadget) keyboardWriteHidFile(modifier byte, keys []byte) error {
+	if u.keyboardWriteFunc != nil {
+		err := u.keyboardWriteFunc(modifier, keys)
+		if u.keyboardHIDTee != nil {
+			u.keyboardHIDTee.Record(modifier, keys, err)
+		}
+		return err
+	}
+
 	keyboardWriteHidFileLock.Lock()
 	defer keyboardWriteHidFileLock.Unlock()
 	if err := maybeInjectKeyboardWriteFailure(); err != nil {
@@ -377,9 +406,7 @@ func (u *UsbGadget) UpdateKeysDown(modifier byte, keys []byte) KeysDownState {
 	return state
 }
 
-func (u *UsbGadget) KeyboardReport(modifier byte, keys []byte) error {
-	defer u.resetUserInputTime()
-
+func (u *UsbGadget) keyboardReportLocked(modifier byte, keys []byte) error {
 	if len(keys) > hidKeyBufferSize {
 		keys = keys[:hidKeyBufferSize]
 	}
@@ -399,6 +426,28 @@ func (u *UsbGadget) KeyboardReport(modifier byte, keys []byte) error {
 
 	u.UpdateKeysDown(modifier, keys)
 	return nil
+}
+
+func (u *UsbGadget) KeyboardReport(modifier byte, keys []byte) error {
+	defer u.resetUserInputTime()
+
+	u.keyboardLock.Lock()
+	defer u.keyboardLock.Unlock()
+
+	return u.keyboardReportLocked(modifier, keys)
+}
+
+// ClearKeyboardState cancels pending auto-release timers and sends a best-effort
+// all-clear keyboard report. Internal key state is updated only if the clear
+// report is written successfully, matching KeyboardReport's failure semantics.
+func (u *UsbGadget) ClearKeyboardState() error {
+	defer u.resetUserInputTime()
+
+	u.keyboardLock.Lock()
+	defer u.keyboardLock.Unlock()
+
+	u.cancelAllAutoReleaseTimers()
+	return u.keyboardReportLocked(0, make([]byte, hidKeyBufferSize))
 }
 
 const (
@@ -438,9 +487,7 @@ var KeyCodeToMaskMap = map[byte]byte{
 	RightSuper:   ModifierMaskRightSuper,
 }
 
-func (u *UsbGadget) keypressReport(key byte, press bool) (KeysDownState, error) {
-	defer u.resetUserInputTime()
-
+func (u *UsbGadget) keypressReportLocked(key byte, press bool) (KeysDownState, error) {
 	l := u.log.With().Uint8("key", key).Bool("press", press).Logger()
 	if l.GetLevel() <= zerolog.DebugLevel {
 		requestID := xid.New()
@@ -508,13 +555,31 @@ func (u *UsbGadget) keypressReport(key byte, press bool) (KeysDownState, error) 
 
 	err := u.keyboardWriteHidFile(modifier, keys)
 	u.RecordWriteResult(err)
-	return u.UpdateKeysDown(modifier, keys), err
+	if err != nil {
+		return state, err
+	}
+	return u.UpdateKeysDown(modifier, keys), nil
+}
+
+func (u *UsbGadget) keypressReport(key byte, press bool) (KeysDownState, error) {
+	defer u.resetUserInputTime()
+
+	u.keyboardLock.Lock()
+	defer u.keyboardLock.Unlock()
+
+	return u.keypressReportLocked(key, press)
 }
 
 func (u *UsbGadget) KeypressReport(key byte, press bool) error {
-	state, err := u.keypressReport(key, press)
+	defer u.resetUserInputTime()
+
+	u.keyboardLock.Lock()
+	defer u.keyboardLock.Unlock()
+
+	state, err := u.keypressReportLocked(key, press)
 	if err != nil {
 		u.log.Warn().Uint8("key", key).Bool("press", press).Msg("failed to report key")
+		return err
 	}
 	isRolledOver := state.Keys[0] == hidErrorRollOver
 
@@ -526,5 +591,5 @@ func (u *UsbGadget) KeypressReport(key byte, press bool) error {
 		u.cancelAutoRelease(key)
 	}
 
-	return err
+	return nil
 }

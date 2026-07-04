@@ -479,6 +479,7 @@ func handleSessionRequest(
 
 	// Cancel any ongoing keyboard macro when session changes
 	cancelAndDrainMacroQueue()
+	clearKeyboardStateForSessionTransition("cloud session takeover")
 
 	currentSession = session
 	_ = wsjson.Write(context.Background(), c, gin.H{"type": "answer", "data": sd})

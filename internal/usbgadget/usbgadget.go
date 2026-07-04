@@ -60,13 +60,14 @@ type UsbGadget struct {
 
 	configLock sync.Mutex
 
-	keyboardHidFile *os.File
-	keyboardLock    sync.Mutex
-	keyboardHIDTee  *keyboardHIDTee
-	absMouseHidFile *os.File
-	absMouseLock    sync.Mutex
-	relMouseHidFile *os.File
-	relMouseLock    sync.Mutex
+	keyboardHidFile   *os.File
+	keyboardLock      sync.Mutex
+	keyboardHIDTee    *keyboardHIDTee
+	keyboardWriteFunc func(modifier byte, keys []byte) error // injectable keyboard writer for host-side tests
+	absMouseHidFile   *os.File
+	absMouseLock      sync.Mutex
+	relMouseHidFile   *os.File
+	relMouseLock      sync.Mutex
 
 	keyboardState byte          // keyboard latched state (NumLock, CapsLock, ScrollLock, Compose, Kana)
 	keysDownState KeysDownState // keyboard dynamic state (modifier keys and pressed keys)
@@ -84,7 +85,8 @@ type UsbGadget struct {
 
 	absMouseAccumulatedWheelY float64
 
-	lastUserInput time.Time
+	lastUserInput     time.Time
+	lastUserInputLock sync.Mutex
 
 	writeHealthLock  sync.Mutex
 	writeWindow      []writeRecord

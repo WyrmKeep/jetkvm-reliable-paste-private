@@ -120,6 +120,15 @@ func rpcKeypressReport(key byte, press bool) error {
 	return gadget.KeypressReport(key, press)
 }
 
+func clearKeyboardStateForSessionTransition(reason string) {
+	if gadget == nil {
+		return
+	}
+	if err := gadget.ClearKeyboardState(); err != nil {
+		usbLogger.Warn().Err(err).Str("reason", reason).Msg("failed to clear keyboard state for session transition")
+	}
+}
+
 func rpcAbsMouseReport(x int, y int, buttons uint8) error {
 	return gadget.AbsMouseReport(x, y, buttons)
 }
