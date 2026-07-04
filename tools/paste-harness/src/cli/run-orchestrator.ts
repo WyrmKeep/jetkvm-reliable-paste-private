@@ -91,6 +91,17 @@ async function main(): Promise<void> {
     }
     orchestratorOptions.productProfile = productProfile;
   }
+  if (
+    args.flags.has("product-verify-chunks") ||
+    args.flags.has("product-auto-verify") ||
+    args.flags.has("product-auto-repair")
+  ) {
+    orchestratorOptions.productVerification = {
+      verifyChunks: args.flags.has("product-verify-chunks"),
+      autoVerify: args.flags.has("product-auto-verify") || args.flags.has("product-auto-repair"),
+      autoRepair: args.flags.has("product-auto-repair"),
+    };
+  }
   const expectedBuildIdentity = optionalString(args, "expected-build");
   if (expectedBuildIdentity !== undefined) {
     orchestratorOptions.expectedBuildIdentity = expectedBuildIdentity;

@@ -19,6 +19,7 @@ import {
 import {
   buildProductPathLedgerDetails,
   runProductPathText,
+  type ProductVerificationOptions,
   type ProductPathProfile,
   type ProductPathRunOptions,
 } from "./productPath.js";
@@ -129,6 +130,7 @@ export interface OrchestratorOptions {
   enableTee?: boolean;
   hidrpcDelayMs?: number;
   productProfile?: ProductPathProfile;
+  productVerification?: ProductVerificationOptions;
   forceChurnTelemetry?: boolean;
 }
 
@@ -492,6 +494,9 @@ async function runProductPathInjection(
     signal: args.signal,
     onProgress: args.onProgress,
   };
+  if (options.productVerification !== undefined) {
+    productOptions.verification = options.productVerification;
+  }
   if (options.watchdogMs !== undefined) {
     productOptions.timeoutMs = options.watchdogMs;
   }
@@ -507,6 +512,9 @@ async function runProductPathInjection(
         doneLine: result.doneLine,
         manualConfirmContinuations: result.manualConfirmContinuations,
         traceLineCount: result.traceLines.length,
+        traceLines: result.traceLines,
+        autoVerifyRequested: options.productVerification?.autoVerify === true,
+        autoRepairRequested: options.productVerification?.autoRepair === true,
       }),
     },
   };

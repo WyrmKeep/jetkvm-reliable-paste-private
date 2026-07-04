@@ -13,11 +13,22 @@ import { kvmTarget, runSshCommand, type RigEnv } from "./ssh.js";
 export const PASTE_TRACE_STORAGE_KEY = "jetkvm_reliable_paste_trace";
 
 export type ProductPathProfile = "reliable" | "fast";
-export type ProductVerificationMode = "auto-verify-off" | "manual-confirm-auto-continue";
+export type ProductVerificationMode =
+  | "auto-verify-off"
+  | "auto-verify"
+  | "auto-repair"
+  | "manual-confirm-auto-continue";
+
+export interface ProductVerificationOptions {
+  autoVerify?: boolean;
+  autoRepair?: boolean;
+  verifyChunks?: boolean;
+}
 
 export interface ProductPathRunOptions {
   host?: string;
   profile?: ProductPathProfile;
+  verification?: ProductVerificationOptions;
   timeoutMs?: number;
   headless?: boolean;
   clearBefore?: boolean;
@@ -41,6 +52,9 @@ export interface ProductPathRunResult {
 export interface ProductPathLedgerDetails {
   completion_signal: "done-trace";
   verification_mode: ProductVerificationMode;
+  ocr_calibration: "not-requested" | "engaged" | "manual-fallback";
+  auto_verify_requested: boolean;
+  auto_repair_requested: boolean;
   manual_confirm_continuations: number;
   trace_line_count: number;
   done_line: string;
@@ -70,14 +84,55 @@ export function resolveProductVerificationMode(manualConfirmContinuations: numbe
   return manualConfirmContinuations > 0 ? "manual-confirm-auto-continue" : "auto-verify-off";
 }
 
+export function resolveProductVerificationModeFromTrace(args: {
+  autoVerifyRequested: boolean;
+  autoRepairRequested: boolean;
+  manualConfirmContinuations: number;
+  traceLines: readonly string[];
+}): ProductVerificationMode {
+  if (args.manualConfirmContinuations > 0) {
+    return "manual-confirm-auto-continue";
+  }
+  if (!args.autoVerifyRequested) {
+    return "auto-verify-off";
+  }
+  return args.autoRepairRequested && resolveOcrCalibration(args.traceLines) === "engaged"
+    ? "auto-repair"
+    : "auto-verify";
+}
+
+export function resolveOcrCalibration(
+  traceLines: readonly string[],
+): ProductPathLedgerDetails["ocr_calibration"] {
+  const calibrationLine = traceLines.find(line => line.startsWith("ocr-calibrate:"));
+  if (calibrationLine === undefined) {
+    return "not-requested";
+  }
+  return calibrationLine.includes("counter=") ? "engaged" : "manual-fallback";
+}
+
 export function buildProductPathLedgerDetails(args: {
   doneLine: string;
   manualConfirmContinuations: number;
   traceLineCount: number;
+  traceLines?: readonly string[];
+  autoVerifyRequested?: boolean;
+  autoRepairRequested?: boolean;
 }): ProductPathLedgerDetails {
+  const traceLines = args.traceLines ?? [];
+  const autoVerifyRequested = args.autoVerifyRequested === true;
+  const autoRepairRequested = args.autoRepairRequested === true;
   return {
     completion_signal: "done-trace",
-    verification_mode: resolveProductVerificationMode(args.manualConfirmContinuations),
+    verification_mode: resolveProductVerificationModeFromTrace({
+      autoVerifyRequested,
+      autoRepairRequested,
+      manualConfirmContinuations: args.manualConfirmContinuations,
+      traceLines,
+    }),
+    ocr_calibration: autoVerifyRequested ? resolveOcrCalibration(traceLines) : "not-requested",
+    auto_verify_requested: autoVerifyRequested,
+    auto_repair_requested: autoRepairRequested,
     manual_confirm_continuations: args.manualConfirmContinuations,
     trace_line_count: args.traceLineCount,
     done_line: args.doneLine,
@@ -151,7 +206,7 @@ export async function runProductPathText(
     await openPasteModal(page);
     await selectPasteProfile(page, options.profile ?? "reliable");
     await submitTextThroughPasteModal(page, text);
-    await disablePasteVerificationPrompts(page);
+    await configurePasteVerificationPrompts(page, options.verification);
     await page.evaluate(
       key =>
         (globalThis as unknown as { localStorage: { removeItem: (name: string) => void } }).localStorage.removeItem(
@@ -341,6 +396,11 @@ async function selectPasteProfile(page: Page, profile: ProductPathProfile): Prom
   const label = profile === "fast" ? /Fast/i : /Reliable/i;
   const radio = page.getByRole("radio", { name: label }).first();
   if (await radio.isVisible().catch(() => false)) {
+    const alreadySelected = await radio.evaluate(element => element.getAttribute("aria-checked") === "true")
+      .catch(() => false);
+    if (alreadySelected) {
+      return;
+    }
     await radio.click();
   }
 }
@@ -352,16 +412,34 @@ async function submitTextThroughPasteModal(page: Page, text: string): Promise<vo
 }
 
 async function disablePasteVerificationPrompts(page: Page): Promise<void> {
-  for (const label of [/Verify each chunk/i, /Auto-verify/i, /Auto-repair/i]) {
-    const checkbox = page.locator("label").filter({ hasText: label }).locator('input[type="checkbox"]');
-    const count = await checkbox.count();
-    for (let index = 0; index < count; index += 1) {
-      const item = checkbox.nth(index);
-      if (await item.isChecked().catch(() => false)) {
-        await item.uncheck().catch(() => {
-          // If a checkbox disappears between discovery and uncheck, it is already disabled for this run.
-        });
-      }
+  await configurePasteVerificationPrompts(page);
+}
+
+async function configurePasteVerificationPrompts(
+  page: Page,
+  verification: ProductVerificationOptions = {},
+): Promise<void> {
+  await setCheckboxByLabel(page, /Verify each chunk/i, verification.verifyChunks === true);
+  await setCheckboxByLabel(page, /Auto-verify/i, verification.autoVerify === true);
+  await page.waitForTimeout(100);
+  await setCheckboxByLabel(page, /Auto-repair/i, verification.autoRepair === true);
+}
+
+async function setCheckboxByLabel(page: Page, label: RegExp, checked: boolean): Promise<void> {
+  const checkbox = page.locator("label").filter({ hasText: label }).locator('input[type="checkbox"]');
+  const count = await checkbox.count();
+  for (let index = 0; index < count; index += 1) {
+    const item = checkbox.nth(index);
+    const isChecked = await item.isChecked().catch(() => false);
+    if (checked && !isChecked) {
+      await item.check().catch(() => {
+        // If a checkbox disappears between discovery and check, treat it as unavailable for this run.
+      });
+    }
+    if (!checked && isChecked) {
+      await item.uncheck().catch(() => {
+        // If a checkbox disappears between discovery and uncheck, it is already disabled for this run.
+      });
     }
   }
 }
