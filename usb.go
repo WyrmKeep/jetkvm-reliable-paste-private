@@ -30,6 +30,9 @@ var keyboardReportSeq atomic.Int64
 
 var gadget *usbgadget.UsbGadget
 var usbMonitorInstance *usbMonitor
+var keyboardReportWrite = func(modifier byte, keys []byte) error {
+	return gadget.KeyboardReport(modifier, keys)
+}
 
 // initUsbGadget initializes the USB gadget.
 // call it only after the config is loaded.
@@ -101,7 +104,7 @@ func rpcKeyboardReport(modifier byte, keys []byte) error {
 			return nil
 		}
 	}
-	return gadget.KeyboardReport(modifier, keys)
+	return keyboardReportWrite(modifier, keys)
 }
 
 func flushKeyboardHIDTee() {

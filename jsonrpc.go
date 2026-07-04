@@ -1032,27 +1032,54 @@ const pasteInterMacroDrain = 200 * time.Millisecond
 // and give the host time to wake. Single taps spaced ≥ the idle threshold
 // can never trigger Windows Sticky Keys (which needs 5 rapid presses).
 const (
-	pasteWakeIdleThreshold = 10 * time.Second
-	pasteWakeSettle        = 500 * time.Millisecond
+	pasteWakeIdleThreshold      = 10 * time.Second
+	pasteWakeReleaseMaxAttempts = 3
+)
+
+var (
+	pasteWakeTapHold           = 50 * time.Millisecond
+	pasteWakeReleaseRetryDelay = 25 * time.Millisecond
+	pasteWakeSettle            = 500 * time.Millisecond
 )
 
 // wakeTargetForPaste sends the wake tap if the keyboard has been idle. The
 // idle gate makes this self-limiting: after the first batch of a paste,
 // lastKeyboardReportTime is fresh and subsequent batches skip the tap.
-func wakeTargetForPaste() {
+func wakeTargetForPaste() error {
 	last := lastKeyboardReportTime.Load()
 	if last != 0 && time.Since(time.Unix(0, last)) < pasteWakeIdleThreshold {
-		return
+		return nil
 	}
 	logger.Debug().Msg("paste wake: tapping shift and settling before first batch")
 	if err := rpcKeyboardReport(0x02, keyboardClearStateKeys); err != nil {
 		logger.Warn().Err(err).Msg("paste wake tap failed")
+		return fmt.Errorf("paste wake tap failed: %w", err)
 	}
-	time.Sleep(50 * time.Millisecond)
-	if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
-		logger.Warn().Err(err).Msg("paste wake release failed")
+	time.Sleep(pasteWakeTapHold)
+
+	usbgadget.ArmNextWakeReleaseWriteFailure()
+	var releaseErr error
+	for attempt := 1; attempt <= pasteWakeReleaseMaxAttempts; attempt++ {
+		if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
+			releaseErr = err
+			logger.Warn().
+				Err(err).
+				Int("attempt", attempt).
+				Int("max_attempts", pasteWakeReleaseMaxAttempts).
+				Msg("paste wake release failed")
+			if attempt < pasteWakeReleaseMaxAttempts {
+				time.Sleep(pasteWakeReleaseRetryDelay)
+			}
+			continue
+		}
+		releaseErr = nil
+		break
+	}
+	if releaseErr != nil {
+		return fmt.Errorf("paste wake release failed after %d attempts: %w", pasteWakeReleaseMaxAttempts, releaseErr)
 	}
 	time.Sleep(pasteWakeSettle)
+	return nil
 }
 
 // queuedMacro wraps a macro batch with its paste flag and origin session so
@@ -1151,17 +1178,29 @@ func drainMacroQueue() {
 			Bool("is_paste", item.isPaste).
 			Msg("executing queued keyboard macro")
 
+		var err error
 		if item.isPaste {
-			wakeTargetForPaste()
+			err = wakeTargetForPaste()
+			if err != nil {
+				discardQueuedMacrosAfterPastePreflightFailure("paste wake failed")
+			}
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		if err == nil {
+			ctx, cancel := context.WithCancel(context.Background())
 
-		macroLock.Lock()
-		macroCurrentCancel = cancel
-		macroLock.Unlock()
+			macroLock.Lock()
+			macroCurrentCancel = cancel
+			macroLock.Unlock()
 
-		err := rpcDoExecuteKeyboardMacro(ctx, item.steps)
+			err = rpcDoExecuteKeyboardMacro(ctx, item.steps)
+
+			macroLock.Lock()
+			macroCurrentCancel = nil
+			macroLock.Unlock()
+
+			cancel()
+		}
 		flushKeyboardHIDTee()
 		if err != nil {
 			logger.Warn().Uint64("macro_id", macroID).Err(err).Msg("queued keyboard macro failed")
@@ -1171,12 +1210,6 @@ func drainMacroQueue() {
 		} else {
 			logger.Info().Uint64("macro_id", macroID).Msg("queued keyboard macro completed")
 		}
-
-		macroLock.Lock()
-		macroCurrentCancel = nil
-		macroLock.Unlock()
-
-		cancel()
 
 		// Paste-depth decrement + conditional emit on the 1→0 transition.
 		// Non-paste macros never touch pasteDepth or emit state.
@@ -1199,6 +1232,45 @@ func drainMacroQueue() {
 		if !item.isPaste {
 			time.Sleep(pasteInterMacroDrain)
 		}
+	}
+}
+
+func discardQueuedMacrosAfterPastePreflightFailure(reason string) {
+	if macroQueue == nil {
+		return
+	}
+
+	macroEnqueueMu.Lock()
+	if macroEnqueueCancel != nil {
+		macroEnqueueCancel()
+	}
+	macroEnqueueCtx, macroEnqueueCancel = context.WithCancel(context.Background())
+	macroEnqueueMu.Unlock()
+
+	var discardedTotal int
+	var discardedPaste int32
+	draining := true
+	for draining {
+		select {
+		case item := <-macroQueue:
+			discardedTotal++
+			if item.isPaste {
+				discardedPaste++
+			}
+		default:
+			draining = false
+		}
+	}
+	if discardedTotal == 0 {
+		return
+	}
+	logger.Warn().
+		Str("reason", reason).
+		Int("count", discardedTotal).
+		Int32("discarded_paste", discardedPaste).
+		Msg("discarded queued keyboard macros after paste preflight failure")
+	if discardedPaste > 0 {
+		pasteDepth.Add(-discardedPaste)
 	}
 }
 
@@ -1335,6 +1407,15 @@ func isClearKeyStep(step hidrpc.KeyboardMacroStep) bool {
 	return step.Modifier == 0 && bytes.Equal(step.Keys, keyboardClearStateKeys)
 }
 
+func sendKeyboardAllClearAfterMacroWriteError(originalErr error) {
+	if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
+		logger.Warn().
+			Err(err).
+			AnErr("original_error", originalErr).
+			Msg("failed to send all-clear after keyboard macro write error")
+	}
+}
+
 func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacroStep) error {
 	logger.Debug().Interface("macro", macro).Msg("Executing keyboard macro")
 
@@ -1361,6 +1442,7 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 		err := rpcKeyboardReport(step.Modifier, step.Keys)
 		if err != nil {
 			logger.Warn().Err(err).Msg("failed to execute keyboard macro")
+			sendKeyboardAllClearAfterMacroWriteError(err)
 			return err
 		}
 

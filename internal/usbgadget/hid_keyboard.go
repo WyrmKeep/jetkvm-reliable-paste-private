@@ -317,6 +317,12 @@ var keyboardWriteHidFileLock sync.Mutex
 func (u *UsbGadget) keyboardWriteHidFile(modifier byte, keys []byte) error {
 	keyboardWriteHidFileLock.Lock()
 	defer keyboardWriteHidFileLock.Unlock()
+	if err := maybeInjectKeyboardWriteFailure(); err != nil {
+		if u.keyboardHIDTee != nil {
+			u.keyboardHIDTee.Record(modifier, keys, err)
+		}
+		return err
+	}
 	if err := u.openKeyboardHidFile(); err != nil {
 		if u.keyboardHIDTee != nil {
 			u.keyboardHIDTee.Record(modifier, keys, err)
