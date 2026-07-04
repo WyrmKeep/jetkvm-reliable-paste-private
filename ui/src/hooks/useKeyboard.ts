@@ -22,6 +22,7 @@ import {
   buildPasteMacroBatches,
   DEFAULT_LARGE_PASTE_POLICY,
   estimateBatchBytes,
+  estimatePasteDrainTimeoutMs,
   partitionBatchesByChunkChars,
   type KeyboardLayoutLike,
   type PasteChunkPlan,
@@ -928,32 +929,15 @@ export default function useKeyboard() {
               // ~2x its measured worst case, with a policy floor for
               // small chunks.
               //
-              // The derivation reads delayMs from ExecutePasteTextOptions
-              // and applies the SAME `|| 25` fallback that executeMacroRemote
-              // uses for MacroStep.delay. This matters for debug-mode pastes
-              // where the PasteModal delay input can be 0 (slider at 0) or
-              // NaN (empty input). Without the fallback, delayMs=0 would
-              // halve the derived budget and delayMs=NaN would collapse the
-              // whole expression to NaN, making Math.max short-circuit and
-              // the required drain fire almost immediately. The `|| 25`
-              // matches executeMacroRemote's step.delay || 25 at line 456
-              // of this file — same expression, same default, same source
-              // of truth.
-              const effectiveResetDelayMs = delayMs || 25;
-              const perMacroStepBackendMs = (5 + effectiveResetDelayMs) * 2;
-              const perBatchInterMacroMs = 400;
-              let chunkStepCount = 0;
-              for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
-                chunkStepCount += batchStats[b].stepCount;
-              }
-              const chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex;
-              const derivedDrainTimeoutMs =
-                chunkStepCount * perMacroStepBackendMs +
-                chunkNumBatches * perBatchInterMacroMs +
-                5000;
-              const chunkDrainTimeoutMs = Math.max(
+              // The shared derivation reads delayMs from
+              // ExecutePasteTextOptions and applies the SAME `|| 25`
+              // fallback that executeMacroRemote uses for MacroStep.delay.
+              // This matters for debug-mode pastes where the PasteModal
+              // delay input can be 0 (slider at 0) or NaN (empty input).
+              const chunkDrainTimeoutMs = estimatePasteDrainTimeoutMs(
+                batchStats.slice(chunk.batchStartIndex, chunk.batchEndIndex),
+                delayMs,
                 policy.chunkDrainTimeoutFloorMs,
-                derivedDrainTimeoutMs,
               );
 
               // Intermediate chunks (ci < chunks.length - 1) skip the
@@ -1138,7 +1122,12 @@ export default function useKeyboard() {
             chunkTotal: chunkTotalForProgress,
           });
 
-          const drainTimeoutMs = Math.max(finalSettleMs, batches.length * 1000);
+          // The final non-chunk drain must budget for all queued batches.
+          // A flat batches*1000ms timeout under-budgeted multi-batch
+          // Reliable product pastes: delivery completed, but the wait
+          // rejected before the final pasteDepth 1->0 state arrived, so
+          // PasteModal never persisted its `done:` trace.
+          const drainTimeoutMs = estimatePasteDrainTimeoutMs(batchStats, delayMs, finalSettleMs);
           await waitForPasteDrain(
             "bestEffort",
             drainTimeoutMs,
