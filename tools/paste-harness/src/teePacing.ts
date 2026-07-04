@@ -85,7 +85,7 @@ export function parseTeeLog(text: string): TeeRecord[] {
   const records: TeeRecord[] = [];
   const lines = text.split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]?.trim();
+    const line = stripLeadingRotationPadding(lines[index] ?? "");
     if (!line) {
       continue;
     }
@@ -100,6 +100,10 @@ export function parseTeeLog(text: string): TeeRecord[] {
     records.push(parseTeeRecord(parsed, index + 1));
   }
   return records;
+}
+
+function stripLeadingRotationPadding(rawLine: string): string {
+  return rawLine.replace(/^[\u0000\s]+/u, "");
 }
 
 function percentile(values: readonly number[], p: number): number {

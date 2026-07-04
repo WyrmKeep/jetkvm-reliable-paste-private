@@ -49,6 +49,8 @@ import {
 
 export { parseLedgerText };
 
+type SshCommandRunner = typeof runSshCommand;
+
 export type RunOutcome =
   | "completed"
   | "abort:preflight"
@@ -103,6 +105,7 @@ export interface OrchestratorDeps {
   getSinkState: () => Promise<SinkState>;
   readRecvSnapshot: () => Promise<Buffer>;
   fetchTeeLog: () => Promise<string>;
+  resetTeeLog: () => Promise<void>;
   classifyRun: (args: { recvSnapshot: Buffer; teeLog: string }) => Promise<ClassificationSummary>;
   runInjection: (args: InjectionRunArgs) => Promise<InjectionRunResult>;
 }
@@ -142,6 +145,13 @@ interface ArtifactSummary {
   [key: string]: unknown;
 }
 
+interface TeeArtifactPolicy {
+  teeEnabled: boolean;
+  fetchTeeLog: boolean;
+  markerFileName: string;
+  markerReason: string;
+}
+
 interface RunState {
   telemetry: TelemetrySummary;
   sink: SinkState;
@@ -159,6 +169,9 @@ interface RunState {
 const DEFAULT_WATCHDOG_MS = 30_000;
 const DEFAULT_FOCUS_POLL_MS = 1_000;
 const DEFAULT_SYNTHETIC_DURATION_MS = 250;
+const DEVICE_PRODUCTION_APP_PATH = "/userdata/jetkvm/bin/jetkvm_app";
+const DEVICE_TEE_LOG_PATH = "/tmp/jetkvm-hid-tee.log";
+const DEVICE_TEE_ROTATED_LOG_PATH = "/tmp/jetkvm-hid-tee.log.1";
 
 export async function runOrchestrator(
   options: OrchestratorOptions,
@@ -179,16 +192,61 @@ export async function runOrchestrator(
   let state: RunState | undefined;
   let outcome: RunOutcome = "failed";
   let failureReason = "";
+  let teeArtifacts = initialTeeArtifactPolicy(options.enableTee === true);
+  let teeResetFailure = "";
+
+  if (teeArtifacts.teeEnabled) {
+    try {
+      await runtimeDeps.resetTeeLog();
+      teeArtifacts = {
+        teeEnabled: true,
+        fetchTeeLog: true,
+        markerFileName: "tee.log",
+        markerReason: "",
+      };
+      await appendStep(writer, runId, "tee-reset", "ok", runtimeDeps.now, {
+        path: DEVICE_TEE_LOG_PATH,
+      });
+    } catch (error) {
+      teeResetFailure = `tee_reset_failed: ${error instanceof Error ? error.message : String(error)}`;
+      teeArtifacts = {
+        teeEnabled: true,
+        fetchTeeLog: false,
+        markerFileName: "tee.reset_failed",
+        markerReason: `${teeResetFailure}; device tee log intentionally not fetched`,
+      };
+      await appendStep(writer, runId, "tee-reset", "abort:preflight", runtimeDeps.now, {
+        reason: teeResetFailure,
+      });
+    }
+  }
 
   const telemetry = await safeTelemetry(runtimeDeps, options.forceChurnTelemetry === true);
   const sink = await safeSinkState(runtimeDeps);
   const deviceClockOffsetMs = await runtimeDeps.measureDeviceClockOffset().catch(() => 0);
   const devicePreflight = await runtimeDeps.getDevicePreflight(options.expectedBuildIdentity);
 
-  if (!devicePreflight.ok || devicePreflight.autoUpdateEnabled) {
+  if (teeResetFailure !== "") {
+    outcome = "abort:preflight";
+    failureReason = teeResetFailure;
+    const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps, teeArtifacts);
+    state = await makeState({
+      deps: runtimeDeps,
+      telemetry,
+      sink,
+      devicePreflight,
+      focus: emptyFocus("not_checked"),
+      focusEvents: [],
+      hidOutputReports: 0,
+      artifactSummary: artifacts.summary,
+      recvSnapshot: artifacts.recvSnapshot,
+      teeLog: artifacts.teeLog,
+    });
+    await appendStep(writer, runId, "preflight", outcome, runtimeDeps.now, { reason: failureReason });
+  } else if (!devicePreflight.ok || devicePreflight.autoUpdateEnabled) {
     outcome = "abort:preflight";
     failureReason = devicePreflight.reason ?? "device_preflight_failed";
-    const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps);
+    const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps, teeArtifacts);
     state = await makeState({
       deps: runtimeDeps,
       telemetry,
@@ -208,7 +266,7 @@ export async function runOrchestrator(
     if (!focus.ok) {
       outcome = "abort:focus";
       failureReason = focus.reason ?? "cannot_confirm_focus";
-      const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps);
+      const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps, teeArtifacts);
       state = await makeState({
         deps: runtimeDeps,
         telemetry,
@@ -225,7 +283,7 @@ export async function runOrchestrator(
     } else if (focus.capsLock) {
       outcome = "abort:preflight";
       failureReason = "caps_lock_on";
-      const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps);
+      const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps, teeArtifacts);
       state = await makeState({
         deps: runtimeDeps,
         telemetry,
@@ -252,7 +310,7 @@ export async function runOrchestrator(
         hid_output_reports: injection.hidOutputReports,
         reason: failureReason,
       });
-      const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps);
+      const artifacts = await collectArtifacts(artifactsDir, options.artifactsRoot, runId, runtimeDeps, teeArtifacts);
       state = await makeState({
         deps: runtimeDeps,
         telemetry,
@@ -287,6 +345,7 @@ export async function runOrchestrator(
         artifactsDir,
         options.artifactsRoot,
         runId,
+        teeArtifacts,
       )),
     deviceClockOffsetMs,
   });
@@ -311,6 +370,7 @@ export async function createRealDeps(options: OrchestratorOptions, env?: RigEnv)
     },
     readRecvSnapshot: async () => (await readRecvSnapshot(rigEnv)).bytes,
     fetchTeeLog: () => fetchTeeLog(rigEnv),
+    resetTeeLog: () => resetTeeLog(rigEnv),
     classifyRun: async ({ recvSnapshot }) => classifyRecvSnapshot(options.corpusText, recvSnapshot),
     runInjection: (args) => {
       if (options.injectionPath === "raw" || options.injectionPath === "hidtype") {
@@ -548,24 +608,48 @@ async function collectArtifacts(
   artifactsRoot: string,
   runId: string,
   deps: OrchestratorDeps,
+  teePolicy: TeeArtifactPolicy,
 ): Promise<{ summary: ArtifactSummary; recvSnapshot: Buffer; teeLog: string }> {
   await mkdir(artifactsDir, { recursive: true });
-  const [teeLog, recvSnapshot] = await Promise.all([
-    deps.fetchTeeLog().catch((error: unknown) => `tee fetch failed: ${error instanceof Error ? error.message : String(error)}\n`),
+  const [teeArtifact, recvSnapshot] = await Promise.all([
+    readTeeArtifact(runId, deps, teePolicy),
     deps.readRecvSnapshot().catch((error: unknown) =>
       Buffer.from(`recv snapshot failed: ${error instanceof Error ? error.message : String(error)}\n`, "utf8"),
     ),
   ]);
-  const teePath = join(artifactsDir, "tee.log");
+  const teePath = join(artifactsDir, teeArtifact.fileName);
   const recvPath = join(artifactsDir, "recv.txt");
-  await Promise.all([writeFile(teePath, teeLog, "utf8"), writeFile(recvPath, recvSnapshot)]);
+  await Promise.all([writeFile(teePath, teeArtifact.content, "utf8"), writeFile(recvPath, recvSnapshot)]);
   return {
     summary: {
       tee_log_path: normalizeRelativePath(relative(artifactsRoot, teePath), runId),
       recv_txt_path: normalizeRelativePath(relative(artifactsRoot, recvPath), runId),
+      tee_enabled: teePolicy.teeEnabled,
+      tee_fetch_skipped: !teePolicy.fetchTeeLog,
+      ...(teePolicy.fetchTeeLog ? {} : { tee_marker_reason: teePolicy.markerReason }),
     },
     recvSnapshot,
-    teeLog,
+    teeLog: teeArtifact.content,
+  };
+}
+
+async function readTeeArtifact(
+  runId: string,
+  deps: OrchestratorDeps,
+  teePolicy: TeeArtifactPolicy,
+): Promise<{ fileName: string; content: string }> {
+  if (!teePolicy.fetchTeeLog) {
+    return {
+      fileName: teePolicy.markerFileName,
+      content: `${teePolicy.teeEnabled ? "HID tee unavailable" : "HID tee disabled"} for run_id=${runId}; ${teePolicy.markerReason}\n`,
+    };
+  }
+
+  return {
+    fileName: "tee.log",
+    content: await deps
+      .fetchTeeLog()
+      .catch((error: unknown) => `tee fetch failed: ${error instanceof Error ? error.message : String(error)}\n`),
   };
 }
 
@@ -608,8 +692,9 @@ async function fallbackState(
   artifactsDir: string,
   artifactsRoot: string,
   runId: string,
+  teePolicy: TeeArtifactPolicy,
 ): Promise<RunState> {
-  const artifacts = await collectArtifacts(artifactsDir, artifactsRoot, runId, deps);
+  const artifacts = await collectArtifacts(artifactsDir, artifactsRoot, runId, deps, teePolicy);
   return makeState({
     deps,
     telemetry,
@@ -735,6 +820,24 @@ function emptyFocus(reason: string): FocusResult {
   return { ok: false, foregroundTitle: "", capsLock: false, reason, events: [] };
 }
 
+function initialTeeArtifactPolicy(teeEnabled: boolean): TeeArtifactPolicy {
+  if (teeEnabled) {
+    return {
+      teeEnabled: true,
+      fetchTeeLog: false,
+      markerFileName: "tee.reset_not_completed",
+      markerReason: "tee reset did not complete; device tee log intentionally not fetched",
+    };
+  }
+
+  return {
+    teeEnabled: false,
+    fetchTeeLog: false,
+    markerFileName: "tee.disabled",
+    markerReason: "device tee log intentionally not fetched because tee_enabled=false",
+  };
+}
+
 function normalizeRelativePath(relativePath: string, runId: string): string {
   const normalized = relativePath.split("\\").join("/");
   return normalized.startsWith(runId) ? `artifacts/${normalized}` : normalized;
@@ -750,17 +853,12 @@ function newRunId(): string {
   return `${stamp}-${suffix}`;
 }
 
-async function getDevicePreflight(
+export async function getDevicePreflight(
   env: RigEnv,
   expectedBuildIdentity?: string,
+  sshRunner: SshCommandRunner = runSshCommand,
 ): Promise<DevicePreflightResult> {
-  const command = [
-    "printf 'hostname='; hostname",
-    "printf '\\napp_sha256='; sha256sum /userdata/jetkvm/bin/jetkvm_app 2>/dev/null | awk '{print $1}'",
-    "printf '\\nauto_update_enabled='; grep -q '\"auto_update_enabled\": false' /userdata/kvm_config.json && echo false || echo true",
-    "printf 'keyboard_layout='; sed -n 's/.*\"keyboard_layout\": \"\\([^\"]*\\)\".*/\\1/p' /userdata/kvm_config.json | head -1",
-  ].join("; ");
-  const result = await runSshCommand(kvmTarget(env.KVM_PRIMARY), command, { timeoutMs: 10_000 });
+  const result = await sshRunner(kvmTarget(env.KVM_PRIMARY), buildDevicePreflightCommand(), { timeoutMs: 10_000 });
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -771,8 +869,69 @@ async function getDevicePreflight(
       reason: result.stderr || result.stdout || "ssh_failed",
     };
   }
-  const fields = Object.fromEntries(
-    result.stdout
+  const fields = parseKeyValueOutput(result.stdout);
+  const hostname = fields.hostname ?? env.KVM_PRIMARY;
+  const productionHash = fields.production_app_sha256 ?? fields.app_sha256 ?? "";
+  const runningHash = fields.running_app_sha256 && fields.running_app_sha256.length > 0
+    ? fields.running_app_sha256
+    : productionHash;
+  const runningBinaryPath = fields.running_exe && fields.running_exe.length > 0
+    ? fields.running_exe
+    : DEVICE_PRODUCTION_APP_PATH;
+  const productionBuildIdentity = buildDeviceBuildIdentity(hostname, productionHash);
+  const runningBuildIdentity = buildDeviceBuildIdentity(hostname, runningHash);
+  const buildIdentity = runningBuildIdentity;
+  const autoUpdateEnabled = fields.auto_update_enabled !== "false";
+  const deviceLayout = fields.keyboard_layout ?? "";
+  const expected = expectedBuildIdentity ?? buildIdentity;
+  const identityMatches = expectedBuildIdentity === undefined || buildIdentity.includes(expectedBuildIdentity);
+  const ok = runningHash.length > 0 && !autoUpdateEnabled && identityMatches;
+  const productionRunningMismatch =
+    productionHash.length > 0 && runningHash.length > 0 && productionHash !== runningHash;
+  const preflight: DevicePreflightResult = {
+    ok,
+    buildIdentity,
+    expectedBuildIdentity: expected,
+    autoUpdateEnabled,
+    deviceLayout,
+    productionBuildIdentity,
+    runningBuildIdentity,
+    productionBinaryPath: DEVICE_PRODUCTION_APP_PATH,
+    runningBinaryPath,
+    productionBuildSha256: productionHash,
+    runningBuildSha256: runningHash,
+    buildIdentitySource: "running_binary",
+    productionRunningMismatch,
+    raw: fields,
+  };
+  if (fields.running_pid !== undefined && fields.running_pid.length > 0) {
+    preflight.runningPid = fields.running_pid;
+  }
+  if (!ok) {
+    preflight.reason = autoUpdateEnabled ? "auto_update_enabled=true" : "build_identity_mismatch";
+  }
+  return preflight;
+}
+
+function buildDevicePreflightCommand(): string {
+  return [
+    "running_pid=\"$(pidof jetkvm_app_debug 2>/dev/null | awk '{print $1}')\"",
+    "if [ -z \"$running_pid\" ]; then running_pid=\"$(pidof jetkvm_app 2>/dev/null | awk '{print $1}')\"; fi",
+    "running_exe=\"\"",
+    "if [ -n \"$running_pid\" ]; then running_exe=\"$(readlink -f \"/proc/$running_pid/exe\" 2>/dev/null || true)\"; fi",
+    "printf 'hostname='; hostname",
+    `printf '\\nproduction_app_sha256='; sha256sum ${DEVICE_PRODUCTION_APP_PATH} 2>/dev/null | awk '{print $1}'`,
+    "printf '\\nrunning_pid=%s' \"$running_pid\"",
+    "printf '\\nrunning_exe=%s' \"$running_exe\"",
+    "printf '\\nrunning_app_sha256='; if [ -n \"$running_exe\" ]; then sha256sum \"$running_exe\" 2>/dev/null | awk '{print $1}'; fi",
+    "printf '\\nauto_update_enabled='; grep -q '\"auto_update_enabled\": false' /userdata/kvm_config.json && echo false || echo true",
+    "printf 'keyboard_layout='; sed -n 's/.*\"keyboard_layout\": \"\\([^\"]*\\)\".*/\\1/p' /userdata/kvm_config.json | head -1",
+  ].join("; ");
+}
+
+function parseKeyValueOutput(stdout: string): Record<string, string> {
+  return Object.fromEntries(
+    stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.includes("="))
@@ -781,25 +940,10 @@ async function getDevicePreflight(
         return [line.slice(0, equals), line.slice(equals + 1)];
       }),
   );
-  const hash = fields.app_sha256 ?? "";
-  const buildIdentity = `${fields.hostname ?? env.KVM_PRIMARY}:${hash.slice(0, 12)}`;
-  const autoUpdateEnabled = fields.auto_update_enabled !== "false";
-  const deviceLayout = fields.keyboard_layout ?? "";
-  const expected = expectedBuildIdentity ?? buildIdentity;
-  const identityMatches = expectedBuildIdentity === undefined || buildIdentity.includes(expectedBuildIdentity);
-  const ok = buildIdentity.length > 1 && !autoUpdateEnabled && identityMatches;
-  const preflight: DevicePreflightResult = {
-    ok,
-    buildIdentity,
-    expectedBuildIdentity: expected,
-    autoUpdateEnabled,
-    deviceLayout,
-    raw: fields,
-  };
-  if (!ok) {
-    preflight.reason = autoUpdateEnabled ? "auto_update_enabled=true" : "build_identity_mismatch";
-  }
-  return preflight;
+}
+
+function buildDeviceBuildIdentity(hostname: string, hash: string): string {
+  return `${hostname}:${hash.slice(0, 12)}`;
 }
 
 async function measureDeviceClockOffset(env: RigEnv): Promise<number> {
@@ -813,10 +957,21 @@ async function measureDeviceClockOffset(env: RigEnv): Promise<number> {
   return calculateClockOffsetMs({ beforeNs, deviceNs, afterNs });
 }
 
-async function fetchTeeLog(env: RigEnv): Promise<string> {
+export async function resetTeeLog(
+  env: RigEnv,
+  sshRunner: SshCommandRunner = runSshCommand,
+): Promise<void> {
+  const command = `rm -f ${DEVICE_TEE_ROTATED_LOG_PATH}; : > ${DEVICE_TEE_LOG_PATH}`;
+  const result = await sshRunner(kvmTarget(env.KVM_PRIMARY), command, { timeoutMs: 10_000 });
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || "ssh_failed");
+  }
+}
+
+export async function fetchTeeLog(env: RigEnv, sshRunner: SshCommandRunner = runSshCommand): Promise<string> {
   const command =
-    'for f in /tmp/jetkvm-hid-tee.log.1 /tmp/jetkvm-hid-tee.log; do [ -f "$f" ] && cat "$f"; done';
-  const result = await runSshCommand(kvmTarget(env.KVM_PRIMARY), command, { timeoutMs: 10_000 });
+    `for f in ${DEVICE_TEE_ROTATED_LOG_PATH} ${DEVICE_TEE_LOG_PATH}; do [ -f "$f" ] && cat "$f"; done`;
+  const result = await sshRunner(kvmTarget(env.KVM_PRIMARY), command, { timeoutMs: 10_000 });
   if (result.exitCode !== 0) {
     return "";
   }

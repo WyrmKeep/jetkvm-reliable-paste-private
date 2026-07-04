@@ -8,7 +8,9 @@ import { emptyErrorVector } from "./classifier.js";
 import { renderDashboardHtml } from "./dashboard.js";
 import {
   calculateClockOffsetMs,
+  getDevicePreflight,
   parseLedgerText,
+  resetTeeLog,
   runOrchestrator,
   type FocusResult,
   type OrchestratorDeps,
@@ -72,6 +74,7 @@ function makeDeps(overrides: Partial<OrchestratorDeps> = {}): OrchestratorDeps {
     getSinkState: async () => ({ processCount: 1, maxWorkingSetBytes: 42_000_000 }),
     readRecvSnapshot: async () => Buffer.from("recv snapshot", "utf8"),
     fetchTeeLog: async () => "tee snapshot",
+    resetTeeLog: async () => undefined,
     classifyRun: async () => ({
       per_class_error_vector: emptyErrorVector(),
       garble_events_pre_repair: 0,
@@ -180,8 +183,8 @@ describe("run orchestrator", () => {
 
       expect(result.outcome).toBe("abort:focus");
       expect(injectionStarted).toBe(false);
-      expect(await readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "tee.log"), "utf8")).toBe(
-        "tee snapshot",
+      expect(await readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "tee.disabled"), "utf8")).toContain(
+        "HID tee disabled",
       );
       expect(JSON.stringify(parseLedgerText(await readFile(baseOptions(dir).ledgerPath, "utf8")).records)).toContain(
         '"hid_output_reports":0',
@@ -278,8 +281,8 @@ describe("run orchestrator", () => {
       );
 
       expect(result.outcome).toBe("completed");
-      expect(await readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "tee.log"), "utf8")).toBe(
-        "tee snapshot",
+      expect(await readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "tee.disabled"), "utf8")).toContain(
+        "HID tee disabled",
       );
       expect(await readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "recv.txt"))).toEqual(
         Buffer.from("recv snapshot", "utf8"),
@@ -287,10 +290,157 @@ describe("run orchestrator", () => {
       const parsed = parseLedgerText(await readFile(baseOptions(dir).ledgerPath, "utf8"));
       const html = renderDashboardHtml(parsed.records);
       expect(JSON.stringify(parsed.records)).toContain('"excluded_from_thresholds":true');
-      expect(html).toContain("artifacts/run-unit/tee.log");
+      expect(html).toContain("artifacts/run-unit/tee.disabled");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("skips device tee fetch when tee is disabled and writes a disabled marker", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paste-orch-tee-disabled-"));
+    let fetchCalls = 0;
+    let resetCalls = 0;
+    try {
+      const result = await runOrchestrator(
+        baseOptions(dir),
+        makeDeps({
+          fetchTeeLog: async () => {
+            fetchCalls += 1;
+            return "stale tee that must not be copied";
+          },
+          resetTeeLog: async () => {
+            resetCalls += 1;
+          },
+        }),
+      );
+
+      expect(result.outcome).toBe("completed");
+      expect(fetchCalls).toBe(0);
+      expect(resetCalls).toBe(0);
+      const markerPath = join(baseOptions(dir).artifactsRoot, "run-unit", "tee.disabled");
+      expect(await readFile(markerPath, "utf8")).toContain("device tee log intentionally not fetched");
+      await expect(readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "tee.log"), "utf8")).rejects.toThrow();
+      const parsed = parseLedgerText(await readFile(baseOptions(dir).ledgerPath, "utf8"));
+      const run = parsed.records.find(record => record.record_type === "run");
+      expect(run).toMatchObject({
+        artifacts: {
+          tee_enabled: false,
+          tee_log_path: "artifacts/run-unit/tee.disabled",
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("resets device tee before injection and fetches tee log only for tee-enabled runs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "paste-orch-tee-enabled-"));
+    const events: string[] = [];
+    try {
+      const result = await runOrchestrator(
+        { ...baseOptions(dir), enableTee: true },
+        makeDeps({
+          resetTeeLog: async () => {
+            events.push("reset");
+          },
+          runInjection: async ({ onProgress }) => {
+            events.push("inject");
+            onProgress(1);
+            return { hidOutputReports: 2 };
+          },
+          fetchTeeLog: async () => {
+            events.push("fetch");
+            return "fresh tee snapshot";
+          },
+        }),
+      );
+
+      expect(result.outcome).toBe("completed");
+      expect(events).toEqual(["reset", "inject", "fetch"]);
+      expect(await readFile(join(baseOptions(dir).artifactsRoot, "run-unit", "tee.log"), "utf8")).toBe(
+        "fresh tee snapshot",
+      );
+      const parsed = parseLedgerText(await readFile(baseOptions(dir).ledgerPath, "utf8"));
+      const run = parsed.records.find(record => record.record_type === "run");
+      expect(run).toMatchObject({
+        artifacts: {
+          tee_enabled: true,
+          tee_log_path: "artifacts/run-unit/tee.log",
+        },
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("preflight attributes build identity to the running binary when it differs from production", async () => {
+    const productionHash = `${"a".repeat(64)}`;
+    const runningHash = `${"b".repeat(64)}`;
+    const preflight = await getDevicePreflight(
+      {
+        KVM_PRIMARY: "192.0.2.10",
+        KVM_SECONDARY: "192.0.2.11",
+        WIN_TARGET: "192.0.2.12",
+        WIN_RECV: "C:\\recv.txt",
+      },
+      undefined,
+      async () => ({
+        command: "ssh",
+        args: [],
+        stdout: [
+          "hostname=worklaptopjetkvm",
+          `production_app_sha256=${productionHash}`,
+          "running_pid=4242",
+          "running_exe=/userdata/jetkvm/bin/jetkvm_app_debug",
+          `running_app_sha256=${runningHash}`,
+          "auto_update_enabled=false",
+          "keyboard_layout=en-UK",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      }),
+    );
+
+    expect(preflight.ok).toBe(true);
+    expect(preflight.buildIdentity).toBe("worklaptopjetkvm:bbbbbbbbbbbb");
+    expect(preflight.runningBuildIdentity).toBe("worklaptopjetkvm:bbbbbbbbbbbb");
+    expect(preflight.productionBuildIdentity).toBe("worklaptopjetkvm:aaaaaaaaaaaa");
+    expect(preflight.runningBinaryPath).toBe("/userdata/jetkvm/bin/jetkvm_app_debug");
+    expect(preflight.productionBinaryPath).toBe("/userdata/jetkvm/bin/jetkvm_app");
+    expect(preflight.productionRunningMismatch).toBe(true);
+  });
+
+  test("resetTeeLog truncates the current device tee and removes the rotated tee through ssh", async () => {
+    let observedTarget = "";
+    let observedCommand = "";
+
+    await resetTeeLog(
+      {
+        KVM_PRIMARY: "192.0.2.10",
+        KVM_SECONDARY: "192.0.2.11",
+        WIN_TARGET: "192.0.2.12",
+        WIN_RECV: "C:\\recv.txt",
+      },
+      async (target, command) => {
+        observedTarget = target;
+        observedCommand = command;
+        return {
+          command: "ssh",
+          args: [],
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+        };
+      },
+    );
+
+    expect(observedTarget).toBe("root@192.0.2.10");
+    expect(observedCommand).toContain(": > /tmp/jetkvm-hid-tee.log");
+    expect(observedCommand).toContain("rm -f /tmp/jetkvm-hid-tee.log.1");
   });
 
   test("records product path completion and verification details on run rows", async () => {

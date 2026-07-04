@@ -52,4 +52,16 @@ describe("tee pacing analyzer", () => {
 
     expect(() => parseTeeLog(text)).toThrow(/keys must contain 6 bytes/);
   });
+
+  test("skips NUL-padded rotation prefixes before JSON tee records", () => {
+    const text = `\u0000\u0000\n\u0000\u0000${teeLine(0)}\n${teeLine(11)}`;
+
+    const records = parseTeeLog(text);
+    const result = analyzeTeePacing(text, { expectMs: 11 });
+
+    expect(records).toHaveLength(2);
+    expect(records[0]?.monotonic_ns).toBe(0);
+    expect(result.ok).toBe(true);
+    expect(result.reportCount).toBe(2);
+  });
 });

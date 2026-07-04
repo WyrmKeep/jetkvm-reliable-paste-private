@@ -11,6 +11,8 @@ static/*
 device-tests.tar.gz
 node_modules
 tools/paste-harness/hidtype/hidtype
+tools/paste-harness/artifacts/
+tools/paste-harness/ledger.jsonl
 
 # generated during the build process
 #internal/native/include
