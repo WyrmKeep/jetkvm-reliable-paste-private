@@ -153,7 +153,7 @@ export async function resetNotepad(env?: RigEnv): Promise<RigFocusResult> {
     { timeoutMs: 10_000 },
   );
   return parsePowerShellJson<RigFocusResult>(
-    await runScheduledTaskAndReadResult(windowsTarget(rigEnv), RESET_TASK_NAME, "reset-notepad-result.json", 15_000),
+    await runScheduledTaskAndReadResult(windowsTarget(rigEnv), RESET_TASK_NAME, "reset-notepad-result.json", 45_000),
   );
 }
 
@@ -273,9 +273,24 @@ function dotSourceScript(functionName: string, resultFileName: string): string {
   const layoutComment = functionName === "Invoke-PasteRigPinUkLayout" ? "# Pins Preload to 00000809 only\n" : "";
   return `
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\\common.ps1"
-${layoutComment}
-${functionName} -ResultPath "$PSScriptRoot\\${resultFileName}"
+$resultPath = "$PSScriptRoot\\${resultFileName}"
+try {
+  . "$PSScriptRoot\\common.ps1"
+${layoutComment
+  .split("\n")
+  .filter((line) => line.length > 0)
+  .map((line) => `  ${line}`)
+  .join("\n")}
+  ${functionName} -ResultPath $resultPath
+} catch {
+  [PSCustomObject]@{
+    ok = $false
+    reason = $_.Exception.Message
+    line = $_.InvocationInfo.ScriptLineNumber
+    position = $_.InvocationInfo.PositionMessage
+  } | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath $resultPath -Encoding UTF8
+  throw
+}
 `;
 }
 
@@ -371,6 +386,26 @@ function Get-PasteRigSinkState {
   [PSCustomObject]@{ processCount = $windows.Count; maxWorkingSetBytes = [int64]$maxWs }
 }
 
+function Start-PasteRigNotepad {
+  try {
+    Start-Process -FilePath 'explorer.exe' -ArgumentList $RecvPath
+    Start-Sleep -Milliseconds 750
+    if ($null -ne (Find-PasteRigRecvNotepadWindow)) { return }
+  } catch {}
+
+  $notepadExe = 'notepad.exe'
+  try {
+    $package = Get-AppxPackage -Name Microsoft.WindowsNotepad -ErrorAction SilentlyContinue
+    if ($null -ne $package) {
+      $packagedExe = Join-Path $package.InstallLocation 'Notepad\\Notepad.exe'
+      if (Test-Path -LiteralPath $packagedExe) {
+        $notepadExe = $packagedExe
+      }
+    }
+  } catch {}
+  Start-Process -FilePath $notepadExe -ArgumentList $RecvPath
+}
+
 function Invoke-PasteRigFocusGuard {
   param([Parameter(Mandatory=$true)] [string] $ResultPath)
   $events = New-Object System.Collections.Generic.List[object]
@@ -409,13 +444,155 @@ function Invoke-PasteRigForegroundProbe {
   })
 }
 
+function Get-PasteRigToggleState {
+  param($Element)
+  if ($null -eq $Element) { return $null }
+  try { return $Element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Current.ToggleState.ToString() } catch { return $null }
+}
+
+function Find-PasteRigAutomationControl {
+  param(
+    [Parameter(Mandatory=$true)] $Root,
+    [string] $Name = '',
+    [string] $AutomationId = '',
+    [bool] $RequireToggle = $false
+  )
+  $all = $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+  for ($i = 0; $i -lt $all.Count; $i++) {
+    $element = $all.Item($i)
+    $nameOk = ($Name.Length -eq 0 -or $element.Current.Name -eq $Name)
+    $idOk = ($AutomationId.Length -eq 0 -or $element.Current.AutomationId -eq $AutomationId)
+    if (-not ($nameOk -and $idOk)) { continue }
+    if ($RequireToggle) {
+      try {
+        if (-not [bool]$element.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsTogglePatternAvailableProperty)) { continue }
+      } catch { continue }
+    }
+    return $element
+  }
+  return $null
+}
+
+function Invoke-PasteRigAutomationControl {
+  param($Element)
+  if ($null -eq $Element) { throw 'automation control not found' }
+  try {
+    $Element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    return
+  } catch {}
+  try {
+    $Element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    return
+  } catch {}
+  throw "automation control '$($Element.Current.Name)' supports neither Invoke nor Toggle"
+}
+
+function Set-PasteRigToggleOff {
+  param($Element, [Parameter(Mandatory=$true)] [string] $Label)
+  if ($null -eq $Element) {
+    return [PSCustomObject]@{ label = $Label; found = $false; before = $null; after = $null; changed = $false }
+  }
+  $before = Get-PasteRigToggleState $Element
+  $changed = $false
+  if ($before -eq 'On' -or $before -eq 'Indeterminate') {
+    $Element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    Start-Sleep -Milliseconds 500
+    $changed = $true
+  }
+  $after = Get-PasteRigToggleState $Element
+  if ($after -ne 'Off' -and $before -ne 'Off') {
+    $Element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+    Start-Sleep -Milliseconds 500
+    $after = Get-PasteRigToggleState $Element
+    $changed = $true
+  }
+  return [PSCustomObject]@{ label = $Label; found = $true; before = $before; after = $after; changed = $changed }
+}
+
+function Set-PasteRigNotepadSpellingOff {
+  $statusPath = Join-Path $PSScriptRoot 'notepad-spelling-status.json'
+  $settingsDat = Join-Path $env:LOCALAPPDATA 'Packages\\Microsoft.WindowsNotepad_8wekyb3d8bbwe\\Settings\\settings.dat'
+  $backupPath = Join-Path $PSScriptRoot 'notepad-settings-before-spelling-off.dat'
+  if ((Test-Path -LiteralPath $settingsDat) -and -not (Test-Path -LiteralPath $backupPath)) {
+    Copy-Item -LiteralPath $settingsDat -Destination $backupPath -Force
+  }
+
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+
+  $probeProcess = $null
+  try {
+    Start-PasteRigNotepad
+    $probeWindow = $null
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+      Start-Sleep -Milliseconds 250
+      $probeWindow = Find-PasteRigRecvNotepadWindow
+      if ($null -ne $probeWindow) { break }
+    }
+    if ($null -eq $probeWindow) {
+      throw 'notepad settings probe window not found'
+    }
+    $probeProcess = Get-Process -Id $probeWindow.processId -ErrorAction Stop
+    $root = [System.Windows.Automation.AutomationElement]::FromHandle($probeWindow.handle)
+    $settings = Find-PasteRigAutomationControl -Root $root -Name 'Settings' -AutomationId 'SettingsButton'
+    Invoke-PasteRigAutomationControl $settings
+    Start-Sleep -Seconds 2
+    $settingsRoot = [System.Windows.Automation.AutomationElement]::FromHandle($probeWindow.handle)
+    $spell = Find-PasteRigAutomationControl -Root $settingsRoot -Name 'Spell check' -AutomationId 'SpellCheckSwitch' -RequireToggle $true
+    $autocorrect = Find-PasteRigAutomationControl -Root $settingsRoot -Name 'Autocorrect' -RequireToggle $true
+    $before = @(
+      [PSCustomObject]@{ label = 'Spell check'; state = (Get-PasteRigToggleState $spell); found = ($null -ne $spell) },
+      [PSCustomObject]@{ label = 'Autocorrect'; state = (Get-PasteRigToggleState $autocorrect); found = ($null -ne $autocorrect) }
+    )
+    $actions = @()
+    $actions += Set-PasteRigToggleOff $autocorrect 'Autocorrect'
+    $settingsRoot = [System.Windows.Automation.AutomationElement]::FromHandle($probeWindow.handle)
+    $spell = Find-PasteRigAutomationControl -Root $settingsRoot -Name 'Spell check' -AutomationId 'SpellCheckSwitch' -RequireToggle $true
+    $actions += Set-PasteRigToggleOff $spell 'Spell check'
+    Start-Sleep -Milliseconds 500
+    $settingsRoot = [System.Windows.Automation.AutomationElement]::FromHandle($probeWindow.handle)
+    $spellAfter = Find-PasteRigAutomationControl -Root $settingsRoot -Name 'Spell check' -AutomationId 'SpellCheckSwitch' -RequireToggle $true
+    $autocorrectAfter = Find-PasteRigAutomationControl -Root $settingsRoot -Name 'Autocorrect' -RequireToggle $true
+    $spellAfterState = Get-PasteRigToggleState $spellAfter
+    $autocorrectAfterState = Get-PasteRigToggleState $autocorrectAfter
+    $after = @(
+      [PSCustomObject]@{ label = 'Spell check'; state = $spellAfterState; found = ($null -ne $spellAfter) },
+      [PSCustomObject]@{ label = 'Autocorrect'; state = $autocorrectAfterState; found = ($null -ne $autocorrectAfter) }
+    )
+  } finally {
+    if ($null -ne $probeProcess) {
+      Get-Process -Id $probeProcess.Id -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 500
+    }
+  }
+
+  $spellOk = ($null -eq $spellAfter) -or ($spellAfterState -eq 'Off')
+  $autocorrectOk = ($null -eq $autocorrectAfter) -or ($autocorrectAfterState -eq 'Off')
+  $status = [PSCustomObject]@{
+    ok = ($spellOk -and $autocorrectOk)
+    checkedAt = (Get-PasteRigNow)
+    skipped = (($null -eq $spellAfter) -and ($null -eq $autocorrectAfter))
+    settingsDat = $settingsDat
+    backupPath = $(if (Test-Path -LiteralPath $backupPath) { $backupPath } else { '' })
+    before = $before
+    actions = $actions
+    after = $after
+  }
+  ConvertTo-PasteRigJson -Path $statusPath -Object $status
+  if (-not $status.ok) {
+    throw "failed to disable Notepad spelling transforms"
+  }
+  return $status
+}
+
 function Invoke-PasteRigResetNotepad {
   param([Parameter(Mandatory=$true)] [string] $ResultPath)
   Get-Process notepad -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   $parent = Split-Path -Parent $RecvPath
   if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
   [IO.File]::WriteAllText($RecvPath, '', [Text.UTF8Encoding]::new($false))
-  Start-Process -FilePath 'notepad.exe' -ArgumentList $RecvPath
+  Set-PasteRigNotepadSpellingOff | Out-Null
+  Start-PasteRigNotepad
   Start-Sleep -Seconds 1
   Invoke-PasteRigFocusGuard -ResultPath $ResultPath
 }

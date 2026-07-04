@@ -30,6 +30,20 @@ describe("NucBox rig control helpers", () => {
     expect(scripts["read-recv.ps1"]).toContain("ToBase64String");
   });
 
+  test("reset script keeps Notepad spelling transforms disabled", () => {
+    const scripts = makeNucBoxRigScripts();
+    const common = scripts["common.ps1"];
+
+    expect(common).toContain("Set-PasteRigNotepadSpellingOff");
+    expect(common).toContain("Packages\\Microsoft.WindowsNotepad_8wekyb3d8bbwe\\Settings\\settings.dat");
+    expect(common).toContain("UIAutomationClient");
+    expect(common).toContain("SpellCheckSwitch");
+    expect(common).toContain("Autocorrect");
+    expect(common).toContain("notepad-spelling-status.json");
+    expect(common).toContain("checkedAt = (Get-PasteRigNow)");
+    expect(common).not.toContain("return $existingStatus");
+  });
+
   test("registers persistent interactive scheduled tasks as Robert", () => {
     const script = buildScheduledTaskRegistrationScript();
 
