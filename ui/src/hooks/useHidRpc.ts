@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { Logger } from "tslog";
 
 import { useRTCStore } from "@hooks/stores";
+import { sendHidRpcMessage, type HidRpcSendMessageParams } from "@/utils/hidRpcTransport";
 
 import {
   CancelKeyboardMacroReportMessage,
@@ -19,12 +20,6 @@ import {
 } from "./hidRpc";
 
 const KEEPALIVE_MESSAGE = new KeypressKeepAliveMessage();
-
-interface sendMessageParams {
-  ignoreHandshakeState?: boolean;
-  useUnreliableChannel?: boolean;
-  requireOrdered?: boolean;
-}
 
 const HANDSHAKE_TIMEOUT = 30 * 1000; // 30 seconds
 const HANDSHAKE_MAX_ATTEMPTS = 10;
@@ -198,30 +193,24 @@ export function useHidRpc(
   const sendMessage = useCallback(
     (
       message: RpcMessage,
-      { ignoreHandshakeState, useUnreliableChannel, requireOrdered = true }: sendMessageParams = {},
+      params: HidRpcSendMessageParams = {},
     ) => {
-      if (hidRpcDisabled) return;
-      if (rpcHidChannel?.readyState !== "open") return;
-      if (!rpcHidReady && !ignoreHandshakeState) return;
-
-      let data: Uint8Array | undefined;
-      try {
-        data = message.marshal();
-      } catch (e) {
-        logger.error("Failed to marshal message", e);
-      }
-      if (!data) return;
-
-      if (useUnreliableChannel) {
-        if (requireOrdered && rpcHidUnreliableReady) {
-          rpcHidUnreliableChannel?.send(data as unknown as ArrayBuffer);
-        } else if (!requireOrdered && rpcHidUnreliableNonOrderedReady) {
-          rpcHidUnreliableNonOrderedChannel?.send(data as unknown as ArrayBuffer);
-        }
-        return;
-      }
-
-      rpcHidChannel?.send(data as unknown as ArrayBuffer);
+      sendHidRpcMessage(
+        message,
+        {
+          reliable: rpcHidChannel,
+          unreliableOrdered: rpcHidUnreliableChannel,
+          unreliableNonOrdered: rpcHidUnreliableNonOrderedChannel,
+        },
+        {
+          hidRpcDisabled,
+          handshakeReady: rpcHidReady,
+          unreliableOrderedReady: rpcHidUnreliableReady,
+          unreliableNonOrderedReady: rpcHidUnreliableNonOrderedReady,
+        },
+        params,
+        logger,
+      );
     },
     [
       rpcHidChannel,

@@ -17,6 +17,7 @@ import { useHidRpc } from "@/hooks/useHidRpc";
 import { JsonRpcResponse, useJsonRpc } from "@/hooks/useJsonRpc";
 import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
+import { createKeepaliveScheduler, type KeepaliveScheduler } from "@/utils/keepaliveScheduler";
 import {
   buildPasteMacroBatches,
   DEFAULT_LARGE_PASTE_POLICY,
@@ -31,6 +32,8 @@ const MACRO_RESET_KEYBOARD_STATE = {
   modifier: 0,
   delay: 0,
 };
+
+const KEYPRESS_KEEPALIVE_INTERVAL_MS = 50;
 
 // Module-level guards for the Phase 2 chunk-aware paste path.
 //
@@ -376,8 +379,8 @@ export default function useKeyboard() {
     abortController.current = ac;
   }, []);
 
-  // Keepalive timer management
-  const keepAliveTimerRef = useRef<number | null>(null);
+  const keepAliveSchedulerRef = useRef<KeepaliveScheduler | null>(null);
+  const sendKeypressKeepAliveRef = useRef<() => void>(() => undefined);
 
   // INTRODUCTION: The earlier version of the JetKVM device shipped with all keyboard state
   // being tracked on the browser/client-side. When adding the keyPressReport API to the
@@ -426,6 +429,14 @@ export default function useKeyboard() {
         break;
     }
   });
+  sendKeypressKeepAliveRef.current = sendKeypressKeepAliveHidRpc;
+
+  if (!keepAliveSchedulerRef.current) {
+    keepAliveSchedulerRef.current = createKeepaliveScheduler({
+      intervalMs: KEYPRESS_KEEPALIVE_INTERVAL_MS,
+      onTick: () => sendKeypressKeepAliveRef.current(),
+    });
+  }
 
   const handleLegacyKeyboardReport = useCallback(
     async (keys: number[], modifier: number) => {
@@ -459,23 +470,9 @@ export default function useKeyboard() {
     [send],
   );
 
-  const KEEPALIVE_INTERVAL = 50;
-
   const cancelKeepAlive = useCallback(() => {
-    if (keepAliveTimerRef.current) {
-      clearInterval(keepAliveTimerRef.current);
-      keepAliveTimerRef.current = null;
-    }
+    keepAliveSchedulerRef.current?.reset();
   }, []);
-
-  const scheduleKeepAlive = useCallback(() => {
-    // Clears existing keepalive timer
-    cancelKeepAlive();
-
-    keepAliveTimerRef.current = setInterval(() => {
-      sendKeypressKeepAliveHidRpc();
-    }, KEEPALIVE_INTERVAL);
-  }, [cancelKeepAlive, sendKeypressKeepAliveHidRpc]);
 
   // resetKeyboardState is used to reset the keyboard state to no keys pressed and no modifiers.
   // This is useful for macros, in case of client-side rollover, and when the browser loses focus
@@ -557,15 +554,10 @@ export default function useKeyboard() {
 
   const sendKeypress = useCallback(
     (key: number, press: boolean) => {
-      cancelKeepAlive();
-
       sendKeypressEventHidRpc(key, press);
-
-      if (press) {
-        scheduleKeepAlive();
-      }
+      keepAliveSchedulerRef.current?.handleKeyChange(key, press);
     },
-    [sendKeypressEventHidRpc, scheduleKeepAlive, cancelKeepAlive],
+    [sendKeypressEventHidRpc],
   );
 
   // handleKeyPress is used to handle a key press or release event.
