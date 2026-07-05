@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Paste harness dashboard</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.4}
+body{margin:2rem;max-width:1200px}
+table{border-collapse:collapse;width:100%;margin:1rem 0}
+th,td{border:1px solid #999;padding:.35rem .5rem;text-align:left;vertical-align:top}
+th{background:#eee;color:#111}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.warning{border:1px solid #b7791f;background:#fff7db;color:#4a2a00;padding:.5rem;margin:.5rem 0}
+.muted{opacity:.75}
+</style>
+</head>
+<body>
+<h1>Paste harness dashboard</h1>
+<p class="muted">Deterministic rendering from ledger rows only. No wall-clock or random values are embedded.</p>
+
+<h2>Summary</h2>
+<table>
+<tbody>
+<tr><th>Runs</th><td>1</td></tr>
+<tr><th>Steps</th><td>0</td></tr>
+<tr><th>Annotations</th><td>0</td></tr>
+<tr><th>Threshold-eligible run duration</th><td>72807 ms</td></tr>
+<tr><th>Excluded from thresholds</th><td>0</td></tr>
+<tr><th>Threshold-eligible runs</th><td>1</td></tr>
+</tbody>
+</table>
+<h2>Threshold-eligible per-class error rates</h2>
+<table>
+<thead><tr><th>Class</th><th>Errors</th><th>Rate</th></tr></thead>
+<tbody>
+<tr><td>drop</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>insertion</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>same-length-substitution</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>case-error</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>stuck-modifier-run</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>layout-swap-signature</td><td>0</td><td>0.0000%</td></tr>
+</tbody>
+</table>
+<h2>Runs</h2>
+<table>
+<thead>
+<tr><th>Run</th><th>Timestamp</th><th>Purpose</th><th>Path</th><th>Outcome</th><th>Duration</th><th>drop</th><th>insertion</th><th>same-length-substitution</th><th>case-error</th><th>stuck-modifier-run</th><th>layout-swap-signature</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#run-20260705105526300-f16dep36">20260705105526300-f16dep36</a></td><td>2026-07-05T10:56:39.107Z</td><td>deploy_provenance</td><td>synthetic</td><td>completed</td><td>72807 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+</tbody>
+</table>
+<h2>Steps</h2>
+<table>
+<thead><tr><th>Run</th><th>Step</th><th>Name</th><th>Outcome</th><th>Timestamp</th><th>Duration</th></tr></thead>
+<tbody>
+
+</tbody>
+</table>
+
+
+<h2>Run details</h2>
+<section id="run-20260705105526300-f16dep36">
+<h3>20260705105526300-f16dep36</h3>
+<ul>
+<li>Corpus: <code>f16-deploy-36-parity:size=1</code> (<code>sha256:fb5a6bdb12efe66508e4661faf8ffba60ae0a113cbd203d727727d7e95ba39ab</code>)</li>
+<li>Corpus path: <code>synthetic://build-identity</code></li>
+<li>Build: <code>jetkvm-50248789f5727d74:fb5a6bdb12ef</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>not-applicable</code>, sink RSS 0</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=0.000 ms</li>
+<li>Telemetry: calm=true, max CPU=0</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/f16-deploy-36-parity/tee.disabled">artifacts/f16-deploy-36-parity/tee.disabled</a>, <a href="artifacts/f16-deploy-36-parity/recv.txt">artifacts/f16-deploy-36-parity/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 0</li>
+</ul>
+<p>Steps: </p>
+</section>
+</body>
+</html>

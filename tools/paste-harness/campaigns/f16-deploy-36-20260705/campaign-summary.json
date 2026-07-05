@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-07-05T10:56:39.107Z",
+  "feature_id": "F16-deploy-36-checklist",
+  "status": "passed",
+  "device": "192.168.1.36",
+  "hostname": "jetkvm-50248789f5727d74",
+  "branch_sha": "58eac4f7216a6bd7963783c015a8a7a1de952d29",
+  "deployed_binary_sha256": "fb5a6bdb12efe66508e4661faf8ffba60ae0a113cbd203d727727d7e95ba39ab",
+  "build_identity": "jetkvm-50248789f5727d74:fb5a6bdb12ef",
+  "version": {
+    "version": "0.5.5",
+    "revision": "58eac4f7216a6bd7963783c015a8a7a1de952d29",
+    "branch": "paste/008-content-verification",
+    "buildDate": "2026-07-05T10:12:48+0000",
+    "goVersion": "go1.25.1",
+    "platform": "linux/arm"
+  },
+  "deploy_started_at": "2026-07-05T10:55:26.300Z",
+  "verified_at": "2026-07-05T10:56:39.107Z",
+  "deploy_method": "staged prebuilt F15 bin/jetkvm_app to /userdata/jetkvm/jetkvm_app.update and rebooted",
+  "requested_deploy_command": "./dev_deploy.sh -r 192.168.1.36 -i --skip-native-build",
+  "parity_target": {
+    "device": "192.168.1.110",
+    "branch_sha": "58eac4f7216a6bd7963783c015a8a7a1de952d29",
+    "binary_sha256": "fb5a6bdb12efe66508e4661faf8ffba60ae0a113cbd203d727727d7e95ba39ab",
+    "build_identity": "worklaptopjetkvm:fb5a6bdb12ef",
+    "campaign": "tools/paste-harness/campaigns/f15-deploy-110-20260705/"
+  },
+  "pre_deploy": {
+    "binary_sha256": "91f7f2949c52b600e9077ccb24b234f8057ed4206c339b51d0277fe357817f97",
+    "version": "0.5.5-dev202604292220",
+    "revision": "a83a02501855a5e77ad6becf0e65fd41e21b548b",
+    "branch": "fix/phase-3c-first-paste-chunk-probe",
+    "buildDate": "2026-04-29T22:20:01+0000"
+  },
+  "final_device_state": {
+    "auto_update_enabled": false,
+    "keyboard_layout": "en-UK",
+    "staged_update_remaining": false,
+    "production_running": true,
+    "jetkvm_app_pids": ["278", "268", "180"],
+    "jetkvm_app_debug_pids": []
+  },
+  "ledger_run": "20260705105526300-f16dep36",
+  "checklist": "docs/handoff/2026-07-05-jetkvm-36-user-checklist.md",
+  "dashboard": "tools/paste-harness/campaigns/f16-deploy-36-20260705/dashboard.html"
+}

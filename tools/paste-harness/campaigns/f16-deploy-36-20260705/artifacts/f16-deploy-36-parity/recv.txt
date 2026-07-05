@@ -1,0 +1,1 @@
+No target-host readback was collected for F16. The .36-attached host has no SSH, so user validation is by the in-repo visual/counter checklist only.
