@@ -1,0 +1,1742 @@
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:09:07.1411541Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:09:07.1509339Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173084672
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705020907505-8a8033",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705020907505-8a8033"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:09:53.3498858Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:09:53.3539497Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174022656
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705020953668-he3omo",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705020953668-he3omo"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:10:38.7104676Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:10:38.7144900Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173449216
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021039046-dtv1zt",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021039046-dtv1zt"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:11:33.5113991Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:11:33.8682830Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:11:33.8682830Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173596672
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021134239-bd9ts8",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021134239-bd9ts8"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:12:34.3656668Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:12:34.3697093Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173809664
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021234660-1s6uo0",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021234660-1s6uo0"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:12:55.1187326Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:12:55.1187326Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174063616
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021255543-h7vjn8",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021255543-h7vjn8"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:13:15.6875883Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:13:16.0632508Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:13:16.0632508Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 172916736
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021316367-0pf3r9",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021316367-0pf3r9"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:13:36.9164121Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:13:36.9204546Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 171245568
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021337238-s9yeql",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021337238-s9yeql"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:13:57.7269934Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:13:57.7307188Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173879296
+    }
+  }
+}
+{
+  "ok": false,
+  "runId": "20260705021358116-lese60",
+  "outcome": "failed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021358116-lese60"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:14:33.3110185Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:14:33.6698309Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:14:33.6698309Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173785088
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021433978-unlvfd",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021433978-unlvfd"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:14:59.7257249Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:15:00.1143678Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:15:00.1165578Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174284800
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021500412-ik0kmd",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021500412-ik0kmd"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:15:27.7754131Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:15:28.1620049Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:15:28.1640266Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173928448
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021528477-7r7nqc",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021528477-7r7nqc"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:17:29.1793863Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:17:29.1793863Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 172834816
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021729488-aoewke",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021729488-aoewke"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:19:43.7099270Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:19:43.7219940Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174202880
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705021944077-00gp5u",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705021944077-00gp5u"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:20:17.0121129Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:20:17.0161662Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 172961792
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022017338-vtgwtj",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022017338-vtgwtj"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": false,
+    "reason": "cannot_confirm_focus",
+    "foregroundTitle": "Untitled - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:20:49.7183525Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "focus_failed",
+        "at": "2026-07-05T02:20:50.0940066Z",
+        "detail": "Untitled - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174166016
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022050423-d6a3ii",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022050423-d6a3ii"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:21:23.3388331Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:21:23.3408431Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173469696
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022123630-jxcn6n",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022123630-jxcn6n"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": false,
+    "reason": "cannot_confirm_focus",
+    "foregroundTitle": "Untitled - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:21:56.2359221Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "focus_failed",
+        "at": "2026-07-05T02:21:56.6086902Z",
+        "detail": "Untitled - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173461504
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022156929-we276m",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022156929-we276m"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:22:29.9060897Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:22:29.9081000Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173518848
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022230254-ud9tqf",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022230254-ud9tqf"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:23:03.0638150Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:23:03.0638150Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173137920
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022303412-lzine1",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022303412-lzine1"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:23:36.1401235Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:23:36.1401235Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173760512
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022336474-joopub",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022336474-joopub"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:24:09.2014216Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:24:09.2034301Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173887488
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022409577-g5uqom",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022409577-g5uqom"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": false,
+    "reason": "cannot_confirm_focus",
+    "foregroundTitle": "Untitled - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:24:41.9022678Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "focus_failed",
+        "at": "2026-07-05T02:24:42.2862884Z",
+        "detail": "Untitled - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173969408
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022442594-xjr2eu",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022442594-xjr2eu"
+}
+{
+  "ok": false,
+  "runId": "20260705022507363-99is8x",
+  "outcome": "watchdog_abort",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022507363-99is8x"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:25:25.8453523Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:25:26.2039305Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:25:26.2059481Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 172470272
+    }
+  }
+}
+{
+  "ok": false,
+  "runId": "20260705022526532-heie9x",
+  "outcome": "abort:focus",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022526532-heie9x"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:25:44.8297454Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:25:44.8297454Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173699072
+    }
+  }
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:25:55.5194406Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:25:55.5234813Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173514752
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022555843-y2dtkd",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022555843-y2dtkd"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:27:32.9355841Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:27:32.9471320Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174018560
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705022733316-ooarvn",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022733316-ooarvn"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:27:57.5099484Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:27:57.8699337Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:27:57.8719595Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174125056
+    }
+  }
+}
+{
+  "ok": false,
+  "runId": "20260705022758260-6orxkb",
+  "outcome": "abort:focus",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022758260-6orxkb"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:28:15.7826405Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:28:15.7826405Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173809664
+    }
+  }
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:29:11.3321754Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:29:11.7084277Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:29:11.7084277Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173817856
+    }
+  }
+}
+{
+  "ok": false,
+  "runId": "20260705022912028-nqr4oe",
+  "outcome": "focus_lost",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705022912028-nqr4oe"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:29:41.3869438Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:29:41.3869438Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173383680
+    }
+  }
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:31:19.0995199Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:31:19.1037537Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173862912
+    }
+  }
+}
+{
+  "ok": false,
+  "runId": "20260705023119407-nme9wt",
+  "outcome": "failed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705023119407-nme9wt"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:31:54.0470398Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:31:54.4414745Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:31:54.4414745Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173568000
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705023154702-c7vozr",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705023154702-c7vozr"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:39:19.8768331Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:39:19.8826318Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173776896
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705023920192-ftp77r",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705023920192-ftp77r"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:40:51.4136411Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:40:51.4196904Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173948928
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705024051759-na6l8o",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705024051759-na6l8o"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:46:20.3370831Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:46:20.3431331Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173322240
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705024620617-wnpiiv",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705024620617-wnpiiv"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:48:12.9832165Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:48:12.9930392Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 171855872
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705024813355-x3dg2q",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705024813355-x3dg2q"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T02:55:22.5785837Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:55:22.9580355Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:55:22.9580355Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173166592
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705025523246-1t81vf",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705025523246-1t81vf"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T02:56:53.5190321Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T02:56:53.5230750Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173314048
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705025653887-w7fl5e",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705025653887-w7fl5e"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T03:02:07.6717256Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:02:08.0394154Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:02:08.0394154Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 170164224
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705030208372-jn73k5",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705030208372-jn73k5"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:04:04.0906031Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:04:04.0966482Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173584384
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705030404398-2sjjoz",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705030404398-2sjjoz"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:11:18.9357660Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:11:18.9378553Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173686784
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705031119233-y0upzg",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705031119233-y0upzg"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": false,
+    "reason": "cannot_confirm_focus",
+    "foregroundTitle": "Untitled - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T03:12:45.9971953Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "focus_failed",
+        "at": "2026-07-05T03:12:46.3722602Z",
+        "detail": "Untitled - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173531136
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705031246728-k39co5",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705031246728-k39co5"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:18:04.2706184Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:18:04.2807168Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173780992
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705031804575-w1flhq",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705031804575-w1flhq"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:19:51.6185554Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:19:51.6185554Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174092288
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705031951979-f6i6s7",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705031951979-f6i6s7"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:26:39.6456311Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:26:39.6578079Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173891584
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705032639984-frm8ty",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705032639984-frm8ty"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": false,
+    "reason": "cannot_confirm_focus",
+    "foregroundTitle": "Untitled - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T03:28:02.6292031Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "focus_failed",
+        "at": "2026-07-05T03:28:03.0052794Z",
+        "detail": "Untitled - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173993984
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705032803304-hd1h4m",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705032803304-hd1h4m"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:32:54.3633777Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:32:54.3694405Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 172756992
+    }
+  }
+}
+{
+  "ok": false,
+  "runId": "20260705033254648-c6bpat",
+  "outcome": "failed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705033254648-c6bpat"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T03:33:59.9588441Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:34:00.3433796Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:34:00.3433796Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173895680
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705033400652-vxtva5",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705033400652-vxtva5"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:41:05.0428798Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:41:05.0466108Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173572096
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705034105329-xfeteg",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705034105329-xfeteg"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:42:30.2953719Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:42:30.3014667Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173416448
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705034230601-04s039",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705034230601-04s039"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:48:28.3345572Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:48:28.3345572Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173678592
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705034828620-fm2ll2",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705034828620-fm2ll2"
+}
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T03:50:19.7758664Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T03:50:19.7790251Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173457408
+    }
+  }
+}
+{
+  "ok": true,
+  "runId": "20260705035020212-ojemfi",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f14-soak-matrix-20260705/artifacts/20260705035020212-ojemfi"
+}

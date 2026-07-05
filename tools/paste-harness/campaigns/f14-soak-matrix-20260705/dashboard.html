@@ -1,0 +1,1098 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Paste harness dashboard</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.4}
+body{margin:2rem;max-width:1200px}
+table{border-collapse:collapse;width:100%;margin:1rem 0}
+th,td{border:1px solid #999;padding:.35rem .5rem;text-align:left;vertical-align:top}
+th{background:#eee;color:#111}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.warning{border:1px solid #b7791f;background:#fff7db;color:#4a2a00;padding:.5rem;margin:.5rem 0}
+.muted{opacity:.75}
+</style>
+</head>
+<body>
+<h1>Paste harness dashboard</h1>
+<p class="muted">Deterministic rendering from ledger rows only. No wall-clock or random values are embedded.</p>
+
+<h2>Summary</h2>
+<table>
+<tbody>
+<tr><th>Runs</th><td>51</td></tr>
+<tr><th>Steps</th><td>152</td></tr>
+<tr><th>Annotations</th><td>6</td></tr>
+<tr><th>Threshold-eligible run duration</th><td>5275504 ms</td></tr>
+<tr><th>Excluded from thresholds</th><td>9</td></tr>
+<tr><th>Threshold-eligible runs</th><td>42</td></tr>
+</tbody>
+</table>
+<h2>Threshold-eligible per-class error rates</h2>
+<table>
+<thead><tr><th>Class</th><th>Errors</th><th>Rate</th></tr></thead>
+<tbody>
+<tr><td>drop</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>insertion</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>same-length-substitution</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>case-error</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>stuck-modifier-run</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>layout-swap-signature</td><td>0</td><td>0.0000%</td></tr>
+</tbody>
+</table>
+<h2>Runs</h2>
+<table>
+<thead>
+<tr><th>Run</th><th>Timestamp</th><th>Purpose</th><th>Path</th><th>Outcome</th><th>Duration</th><th>drop</th><th>insertion</th><th>same-length-substitution</th><th>case-error</th><th>stuck-modifier-run</th><th>layout-swap-signature</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#run-20260705020907505-8a8033">20260705020907505-8a8033</a></td><td>2026-07-05T02:09:07.505Z</td><td>f14_targeted_regression</td><td>raw</td><td>completed</td><td>37452 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705020953668-he3omo">20260705020953668-he3omo</a></td><td>2026-07-05T02:09:53.668Z</td><td>f14_targeted_regression</td><td>raw</td><td>completed</td><td>36655 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021039046-dtv1zt">20260705021039046-dtv1zt</a></td><td>2026-07-05T02:10:39.046Z</td><td>f14_targeted_regression</td><td>hidrpc</td><td>completed</td><td>46425 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021134239-bd9ts8">20260705021134239-bd9ts8</a></td><td>2026-07-05T02:11:34.239Z</td><td>f14_targeted_regression</td><td>hidrpc</td><td>completed</td><td>51737 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021234660-1s6uo0">20260705021234660-1s6uo0</a></td><td>2026-07-05T02:12:34.660Z</td><td>f14_targeted_regression</td><td>raw</td><td>completed</td><td>12116 ms</td><td>6 <span class="muted">(3.5928%)</span></td><td>1 <span class="muted">(0.5988%)</span></td><td>15 <span class="muted">(8.9820%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>12 <span class="muted">(7.1856%)</span></td></tr>
+<tr><td><a href="#run-20260705021255543-h7vjn8">20260705021255543-h7vjn8</a></td><td>2026-07-05T02:12:55.543Z</td><td>f14_targeted_regression</td><td>raw</td><td>completed</td><td>12142 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021316367-0pf3r9">20260705021316367-0pf3r9</a></td><td>2026-07-05T02:13:16.367Z</td><td>f14_targeted_regression</td><td>raw</td><td>completed</td><td>12157 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021337238-s9yeql">20260705021337238-s9yeql</a></td><td>2026-07-05T02:13:37.238Z</td><td>f14_targeted_regression</td><td>raw</td><td>completed</td><td>12146 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021358116-lese60">20260705021358116-lese60</a></td><td>2026-07-05T02:13:58.116Z</td><td>f14_targeted_regression</td><td>product</td><td>failed</td><td>27141 ms</td><td>55 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021433978-unlvfd">20260705021433978-unlvfd</a></td><td>2026-07-05T02:14:33.978Z</td><td>f14_targeted_regression</td><td>product</td><td>completed</td><td>17658 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021500412-ik0kmd">20260705021500412-ik0kmd</a></td><td>2026-07-05T02:15:00.412Z</td><td>f14_targeted_regression</td><td>product</td><td>completed</td><td>19379 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021528477-7r7nqc">20260705021528477-7r7nqc</a></td><td>2026-07-05T02:15:28.477Z</td><td>f14_targeted_regression</td><td>product</td><td>completed</td><td>112330 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021729488-aoewke">20260705021729488-aoewke</a></td><td>2026-07-05T02:17:29.488Z</td><td>f14_targeted_regression</td><td>product</td><td>completed</td><td>125891 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705021944077-00gp5u">20260705021944077-00gp5u</a></td><td>2026-07-05T02:19:44.078Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24553 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022017338-vtgwtj">20260705022017338-vtgwtj</a></td><td>2026-07-05T02:20:17.338Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24351 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022050423-d6a3ii">20260705022050423-d6a3ii</a></td><td>2026-07-05T02:20:50.423Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24503 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022123630-jxcn6n">20260705022123630-jxcn6n</a></td><td>2026-07-05T02:21:23.631Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24570 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022156929-we276m">20260705022156929-we276m</a></td><td>2026-07-05T02:21:56.929Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24594 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022230254-ud9tqf">20260705022230254-ud9tqf</a></td><td>2026-07-05T02:22:30.254Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24455 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022303412-lzine1">20260705022303412-lzine1</a></td><td>2026-07-05T02:23:03.412Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24384 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022336474-joopub">20260705022336474-joopub</a></td><td>2026-07-05T02:23:36.474Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24358 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022409577-g5uqom">20260705022409577-g5uqom</a></td><td>2026-07-05T02:24:09.577Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24333 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022442594-xjr2eu">20260705022442594-xjr2eu</a></td><td>2026-07-05T02:24:42.594Z</td><td>f14_unattended_batch_attended_false</td><td>product</td><td>completed</td><td>24549 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022507363-99is8x">20260705022507363-99is8x</a></td><td>2026-07-05T02:25:07.363Z</td><td>f14_robustness_induced_stall</td><td>synthetic</td><td>watchdog_abort</td><td>10464 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>398 <span class="muted">(199.0000%)</span></td><td>140 <span class="muted">(70.0000%)</span></td><td>2 <span class="muted">(1.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022526532-heie9x">20260705022526532-heie9x</a></td><td>2026-07-05T02:25:26.532Z</td><td>f14_robustness_induced_focus_loss</td><td>synthetic</td><td>abort:focus</td><td>9962 ms</td><td>200 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022555843-y2dtkd">20260705022555843-y2dtkd</a></td><td>2026-07-05T02:25:55.844Z</td><td>f14_robustness_kill9_resume</td><td>synthetic</td><td>completed</td><td>8566 ms</td><td>200 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022733316-ooarvn">20260705022733316-ooarvn</a></td><td>2026-07-05T02:27:33.316Z</td><td>f14_targeted_regression_rerun</td><td>product</td><td>completed</td><td>16223 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022758260-6orxkb">20260705022758260-6orxkb</a></td><td>2026-07-05T02:27:58.260Z</td><td>f14_robustness_induced_focus_loss_rerun</td><td>synthetic</td><td>abort:focus</td><td>9206 ms</td><td>200 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705022912028-nqr4oe">20260705022912028-nqr4oe</a></td><td>2026-07-05T02:29:12.028Z</td><td>f14_robustness_induced_focus_loss_post_start</td><td>synthetic</td><td>focus_lost</td><td>10055 ms</td><td>200 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705023119407-nme9wt">20260705023119407-nme9wt</a></td><td>2026-07-05T02:31:19.408Z</td><td>f14_soak_matrix</td><td>product</td><td>failed</td><td>26676 ms</td><td>6000 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705023154702-c7vozr">20260705023154702-c7vozr</a></td><td>2026-07-05T02:31:54.702Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>436780 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705023920192-ftp77r">20260705023920192-ftp77r</a></td><td>2026-07-05T02:39:20.193Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>82835 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705024051759-na6l8o">20260705024051759-na6l8o</a></td><td>2026-07-05T02:40:51.759Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>320131 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705024620617-wnpiiv">20260705024620617-wnpiiv</a></td><td>2026-07-05T02:46:20.617Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>104041 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705024813355-x3dg2q">20260705024813355-x3dg2q</a></td><td>2026-07-05T02:48:13.355Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>421135 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705025523246-1t81vf">20260705025523246-1t81vf</a></td><td>2026-07-05T02:55:23.246Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>81906 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705025653887-w7fl5e">20260705025653887-w7fl5e</a></td><td>2026-07-05T02:56:53.888Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>305753 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705030208372-jn73k5">20260705030208372-jn73k5</a></td><td>2026-07-05T03:02:08.373Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>107329 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705030404398-2sjjoz">20260705030404398-2sjjoz</a></td><td>2026-07-05T03:04:04.399Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>426077 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705031119233-y0upzg">20260705031119233-y0upzg</a></td><td>2026-07-05T03:11:19.234Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>78756 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705031246728-k39co5">20260705031246728-k39co5</a></td><td>2026-07-05T03:12:46.728Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>309129 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705031804575-w1flhq">20260705031804575-w1flhq</a></td><td>2026-07-05T03:18:04.575Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>98682 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705031951979-f6i6s7">20260705031951979-f6i6s7</a></td><td>2026-07-05T03:19:51.979Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>399258 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705032639984-frm8ty">20260705032639984-frm8ty</a></td><td>2026-07-05T03:26:39.984Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>74613 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705032803304-hd1h4m">20260705032803304-hd1h4m</a></td><td>2026-07-05T03:28:03.304Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>282647 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705033254648-c6bpat">20260705033254648-c6bpat</a></td><td>2026-07-05T03:32:54.649Z</td><td>f14_soak_matrix</td><td>product</td><td>failed</td><td>57306 ms</td><td>6000 <span class="muted">(100.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705033400652-vxtva5">20260705033400652-vxtva5</a></td><td>2026-07-05T03:34:00.653Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>415987 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705034105329-xfeteg">20260705034105329-xfeteg</a></td><td>2026-07-05T03:41:05.329Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>76537 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705034230601-04s039">20260705034230601-04s039</a></td><td>2026-07-05T03:42:30.601Z</td><td>f14_soak_matrix</td><td>product</td><td>completed</td><td>305269 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705034828620-fm2ll2">20260705034828620-fm2ll2</a></td><td>2026-07-05T03:48:28.620Z</td><td>f14_soak_matrix_rerun</td><td>product</td><td>completed</td><td>102750 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+<tr><td><a href="#run-20260705035020212-ojemfi">20260705035020212-ojemfi</a></td><td>2026-07-05T03:50:20.212Z</td><td>f14_soak_matrix_rerun</td><td>product</td><td>completed</td><td>101044 ms</td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td><td>0 <span class="muted">(0.0000%)</span></td></tr>
+</tbody>
+</table>
+<h2>Steps</h2>
+<table>
+<thead><tr><th>Run</th><th>Step</th><th>Name</th><th>Outcome</th><th>Timestamp</th><th>Duration</th></tr></thead>
+<tbody>
+<tr><td><a href="#run-20260705020907505-8a8033">20260705020907505-8a8033</a></td><td>1783217347505-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:09:07.505Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705020907505-8a8033">20260705020907505-8a8033</a></td><td>1783217356221-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:09:16.221Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705020907505-8a8033">20260705020907505-8a8033</a></td><td>1783217384398-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:09:44.398Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705020953668-he3omo">20260705020953668-he3omo</a></td><td>1783217393668-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:09:53.668Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705020953668-he3omo">20260705020953668-he3omo</a></td><td>1783217401614-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:10:01.614Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705020953668-he3omo">20260705020953668-he3omo</a></td><td>1783217429785-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:10:29.785Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021039046-dtv1zt">20260705021039046-dtv1zt</a></td><td>1783217439046-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:10:39.046Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021039046-dtv1zt">20260705021039046-dtv1zt</a></td><td>1783217446836-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:10:46.836Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021039046-dtv1zt">20260705021039046-dtv1zt</a></td><td>1783217484929-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:11:24.929Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021134239-bd9ts8">20260705021134239-bd9ts8</a></td><td>1783217494239-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:11:34.239Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021134239-bd9ts8">20260705021134239-bd9ts8</a></td><td>1783217502049-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:11:42.049Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021134239-bd9ts8">20260705021134239-bd9ts8</a></td><td>1783217545459-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:12:25.459Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021234660-1s6uo0">20260705021234660-1s6uo0</a></td><td>1783217554661-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:12:34.661Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021234660-1s6uo0">20260705021234660-1s6uo0</a></td><td>1783217562575-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:12:42.575Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021234660-1s6uo0">20260705021234660-1s6uo0</a></td><td>1783217566236-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:12:46.236Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021255543-h7vjn8">20260705021255543-h7vjn8</a></td><td>1783217575544-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:12:55.544Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021255543-h7vjn8">20260705021255543-h7vjn8</a></td><td>1783217583380-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:13:03.380Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021255543-h7vjn8">20260705021255543-h7vjn8</a></td><td>1783217587145-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:13:07.145Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021316367-0pf3r9">20260705021316367-0pf3r9</a></td><td>1783217596367-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:13:16.367Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021316367-0pf3r9">20260705021316367-0pf3r9</a></td><td>1783217604252-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:13:24.252Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021316367-0pf3r9">20260705021316367-0pf3r9</a></td><td>1783217608005-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:13:28.005Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021337238-s9yeql">20260705021337238-s9yeql</a></td><td>1783217617238-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:13:37.238Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021337238-s9yeql">20260705021337238-s9yeql</a></td><td>1783217625115-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:13:45.115Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021337238-s9yeql">20260705021337238-s9yeql</a></td><td>1783217628859-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:13:48.859Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021358116-lese60">20260705021358116-lese60</a></td><td>1783217638117-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:13:58.117Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021358116-lese60">20260705021358116-lese60</a></td><td>1783217645934-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:14:05.934Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021358116-lese60">20260705021358116-lese60</a></td><td>1783217664736-injection</td><td>injection</td><td>failed</td><td>2026-07-05T02:14:24.736Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021433978-unlvfd">20260705021433978-unlvfd</a></td><td>1783217673979-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:14:33.979Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021433978-unlvfd">20260705021433978-unlvfd</a></td><td>1783217682852-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:14:42.852Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021433978-unlvfd">20260705021433978-unlvfd</a></td><td>1783217690963-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:14:50.963Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021500412-ik0kmd">20260705021500412-ik0kmd</a></td><td>1783217700413-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:15:00.413Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021500412-ik0kmd">20260705021500412-ik0kmd</a></td><td>1783217709284-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:15:09.284Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021500412-ik0kmd">20260705021500412-ik0kmd</a></td><td>1783217719260-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:15:19.260Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021528477-7r7nqc">20260705021528477-7r7nqc</a></td><td>1783217728477-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:15:28.477Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021528477-7r7nqc">20260705021528477-7r7nqc</a></td><td>1783217738099-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:15:38.099Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021528477-7r7nqc">20260705021528477-7r7nqc</a></td><td>1783217840330-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:17:20.330Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021729488-aoewke">20260705021729488-aoewke</a></td><td>1783217849489-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:17:29.489Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021729488-aoewke">20260705021729488-aoewke</a></td><td>1783217858295-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:17:38.295Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021729488-aoewke">20260705021729488-aoewke</a></td><td>1783217974853-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:19:34.853Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021944077-00gp5u">20260705021944077-00gp5u</a></td><td>1783217984078-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:19:44.078Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021944077-00gp5u">20260705021944077-00gp5u</a></td><td>1783217992967-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:19:52.967Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705021944077-00gp5u">20260705021944077-00gp5u</a></td><td>1783218008077-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:20:08.077Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022017338-vtgwtj">20260705022017338-vtgwtj</a></td><td>1783218017338-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:20:17.338Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022017338-vtgwtj">20260705022017338-vtgwtj</a></td><td>1783218026167-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:20:26.167Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022017338-vtgwtj">20260705022017338-vtgwtj</a></td><td>1783218041162-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:20:41.162Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022050423-d6a3ii">20260705022050423-d6a3ii</a></td><td>1783218050423-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:20:50.423Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022050423-d6a3ii">20260705022050423-d6a3ii</a></td><td>1783218059384-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:20:59.384Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022050423-d6a3ii">20260705022050423-d6a3ii</a></td><td>1783218074378-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:21:14.378Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022123630-jxcn6n">20260705022123630-jxcn6n</a></td><td>1783218083631-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:21:23.631Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022123630-jxcn6n">20260705022123630-jxcn6n</a></td><td>1783218092706-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:21:32.706Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022123630-jxcn6n">20260705022123630-jxcn6n</a></td><td>1783218107677-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:21:47.677Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022156929-we276m">20260705022156929-we276m</a></td><td>1783218116930-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:21:56.930Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022156929-we276m">20260705022156929-we276m</a></td><td>1783218125920-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:22:05.920Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022156929-we276m">20260705022156929-we276m</a></td><td>1783218140979-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:22:20.979Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022230254-ud9tqf">20260705022230254-ud9tqf</a></td><td>1783218150254-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:22:30.254Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022230254-ud9tqf">20260705022230254-ud9tqf</a></td><td>1783218159159-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:22:39.159Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022230254-ud9tqf">20260705022230254-ud9tqf</a></td><td>1783218174177-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:22:54.177Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022303412-lzine1">20260705022303412-lzine1</a></td><td>1783218183412-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:23:03.412Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022303412-lzine1">20260705022303412-lzine1</a></td><td>1783218192290-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:23:12.290Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022303412-lzine1">20260705022303412-lzine1</a></td><td>1783218207261-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:23:27.261Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022336474-joopub">20260705022336474-joopub</a></td><td>1783218216474-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:23:36.474Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022336474-joopub">20260705022336474-joopub</a></td><td>1783218225319-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:23:45.319Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022336474-joopub">20260705022336474-joopub</a></td><td>1783218240278-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:24:00.278Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022409577-g5uqom">20260705022409577-g5uqom</a></td><td>1783218249578-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:24:09.578Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022409577-g5uqom">20260705022409577-g5uqom</a></td><td>1783218258441-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:24:18.441Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022409577-g5uqom">20260705022409577-g5uqom</a></td><td>1783218273378-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:24:33.378Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022442594-xjr2eu">20260705022442594-xjr2eu</a></td><td>1783218282594-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:24:42.594Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022442594-xjr2eu">20260705022442594-xjr2eu</a></td><td>1783218291658-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:24:51.658Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022442594-xjr2eu">20260705022442594-xjr2eu</a></td><td>1783218306610-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:25:06.610Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022507363-99is8x">20260705022507363-99is8x</a></td><td>1783218307364-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:25:07.364Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022507363-99is8x">20260705022507363-99is8x</a></td><td>1783218316281-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:25:16.281Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022507363-99is8x">20260705022507363-99is8x</a></td><td>1783218317285-injection</td><td>injection</td><td>watchdog_abort</td><td>2026-07-05T02:25:17.285Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022526532-heie9x">20260705022526532-heie9x</a></td><td>1783218326532-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:25:26.532Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022526532-heie9x">20260705022526532-heie9x</a></td><td>1783218336494-focus-guard</td><td>focus-guard</td><td>abort:focus</td><td>2026-07-05T02:25:36.494Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022545186-193voh">20260705022545186-193voh</a></td><td>1783218345186-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:25:45.186Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022555843-y2dtkd">20260705022555843-y2dtkd</a></td><td>1783218355844-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:25:55.844Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022555843-y2dtkd">20260705022555843-y2dtkd</a></td><td>1783218363622-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:26:03.622Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022555843-y2dtkd">20260705022555843-y2dtkd</a></td><td>1783218363875-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:26:03.875Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022733316-ooarvn">20260705022733316-ooarvn</a></td><td>1783218453317-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:27:33.317Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022733316-ooarvn">20260705022733316-ooarvn</a></td><td>1783218461203-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:27:41.203Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022733316-ooarvn">20260705022733316-ooarvn</a></td><td>1783218469014-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:27:49.014Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022758260-6orxkb">20260705022758260-6orxkb</a></td><td>1783218478260-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:27:58.260Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022758260-6orxkb">20260705022758260-6orxkb</a></td><td>1783218487465-focus-guard</td><td>focus-guard</td><td>abort:focus</td><td>2026-07-05T02:28:07.465Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022912028-nqr4oe">20260705022912028-nqr4oe</a></td><td>1783218552028-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:29:12.028Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022912028-nqr4oe">20260705022912028-nqr4oe</a></td><td>1783218559647-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:29:19.647Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705022912028-nqr4oe">20260705022912028-nqr4oe</a></td><td>1783218561566-injection</td><td>injection</td><td>focus_lost</td><td>2026-07-05T02:29:21.566Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023119407-nme9wt">20260705023119407-nme9wt</a></td><td>1783218679408-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:31:19.408Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023119407-nme9wt">20260705023119407-nme9wt</a></td><td>1783218687239-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:31:27.239Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023119407-nme9wt">20260705023119407-nme9wt</a></td><td>1783218705529-injection</td><td>injection</td><td>failed</td><td>2026-07-05T02:31:45.529Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023154702-c7vozr">20260705023154702-c7vozr</a></td><td>1783218714702-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:31:54.702Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023154702-c7vozr">20260705023154702-c7vozr</a></td><td>1783218723565-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:32:03.565Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023154702-c7vozr">20260705023154702-c7vozr</a></td><td>1783219150927-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:39:10.927Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023920192-ftp77r">20260705023920192-ftp77r</a></td><td>1783219160193-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:39:20.193Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023920192-ftp77r">20260705023920192-ftp77r</a></td><td>1783219169109-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:39:29.109Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705023920192-ftp77r">20260705023920192-ftp77r</a></td><td>1783219242472-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:40:42.472Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024051759-na6l8o">20260705024051759-na6l8o</a></td><td>1783219251759-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:40:51.759Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024051759-na6l8o">20260705024051759-na6l8o</a></td><td>1783219260593-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:41:00.593Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024051759-na6l8o">20260705024051759-na6l8o</a></td><td>1783219571337-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:46:11.337Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024620617-wnpiiv">20260705024620617-wnpiiv</a></td><td>1783219580618-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:46:20.618Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024620617-wnpiiv">20260705024620617-wnpiiv</a></td><td>1783219589561-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:46:29.561Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024620617-wnpiiv">20260705024620617-wnpiiv</a></td><td>1783219684124-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:48:04.124Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024813355-x3dg2q">20260705024813355-x3dg2q</a></td><td>1783219693355-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:48:13.355Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024813355-x3dg2q">20260705024813355-x3dg2q</a></td><td>1783219702142-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:48:22.142Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705024813355-x3dg2q">20260705024813355-x3dg2q</a></td><td>1783220113939-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:55:13.939Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705025523246-1t81vf">20260705025523246-1t81vf</a></td><td>1783220123246-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:55:23.246Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705025523246-1t81vf">20260705025523246-1t81vf</a></td><td>1783220132161-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:55:32.161Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705025523246-1t81vf">20260705025523246-1t81vf</a></td><td>1783220204619-injection</td><td>injection</td><td>completed</td><td>2026-07-05T02:56:44.619Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705025653887-w7fl5e">20260705025653887-w7fl5e</a></td><td>1783220213888-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T02:56:53.888Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705025653887-w7fl5e">20260705025653887-w7fl5e</a></td><td>1783220222712-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T02:57:02.712Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705025653887-w7fl5e">20260705025653887-w7fl5e</a></td><td>1783220519102-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:01:59.102Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705030208372-jn73k5">20260705030208372-jn73k5</a></td><td>1783220528373-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:02:08.373Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705030208372-jn73k5">20260705030208372-jn73k5</a></td><td>1783220537546-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:02:17.546Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705030208372-jn73k5">20260705030208372-jn73k5</a></td><td>1783220635154-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:03:55.154Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705030404398-2sjjoz">20260705030404398-2sjjoz</a></td><td>1783220644399-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:04:04.399Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705030404398-2sjjoz">20260705030404398-2sjjoz</a></td><td>1783220653237-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:04:13.237Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705030404398-2sjjoz">20260705030404398-2sjjoz</a></td><td>1783221069917-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:11:09.917Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031119233-y0upzg">20260705031119233-y0upzg</a></td><td>1783221079234-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:11:19.234Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031119233-y0upzg">20260705031119233-y0upzg</a></td><td>1783221087936-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:11:27.936Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031119233-y0upzg">20260705031119233-y0upzg</a></td><td>1783221157437-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:12:37.437Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031246728-k39co5">20260705031246728-k39co5</a></td><td>1783221166728-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:12:46.728Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031246728-k39co5">20260705031246728-k39co5</a></td><td>1783221175512-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:12:55.512Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031246728-k39co5">20260705031246728-k39co5</a></td><td>1783221475312-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:17:55.312Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031804575-w1flhq">20260705031804575-w1flhq</a></td><td>1783221484575-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:18:04.575Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031804575-w1flhq">20260705031804575-w1flhq</a></td><td>1783221493325-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:18:13.325Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031804575-w1flhq">20260705031804575-w1flhq</a></td><td>1783221582717-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:19:42.717Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031951979-f6i6s7">20260705031951979-f6i6s7</a></td><td>1783221591979-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:19:51.979Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031951979-f6i6s7">20260705031951979-f6i6s7</a></td><td>1783221601478-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:20:01.478Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705031951979-f6i6s7">20260705031951979-f6i6s7</a></td><td>1783221990699-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:26:30.699Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705032639984-frm8ty">20260705032639984-frm8ty</a></td><td>1783221999984-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:26:39.984Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705032639984-frm8ty">20260705032639984-frm8ty</a></td><td>1783222008628-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:26:48.628Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705032639984-frm8ty">20260705032639984-frm8ty</a></td><td>1783222074062-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:27:54.062Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705032803304-hd1h4m">20260705032803304-hd1h4m</a></td><td>1783222083304-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:28:03.304Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705032803304-hd1h4m">20260705032803304-hd1h4m</a></td><td>1783222091987-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:28:11.987Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705032803304-hd1h4m">20260705032803304-hd1h4m</a></td><td>1783222365407-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:32:45.407Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705033254648-c6bpat">20260705033254648-c6bpat</a></td><td>1783222374649-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:32:54.649Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705033254648-c6bpat">20260705033254648-c6bpat</a></td><td>1783222383299-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:33:03.299Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705033254648-c6bpat">20260705033254648-c6bpat</a></td><td>1783222431429-injection</td><td>injection</td><td>failed</td><td>2026-07-05T03:33:51.429Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705033400652-vxtva5">20260705033400652-vxtva5</a></td><td>1783222440653-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:34:00.653Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705033400652-vxtva5">20260705033400652-vxtva5</a></td><td>1783222449473-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:34:09.473Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705033400652-vxtva5">20260705033400652-vxtva5</a></td><td>1783222856105-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:40:56.105Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034105329-xfeteg">20260705034105329-xfeteg</a></td><td>1783222865329-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:41:05.329Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034105329-xfeteg">20260705034105329-xfeteg</a></td><td>1783222873984-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:41:13.984Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034105329-xfeteg">20260705034105329-xfeteg</a></td><td>1783222941319-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:42:21.319Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034230601-04s039">20260705034230601-04s039</a></td><td>1783222950601-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:42:30.601Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034230601-04s039">20260705034230601-04s039</a></td><td>1783222959248-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:42:39.248Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034230601-04s039">20260705034230601-04s039</a></td><td>1783223255311-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:47:35.311Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034828620-fm2ll2">20260705034828620-fm2ll2</a></td><td>1783223308620-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:48:28.620Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034828620-fm2ll2">20260705034828620-fm2ll2</a></td><td>1783223316565-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:48:36.565Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705034828620-fm2ll2">20260705034828620-fm2ll2</a></td><td>1783223410832-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:50:10.832Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705035020212-ojemfi">20260705035020212-ojemfi</a></td><td>1783223420212-run-start</td><td>run-start</td><td>ok</td><td>2026-07-05T03:50:20.212Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705035020212-ojemfi">20260705035020212-ojemfi</a></td><td>1783223429111-preflight</td><td>preflight</td><td>ok</td><td>2026-07-05T03:50:29.111Z</td><td>0 ms</td></tr>
+<tr><td><a href="#run-20260705035020212-ojemfi">20260705035020212-ojemfi</a></td><td>1783223520714-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:52:00.714Z</td><td>0 ms</td></tr>
+</tbody>
+</table>
+<h2>Annotations</h2>
+<table>
+<thead><tr><th>Run</th><th>Type</th><th>Timestamp</th><th>Reason</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td><a href="#run-20260705021234660-1s6uo0">20260705021234660-1s6uo0</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:52.835Z</td><td>F17: deliberate layout-mismatch negative control, expected layout-swap signal; not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022507363-99is8x">20260705022507363-99is8x</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:52.943Z</td><td>F17: induced A-X5 watchdog-stall robustness row; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022526532-heie9x">20260705022526532-heie9x</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.052Z</td><td>F17: induced A-X5 focus-loss setup abort; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022555843-y2dtkd">20260705022555843-y2dtkd</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.163Z</td><td>F17: induced A-X5 kill-9 resume row verifies ledger recovery only; not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022758260-6orxkb">20260705022758260-6orxkb</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.286Z</td><td>F17: induced A-X5 focus-loss rerun setup abort; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022912028-nqr4oe">20260705022912028-nqr4oe</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.398Z</td><td>F17: induced A-X5 post-start focus-loss row; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+</tbody>
+</table>
+<h2>Incomplete runs</h2>
+<table>
+<thead><tr><th>Run</th><th>Observed steps</th><th>Last outcome</th></tr></thead>
+<tbody>
+<tr><td><code>20260705022545186-193voh</code></td><td>1</td><td>ok</td></tr>
+</tbody>
+</table>
+<h2>Run details</h2>
+<section id="run-20260705020907505-8a8033">
+<h3>20260705020907505-8a8033</h3>
+<ul>
+<li>Corpus: <code>file:angle-dense-2000.txt</code> (<code>sha256:b9425bd607c31f73d42d111aa2ba8178c5efeb6c23d45d0297b4cdebb9df00ca</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/angle-dense-2000.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172621824</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-793.748 ms</li>
+<li>Telemetry: calm=true, max CPU=19.74</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705020907505-8a8033/tee.disabled">artifacts/20260705020907505-8a8033/tee.disabled</a>, <a href="artifacts/20260705020907505-8a8033/recv.txt">artifacts/20260705020907505-8a8033/recv.txt</a></li>
+<li>HID output reports: 4009, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705020953668-he3omo">
+<h3>20260705020953668-he3omo</h3>
+<ul>
+<li>Corpus: <code>file:shifted-symbol-storm-2000.txt</code> (<code>sha256:2daa0f88583268139bd64a077f506a90b33cad5108c6f4c563e272a9c334ae8c</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/shifted-symbol-storm-2000.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173453312</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-792.477 ms</li>
+<li>Telemetry: calm=true, max CPU=21.52</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705020953668-he3omo/tee.disabled">artifacts/20260705020953668-he3omo/tee.disabled</a>, <a href="artifacts/20260705020953668-he3omo/recv.txt">artifacts/20260705020953668-he3omo/recv.txt</a></li>
+<li>HID output reports: 4009, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021039046-dtv1zt">
+<h3>20260705021039046-dtv1zt</h3>
+<ul>
+<li>Corpus: <code>file:angle-dense-2000.txt</code> (<code>sha256:b9425bd607c31f73d42d111aa2ba8178c5efeb6c23d45d0297b4cdebb9df00ca</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/angle-dense-2000.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172933120</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-792.233 ms</li>
+<li>Telemetry: calm=true, max CPU=6.81</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021039046-dtv1zt/tee.disabled">artifacts/20260705021039046-dtv1zt/tee.disabled</a>, <a href="artifacts/20260705021039046-dtv1zt/recv.txt">artifacts/20260705021039046-dtv1zt/recv.txt</a></li>
+<li>HID output reports: 4008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021134239-bd9ts8">
+<h3>20260705021134239-bd9ts8</h3>
+<ul>
+<li>Corpus: <code>file:shifted-symbol-storm-2000.txt</code> (<code>sha256:2daa0f88583268139bd64a077f506a90b33cad5108c6f4c563e272a9c334ae8c</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/shifted-symbol-storm-2000.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173080576</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-790.936 ms</li>
+<li>Telemetry: calm=true, max CPU=13.93</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021134239-bd9ts8/tee.disabled">artifacts/20260705021134239-bd9ts8/tee.disabled</a>, <a href="artifacts/20260705021134239-bd9ts8/recv.txt">artifacts/20260705021134239-bd9ts8/recv.txt</a></li>
+<li>HID output reports: 4008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021234660-1s6uo0">
+<h3>20260705021234660-1s6uo0</h3>
+<ul>
+<li>Corpus: <code>file:layout-probe.txt</code> (<code>sha256:f62c35d8e56131dae2f17b713b7cf2b8fae4d01de42c8e69971edd9c8d4ce79d</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/layout-probe.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173494272</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-787.847 ms</li>
+<li>Telemetry: calm=true, max CPU=4.3</li>
+<li>Garble events pre-repair: 12, excluded=true, excluded reason: <code>F17: deliberate layout-mismatch negative control, expected layout-swap signal; not a threshold datapoint</code></li>
+<li>Artifacts: <a href="artifacts/20260705021234660-1s6uo0/tee.disabled">artifacts/20260705021234660-1s6uo0/tee.disabled</a>, <a href="artifacts/20260705021234660-1s6uo0/recv.txt">artifacts/20260705021234660-1s6uo0/recv.txt</a></li>
+<li>HID output reports: 333, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021255543-h7vjn8">
+<h3>20260705021255543-h7vjn8</h3>
+<ul>
+<li>Corpus: <code>file:layout-probe.txt</code> (<code>sha256:f62c35d8e56131dae2f17b713b7cf2b8fae4d01de42c8e69971edd9c8d4ce79d</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/layout-probe.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173527040</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-792.650 ms</li>
+<li>Telemetry: calm=true, max CPU=7.5</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021255543-h7vjn8/tee.disabled">artifacts/20260705021255543-h7vjn8/tee.disabled</a>, <a href="artifacts/20260705021255543-h7vjn8/recv.txt">artifacts/20260705021255543-h7vjn8/recv.txt</a></li>
+<li>HID output reports: 343, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021316367-0pf3r9">
+<h3>20260705021316367-0pf3r9</h3>
+<ul>
+<li>Corpus: <code>file:layout-probe.txt</code> (<code>sha256:f62c35d8e56131dae2f17b713b7cf2b8fae4d01de42c8e69971edd9c8d4ce79d</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/layout-probe.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172359680</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-790.424 ms</li>
+<li>Telemetry: calm=true, max CPU=10.59</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021316367-0pf3r9/tee.disabled">artifacts/20260705021316367-0pf3r9/tee.disabled</a>, <a href="artifacts/20260705021316367-0pf3r9/recv.txt">artifacts/20260705021316367-0pf3r9/recv.txt</a></li>
+<li>HID output reports: 343, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021337238-s9yeql">
+<h3>20260705021337238-s9yeql</h3>
+<ul>
+<li>Corpus: <code>file:layout-probe.txt</code> (<code>sha256:f62c35d8e56131dae2f17b713b7cf2b8fae4d01de42c8e69971edd9c8d4ce79d</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/layout-probe.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 170962944</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-789.561 ms</li>
+<li>Telemetry: calm=true, max CPU=16.98</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021337238-s9yeql/tee.disabled">artifacts/20260705021337238-s9yeql/tee.disabled</a>, <a href="artifacts/20260705021337238-s9yeql/recv.txt">artifacts/20260705021337238-s9yeql/recv.txt</a></li>
+<li>HID output reports: 343, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021358116-lese60">
+<h3>20260705021358116-lese60</h3>
+<ul>
+<li>Corpus: <code>file:angle-dense-product-singlebatch.txt</code> (<code>sha256:1c22b398f40b6be90cc79a0fffc0a9110c332a93ca026bb471d6a82277fa0826</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/angle-dense-product-singlebatch.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173211648</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-786.158 ms</li>
+<li>Telemetry: calm=true, max CPU=8.87</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Artifacts: <a href="artifacts/20260705021358116-lese60/tee.disabled">artifacts/20260705021358116-lese60/tee.disabled</a>, <a href="artifacts/20260705021358116-lese60/recv.txt">artifacts/20260705021358116-lese60/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021433978-unlvfd">
+<h3>20260705021433978-unlvfd</h3>
+<ul>
+<li>Corpus: <code>file:shifted-symbol-product-singlebatch.txt</code> (<code>sha256:bac0593dfa9f4d1f2d7af0544722f333ce3ca291c252ac26972a9206e61deeee</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/shifted-symbol-product-singlebatch.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173273088</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-735.534 ms</li>
+<li>Telemetry: calm=true, max CPU=16.54</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021433978-unlvfd/tee.disabled">artifacts/20260705021433978-unlvfd/tee.disabled</a>, <a href="artifacts/20260705021433978-unlvfd/recv.txt">artifacts/20260705021433978-unlvfd/recv.txt</a></li>
+<li>HID output reports: 110, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021500412-ik0kmd">
+<h3>20260705021500412-ik0kmd</h3>
+<ul>
+<li>Corpus: <code>file:product-240-two-batch-diagnostic.txt</code> (<code>sha256:f29641988ff6578661fb60be3ded56799f7bf92c8d899f4115a916012e24d77e</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/product-240-two-batch-diagnostic.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173780992</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-773.078 ms</li>
+<li>Telemetry: calm=true, max CPU=0</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021500412-ik0kmd/tee.disabled">artifacts/20260705021500412-ik0kmd/tee.disabled</a>, <a href="artifacts/20260705021500412-ik0kmd/recv.txt">artifacts/20260705021500412-ik0kmd/recv.txt</a></li>
+<li>HID output reports: 488, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021528477-7r7nqc">
+<h3>20260705021528477-7r7nqc</h3>
+<ul>
+<li>Corpus: <code>angle-dense:seed=f13-angle:size=6000</code> (<code>sha256:00b583915175a1b756b33cd5f4e466786a5ee933004438b8ae3da99724a2733c</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173268992</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-765.854 ms</li>
+<li>Telemetry: calm=true, max CPU=16.05</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021528477-7r7nqc/tee.disabled">artifacts/20260705021528477-7r7nqc/tee.disabled</a>, <a href="artifacts/20260705021528477-7r7nqc/recv.txt">artifacts/20260705021528477-7r7nqc/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021729488-aoewke">
+<h3>20260705021729488-aoewke</h3>
+<ul>
+<li>Corpus: <code>shifted-symbol-storm:seed=f13-shifted:size=6000</code> (<code>sha256:b8a4a1acc0b098febb036ea343e635aca224b72b700a53eb972b5eeb07bfbb8a</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172285952</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-773.398 ms</li>
+<li>Telemetry: calm=true, max CPU=6.42</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021729488-aoewke/tee.disabled">artifacts/20260705021729488-aoewke/tee.disabled</a>, <a href="artifacts/20260705021729488-aoewke/recv.txt">artifacts/20260705021729488-aoewke/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705021944077-00gp5u">
+<h3>20260705021944077-00gp5u</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173686784</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-770.038 ms</li>
+<li>Telemetry: calm=true, max CPU=4.04</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705021944077-00gp5u/tee.disabled">artifacts/20260705021944077-00gp5u/tee.disabled</a>, <a href="artifacts/20260705021944077-00gp5u/recv.txt">artifacts/20260705021944077-00gp5u/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022017338-vtgwtj">
+<h3>20260705022017338-vtgwtj</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172261376</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-767.245 ms</li>
+<li>Telemetry: calm=true, max CPU=6.78</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022017338-vtgwtj/tee.disabled">artifacts/20260705022017338-vtgwtj/tee.disabled</a>, <a href="artifacts/20260705022017338-vtgwtj/recv.txt">artifacts/20260705022017338-vtgwtj/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022050423-d6a3ii">
+<h3>20260705022050423-d6a3ii</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173531136</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-752.465 ms</li>
+<li>Telemetry: calm=true, max CPU=7.54</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022050423-d6a3ii/tee.disabled">artifacts/20260705022050423-d6a3ii/tee.disabled</a>, <a href="artifacts/20260705022050423-d6a3ii/recv.txt">artifacts/20260705022050423-d6a3ii/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022123630-jxcn6n">
+<h3>20260705022123630-jxcn6n</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172957696</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-766.655 ms</li>
+<li>Telemetry: calm=true, max CPU=6.56</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022123630-jxcn6n/tee.disabled">artifacts/20260705022123630-jxcn6n/tee.disabled</a>, <a href="artifacts/20260705022123630-jxcn6n/recv.txt">artifacts/20260705022123630-jxcn6n/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022156929-we276m">
+<h3>20260705022156929-we276m</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172892160</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-731.087 ms</li>
+<li>Telemetry: calm=true, max CPU=14.32</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022156929-we276m/tee.disabled">artifacts/20260705022156929-we276m/tee.disabled</a>, <a href="artifacts/20260705022156929-we276m/recv.txt">artifacts/20260705022156929-we276m/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022230254-ud9tqf">
+<h3>20260705022230254-ud9tqf</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173080576</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-769.097 ms</li>
+<li>Telemetry: calm=true, max CPU=8.04</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022230254-ud9tqf/tee.disabled">artifacts/20260705022230254-ud9tqf/tee.disabled</a>, <a href="artifacts/20260705022230254-ud9tqf/recv.txt">artifacts/20260705022230254-ud9tqf/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022303412-lzine1">
+<h3>20260705022303412-lzine1</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172847104</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-765.342 ms</li>
+<li>Telemetry: calm=true, max CPU=4.82</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022303412-lzine1/tee.disabled">artifacts/20260705022303412-lzine1/tee.disabled</a>, <a href="artifacts/20260705022303412-lzine1/recv.txt">artifacts/20260705022303412-lzine1/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022336474-joopub">
+<h3>20260705022336474-joopub</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173264896</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-765.189 ms</li>
+<li>Telemetry: calm=true, max CPU=10.06</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022336474-joopub/tee.disabled">artifacts/20260705022336474-joopub/tee.disabled</a>, <a href="artifacts/20260705022336474-joopub/recv.txt">artifacts/20260705022336474-joopub/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022409577-g5uqom">
+<h3>20260705022409577-g5uqom</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173346816</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-766.383 ms</li>
+<li>Telemetry: calm=true, max CPU=2.81</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022409577-g5uqom/tee.disabled">artifacts/20260705022409577-g5uqom/tee.disabled</a>, <a href="artifacts/20260705022409577-g5uqom/recv.txt">artifacts/20260705022409577-g5uqom/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022442594-xjr2eu">
+<h3>20260705022442594-xjr2eu</h3>
+<ul>
+<li>Corpus: <code>file:ae8-trigger-compact-layout.txt</code> (<code>sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/ae8-trigger-compact-layout.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173391872</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-762.431 ms</li>
+<li>Telemetry: calm=true, max CPU=6.78</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022442594-xjr2eu/tee.disabled">artifacts/20260705022442594-xjr2eu/tee.disabled</a>, <a href="artifacts/20260705022442594-xjr2eu/recv.txt">artifacts/20260705022442594-xjr2eu/recv.txt</a></li>
+<li>HID output reports: 1204, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022507363-99is8x">
+<h3>20260705022507363-99is8x</h3>
+<ul>
+<li>Corpus: <code>mixed-case:seed=f14-stall:size=200</code> (<code>sha256:bf5a98ae668b31d6f5fc180e4dc9fa9606b4bf0f2a1610d45eaf801d52ef7a80</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 178896896</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-764.691 ms</li>
+<li>Telemetry: calm=true, max CPU=12.49</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 watchdog-stall robustness row; synthetic failure evidence, not a threshold datapoint</code></li>
+<li>Artifacts: <a href="artifacts/20260705022507363-99is8x/tee.disabled">artifacts/20260705022507363-99is8x/tee.disabled</a>, <a href="artifacts/20260705022507363-99is8x/recv.txt">artifacts/20260705022507363-99is8x/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022526532-heie9x">
+<h3>20260705022526532-heie9x</h3>
+<ul>
+<li>Corpus: <code>mixed-case:seed=f14-focus:size=200</code> (<code>sha256:617f9c18d4b722679c6822fa41503ce1567881f98e4f9c9f7f58376a4200c1d8</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>fail</code>, sink RSS 0</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=false, auto-update=false, capsLockOff=true, offset=-755.321 ms</li>
+<li>Telemetry: calm=true, max CPU=8.66</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 focus-loss setup abort; synthetic failure evidence, not a threshold datapoint</code></li>
+<li>Artifacts: <a href="artifacts/20260705022526532-heie9x/tee.disabled">artifacts/20260705022526532-heie9x/tee.disabled</a>, <a href="artifacts/20260705022526532-heie9x/recv.txt">artifacts/20260705022526532-heie9x/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 2</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>focus-guard:0 ms</code></p>
+</section>
+<section id="run-20260705022555843-y2dtkd">
+<h3>20260705022555843-y2dtkd</h3>
+<ul>
+<li>Corpus: <code>mixed-case:seed=f14-kill-resume:size=200</code> (<code>sha256:961ac43b20f0f5315fd0474ac6dd49fbee3e839dcdf1a8dfb7e398115bd85ffe</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173010944</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-781.164 ms</li>
+<li>Telemetry: calm=true, max CPU=21.89</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 kill-9 resume row verifies ledger recovery only; not a threshold datapoint</code></li>
+<li>Artifacts: <a href="artifacts/20260705022555843-y2dtkd/tee.disabled">artifacts/20260705022555843-y2dtkd/tee.disabled</a>, <a href="artifacts/20260705022555843-y2dtkd/recv.txt">artifacts/20260705022555843-y2dtkd/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022733316-ooarvn">
+<h3>20260705022733316-ooarvn</h3>
+<ul>
+<li>Corpus: <code>file:angle-dense-product-singlebatch.txt</code> (<code>sha256:1c22b398f40b6be90cc79a0fffc0a9110c332a93ca026bb471d6a82277fa0826</code>)</li>
+<li>Corpus path: <code>/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f8-replication-campaign-20260703/corpus/angle-dense-product-singlebatch.txt</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173531136</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-780.397 ms</li>
+<li>Telemetry: calm=true, max CPU=27.56</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705022733316-ooarvn/tee.disabled">artifacts/20260705022733316-ooarvn/tee.disabled</a>, <a href="artifacts/20260705022733316-ooarvn/recv.txt">artifacts/20260705022733316-ooarvn/recv.txt</a></li>
+<li>HID output reports: 118, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705022758260-6orxkb">
+<h3>20260705022758260-6orxkb</h3>
+<ul>
+<li>Corpus: <code>mixed-case:seed=f14-focus-rerun:size=200</code> (<code>sha256:c285ba4a3f6f0c916aa2b31e4a61961240f18e732c635643c13b5d757d0c7539</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>fail</code>, sink RSS 0</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=false, auto-update=false, capsLockOff=true, offset=-763.032 ms</li>
+<li>Telemetry: calm=true, max CPU=5.09</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 focus-loss rerun setup abort; synthetic failure evidence, not a threshold datapoint</code></li>
+<li>Artifacts: <a href="artifacts/20260705022758260-6orxkb/tee.disabled">artifacts/20260705022758260-6orxkb/tee.disabled</a>, <a href="artifacts/20260705022758260-6orxkb/recv.txt">artifacts/20260705022758260-6orxkb/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 2</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>focus-guard:0 ms</code></p>
+</section>
+<section id="run-20260705022912028-nqr4oe">
+<h3>20260705022912028-nqr4oe</h3>
+<ul>
+<li>Corpus: <code>mixed-case:seed=f14-focus-post-start:size=200</code> (<code>sha256:3544950b00571a21f521c717950270aae7ea5227957a53b4a7b85f5f72d9c515</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173305856</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-775.653 ms</li>
+<li>Telemetry: calm=true, max CPU=1.03</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 post-start focus-loss row; synthetic failure evidence, not a threshold datapoint</code></li>
+<li>Artifacts: <a href="artifacts/20260705022912028-nqr4oe/tee.disabled">artifacts/20260705022912028-nqr4oe/tee.disabled</a>, <a href="artifacts/20260705022912028-nqr4oe/recv.txt">artifacts/20260705022912028-nqr4oe/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 4</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705023119407-nme9wt">
+<h3>20260705023119407-nme9wt</h3>
+<ul>
+<li>Corpus: <code>code:seed=f14-code-rel-6k:size=6000</code> (<code>sha256:da5f35828c224081a4d9a7cd1170d3f82b5fceb429c5ae562e8d062f23403bd6</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173252608</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-773.648 ms</li>
+<li>Telemetry: calm=true, max CPU=0.3</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Artifacts: <a href="artifacts/20260705023119407-nme9wt/tee.disabled">artifacts/20260705023119407-nme9wt/tee.disabled</a>, <a href="artifacts/20260705023119407-nme9wt/recv.txt">artifacts/20260705023119407-nme9wt/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705023154702-c7vozr">
+<h3>20260705023154702-c7vozr</h3>
+<ul>
+<li>Corpus: <code>code:seed=f14-code-rel-30k:size=30000</code> (<code>sha256:cd877c3ccef6445be5bf40f97a551f454bb8c3cf491fc0a193e4b974f9072419</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173072384</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-734.747 ms</li>
+<li>Telemetry: calm=true, max CPU=22.93</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705023154702-c7vozr/tee.disabled">artifacts/20260705023154702-c7vozr/tee.disabled</a>, <a href="artifacts/20260705023154702-c7vozr/recv.txt">artifacts/20260705023154702-c7vozr/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705023920192-ftp77r">
+<h3>20260705023920192-ftp77r</h3>
+<ul>
+<li>Corpus: <code>code:seed=f14-code-fast-6k:size=6000</code> (<code>sha256:1b5720c818744dac49af05ca8f4c9b53d30b512dd2321d5770672c50ed14b153</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173195264</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-736.714 ms</li>
+<li>Telemetry: calm=true, max CPU=6.16</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705023920192-ftp77r/tee.disabled">artifacts/20260705023920192-ftp77r/tee.disabled</a>, <a href="artifacts/20260705023920192-ftp77r/recv.txt">artifacts/20260705023920192-ftp77r/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705024051759-na6l8o">
+<h3>20260705024051759-na6l8o</h3>
+<ul>
+<li>Corpus: <code>code:seed=f14-code-fast-30k:size=30000</code> (<code>sha256:c80a0b379511cec6e916dd1e33fa63f822dbbaad98a2f4d4dbd27f6d5eea0c6a</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173260800</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-739.562 ms</li>
+<li>Telemetry: calm=true, max CPU=4.51</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705024051759-na6l8o/tee.disabled">artifacts/20260705024051759-na6l8o/tee.disabled</a>, <a href="artifacts/20260705024051759-na6l8o/recv.txt">artifacts/20260705024051759-na6l8o/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705024620617-wnpiiv">
+<h3>20260705024620617-wnpiiv</h3>
+<ul>
+<li>Corpus: <code>long-text:seed=f14-longtext-rel-6k:size=6000</code> (<code>sha256:63ca52b1a254be29d55cf7de4cbe28374339dd1c4e9422f026bb2f6822613cb3</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172724224</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-708.558 ms</li>
+<li>Telemetry: calm=true, max CPU=8.38</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705024620617-wnpiiv/tee.disabled">artifacts/20260705024620617-wnpiiv/tee.disabled</a>, <a href="artifacts/20260705024620617-wnpiiv/recv.txt">artifacts/20260705024620617-wnpiiv/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705024813355-x3dg2q">
+<h3>20260705024813355-x3dg2q</h3>
+<ul>
+<li>Corpus: <code>long-text:seed=f14-longtext-rel-30k:size=30000</code> (<code>sha256:5d8cd697e5f69d8d2ee43a3c3015e9932480a569a9596037e9b34889f25dd0f2</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 171454464</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-737.290 ms</li>
+<li>Telemetry: calm=true, max CPU=2.14</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705024813355-x3dg2q/tee.disabled">artifacts/20260705024813355-x3dg2q/tee.disabled</a>, <a href="artifacts/20260705024813355-x3dg2q/recv.txt">artifacts/20260705024813355-x3dg2q/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705025523246-1t81vf">
+<h3>20260705025523246-1t81vf</h3>
+<ul>
+<li>Corpus: <code>long-text:seed=f14-longtext-fast-6k:size=6000</code> (<code>sha256:2678029deaf5fbaf87897118f9f60a201192dd24cd96aab516a217a3da7086b8</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172752896</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-731.570 ms</li>
+<li>Telemetry: calm=true, max CPU=6.18</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705025523246-1t81vf/tee.disabled">artifacts/20260705025523246-1t81vf/tee.disabled</a>, <a href="artifacts/20260705025523246-1t81vf/recv.txt">artifacts/20260705025523246-1t81vf/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705025653887-w7fl5e">
+<h3>20260705025653887-w7fl5e</h3>
+<ul>
+<li>Corpus: <code>long-text:seed=f14-longtext-fast-30k:size=30000</code> (<code>sha256:44e994a27a0c6b6b4e79364c5de84f87992e12f74bb8c824d4086e3ea440d65a</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172900352</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-727.813 ms</li>
+<li>Telemetry: calm=true, max CPU=10.14</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705025653887-w7fl5e/tee.disabled">artifacts/20260705025653887-w7fl5e/tee.disabled</a>, <a href="artifacts/20260705025653887-w7fl5e/recv.txt">artifacts/20260705025653887-w7fl5e/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705030208372-jn73k5">
+<h3>20260705030208372-jn73k5</h3>
+<ul>
+<li>Corpus: <code>scripts:seed=f14-scripts-rel-6k:size=6000</code> (<code>sha256:e3c11bda843ef40ff93c4a297e3cb29f6eab302acd40eff91792f3b4142d91ef</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 169852928</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-720.860 ms</li>
+<li>Telemetry: calm=true, max CPU=21.68</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705030208372-jn73k5/tee.disabled">artifacts/20260705030208372-jn73k5/tee.disabled</a>, <a href="artifacts/20260705030208372-jn73k5/recv.txt">artifacts/20260705030208372-jn73k5/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705030404398-2sjjoz">
+<h3>20260705030404398-2sjjoz</h3>
+<ul>
+<li>Corpus: <code>scripts:seed=f14-scripts-rel-30k:size=30000</code> (<code>sha256:c64ee876feb36319023ffbf0af094947a8c71f77931c0b283786bf2c6502ab55</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172961792</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-718.852 ms</li>
+<li>Telemetry: calm=true, max CPU=5.9</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705030404398-2sjjoz/tee.disabled">artifacts/20260705030404398-2sjjoz/tee.disabled</a>, <a href="artifacts/20260705030404398-2sjjoz/recv.txt">artifacts/20260705030404398-2sjjoz/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705031119233-y0upzg">
+<h3>20260705031119233-y0upzg</h3>
+<ul>
+<li>Corpus: <code>scripts:seed=f14-scripts-fast-6k:size=6000</code> (<code>sha256:572fd2c11346f37218f89275a82cfd43cd441156d11cf0c6871837b2234478c7</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173203456</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-748.477 ms</li>
+<li>Telemetry: calm=true, max CPU=10</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705031119233-y0upzg/tee.disabled">artifacts/20260705031119233-y0upzg/tee.disabled</a>, <a href="artifacts/20260705031119233-y0upzg/recv.txt">artifacts/20260705031119233-y0upzg/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705031246728-k39co5">
+<h3>20260705031246728-k39co5</h3>
+<ul>
+<li>Corpus: <code>scripts:seed=f14-scripts-fast-30k:size=30000</code> (<code>sha256:1f8e5c64488732e07877d6be5e4cbd88269ba895d66a5ab99d26c86e8de55a7d</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172998656</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-747.847 ms</li>
+<li>Telemetry: calm=true, max CPU=10.66</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705031246728-k39co5/tee.disabled">artifacts/20260705031246728-k39co5/tee.disabled</a>, <a href="artifacts/20260705031246728-k39co5/recv.txt">artifacts/20260705031246728-k39co5/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705031804575-w1flhq">
+<h3>20260705031804575-w1flhq</h3>
+<ul>
+<li>Corpus: <code>binary-patterns:seed=f14-binary-rel-6k:size=6000</code> (<code>sha256:61b2557f7e338d4d8743b2dea1349561c1d05a0a992ef9bdb7cd37c19356fcb3</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173363200</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-712.061 ms</li>
+<li>Telemetry: calm=true, max CPU=3.24</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705031804575-w1flhq/tee.disabled">artifacts/20260705031804575-w1flhq/tee.disabled</a>, <a href="artifacts/20260705031804575-w1flhq/recv.txt">artifacts/20260705031804575-w1flhq/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705031951979-f6i6s7">
+<h3>20260705031951979-f6i6s7</h3>
+<ul>
+<li>Corpus: <code>binary-patterns:seed=f14-binary-rel-30k:size=30000</code> (<code>sha256:e86d6b3ab2445bd53618d1eac4aa9e47407db2dd59c63c208301569675973cd9</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173490176</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-744.075 ms</li>
+<li>Telemetry: calm=true, max CPU=6.34</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705031951979-f6i6s7/tee.disabled">artifacts/20260705031951979-f6i6s7/tee.disabled</a>, <a href="artifacts/20260705031951979-f6i6s7/recv.txt">artifacts/20260705031951979-f6i6s7/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705032639984-frm8ty">
+<h3>20260705032639984-frm8ty</h3>
+<ul>
+<li>Corpus: <code>binary-patterns:seed=f14-binary-fast-6k:size=6000</code> (<code>sha256:110a92bd45f4c6b44d7cb81652f379af4c41e5aad25d17aa367d464f6ebd9186</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173481984</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-736.943 ms</li>
+<li>Telemetry: calm=true, max CPU=0.91</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705032639984-frm8ty/tee.disabled">artifacts/20260705032639984-frm8ty/tee.disabled</a>, <a href="artifacts/20260705032639984-frm8ty/recv.txt">artifacts/20260705032639984-frm8ty/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705032803304-hd1h4m">
+<h3>20260705032803304-hd1h4m</h3>
+<ul>
+<li>Corpus: <code>binary-patterns:seed=f14-binary-fast-30k:size=30000</code> (<code>sha256:fef3ddac293303ad5392710b90093718e86d985491e7fcfecae61972c1e9b593</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173498368</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-736.424 ms</li>
+<li>Telemetry: calm=true, max CPU=12.27</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705032803304-hd1h4m/tee.disabled">artifacts/20260705032803304-hd1h4m/tee.disabled</a>, <a href="artifacts/20260705032803304-hd1h4m/recv.txt">artifacts/20260705032803304-hd1h4m/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705033254648-c6bpat">
+<h3>20260705033254648-c6bpat</h3>
+<ul>
+<li>Corpus: <code>compressed-indexes:seed=f14-index-rel-6k:size=6000</code> (<code>sha256:17c0af4ce1393c4dc62cbe6d1e16afcb823cec3a572942f386b1a6320a4ea4b3</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172175360</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-724.438 ms</li>
+<li>Telemetry: calm=true, max CPU=1.89</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Artifacts: <a href="artifacts/20260705033254648-c6bpat/tee.disabled">artifacts/20260705033254648-c6bpat/tee.disabled</a>, <a href="artifacts/20260705033254648-c6bpat/recv.txt">artifacts/20260705033254648-c6bpat/recv.txt</a></li>
+<li>HID output reports: 0, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705033400652-vxtva5">
+<h3>20260705033400652-vxtva5</h3>
+<ul>
+<li>Corpus: <code>compressed-indexes:seed=f14-index-rel-30k:size=30000</code> (<code>sha256:40237c86117ba2b8296f943114ebb2a34080bc036175d5e404eb1ae1d8dcfbbb</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173383680</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-726.282 ms</li>
+<li>Telemetry: calm=true, max CPU=14.21</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705033400652-vxtva5/tee.disabled">artifacts/20260705033400652-vxtva5/tee.disabled</a>, <a href="artifacts/20260705033400652-vxtva5/recv.txt">artifacts/20260705033400652-vxtva5/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705034105329-xfeteg">
+<h3>20260705034105329-xfeteg</h3>
+<ul>
+<li>Corpus: <code>compressed-indexes:seed=f14-index-fast-6k:size=6000</code> (<code>sha256:8e288a949c962c43882d90ef33b3a934a3ae9ab4369a61ecda1cd62d78c6445e</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173162496</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-722.043 ms</li>
+<li>Telemetry: calm=true, max CPU=11.18</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705034105329-xfeteg/tee.disabled">artifacts/20260705034105329-xfeteg/tee.disabled</a>, <a href="artifacts/20260705034105329-xfeteg/recv.txt">artifacts/20260705034105329-xfeteg/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705034230601-04s039">
+<h3>20260705034230601-04s039</h3>
+<ul>
+<li>Corpus: <code>compressed-indexes:seed=f14-index-fast-30k:size=30000</code> (<code>sha256:6f8e80541a34fc3cbd5f6994f622cc6a4ad52bc3e476f2c37b77f680e52491f6</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172916736</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-712.908 ms</li>
+<li>Telemetry: calm=true, max CPU=5.79</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705034230601-04s039/tee.disabled">artifacts/20260705034230601-04s039/tee.disabled</a>, <a href="artifacts/20260705034230601-04s039/recv.txt">artifacts/20260705034230601-04s039/recv.txt</a></li>
+<li>HID output reports: 60008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705034828620-fm2ll2">
+<h3>20260705034828620-fm2ll2</h3>
+<ul>
+<li>Corpus: <code>code:seed=f14-code-rel-6k-rerun1:size=6000</code> (<code>sha256:1e34851d55bf5825c786e8713b5083f4d43818968758c1ae62cd1684cfb922fb</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 173309952</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-735.436 ms</li>
+<li>Telemetry: calm=true, max CPU=14.41</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705034828620-fm2ll2/tee.disabled">artifacts/20260705034828620-fm2ll2/tee.disabled</a>, <a href="artifacts/20260705034828620-fm2ll2/recv.txt">artifacts/20260705034828620-fm2ll2/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+<section id="run-20260705035020212-ojemfi">
+<h3>20260705035020212-ojemfi</h3>
+<ul>
+<li>Corpus: <code>compressed-indexes:seed=f14-index-rel-6k-rerun1:size=6000</code> (<code>sha256:d1f611ecb0069d6d0b69b7fe8126dfc939ccc6cc8918a6507bdace8873e9e383</code>)</li>
+<li>Corpus path: <code>synthetic://generated</code></li>
+<li>Build: <code>worklaptopjetkvm:36505b38a12c</code>, device layout <code>en-UK</code>, host decode layout <code>en-UK</code></li>
+<li>Focus guard: <code>pass</code>, sink RSS 172994560</li>
+<li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
+<li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-716.370 ms</li>
+<li>Telemetry: calm=true, max CPU=7.95</li>
+<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Artifacts: <a href="artifacts/20260705035020212-ojemfi/tee.disabled">artifacts/20260705035020212-ojemfi/tee.disabled</a>, <a href="artifacts/20260705035020212-ojemfi/recv.txt">artifacts/20260705035020212-ojemfi/recv.txt</a></li>
+<li>HID output reports: 12008, focus events: 3</li>
+</ul>
+<p>Steps: <code>run-start:0 ms</code> <code>preflight:0 ms</code> <code>injection:0 ms</code></p>
+</section>
+</body>
+</html>

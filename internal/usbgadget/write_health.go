@@ -5,6 +5,8 @@ import (
 	"errors"
 	"syscall"
 	"time"
+
+	"github.com/rs/zerolog"
 )
 
 type writeRecord struct {
@@ -131,10 +133,14 @@ func (u *UsbGadget) ClearWriteHealth() {
 	u.overrideActive = false
 }
 
-// NewTestGadget creates a minimal UsbGadget for testing write health.
-// Only the write health fields and clock are initialized.
+// NewTestGadget creates a minimal UsbGadget for tests.
 func NewTestGadget(clock func() time.Time) *UsbGadget {
+	logger := zerolog.Nop()
 	return &UsbGadget{
-		writeHealthClock: clock,
+		keysDownState:         KeysDownState{Modifier: 0, Keys: []byte{0, 0, 0, 0, 0, 0}},
+		kbdAutoReleaseTimers:  make(map[byte]*time.Timer),
+		writeHealthClock:      clock,
+		log:                   &logger,
+		logSuppressionCounter: make(map[string]int),
 	}
 }

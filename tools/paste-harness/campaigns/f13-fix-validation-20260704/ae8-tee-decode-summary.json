@@ -1,0 +1,185 @@
+{
+  "expected_hash": "sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544",
+  "rows": [
+    {
+      "run_id": "20260704035131642-0ikzya",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1200,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": -1
+    },
+    {
+      "run_id": "20260704035159358-f47dh5",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035228128-qr58rs",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035257075-0ilybp",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035326611-9wpilj",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035355400-ez2i8n",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": -1
+    },
+    {
+      "run_id": "20260704035424161-5sc3kv",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035453096-tq9qjd",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035522109-qd30u4",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035551040-0k1hgy",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    }
+  ]
+}

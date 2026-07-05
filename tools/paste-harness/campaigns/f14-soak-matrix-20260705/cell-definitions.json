@@ -1,0 +1,137 @@
+{
+  "generated_at": "2026-07-05T03:55:47.330Z",
+  "build": {
+    "source_commit": "ade0a2fbadcb7cf71f12ea35509e9ed88a7f7e04",
+    "binary_sha256": "36505b38a12c2def95ce2424ebacecdb1a392a2013f0eea7478255154b9e106f",
+    "expected_build": "36505b38a12"
+  },
+  "thresholds": {
+    "REL-6K": {
+      "max_total": 6,
+      "max_drop": 2,
+      "max_race": 4,
+      "max_garble": 0
+    },
+    "REL-30K": {
+      "max_total": 30,
+      "max_drop": 10,
+      "max_race": 20,
+      "max_garble": 0
+    },
+    "FAST-6K": {
+      "max_total": 14,
+      "max_garble": 0
+    },
+    "FAST-30K": {
+      "max_total": 72,
+      "max_garble": 0
+    }
+  },
+  "product_cells": [
+    {
+      "cell_id": "M3-PROD-CODE-REL-6K",
+      "threshold": "REL-6K"
+    },
+    {
+      "cell_id": "M3-PROD-CODE-REL-30K",
+      "threshold": "REL-30K"
+    },
+    {
+      "cell_id": "M3-PROD-CODE-FAST-6K",
+      "threshold": "FAST-6K"
+    },
+    {
+      "cell_id": "M3-PROD-CODE-FAST-30K",
+      "threshold": "FAST-30K"
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-REL-6K",
+      "threshold": "REL-6K"
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-REL-30K",
+      "threshold": "REL-30K"
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-FAST-6K",
+      "threshold": "FAST-6K"
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-FAST-30K",
+      "threshold": "FAST-30K"
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-REL-6K",
+      "threshold": "REL-6K"
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-REL-30K",
+      "threshold": "REL-30K"
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-FAST-6K",
+      "threshold": "FAST-6K"
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-FAST-30K",
+      "threshold": "FAST-30K"
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-REL-6K",
+      "threshold": "REL-6K"
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-REL-30K",
+      "threshold": "REL-30K"
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-FAST-6K",
+      "threshold": "FAST-6K"
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-FAST-30K",
+      "threshold": "FAST-30K"
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-REL-6K",
+      "threshold": "REL-6K"
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-REL-30K",
+      "threshold": "REL-30K"
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-FAST-6K",
+      "threshold": "FAST-6K"
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-FAST-30K",
+      "threshold": "FAST-30K"
+    }
+  ],
+  "target_cells": [
+    "TGT-RAW-ANGLE-REL-2K",
+    "TGT-RAW-SHIFT-REL-2K",
+    "TGT-HIDRPC-ANGLE-REL-2K",
+    "TGT-HIDRPC-SHIFT-REL-2K",
+    "TGT-PROD-ANGLE-SINGLE-REL-55",
+    "TGT-PROD-SHIFT-SINGLE-REL-51",
+    "TGT-PROD-2BATCH-DONE-REL-240",
+    "TGT-PROD-ANGLE-REL-6K",
+    "TGT-PROD-SHIFT-REL-6K",
+    "TGT-LAYOUT-MISMATCH-RAW-167",
+    "TGT-LAYOUT-MATCHED-RAW-167",
+    "TGT-AE8-TRIGGER-PROD-REL-598"
+  ],
+  "robustness": {
+    "unattended_batch": {
+      "attended": false,
+      "cell_id": "TGT-AE8-TRIGGER-PROD-REL-598",
+      "purpose": "f14_unattended_batch_attended_false"
+    },
+    "watchdog_cell_id": "A-X5-WATCHDOG-STALL",
+    "focus_cell_id": "A-X5-FOCUS-LOSS",
+    "kill9_resume_cell_id": "A-X5-KILL9-RESUME",
+    "kill9_partial_purpose": "f14_robustness_induced_kill9_partial"
+  }
+}

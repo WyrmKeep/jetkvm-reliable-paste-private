@@ -33,7 +33,7 @@ func SetDefaultsAndValidate(config interface{}) error {
 
 func setDefaultsAndValidate(config interface{}, isRoot bool) error {
 	// first we need to check if the config is a pointer
-	if reflect.TypeOf(config).Kind() != reflect.Ptr {
+	if reflect.TypeOf(config).Kind() != reflect.Pointer {
 		return fmt.Errorf("config is not a pointer")
 	}
 
@@ -106,7 +106,7 @@ func setDefaultsAndValidate(config interface{}, isRoot bool) error {
 			}
 
 			// check if it's a pointer
-			if fieldValue.Kind() == reflect.Ptr {
+			if fieldValue.Kind() == reflect.Pointer {
 				// check if the pointer is nil
 				if fieldValue.IsNil() {
 					fieldConfig.IsEmpty = true

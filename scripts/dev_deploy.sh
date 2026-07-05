@@ -56,7 +56,7 @@ check_ssh() {
 }
 
 # Default values
-SCRIPT_PATH=$(realpath "$(dirname $(realpath "${BASH_SOURCE[0]}"))")
+SCRIPT_PATH=$(realpath "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")
 REMOTE_USER="root"
 REMOTE_PATH="/userdata/jetkvm/bin"
 SKIP_UI_BUILD=false
@@ -153,7 +153,7 @@ if [ "$ENABLE_SYNC_TRACE" = 1 ]; then
     fi
 fi
 
-source ${SCRIPT_PATH}/build_utils.sh
+source "${SCRIPT_PATH}/build_utils.sh"
 
 # Verify required parameters
 if [ -z "$REMOTE_HOST" ]; then

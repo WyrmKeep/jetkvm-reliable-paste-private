@@ -52,6 +52,31 @@ export function estimateBatchBytes(stepCount: number): number {
   return 6 + stepCount * 18;
 }
 
+const PASTE_DRAIN_PRESS_HOLD_MS = 5;
+const PASTE_DRAIN_PER_BATCH_QUEUE_MS = 400;
+const PASTE_DRAIN_TAIL_SLACK_MS = 5000;
+
+export function estimatePasteDrainTimeoutMs(
+  batchStats: PasteBatchStat[],
+  delayMs: number,
+  floorMs: number,
+): number {
+  if (batchStats.length === 0) return floorMs;
+
+  // Use the same reset-delay fallback as executeMacroRemote's
+  // `step.delay || 25`, so slider value 0 and empty/NaN debug inputs do
+  // not under-budget the backend drain wait.
+  const effectiveResetDelayMs = delayMs || 25;
+  const stepCount = batchStats.reduce((sum, stat) => sum + stat.stepCount, 0);
+  const perMacroStepBackendMs = (PASTE_DRAIN_PRESS_HOLD_MS + effectiveResetDelayMs) * 2;
+  const derivedDrainTimeoutMs =
+    stepCount * perMacroStepBackendMs +
+    batchStats.length * PASTE_DRAIN_PER_BATCH_QUEUE_MS +
+    PASTE_DRAIN_TAIL_SLACK_MS;
+
+  return Math.max(floorMs, derivedDrainTimeoutMs);
+}
+
 export function buildStepsForChar(
   normalizedChar: string,
   keyboard: KeyboardLayoutLike,

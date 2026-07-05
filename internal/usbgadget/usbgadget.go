@@ -4,6 +4,7 @@ package usbgadget
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path"
 	"time"
@@ -59,12 +60,14 @@ type UsbGadget struct {
 
 	configLock sync.Mutex
 
-	keyboardHidFile *os.File
-	keyboardLock    sync.Mutex
-	absMouseHidFile *os.File
-	absMouseLock    sync.Mutex
-	relMouseHidFile *os.File
-	relMouseLock    sync.Mutex
+	keyboardHidFile   *os.File
+	keyboardLock      sync.Mutex
+	keyboardHIDTee    *keyboardHIDTee
+	keyboardWriteFunc func(modifier byte, keys []byte) error // injectable keyboard writer for host-side tests
+	absMouseHidFile   *os.File
+	absMouseLock      sync.Mutex
+	relMouseHidFile   *os.File
+	relMouseLock      sync.Mutex
 
 	keyboardState byte          // keyboard latched state (NumLock, CapsLock, ScrollLock, Compose, Kana)
 	keysDownState KeysDownState // keyboard dynamic state (modifier keys and pressed keys)
@@ -82,7 +85,8 @@ type UsbGadget struct {
 
 	absMouseAccumulatedWheelY float64
 
-	lastUserInput time.Time
+	lastUserInput     time.Time
+	lastUserInputLock sync.Mutex
 
 	writeHealthLock  sync.Mutex
 	writeWindow      []writeRecord
@@ -158,6 +162,7 @@ func newUsbGadget(name string, configMap map[string]gadgetConfigItem, enabledDev
 		logger.Error().Err(err).Msg("failed to init USB gadget")
 		return nil
 	}
+	g.keyboardHIDTee = newKeyboardHIDTeeFromEnv(logger)
 
 	return g
 }
@@ -180,18 +185,23 @@ func (u *UsbGadget) Close() error {
 	u.kbdAutoReleaseLock.Unlock()
 
 	// Close HID files
+	var err error
+	if u.keyboardHIDTee != nil {
+		err = errors.Join(err, u.keyboardHIDTee.Close())
+		u.keyboardHIDTee = nil
+	}
 	if u.keyboardHidFile != nil {
-		u.keyboardHidFile.Close()
+		err = errors.Join(err, u.keyboardHidFile.Close())
 		u.keyboardHidFile = nil
 	}
 	if u.absMouseHidFile != nil {
-		u.absMouseHidFile.Close()
+		err = errors.Join(err, u.absMouseHidFile.Close())
 		u.absMouseHidFile = nil
 	}
 	if u.relMouseHidFile != nil {
-		u.relMouseHidFile.Close()
+		err = errors.Join(err, u.relMouseHidFile.Close())
 		u.relMouseHidFile = nil
 	}
 
-	return nil
+	return err
 }

@@ -1,0 +1,34 @@
+{
+  "name": "jetkvm-paste-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^22.21.1"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "self-validate": "node classifier-self-test.js",
+    "ledger:lint": "node ledger-lint.js",
+    "ledger:annotate": "node ledger-annotate.js",
+    "dashboard": "node dashboard.js",
+    "orchestrator": "node run-orchestrator.js",
+    "hidrpc": "node hidrpc-client.js",
+    "tee:pacing": "node tee-pacing.js",
+    "tee:compare": "node tee-compare.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "node-datachannel": "^0.32.3",
+    "playwright-core": "^1.57.0",
+    "ws": "^8.21.0"
+  }
+}

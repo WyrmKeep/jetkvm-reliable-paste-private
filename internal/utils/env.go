@@ -8,7 +8,7 @@ import (
 
 func MarshalEnv(instance interface{}) ([]string, error) {
 	v := reflect.ValueOf(instance)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return nil, fmt.Errorf("instance is nil")
 		}
@@ -56,7 +56,7 @@ func MarshalEnv(instance interface{}) ([]string, error) {
 		case reflect.String:
 			valueStr = fieldValue.String()
 
-		case reflect.Ptr:
+		case reflect.Pointer:
 			if fieldValue.IsNil() {
 				continue // Skip nil pointers
 			}

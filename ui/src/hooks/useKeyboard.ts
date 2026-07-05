@@ -17,10 +17,12 @@ import { useHidRpc } from "@/hooks/useHidRpc";
 import { JsonRpcResponse, useJsonRpc } from "@/hooks/useJsonRpc";
 import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
+import { createKeepaliveScheduler, type KeepaliveScheduler } from "@/utils/keepaliveScheduler";
 import {
   buildPasteMacroBatches,
   DEFAULT_LARGE_PASTE_POLICY,
   estimateBatchBytes,
+  estimatePasteDrainTimeoutMs,
   partitionBatchesByChunkChars,
   type KeyboardLayoutLike,
   type PasteChunkPlan,
@@ -31,6 +33,8 @@ const MACRO_RESET_KEYBOARD_STATE = {
   modifier: 0,
   delay: 0,
 };
+
+const KEYPRESS_KEEPALIVE_INTERVAL_MS = 50;
 
 // Module-level guards for the Phase 2 chunk-aware paste path.
 //
@@ -376,8 +380,8 @@ export default function useKeyboard() {
     abortController.current = ac;
   }, []);
 
-  // Keepalive timer management
-  const keepAliveTimerRef = useRef<number | null>(null);
+  const keepAliveSchedulerRef = useRef<KeepaliveScheduler | null>(null);
+  const sendKeypressKeepAliveRef = useRef<() => void>(() => undefined);
 
   // INTRODUCTION: The earlier version of the JetKVM device shipped with all keyboard state
   // being tracked on the browser/client-side. When adding the keyPressReport API to the
@@ -426,6 +430,14 @@ export default function useKeyboard() {
         break;
     }
   });
+  sendKeypressKeepAliveRef.current = sendKeypressKeepAliveHidRpc;
+
+  if (!keepAliveSchedulerRef.current) {
+    keepAliveSchedulerRef.current = createKeepaliveScheduler({
+      intervalMs: KEYPRESS_KEEPALIVE_INTERVAL_MS,
+      onTick: () => sendKeypressKeepAliveRef.current(),
+    });
+  }
 
   const handleLegacyKeyboardReport = useCallback(
     async (keys: number[], modifier: number) => {
@@ -459,23 +471,9 @@ export default function useKeyboard() {
     [send],
   );
 
-  const KEEPALIVE_INTERVAL = 50;
-
   const cancelKeepAlive = useCallback(() => {
-    if (keepAliveTimerRef.current) {
-      clearInterval(keepAliveTimerRef.current);
-      keepAliveTimerRef.current = null;
-    }
+    keepAliveSchedulerRef.current?.reset();
   }, []);
-
-  const scheduleKeepAlive = useCallback(() => {
-    // Clears existing keepalive timer
-    cancelKeepAlive();
-
-    keepAliveTimerRef.current = setInterval(() => {
-      sendKeypressKeepAliveHidRpc();
-    }, KEEPALIVE_INTERVAL);
-  }, [cancelKeepAlive, sendKeypressKeepAliveHidRpc]);
 
   // resetKeyboardState is used to reset the keyboard state to no keys pressed and no modifiers.
   // This is useful for macros, in case of client-side rollover, and when the browser loses focus
@@ -557,15 +555,10 @@ export default function useKeyboard() {
 
   const sendKeypress = useCallback(
     (key: number, press: boolean) => {
-      cancelKeepAlive();
-
       sendKeypressEventHidRpc(key, press);
-
-      if (press) {
-        scheduleKeepAlive();
-      }
+      keepAliveSchedulerRef.current?.handleKeyChange(key, press);
     },
-    [sendKeypressEventHidRpc, scheduleKeepAlive, cancelKeepAlive],
+    [sendKeypressEventHidRpc],
   );
 
   // handleKeyPress is used to handle a key press or release event.
@@ -633,7 +626,17 @@ export default function useKeyboard() {
           .reduce((acc, val) => acc + val, 0);
 
         if (keyValues.length > 0 || modifierMask > 0) {
-          macro.push({ keys: keyValues, modifier: modifierMask, delay: 5 });
+          // PASTE-009: hold MODIFIED keys (Shift/AltGr + key) longer than
+          // plain keys. The byte-exact 100k surfaced a same-length case race
+          // (`Quick`→`quick`) — the host sampled the key without its modifier
+          // from a too-brief report. A modified press held ~2x longer gives
+          // the host more USB polls to register the modifier together with
+          // the key, reducing these substitution races. Plain (unmodified)
+          // keys keep the short hold, so the slowdown is confined to the
+          // shifted/AltGr minority of characters. This only REDUCES the race
+          // (it can't be content-verified for code — see PASTE-008).
+          const pressHoldMs = modifierMask > 0 ? 10 : 5;
+          macro.push({ keys: keyValues, modifier: modifierMask, delay: pressHoldMs });
           macro.push({ ...MACRO_RESET_KEYBOARD_STATE, delay: step.delay || 25 });
         }
       }
@@ -926,32 +929,15 @@ export default function useKeyboard() {
               // ~2x its measured worst case, with a policy floor for
               // small chunks.
               //
-              // The derivation reads delayMs from ExecutePasteTextOptions
-              // and applies the SAME `|| 25` fallback that executeMacroRemote
-              // uses for MacroStep.delay. This matters for debug-mode pastes
-              // where the PasteModal delay input can be 0 (slider at 0) or
-              // NaN (empty input). Without the fallback, delayMs=0 would
-              // halve the derived budget and delayMs=NaN would collapse the
-              // whole expression to NaN, making Math.max short-circuit and
-              // the required drain fire almost immediately. The `|| 25`
-              // matches executeMacroRemote's step.delay || 25 at line 456
-              // of this file — same expression, same default, same source
-              // of truth.
-              const effectiveResetDelayMs = delayMs || 25;
-              const perMacroStepBackendMs = (5 + effectiveResetDelayMs) * 2;
-              const perBatchInterMacroMs = 400;
-              let chunkStepCount = 0;
-              for (let b = chunk.batchStartIndex; b < chunk.batchEndIndex; b++) {
-                chunkStepCount += batchStats[b].stepCount;
-              }
-              const chunkNumBatches = chunk.batchEndIndex - chunk.batchStartIndex;
-              const derivedDrainTimeoutMs =
-                chunkStepCount * perMacroStepBackendMs +
-                chunkNumBatches * perBatchInterMacroMs +
-                5000;
-              const chunkDrainTimeoutMs = Math.max(
+              // The shared derivation reads delayMs from
+              // ExecutePasteTextOptions and applies the SAME `|| 25`
+              // fallback that executeMacroRemote uses for MacroStep.delay.
+              // This matters for debug-mode pastes where the PasteModal
+              // delay input can be 0 (slider at 0) or NaN (empty input).
+              const chunkDrainTimeoutMs = estimatePasteDrainTimeoutMs(
+                batchStats.slice(chunk.batchStartIndex, chunk.batchEndIndex),
+                delayMs,
                 policy.chunkDrainTimeoutFloorMs,
-                derivedDrainTimeoutMs,
               );
 
               // Intermediate chunks (ci < chunks.length - 1) skip the
@@ -1136,7 +1122,12 @@ export default function useKeyboard() {
             chunkTotal: chunkTotalForProgress,
           });
 
-          const drainTimeoutMs = Math.max(finalSettleMs, batches.length * 1000);
+          // The final non-chunk drain must budget for all queued batches.
+          // A flat batches*1000ms timeout under-budgeted multi-batch
+          // Reliable product pastes: delivery completed, but the wait
+          // rejected before the final pasteDepth 1->0 state arrived, so
+          // PasteModal never persisted its `done:` trace.
+          const drainTimeoutMs = estimatePasteDrainTimeoutMs(batchStats, delayMs, finalSettleMs);
           await waitForPasteDrain(
             "bestEffort",
             drainTimeoutMs,

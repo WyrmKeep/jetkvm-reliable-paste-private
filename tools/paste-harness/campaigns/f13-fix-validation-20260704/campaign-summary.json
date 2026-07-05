@@ -1,0 +1,982 @@
+{
+  "generated_at": "2026-07-04T11:01:40.050Z",
+  "build_identity": "worklaptopjetkvm:6ea2828e3415",
+  "primary_layout": "en-UK",
+  "secondary_layout": "en-UK",
+  "host_decode_layout": "en-UK",
+  "baseline_edit_distances": [
+    {
+      "run_id": "20260704032043546-6uxa3f",
+      "edit_distance": 5,
+      "accuracy": 0.9991665277546258,
+      "vector": {
+        "drop": 29,
+        "insertion": 26,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      }
+    },
+    {
+      "run_id": "20260704032217092-tajav4",
+      "edit_distance": 4,
+      "accuracy": 0.9993332222037006,
+      "vector": {
+        "drop": 2,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 2,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      }
+    },
+    {
+      "run_id": "20260704032350541-5eznjp",
+      "edit_distance": 3,
+      "accuracy": 0.9994999166527755,
+      "vector": {
+        "drop": 27,
+        "insertion": 26,
+        "same-length-substitution": 0,
+        "case-error": 1,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      }
+    }
+  ],
+  "side_by_side": [
+    {
+      "cell": "F13-BASELINE-RATE75",
+      "label": "baseline rate75 raw 6k",
+      "f8": {
+        "label": "baseline rate75 raw 6k",
+        "n": 3,
+        "completed": 3,
+        "garble": 0,
+        "vector": {
+          "drop": 3,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 6,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 58,
+          "insertion": 52,
+          "same-length-substitution": 0,
+          "case-error": 4,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704032043546-6uxa3f",
+          "20260704032217092-tajav4",
+          "20260704032350541-5eznjp"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-RAW-ANGLE-REL-2K",
+      "label": "raw angle 2k rate75",
+      "f8": {
+        "label": "raw angle 2k rate75",
+        "n": 3,
+        "completed": 3,
+        "garble": 0,
+        "vector": {
+          "drop": 493,
+          "insertion": 492,
+          "same-length-substitution": 9,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 496,
+          "insertion": 492,
+          "same-length-substitution": 9,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704032640274-7i24gw",
+          "20260704032720401-b4ij6p",
+          "20260704032800576-hkj7c8"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-RAW-SHIFT-REL-2K",
+      "label": "raw shifted 2k rate75",
+      "f8": {
+        "label": "raw shifted 2k rate75",
+        "n": 3,
+        "completed": 3,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704032840789-sh978p",
+          "20260704032921028-l9r93t",
+          "20260704033001241-e4r0ho"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-HIDRPC-ANGLE-REL-2K",
+      "label": "hidrpc angle 2k 11ms",
+      "f8": {
+        "label": "hidrpc angle 2k 11ms",
+        "n": 3,
+        "completed": 3,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 3,
+          "case-error": 6,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 2,
+          "insertion": 0,
+          "same-length-substitution": 3,
+          "case-error": 3,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704033041440-60407l",
+          "20260704033131485-rl9miv",
+          "20260704033221995-bob2c3"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-HIDRPC-SHIFT-REL-2K",
+      "label": "hidrpc shifted 2k 11ms",
+      "f8": {
+        "label": "hidrpc shifted 2k 11ms",
+        "n": 4,
+        "completed": 4,
+        "garble": 0,
+        "vector": {
+          "drop": 1,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704033312132-864bge",
+          "20260704033407276-vvtiiz",
+          "20260704033502530-a48t1v"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-PROD-ANGLE-SINGLE-REL-55",
+      "label": "product angle single",
+      "f8": {
+        "label": "product angle single",
+        "n": 3,
+        "completed": 3,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704033642043-rdt36p",
+          "20260704033702601-s8rvfe",
+          "20260704033723514-wexc6w"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-PROD-SHIFT-SINGLE-REL-51",
+      "label": "product shifted single",
+      "f8": {
+        "label": "product shifted single",
+        "n": 4,
+        "completed": 4,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704033744345-xh8iqy",
+          "20260704033851406-3h2ya4",
+          "20260704034128310-wzkvgo"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-PROD-2BATCH-DONE-REL-240",
+      "label": "product 2-batch done",
+      "f8": {
+        "label": "product 2-batch done",
+        "n": 2,
+        "completed": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 480,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 3,
+        "completed": 3,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 18,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704033912416-614kof",
+          "20260704033935453-rwacx5",
+          "20260704033958460-wmlt7c"
+        ]
+      }
+    },
+    {
+      "cell": "TGT-AE8-TRIGGER-PROD-REL-598",
+      "label": "AE8 trigger product tee",
+      "f8": {
+        "label": "AE8 trigger product tee",
+        "n": 1,
+        "completed": 1,
+        "garble": 0,
+        "vector": {
+          "drop": 2,
+          "insertion": 2,
+          "same-length-substitution": 45,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      "f13": {
+        "n": 10,
+        "completed": 10,
+        "excluded": 0,
+        "garble": 0,
+        "vector": {
+          "drop": 2,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "runs": [
+          "20260704035131642-0ikzya",
+          "20260704035159358-f47dh5",
+          "20260704035228128-qr58rs",
+          "20260704035257075-0ilybp",
+          "20260704035326611-9wpilj",
+          "20260704035355400-ez2i8n",
+          "20260704035424161-5sc3kv",
+          "20260704035453096-tq9qjd",
+          "20260704035522109-qd30u4",
+          "20260704035551040-0k1hgy"
+        ]
+      }
+    }
+  ],
+  "ae4": {
+    "status": "passed",
+    "amended_contract": "5 qualifying product-path Reliable runs per corpus, calibration engaged, tee enabled and non-empty, delta=0, final garble=0, tee decode exact, isolated races <=1",
+    "angle_dense": [
+      {
+        "run_id": "20260704090615177-fffabj",
+        "timestamp": "2026-07-04T09:06:15.178Z",
+        "corpus_id": "angle-dense:seed=f13-angle:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 108240,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 0.28,
+        "sink_rss_bytes": 172437504,
+        "done_line": "done: chars=6000 elapsed=91.5s effective=65.6cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704090807774-qt89l1",
+        "timestamp": "2026-07-04T09:08:07.774Z",
+        "corpus_id": "angle-dense:seed=f13-angle:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 109258,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 0.58,
+        "sink_rss_bytes": 173580288,
+        "done_line": "done: chars=6000 elapsed=90.9s effective=66.0cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704091001592-ge2nji",
+        "timestamp": "2026-07-04T09:10:01.593Z",
+        "corpus_id": "angle-dense:seed=f13-angle:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 109264,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 5.66,
+        "sink_rss_bytes": 173387776,
+        "done_line": "done: chars=6000 elapsed=91.4s effective=65.7cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704101922456-iog9eh",
+        "timestamp": "2026-07-04T10:19:22.457Z",
+        "corpus_id": "angle-dense:seed=f13-angle:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 120425,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 7.16,
+        "sink_rss_bytes": 173191168,
+        "done_line": "done: chars=6000 elapsed=92.5s effective=64.9cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704102444764-niolbb",
+        "timestamp": "2026-07-04T10:24:44.765Z",
+        "corpus_id": "angle-dense:seed=f13-angle:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 121731,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 8.4,
+        "sink_rss_bytes": 245714944,
+        "done_line": "done: chars=6000 elapsed=93.2s effective=64.4cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12004,
+        "tee_unknown_reports": 0
+      }
+    ],
+    "shifted_symbol_storm": [
+      {
+        "run_id": "20260704104252550-ni8i0f",
+        "timestamp": "2026-07-04T10:42:52.550Z",
+        "corpus_id": "shifted-symbol-storm:seed=f13-shifted:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 125417,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 2.81,
+        "sink_rss_bytes": 172662784,
+        "done_line": "done: chars=6000 elapsed=106.8s effective=56.2cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12004,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704104515052-omynqx",
+        "timestamp": "2026-07-04T10:45:15.053Z",
+        "corpus_id": "shifted-symbol-storm:seed=f13-shifted:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 125096,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 18.18,
+        "sink_rss_bytes": 172789760,
+        "done_line": "done: chars=6000 elapsed=106.5s effective=56.3cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704104737294-viuxfd",
+        "timestamp": "2026-07-04T10:47:37.294Z",
+        "corpus_id": "shifted-symbol-storm:seed=f13-shifted:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 126791,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 3.88,
+        "sink_rss_bytes": 172937216,
+        "done_line": "done: chars=6000 elapsed=106.9s effective=56.1cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704105001133-igo4mb",
+        "timestamp": "2026-07-04T10:50:01.133Z",
+        "corpus_id": "shifted-symbol-storm:seed=f13-shifted:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 125044,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 16.36,
+        "sink_rss_bytes": 173510656,
+        "done_line": "done: chars=6000 elapsed=106.1s effective=56.5cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      },
+      {
+        "run_id": "20260704105223245-we4p89",
+        "timestamp": "2026-07-04T10:52:23.245Z",
+        "corpus_id": "shifted-symbol-storm:seed=f13-shifted:size=6000",
+        "build_sha": "worklaptopjetkvm:e30c5d20b113",
+        "duration_ms": 125099,
+        "ocr_calibration": "engaged",
+        "verification_mode": "auto-repair",
+        "manual_confirm_continuations": 0,
+        "cpu_max_percent": 8.1,
+        "sink_rss_bytes": 172933120,
+        "done_line": "done: chars=6000 elapsed=106.6s effective=56.3cps",
+        "delta": 0,
+        "isolated_races": 0,
+        "final_garble_events": 0,
+        "readback_exact": true,
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        },
+        "tee_non_empty": true,
+        "tee_decode_exact": true,
+        "tee_records": 12003,
+        "tee_unknown_reports": 0
+      }
+    ],
+    "excluded_and_rerun": [
+      {
+        "run_id": "20260704101208918-1gow7y",
+        "cell_id": "TGT-PROD-ANGLE-REL-6K",
+        "outcome": "abort:preflight",
+        "hid_output_reports": 0,
+        "excluded_from_thresholds": true,
+        "excluded_reason": "build_identity_mismatch",
+        "vector": {
+          "drop": 6000,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      {
+        "run_id": "20260704103344657-itgos6",
+        "cell_id": "TGT-PROD-SHIFT-REL-6K",
+        "outcome": "failed",
+        "hid_output_reports": 0,
+        "excluded_from_thresholds": true,
+        "excluded_reason": "locator.click: Timeout 15000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: /Confirm Paste/i }).first()\n    - locator resolved to <button disabled class=\"group cursor-pointer outline-hidden\">…</button>\n  - attempting click action\n    2 × waiting for element to be visible, enabled and stable\n      - element is not enabled\n    - retrying click action\n    - waiting 20ms\n    2 × waiting for element to be visible, enabled and stable\n      - element is not enabled\n    - retrying click action\n      - waiting 100ms\n    28 × waiting for element to be visible, enabled and stable\n       - element is not enabled\n     - retrying click action\n       - waiting 500ms\n",
+        "vector": {
+          "drop": 0,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      },
+      {
+        "run_id": "20260704103717408-cenjcu",
+        "cell_id": "TGT-PROD-SHIFT-REL-6K",
+        "outcome": "completed",
+        "hid_output_reports": 12008,
+        "excluded_from_thresholds": true,
+        "excluded_reason": "A-E4 manual-fallback run excluded and rerun; OCR calibration manual-fallback with manual_confirm_continuations=4",
+        "product_path": {
+          "completion_signal": "done-trace",
+          "verification_mode": "manual-confirm-auto-continue",
+          "ocr_calibration": "manual-fallback",
+          "auto_verify_requested": true,
+          "auto_repair_requested": true,
+          "manual_confirm_continuations": 4,
+          "trace_line_count": 64,
+          "done_line": "done: chars=6000 elapsed=124.1s effective=48.3cps"
+        },
+        "vector": {
+          "drop": 19,
+          "insertion": 0,
+          "same-length-substitution": 0,
+          "case-error": 0,
+          "stuck-modifier-run": 0,
+          "layout-swap-signature": 0
+        }
+      }
+    ],
+    "step_only_excluded_attempts": [
+      {
+        "run_id": "20260704102123204-x5diub",
+        "outcome": "abort:preflight",
+        "reason": "Warning: Permanently added '192.168.1.110' (ED25519) to the list of known hosts.\r\n"
+      },
+      {
+        "run_id": "20260704102646820-2tfmsd",
+        "outcome": "abort:preflight",
+        "reason": "Warning: Permanently added '192.168.1.110' (ED25519) to the list of known hosts.\r\n"
+      },
+      {
+        "run_id": "20260704103200789-sv5iw4",
+        "outcome": "abort:preflight",
+        "reason": "Warning: Permanently added '192.168.1.110' (ED25519) to the list of known hosts.\r\n"
+      }
+    ]
+  },
+  "ae8": [
+    {
+      "run_id": "20260704035131642-0ikzya",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1200,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": -1
+    },
+    {
+      "run_id": "20260704035159358-f47dh5",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035228128-qr58rs",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035257075-0ilybp",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035326611-9wpilj",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035355400-ez2i8n",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 1,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": -1
+    },
+    {
+      "run_id": "20260704035424161-5sc3kv",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035453096-tq9qjd",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035522109-qd30u4",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    },
+    {
+      "run_id": "20260704035551040-0k1hgy",
+      "outcome": "completed",
+      "readback_garble": 0,
+      "readback_vector": {
+        "drop": 0,
+        "insertion": 0,
+        "same-length-substitution": 0,
+        "case-error": 0,
+        "stuck-modifier-run": 0,
+        "layout-swap-signature": 0
+      },
+      "tee_records": 1199,
+      "tee_unknown_reports": 0,
+      "tee_exact": true,
+      "tee_delta": 0,
+      "readback_delta": 0
+    }
+  ],
+  "result": {
+    "status": "passed",
+    "ae4": "passed amended 2026-07-04 gate for angle-dense and shifted-symbol-storm",
+    "ae8": "previous 10/10 garble-dead gate retained",
+    "af8": "all final validators passed"
+  },
+  "final_build_identity": "worklaptopjetkvm:e30c5d20b113",
+  "production_build_identity": "worklaptopjetkvm:6ea2828e3415",
+  "validators": [
+    {
+      "command": "DOCKER_HOST= DOCKER_CONFIG=/tmp/jetkvm-docker-config docker run --rm --platform linux/amd64 -v \"$PWD:/build\" -w /build -e GOFLAGS=-buildvcs=false golangci/golangci-lint:v2.12.2 golangci-lint run --timeout 5m",
+      "exit_code": 0,
+      "observation": "0 issues."
+    },
+    {
+      "command": "GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build $(go list ./internal/... ./pkg/... | grep -v -e internal/native -e internal/regression)",
+      "exit_code": 0,
+      "observation": "Scoped linux/arm cross-build completed successfully."
+    },
+    {
+      "command": "cd ui && npx tsc --noEmit && npx vitest run",
+      "exit_code": 0,
+      "observation": "TypeScript passed; vitest reported 5 files and 16 tests passed."
+    },
+    {
+      "command": "cd tools/paste-harness && npm test",
+      "exit_code": 0,
+      "observation": "Vitest reported 13 files and 73 tests passed."
+    },
+    {
+      "command": "cd tools/paste-harness && node ledger-lint.js campaigns/f13-fix-validation-20260704/ledger.jsonl",
+      "exit_code": 0,
+      "observation": "Ledger lint returned ok=true with zero violations."
+    }
+  ]
+}

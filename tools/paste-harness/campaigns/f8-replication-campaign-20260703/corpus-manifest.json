@@ -1,0 +1,95 @@
+{
+  "generated_at": "2026-07-03T19:20:09.034Z",
+  "rows": [
+    {
+      "file": "ae8-trigger-compact-layout.txt",
+      "bytes": 598,
+      "chars": 598,
+      "sha256": "sha256:ded59b78c6ff7e438b005ff0a315272000246a622890f52763488d7b548b3544"
+    },
+    {
+      "file": "ae8-trigger-layout-sentinel.txt",
+      "bytes": 568,
+      "chars": 568,
+      "sha256": "sha256:b4d318a0e022d390810557d27cf2485588a0b43a17a8b50833d07274bfe54728"
+    },
+    {
+      "file": "ae8-trigger-sentinel.txt",
+      "bytes": 1041,
+      "chars": 1038,
+      "sha256": "sha256:fd398f93f6a5f6970ed5a563fde5f4a53893652dea331488e5092f891e8cd6b7"
+    },
+    {
+      "file": "angle-dense-2000.txt",
+      "bytes": 2003,
+      "chars": 2000,
+      "sha256": "sha256:b9425bd607c31f73d42d111aa2ba8178c5efeb6c23d45d0297b4cdebb9df00ca"
+    },
+    {
+      "file": "angle-dense-500.txt",
+      "bytes": 500,
+      "chars": 500,
+      "sha256": "sha256:b9d72c15dd0f1f9fc7c17e8c3466c0474478dc9fa0e81dffe343f24d5eba1d6a"
+    },
+    {
+      "file": "angle-dense-product-singlebatch.txt",
+      "bytes": 55,
+      "chars": 55,
+      "sha256": "sha256:1c22b398f40b6be90cc79a0fffc0a9110c332a93ca026bb471d6a82277fa0826"
+    },
+    {
+      "file": "baseline-control-5000.txt",
+      "bytes": 5035,
+      "chars": 5000,
+      "sha256": "sha256:72d6b7a057008d58e4b23bdf2120a46f380b82e48e2e05a3024f741c8a9e4803"
+    },
+    {
+      "file": "baseline-control-6000.txt",
+      "bytes": 6040,
+      "chars": 6000,
+      "sha256": "sha256:b2f41129f75cbe78f3bc7c7933e7a68aec57ce13b281cc45256fd4c945d940b3"
+    },
+    {
+      "file": "baseline-simple-6000.txt",
+      "bytes": 6000,
+      "chars": 6000,
+      "sha256": "sha256:5c2e3118da595f6fe68d95256a6193d3ef0f908200f55a78792f38507d2eb03e"
+    },
+    {
+      "file": "baseline-singleline-6000.txt",
+      "bytes": 6000,
+      "chars": 6000,
+      "sha256": "sha256:eb8185b24a1aea2f0b04ac02c2b01ce9ccdaa6ba94b0a2ed8b4455569b3b9d5e"
+    },
+    {
+      "file": "layout-probe.txt",
+      "bytes": 172,
+      "chars": 167,
+      "sha256": "sha256:f62c35d8e56131dae2f17b713b7cf2b8fae4d01de42c8e69971edd9c8d4ce79d"
+    },
+    {
+      "file": "product-240-two-batch-diagnostic.txt",
+      "bytes": 240,
+      "chars": 240,
+      "sha256": "sha256:f29641988ff6578661fb60be3ded56799f7bf92c8d899f4115a916012e24d77e"
+    },
+    {
+      "file": "shifted-symbol-product-singlebatch.txt",
+      "bytes": 52,
+      "chars": 51,
+      "sha256": "sha256:bac0593dfa9f4d1f2d7af0544722f333ce3ca291c252ac26972a9206e61deeee"
+    },
+    {
+      "file": "shifted-symbol-storm-2000.txt",
+      "bytes": 2086,
+      "chars": 2000,
+      "sha256": "sha256:2daa0f88583268139bd64a077f506a90b33cad5108c6f4c563e272a9c334ae8c"
+    },
+    {
+      "file": "shifted-symbol-storm-500.txt",
+      "bytes": 525,
+      "chars": 500,
+      "sha256": "sha256:b509270f9387110e9b2a1d71d1ff1858afb89d8eb1afe21ce4dff3501d4b433d"
+    }
+  ]
+}

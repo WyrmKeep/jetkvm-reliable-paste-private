@@ -24,7 +24,7 @@ import { InputFieldWithLabel } from "@components/InputField";
 import { TextAreaWithLabel } from "@components/TextArea";
 import { PASTE_PROFILES, type PasteProfileName } from "@/utils/pasteBatches";
 import { DEFAULT_LARGE_PASTE_POLICY } from "@/utils/pasteMacro";
-import { findCounter, readCounter, type CounterCalibration } from "@/utils/counterOcr";
+import { calibrateCounter, readCounter, type CounterCalibration } from "@/utils/counterOcr";
 
 // uint32 max value / 4
 const pasteMaxLength = 1073741824;
@@ -372,13 +372,16 @@ export default function PasteModal() {
           totalChars - startOffset >= DEFAULT_LARGE_PASTE_POLICY.autoThresholdChars &&
           videoEl instanceof HTMLVideoElement;
         if (autoVerifyRequested) {
-          // findCounter (whole-strip search) is flakier than the fixed-region
-          // read, so retry a few times before giving up — a single miss used
-          // to silently disable verification for the whole paste.
-          for (let attempt = 0; attempt < 3 && !ocrCal; attempt++) {
-            if (attempt > 0) await new Promise(r => setTimeout(r, 600));
+          // PASTE-013: calibrateCounter reuses a cached region (deterministic
+          // fixed-region read) when available, only falling back to the flaky
+          // whole-strip locate when there's no usable cache — so after one
+          // success per window layout, calibration is reliable. Still retry a
+          // few times (more than before) to give the first locate the best
+          // chance on a soft frame; a miss only degrades to manual confirm.
+          for (let attempt = 0; attempt < 6 && !ocrCal; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 700));
             try {
-              ocrCal = await findCounter(videoEl as HTMLVideoElement);
+              ocrCal = await calibrateCounter(videoEl as HTMLVideoElement);
             } catch {
               ocrCal = null;
             }

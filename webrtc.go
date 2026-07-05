@@ -474,6 +474,7 @@ func newSession(config SessionConfig) (*Session, error) {
 			if session == currentSession {
 				// Cancel any ongoing keyboard report multi when session closes
 				cancelAndDrainMacroQueue()
+				clearKeyboardStateForSessionTransition("session close")
 				currentSession = nil
 			}
 			// Stop RPC processor
