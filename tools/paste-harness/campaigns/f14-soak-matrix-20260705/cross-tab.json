@@ -287,6 +287,9 @@
   "target_summary": [
     {
       "cell_id": "TGT-RAW-ANGLE-REL-2K",
+      "completed_runs": [
+        "20260705020907505-8a8033"
+      ],
       "completed_eligible_runs": [
         "20260705020907505-8a8033"
       ],
@@ -302,6 +305,9 @@
     },
     {
       "cell_id": "TGT-RAW-SHIFT-REL-2K",
+      "completed_runs": [
+        "20260705020953668-he3omo"
+      ],
       "completed_eligible_runs": [
         "20260705020953668-he3omo"
       ],
@@ -317,6 +323,9 @@
     },
     {
       "cell_id": "TGT-HIDRPC-ANGLE-REL-2K",
+      "completed_runs": [
+        "20260705021039046-dtv1zt"
+      ],
       "completed_eligible_runs": [
         "20260705021039046-dtv1zt"
       ],
@@ -332,6 +341,9 @@
     },
     {
       "cell_id": "TGT-HIDRPC-SHIFT-REL-2K",
+      "completed_runs": [
+        "20260705021134239-bd9ts8"
+      ],
       "completed_eligible_runs": [
         "20260705021134239-bd9ts8"
       ],
@@ -347,6 +359,9 @@
     },
     {
       "cell_id": "TGT-PROD-ANGLE-SINGLE-REL-55",
+      "completed_runs": [
+        "20260705022733316-ooarvn"
+      ],
       "completed_eligible_runs": [
         "20260705022733316-ooarvn"
       ],
@@ -369,6 +384,9 @@
     },
     {
       "cell_id": "TGT-PROD-SHIFT-SINGLE-REL-51",
+      "completed_runs": [
+        "20260705021433978-unlvfd"
+      ],
       "completed_eligible_runs": [
         "20260705021433978-unlvfd"
       ],
@@ -384,6 +402,9 @@
     },
     {
       "cell_id": "TGT-PROD-2BATCH-DONE-REL-240",
+      "completed_runs": [
+        "20260705021500412-ik0kmd"
+      ],
       "completed_eligible_runs": [
         "20260705021500412-ik0kmd"
       ],
@@ -399,6 +420,9 @@
     },
     {
       "cell_id": "TGT-PROD-ANGLE-REL-6K",
+      "completed_runs": [
+        "20260705021528477-7r7nqc"
+      ],
       "completed_eligible_runs": [
         "20260705021528477-7r7nqc"
       ],
@@ -414,6 +438,9 @@
     },
     {
       "cell_id": "TGT-PROD-SHIFT-REL-6K",
+      "completed_runs": [
+        "20260705021729488-aoewke"
+      ],
       "completed_eligible_runs": [
         "20260705021729488-aoewke"
       ],
@@ -429,14 +456,15 @@
     },
     {
       "cell_id": "TGT-LAYOUT-MISMATCH-RAW-167",
-      "completed_eligible_runs": [
+      "completed_runs": [
         "20260705021234660-1s6uo0"
       ],
+      "completed_eligible_runs": [],
       "all_runs": [
         {
           "run_id": "20260705021234660-1s6uo0",
           "outcome": "completed",
-          "excluded": false,
+          "excluded": true,
           "garble": 12,
           "total_errors": 22
         }
@@ -444,6 +472,11 @@
     },
     {
       "cell_id": "TGT-LAYOUT-MATCHED-RAW-167",
+      "completed_runs": [
+        "20260705021255543-h7vjn8",
+        "20260705021316367-0pf3r9",
+        "20260705021337238-s9yeql"
+      ],
       "completed_eligible_runs": [
         "20260705021255543-h7vjn8",
         "20260705021316367-0pf3r9",
@@ -475,6 +508,18 @@
     },
     {
       "cell_id": "TGT-AE8-TRIGGER-PROD-REL-598",
+      "completed_runs": [
+        "20260705021944077-00gp5u",
+        "20260705022017338-vtgwtj",
+        "20260705022050423-d6a3ii",
+        "20260705022123630-jxcn6n",
+        "20260705022156929-we276m",
+        "20260705022230254-ud9tqf",
+        "20260705022303412-lzine1",
+        "20260705022336474-joopub",
+        "20260705022409577-g5uqom",
+        "20260705022442594-xjr2eu"
+      ],
       "completed_eligible_runs": [
         "20260705021944077-00gp5u",
         "20260705022017338-vtgwtj",

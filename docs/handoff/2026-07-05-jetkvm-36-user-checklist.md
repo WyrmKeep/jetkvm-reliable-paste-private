@@ -5,13 +5,13 @@
 **Required build identity:** `jetkvm-50248789f5727d74:fb5a6bdb12ef`
 **Required keyboard layout setting:** `en-UK`
 
-Before step 1, open the `.36` JetKVM web UI and confirm the device build revision/SHA is exactly `58eac4f7216a6bd7963783c015a8a7a1de952d29`. Do not run this checklist on any other build. Results from a pre-parity build do not count.
+Before step 1, open `http://192.168.1.36/metrics` in a browser and confirm the unauthenticated `jetkvm_build_info{revision="58eac4f7216a6bd7963783c015a8a7a1de952d29",...}` metric reports the exact device build revision/SHA. Do not run this checklist on any other build. Results from a pre-parity build do not count.
 
 Do not use SSH or scripts on the `.36`-attached host for this checklist. Each result must be verifiable only by eye or by the target app's own character counter.
 
 ## Preflight
 
-- [ ] Pass / [ ] Fail: Device web UI shows build revision/SHA `58eac4f7216a6bd7963783c015a8a7a1de952d29`.
+- [ ] Pass / [ ] Fail: Browser view of `http://192.168.1.36/metrics` shows `jetkvm_build_info` revision/SHA `58eac4f7216a6bd7963783c015a8a7a1de952d29`.
 - [ ] Pass / [ ] Fail: Device keyboard layout is `en-UK`.
 - [ ] Pass / [ ] Fail: The target app is open, focused, empty, and either has a visible character counter or the full pasted text can be checked by eye.
 

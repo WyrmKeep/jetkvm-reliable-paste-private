@@ -23,22 +23,22 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <tbody>
 <tr><th>Runs</th><td>51</td></tr>
 <tr><th>Steps</th><td>152</td></tr>
-<tr><th>Annotations</th><td>0</td></tr>
-<tr><th>Threshold-eligible run duration</th><td>5296186 ms</td></tr>
-<tr><th>Excluded from thresholds</th><td>7</td></tr>
-<tr><th>Threshold-eligible runs</th><td>44</td></tr>
+<tr><th>Annotations</th><td>6</td></tr>
+<tr><th>Threshold-eligible run duration</th><td>5275504 ms</td></tr>
+<tr><th>Excluded from thresholds</th><td>9</td></tr>
+<tr><th>Threshold-eligible runs</th><td>42</td></tr>
 </tbody>
 </table>
 <h2>Threshold-eligible per-class error rates</h2>
 <table>
 <thead><tr><th>Class</th><th>Errors</th><th>Rate</th></tr></thead>
 <tbody>
-<tr><td>drop</td><td>206</td><td>0.0532%</td></tr>
-<tr><td>insertion</td><td>1</td><td>0.0003%</td></tr>
-<tr><td>same-length-substitution</td><td>15</td><td>0.0039%</td></tr>
+<tr><td>drop</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>insertion</td><td>0</td><td>0.0000%</td></tr>
+<tr><td>same-length-substitution</td><td>0</td><td>0.0000%</td></tr>
 <tr><td>case-error</td><td>0</td><td>0.0000%</td></tr>
 <tr><td>stuck-modifier-run</td><td>0</td><td>0.0000%</td></tr>
-<tr><td>layout-swap-signature</td><td>12</td><td>0.0031%</td></tr>
+<tr><td>layout-swap-signature</td><td>0</td><td>0.0000%</td></tr>
 </tbody>
 </table>
 <h2>Runs</h2>
@@ -258,7 +258,18 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <tr><td><a href="#run-20260705035020212-ojemfi">20260705035020212-ojemfi</a></td><td>1783223520714-injection</td><td>injection</td><td>completed</td><td>2026-07-05T03:52:00.714Z</td><td>0 ms</td></tr>
 </tbody>
 </table>
-
+<h2>Annotations</h2>
+<table>
+<thead><tr><th>Run</th><th>Type</th><th>Timestamp</th><th>Reason</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td><a href="#run-20260705021234660-1s6uo0">20260705021234660-1s6uo0</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:52.835Z</td><td>F17: deliberate layout-mismatch negative control, expected layout-swap signal; not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022507363-99is8x">20260705022507363-99is8x</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:52.943Z</td><td>F17: induced A-X5 watchdog-stall robustness row; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022526532-heie9x">20260705022526532-heie9x</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.052Z</td><td>F17: induced A-X5 focus-loss setup abort; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022555843-y2dtkd">20260705022555843-y2dtkd</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.163Z</td><td>F17: induced A-X5 kill-9 resume row verifies ledger recovery only; not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022758260-6orxkb">20260705022758260-6orxkb</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.286Z</td><td>F17: induced A-X5 focus-loss rerun setup abort; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+<tr><td><a href="#run-20260705022912028-nqr4oe">20260705022912028-nqr4oe</a></td><td>manual_exclusion</td><td>2026-07-05T12:31:53.398Z</td><td>F17: induced A-X5 post-start focus-loss row; synthetic failure evidence, not a threshold datapoint</td><td>F17-final-polish</td></tr>
+</tbody>
+</table>
 <h2>Incomplete runs</h2>
 <table>
 <thead><tr><th>Run</th><th>Observed steps</th><th>Last outcome</th></tr></thead>
@@ -341,7 +352,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-787.847 ms</li>
 <li>Telemetry: calm=true, max CPU=4.3</li>
-<li>Garble events pre-repair: 12, excluded=false</li>
+<li>Garble events pre-repair: 12, excluded=true, excluded reason: <code>F17: deliberate layout-mismatch negative control, expected layout-swap signal; not a threshold datapoint</code></li>
 <li>Artifacts: <a href="artifacts/20260705021234660-1s6uo0/tee.disabled">artifacts/20260705021234660-1s6uo0/tee.disabled</a>, <a href="artifacts/20260705021234660-1s6uo0/recv.txt">artifacts/20260705021234660-1s6uo0/recv.txt</a></li>
 <li>HID output reports: 333, focus events: 3</li>
 </ul>
@@ -645,7 +656,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-764.691 ms</li>
 <li>Telemetry: calm=true, max CPU=12.49</li>
-<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 watchdog-stall robustness row; synthetic failure evidence, not a threshold datapoint</code></li>
 <li>Artifacts: <a href="artifacts/20260705022507363-99is8x/tee.disabled">artifacts/20260705022507363-99is8x/tee.disabled</a>, <a href="artifacts/20260705022507363-99is8x/recv.txt">artifacts/20260705022507363-99is8x/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -661,7 +672,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
 <li>Preflight: ok=false, auto-update=false, capsLockOff=true, offset=-755.321 ms</li>
 <li>Telemetry: calm=true, max CPU=8.66</li>
-<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 focus-loss setup abort; synthetic failure evidence, not a threshold datapoint</code></li>
 <li>Artifacts: <a href="artifacts/20260705022526532-heie9x/tee.disabled">artifacts/20260705022526532-heie9x/tee.disabled</a>, <a href="artifacts/20260705022526532-heie9x/recv.txt">artifacts/20260705022526532-heie9x/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 2</li>
 </ul>
@@ -677,7 +688,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-781.164 ms</li>
 <li>Telemetry: calm=true, max CPU=21.89</li>
-<li>Garble events pre-repair: 0, excluded=false</li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 kill-9 resume row verifies ledger recovery only; not a threshold datapoint</code></li>
 <li>Artifacts: <a href="artifacts/20260705022555843-y2dtkd/tee.disabled">artifacts/20260705022555843-y2dtkd/tee.disabled</a>, <a href="artifacts/20260705022555843-y2dtkd/recv.txt">artifacts/20260705022555843-y2dtkd/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 3</li>
 </ul>
@@ -709,7 +720,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
 <li>Preflight: ok=false, auto-update=false, capsLockOff=true, offset=-763.032 ms</li>
 <li>Telemetry: calm=true, max CPU=5.09</li>
-<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 focus-loss rerun setup abort; synthetic failure evidence, not a threshold datapoint</code></li>
 <li>Artifacts: <a href="artifacts/20260705022758260-6orxkb/tee.disabled">artifacts/20260705022758260-6orxkb/tee.disabled</a>, <a href="artifacts/20260705022758260-6orxkb/recv.txt">artifacts/20260705022758260-6orxkb/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 2</li>
 </ul>
@@ -725,7 +736,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 <li>Harness: <code>paste-harness/0.1.0</code>, classifier <code>paste-harness-classifier/1.0.1</code></li>
 <li>Preflight: ok=true, auto-update=false, capsLockOff=true, offset=-775.653 ms</li>
 <li>Telemetry: calm=true, max CPU=1.03</li>
-<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>auto: excluded_from_thresholds=true</code></li>
+<li>Garble events pre-repair: 0, excluded=true, excluded reason: <code>F17: induced A-X5 post-start focus-loss row; synthetic failure evidence, not a threshold datapoint</code></li>
 <li>Artifacts: <a href="artifacts/20260705022912028-nqr4oe/tee.disabled">artifacts/20260705022912028-nqr4oe/tee.disabled</a>, <a href="artifacts/20260705022912028-nqr4oe/recv.txt">artifacts/20260705022912028-nqr4oe/recv.txt</a></li>
 <li>HID output reports: 0, focus events: 4</li>
 </ul>

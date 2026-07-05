@@ -15,6 +15,7 @@ Generated: 2026-07-05T03:55:47.331Z
 - Garble events across threshold-eligible M3 product cells: 0.
 - No manual-fallback OCR rows were used. No >6k row requested auto-repair.
 - Initial no-HID/UI-click failures for `M3-PROD-CODE-REL-6K` and `M3-PROD-INDEX-REL-6K` were excluded by outcome and rerun successfully.
+- F17 annotated the deliberate layout-mismatch negative-control and A-X5 synthetic robustness rows as excluded from thresholds; they remain traceability evidence, not pass/fail datapoints.
 
 | Cell | Run | Threshold | Pass | Total errors | Garble | Verification | Duration ms |
 |---|---|---|---:|---:|---:|---|---:|
@@ -41,7 +42,7 @@ Generated: 2026-07-05T03:55:47.331Z
 
 ## Targeted regression traceability
 
-| Cell | Completed threshold-eligible run(s) | Notes |
+| Cell | Completed run(s) | Notes |
 |---|---|---|
 | `TGT-RAW-ANGLE-REL-2K` | `20260705020907505-8a8033` |  |
 | `TGT-RAW-SHIFT-REL-2K` | `20260705020953668-he3omo` |  |
@@ -52,16 +53,16 @@ Generated: 2026-07-05T03:55:47.331Z
 | `TGT-PROD-2BATCH-DONE-REL-240` | `20260705021500412-ik0kmd` |  |
 | `TGT-PROD-ANGLE-REL-6K` | `20260705021528477-7r7nqc` |  |
 | `TGT-PROD-SHIFT-REL-6K` | `20260705021729488-aoewke` |  |
-| `TGT-LAYOUT-MISMATCH-RAW-167` | `20260705021234660-1s6uo0` | Deliberate mismatch, garble/layout-swap expected. |
+| `TGT-LAYOUT-MISMATCH-RAW-167` | `20260705021234660-1s6uo0` | Deliberate mismatch, garble/layout-swap expected; F17 manual annotation excludes it from thresholds. |
 | `TGT-LAYOUT-MATCHED-RAW-167` | `20260705021255543-h7vjn8`, `20260705021316367-0pf3r9`, `20260705021337238-s9yeql` |  |
 | `TGT-AE8-TRIGGER-PROD-REL-598` | `20260705021944077-00gp5u`, `20260705022017338-vtgwtj`, `20260705022050423-d6a3ii`, `20260705022123630-jxcn6n`, `20260705022156929-we276m`, `20260705022230254-ud9tqf`, `20260705022303412-lzine1`, `20260705022336474-joopub`, `20260705022409577-g5uqom`, `20260705022442594-xjr2eu` |  |
 
 ## A-X5 robustness
 
 - Unattended batch: attended=false, 10 consecutive completed product runs on `TGT-AE8-TRIGGER-PROD-REL-598`.
-- Watchdog abort rows: `20260705022507363-99is8x:watchdog_abort`.
-- Focus-loss row: `20260705022912028-nqr4oe:focus_lost`; earlier `abort:focus` setup attempts were excluded and rerun until a true mid-run focus_lost row was recorded.
-- Kill -9 resume rows: `20260705022555843-y2dtkd:completed`. Ledger lint passed immediately after the killed process and after resume.
+- Watchdog abort rows: `20260705022507363-99is8x:watchdog_abort` (F17 manual annotation excludes the synthetic row from thresholds).
+- Focus-loss row: `20260705022912028-nqr4oe:focus_lost`; earlier `abort:focus` setup attempts were excluded and rerun until a true mid-run focus_lost row was recorded. F17 manual annotations document all A-X5 focus-loss synthetic rows as threshold-excluded.
+- Kill -9 resume rows: `20260705022555843-y2dtkd:completed` (F17 manual annotation excludes the synthetic row from thresholds). Ledger lint passed immediately after the killed process and after resume.
 
 ## A-X3 cross-tab
 

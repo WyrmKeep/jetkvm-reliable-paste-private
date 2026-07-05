@@ -18,6 +18,7 @@ Binding rules for this spec:
 - Repair-assisted byte-perfect claims are only valid at sizes ≤6k with calibration engaged. Manual fallback rows are excluded and rerun.
 - Cells >6k use fast-chunked/count-verify mode, not full auto-repair.
 - Symbol-heavy cells are verified by SSH byte-exact readback only. OCR can be a progress aid, never the pass/fail oracle.
+- For symbol-heavy ≤6k cells, repair-assist is allowed only as the trigger for a second pass because the acceptance verdict remains SSH byte-exact readback; OCR never decides pass/fail.
 
 ## Problem statement
 
