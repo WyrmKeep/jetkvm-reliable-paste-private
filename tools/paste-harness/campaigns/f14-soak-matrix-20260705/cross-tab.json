@@ -1,0 +1,618 @@
+{
+  "product_orphans": [],
+  "target_orphans": [],
+  "soak_runs_without_spec_cell": [],
+  "product_summary": [
+    {
+      "cell_id": "M3-PROD-CODE-REL-6K",
+      "threshold": "REL-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705034828620-fm2ll2",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 102750
+    },
+    {
+      "cell_id": "M3-PROD-CODE-REL-30K",
+      "threshold": "REL-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705023154702-c7vozr",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "manual-confirm-auto-continue",
+      "ocr_calibration": "engaged",
+      "duration_ms": 436780
+    },
+    {
+      "cell_id": "M3-PROD-CODE-FAST-6K",
+      "threshold": "FAST-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705023920192-ftp77r",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 82835
+    },
+    {
+      "cell_id": "M3-PROD-CODE-FAST-30K",
+      "threshold": "FAST-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705024051759-na6l8o",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "manual-confirm-auto-continue",
+      "ocr_calibration": "engaged",
+      "duration_ms": 320131
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-REL-6K",
+      "threshold": "REL-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705024620617-wnpiiv",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "manual-confirm-auto-continue",
+      "ocr_calibration": "engaged",
+      "duration_ms": 104041
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-REL-30K",
+      "threshold": "REL-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705024813355-x3dg2q",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "manual-confirm-auto-continue",
+      "ocr_calibration": "engaged",
+      "duration_ms": 421135
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-FAST-6K",
+      "threshold": "FAST-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705025523246-1t81vf",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 81906
+    },
+    {
+      "cell_id": "M3-PROD-LONGTEXT-FAST-30K",
+      "threshold": "FAST-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705025653887-w7fl5e",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-verify",
+      "ocr_calibration": "engaged",
+      "duration_ms": 305753
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-REL-6K",
+      "threshold": "REL-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705030208372-jn73k5",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 107329
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-REL-30K",
+      "threshold": "REL-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705030404398-2sjjoz",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-verify",
+      "ocr_calibration": "engaged",
+      "duration_ms": 426077
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-FAST-6K",
+      "threshold": "FAST-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705031119233-y0upzg",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 78756
+    },
+    {
+      "cell_id": "M3-PROD-SCRIPTS-FAST-30K",
+      "threshold": "FAST-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705031246728-k39co5",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "manual-confirm-auto-continue",
+      "ocr_calibration": "engaged",
+      "duration_ms": 309129
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-REL-6K",
+      "threshold": "REL-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705031804575-w1flhq",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 98682
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-REL-30K",
+      "threshold": "REL-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705031951979-f6i6s7",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-verify",
+      "ocr_calibration": "engaged",
+      "duration_ms": 399258
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-FAST-6K",
+      "threshold": "FAST-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705032639984-frm8ty",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 74613
+    },
+    {
+      "cell_id": "M3-PROD-BINARY-FAST-30K",
+      "threshold": "FAST-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705032803304-hd1h4m",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-verify",
+      "ocr_calibration": "engaged",
+      "duration_ms": 282647
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-REL-6K",
+      "threshold": "REL-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705035020212-ojemfi",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 101044
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-REL-30K",
+      "threshold": "REL-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705033400652-vxtva5",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-verify",
+      "ocr_calibration": "engaged",
+      "duration_ms": 415987
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-FAST-6K",
+      "threshold": "FAST-6K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705034105329-xfeteg",
+      "outcome": "completed",
+      "corpus_size": 6000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-repair",
+      "ocr_calibration": "engaged",
+      "duration_ms": 76537
+    },
+    {
+      "cell_id": "M3-PROD-INDEX-FAST-30K",
+      "threshold": "FAST-30K",
+      "pass": true,
+      "reasons": [],
+      "run_id": "20260705034230601-04s039",
+      "outcome": "completed",
+      "corpus_size": 30000,
+      "total_errors": 0,
+      "garble": 0,
+      "verification_mode": "auto-verify",
+      "ocr_calibration": "engaged",
+      "duration_ms": 305269
+    }
+  ],
+  "target_summary": [
+    {
+      "cell_id": "TGT-RAW-ANGLE-REL-2K",
+      "completed_eligible_runs": [
+        "20260705020907505-8a8033"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705020907505-8a8033",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-RAW-SHIFT-REL-2K",
+      "completed_eligible_runs": [
+        "20260705020953668-he3omo"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705020953668-he3omo",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-HIDRPC-ANGLE-REL-2K",
+      "completed_eligible_runs": [
+        "20260705021039046-dtv1zt"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021039046-dtv1zt",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-HIDRPC-SHIFT-REL-2K",
+      "completed_eligible_runs": [
+        "20260705021134239-bd9ts8"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021134239-bd9ts8",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-PROD-ANGLE-SINGLE-REL-55",
+      "completed_eligible_runs": [
+        "20260705022733316-ooarvn"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021358116-lese60",
+          "outcome": "failed",
+          "excluded": true,
+          "garble": 0,
+          "total_errors": 55
+        },
+        {
+          "run_id": "20260705022733316-ooarvn",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-PROD-SHIFT-SINGLE-REL-51",
+      "completed_eligible_runs": [
+        "20260705021433978-unlvfd"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021433978-unlvfd",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-PROD-2BATCH-DONE-REL-240",
+      "completed_eligible_runs": [
+        "20260705021500412-ik0kmd"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021500412-ik0kmd",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-PROD-ANGLE-REL-6K",
+      "completed_eligible_runs": [
+        "20260705021528477-7r7nqc"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021528477-7r7nqc",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-PROD-SHIFT-REL-6K",
+      "completed_eligible_runs": [
+        "20260705021729488-aoewke"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021729488-aoewke",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-LAYOUT-MISMATCH-RAW-167",
+      "completed_eligible_runs": [
+        "20260705021234660-1s6uo0"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021234660-1s6uo0",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 12,
+          "total_errors": 22
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-LAYOUT-MATCHED-RAW-167",
+      "completed_eligible_runs": [
+        "20260705021255543-h7vjn8",
+        "20260705021316367-0pf3r9",
+        "20260705021337238-s9yeql"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021255543-h7vjn8",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705021316367-0pf3r9",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705021337238-s9yeql",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    },
+    {
+      "cell_id": "TGT-AE8-TRIGGER-PROD-REL-598",
+      "completed_eligible_runs": [
+        "20260705021944077-00gp5u",
+        "20260705022017338-vtgwtj",
+        "20260705022050423-d6a3ii",
+        "20260705022123630-jxcn6n",
+        "20260705022156929-we276m",
+        "20260705022230254-ud9tqf",
+        "20260705022303412-lzine1",
+        "20260705022336474-joopub",
+        "20260705022409577-g5uqom",
+        "20260705022442594-xjr2eu"
+      ],
+      "all_runs": [
+        {
+          "run_id": "20260705021944077-00gp5u",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022017338-vtgwtj",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022050423-d6a3ii",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022123630-jxcn6n",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022156929-we276m",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022230254-ud9tqf",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022303412-lzine1",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022336474-joopub",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022409577-g5uqom",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        },
+        {
+          "run_id": "20260705022442594-xjr2eu",
+          "outcome": "completed",
+          "excluded": false,
+          "garble": 0,
+          "total_errors": 0
+        }
+      ]
+    }
+  ],
+  "robustness_summary": {
+    "unattended_batch": {
+      "attended": false,
+      "cell_id": "TGT-AE8-TRIGGER-PROD-REL-598",
+      "purpose": "f14_unattended_batch_attended_false",
+      "completed_runs": [
+        "20260705021944077-00gp5u",
+        "20260705022017338-vtgwtj",
+        "20260705022050423-d6a3ii",
+        "20260705022123630-jxcn6n",
+        "20260705022156929-we276m",
+        "20260705022230254-ud9tqf",
+        "20260705022303412-lzine1",
+        "20260705022336474-joopub",
+        "20260705022409577-g5uqom",
+        "20260705022442594-xjr2eu"
+      ]
+    },
+    "watchdog_abort_rows": [
+      {
+        "run_id": "20260705022507363-99is8x",
+        "outcome": "watchdog_abort",
+        "reason": "no_progress"
+      }
+    ],
+    "focus_lost_rows": [
+      {
+        "run_id": "20260705022912028-nqr4oe",
+        "outcome": "focus_lost",
+        "reason": "wrong_foreground"
+      }
+    ],
+    "kill9_resume_rows": [
+      {
+        "run_id": "20260705022555843-y2dtkd",
+        "outcome": "completed"
+      }
+    ],
+    "kill9_partial_steps": [
+      "20260705022545186-193voh"
+    ],
+    "focus_setup_abort_rows": [
+      {
+        "run_id": "20260705022526532-heie9x",
+        "outcome": "abort:focus",
+        "reason": "notepad_not_found"
+      },
+      {
+        "run_id": "20260705022758260-6orxkb",
+        "outcome": "abort:focus",
+        "reason": "notepad_not_found"
+      }
+    ]
+  }
+}
