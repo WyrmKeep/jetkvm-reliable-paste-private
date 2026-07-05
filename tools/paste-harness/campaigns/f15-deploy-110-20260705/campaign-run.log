@@ -1,0 +1,204 @@
+== reset-notepad ae4-1 ==
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T10:16:12.7127700Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T10:16:12.7168133Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 170627072
+    }
+  }
+}
+== ae4-confirmation-run-1 ==
+{
+  "ok": true,
+  "runId": "20260705101613067-sm4ujf",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/artifacts/20260705101613067-sm4ujf"
+}
+== reset-notepad ae4-2 ==
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T10:18:06.1666568Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T10:18:06.1666568Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173113344
+    }
+  }
+}
+== ae4-confirmation-run-2 ==
+{
+  "ok": false,
+  "runId": "20260705101806491-5hcube",
+  "outcome": "failed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/artifacts/20260705101806491-5hcube"
+}
+== reset-notepad ae4-3 ==
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T10:19:50.7847780Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T10:19:50.7888191Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173281280
+    }
+  }
+}
+== ae4-confirmation-run-3 ==
+{
+  "ok": false,
+  "runId": "20260705101951092-fci1tt",
+  "outcome": "failed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/artifacts/20260705101951092-fci1tt"
+}
+== reset-notepad ae4-4 ==
+{
+  "ok": true,
+  "reset": {
+    "ok": false,
+    "reason": "cannot_confirm_focus",
+    "foregroundTitle": "Untitled - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "wrong_foreground",
+        "at": "2026-07-05T10:22:16.7949340Z",
+        "detail": "Untitled - Notepad"
+      },
+      {
+        "type": "focus_failed",
+        "at": "2026-07-05T10:22:17.1687390Z",
+        "detail": "Untitled - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 170823680
+    }
+  }
+}
+== ae4-confirmation-run-4 ==
+{
+  "ok": true,
+  "runId": "20260705102217529-fiwf2s",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/artifacts/20260705102217529-fiwf2s"
+}
+== reset-notepad ae4-5 ==
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T10:25:20.0371764Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T10:25:20.0413883Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 173314048
+    }
+  }
+}
+== ae4-confirmation-run-5 ==
+{
+  "ok": true,
+  "runId": "20260705102520347-pk4a7y",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/artifacts/20260705102520347-pk4a7y"
+}
+== reset-notepad deploy-smoke ==
+{
+  "ok": true,
+  "reset": {
+    "ok": true,
+    "reason": "",
+    "foregroundTitle": "recv.txt - Notepad",
+    "capsLock": false,
+    "events": [
+      {
+        "type": "refocused",
+        "at": "2026-07-05T10:28:56.4630605Z",
+        "detail": "recv.txt - Notepad"
+      },
+      {
+        "type": "confirmed",
+        "at": "2026-07-05T10:28:56.4630605Z",
+        "detail": "recv.txt - Notepad"
+      }
+    ],
+    "sink": {
+      "processCount": 1,
+      "maxWorkingSetBytes": 174428160
+    }
+  }
+}
+== deploy-smoke ==
+{
+  "ok": true,
+  "runId": "20260705102856838-khjcmi",
+  "outcome": "completed",
+  "ledgerPath": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/ledger.jsonl",
+  "artifactsDir": "/Users/robertmaguire/Developer/Jetkvm Dev/jetkvm-reliable-paste-private/tools/paste-harness/campaigns/f15-deploy-110-20260705/artifacts/20260705102856838-khjcmi"
+}
