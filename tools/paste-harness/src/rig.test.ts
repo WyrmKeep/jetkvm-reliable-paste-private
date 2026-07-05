@@ -41,7 +41,11 @@ describe("NucBox rig control helpers", () => {
     expect(common).toContain("Autocorrect");
     expect(common).toContain("notepad-spelling-status.json");
     expect(common).toContain("checkedAt = (Get-PasteRigNow)");
+    expect(common).toContain("$bothTogglesNotFound");
+    expect(common).toContain("notepad_spelling_toggles_not_found");
+    expect(common).toContain("skipped = $false");
     expect(common).not.toContain("return $existingStatus");
+    expect(common).not.toContain("ok = ($spellOk -and $autocorrectOk)");
   });
 
   test("registers persistent interactive scheduled tasks as Robert", () => {

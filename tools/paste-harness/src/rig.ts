@@ -566,12 +566,20 @@ function Set-PasteRigNotepadSpellingOff {
     }
   }
 
+  $bothTogglesNotFound = (($null -eq $spellAfter) -and ($null -eq $autocorrectAfter))
   $spellOk = ($null -eq $spellAfter) -or ($spellAfterState -eq 'Off')
   $autocorrectOk = ($null -eq $autocorrectAfter) -or ($autocorrectAfterState -eq 'Off')
+  $failureReason = ''
+  if ($bothTogglesNotFound) {
+    $failureReason = 'notepad_spelling_toggles_not_found'
+  } elseif (-not ($spellOk -and $autocorrectOk)) {
+    $failureReason = 'notepad_spelling_toggles_not_off'
+  }
   $status = [PSCustomObject]@{
-    ok = ($spellOk -and $autocorrectOk)
+    ok = (($spellOk -and $autocorrectOk) -and -not $bothTogglesNotFound)
     checkedAt = (Get-PasteRigNow)
-    skipped = (($null -eq $spellAfter) -and ($null -eq $autocorrectAfter))
+    skipped = $false
+    failureReason = $failureReason
     settingsDat = $settingsDat
     backupPath = $(if (Test-Path -LiteralPath $backupPath) { $backupPath } else { '' })
     before = $before

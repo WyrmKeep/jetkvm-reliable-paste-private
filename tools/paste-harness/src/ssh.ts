@@ -14,6 +14,8 @@ export const SSH_BASE_ARGS = [
   "-o",
   "ConnectTimeout=10",
   "-o",
+  "LogLevel=ERROR",
+  "-o",
   "BatchMode=yes",
 ] as const;
 

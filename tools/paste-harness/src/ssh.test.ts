@@ -24,6 +24,8 @@ describe("shared SSH wrapper", () => {
       "-o",
       "ConnectTimeout=10",
       "-o",
+      "LogLevel=ERROR",
+      "-o",
       "BatchMode=yes",
     ]);
 
