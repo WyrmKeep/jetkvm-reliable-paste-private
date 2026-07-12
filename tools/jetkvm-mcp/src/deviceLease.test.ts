@@ -63,6 +63,8 @@ describe("device lease", () => {
     });
     expect(lease.path).not.toContain("secret-device");
     expect((await stat(lease.path)).mode & 0o777).toBe(0o600);
+    expect(lease.proof.referencePath).not.toBe(lease.path);
+    expect((await stat(lease.proof.referencePath)).mode & 0o777).toBe(0o600);
     await lease.release();
   });
 
@@ -81,6 +83,25 @@ describe("device lease", () => {
       }),
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_DIRECTORY_UNSAFE" });
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("revalidates directory ownership and permissions before admin-lock release", async () => {
+    const directory = await temporaryDirectory();
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+    await chmod(directory, 0o777);
+
+    await expect(lease.release()).rejects.toMatchObject({
+      code: "DEVICE_LEASE_DIRECTORY_UNSAFE",
+    });
+    expect(await readFile(lease.path, "utf8")).toContain("owner-a");
+
+    await chmod(directory, 0o700);
+    await lease.release();
   });
 
   it("validates injected record fields before creating a lease file", async () => {
@@ -173,9 +194,9 @@ describe("device lease", () => {
       runId: "run-a",
     });
 
-    await expect(loadDeviceLeaseProofReference(parent.path)).resolves.toEqual(
-      parent.proof,
-    );
+    await expect(
+      loadDeviceLeaseProofReference(parent.proof.referencePath),
+    ).resolves.toEqual(parent.proof);
     await expect(
       loadDeviceLeaseProofReference("relative-proof"),
     ).rejects.toMatchObject({
@@ -189,6 +210,45 @@ describe("device lease", () => {
     });
     await expect(stat(missingParent)).rejects.toMatchObject({ code: "ENOENT" });
     await parent.release();
+  });
+
+  it("invalidates an acquisition capability before a replacement lease can exist", async () => {
+    const directory = await temporaryDirectory();
+    const first = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+    const delayedReference = first.proof.referencePath;
+    const delayedProof = first.proof;
+    await first.release();
+
+    const replacement = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-b",
+      runId: "run-b",
+    });
+    expect(replacement.proof.referencePath).not.toBe(delayedReference);
+    await expect(
+      loadDeviceLeaseProofReference(delayedReference),
+    ).rejects.toMatchObject({
+      code: "DEVICE_LEASE_PROOF_INVALID",
+    });
+    await expect(
+      acquireDeviceLease({
+        directory,
+        deviceKey: "device-a",
+        ownerId: delayedProof.ownerId,
+        runId: "delayed-child",
+        inheritedProof: delayedProof,
+      }),
+    ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
+    expect(await readFile(replacement.path, "utf8")).toContain(
+      '"owner_id":"owner-b"',
+    );
+    await replacement.release();
   });
 
   it("releases the lease in finally when the protected operation throws", async () => {

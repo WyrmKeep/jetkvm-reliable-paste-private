@@ -44,7 +44,7 @@ async function runChild(
   const child = spawn(executable, command.slice(1), {
     stdio: "inherit",
     shell: false,
-    env: buildLeaseChildEnvironment(environment, lease.proof.path),
+    env: buildLeaseChildEnvironment(environment, lease.proof.referencePath),
   });
   signal.addEventListener(
     "abort",
