@@ -16,10 +16,11 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "test:task1": "vitest run src/domain.test.ts src/errors.test.ts src/runtimePolicy.test.ts src/deviceLease.test.ts",
+    "test:task1": "vitest run src/domain.test.ts src/errors.test.ts src/runtimePolicy.test.ts src/deviceLease.test.ts src/deviceLeaseRunner.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
-    "device-lease:run": "node scripts/with-device-lease.mjs"
+    "device-lease:run": "node dist/deviceLeaseRunner.js",
+    "test:installed-lease": "npm run build && node scripts/installed-device-lease-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

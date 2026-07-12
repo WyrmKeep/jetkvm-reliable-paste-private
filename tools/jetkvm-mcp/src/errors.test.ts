@@ -54,15 +54,29 @@ describe("stable failures", () => {
   });
 
   it("marks an unknown mutation as effect-unknown and never retryable", () => {
-    expect(makeFailure({ code: "ACTION_OUTCOME_UNKNOWN", outcome: "unknown" })).toMatchObject({
+    expect(
+      makeFailure({ code: "ACTION_OUTCOME_UNKNOWN", outcome: "unknown" }),
+    ).toMatchObject({
       ok: false,
       error: { retryable: false, effectsUnknown: true },
     });
   });
 
   it("makes sent and unknown outcomes non-retryable even for untyped hostile input", () => {
-    expect(makeFailure({ code: "CONNECTION_LOST", outcome: "sent", retryable: true as false }).error.retryable).toBe(false);
-    expect(makeFailure({ code: "CONNECTION_LOST", outcome: "unknown", retryable: true as false }).error.retryable).toBe(false);
+    expect(
+      makeFailure({
+        code: "CONNECTION_LOST",
+        outcome: "sent",
+        retryable: true as false,
+      }).error.retryable,
+    ).toBe(false);
+    expect(
+      makeFailure({
+        code: "CONNECTION_LOST",
+        outcome: "unknown",
+        retryable: true as false,
+      }).error.retryable,
+    ).toBe(false);
   });
 
   it("fails closed when an untyped caller supplies a non-stable code", () => {

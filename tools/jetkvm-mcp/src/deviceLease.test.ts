@@ -1,13 +1,24 @@
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DeviceLeaseError,
   acquireDeviceLease,
   removeStaleDeviceLease,
   withDeviceLease,
+  loadDeviceLeaseProofReference,
 } from "./deviceLease.js";
 
 const temporaryDirectories: string[] = [];
@@ -19,7 +30,11 @@ async function temporaryDirectory(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("device lease", () => {
@@ -51,19 +66,78 @@ describe("device lease", () => {
     await lease.release();
   });
 
-  it("rejects a second contender without reading or exposing the proof", async () => {
-    const directory = await temporaryDirectory();
-    const first = await acquireDeviceLease({ directory, deviceKey: "device-a", ownerId: "owner-a", runId: "run-a" });
+  it("rejects a preexisting permissive lease directory", async () => {
+    const root = await temporaryDirectory();
+    const directory = join(root, "unsafe");
+    await mkdir(directory, { mode: 0o700 });
+    await chmod(directory, 0o777);
 
     await expect(
-      acquireDeviceLease({ directory, deviceKey: "device-a", ownerId: "owner-b", runId: "run-b" }),
-    ).rejects.toMatchObject({ code: "DEVICE_LEASE_BUSY", message: "The device lease is already held." });
+      acquireDeviceLease({
+        directory,
+        deviceKey: "device-a",
+        ownerId: "owner-a",
+        runId: "run-a",
+      }),
+    ).rejects.toMatchObject({ code: "DEVICE_LEASE_DIRECTORY_UNSAFE" });
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("validates injected record fields before creating a lease file", async () => {
+    const root = await temporaryDirectory();
+    const invalidOptions = [
+      { hostname: "" },
+      { pid: 0 },
+      { now: () => new Date(Number.NaN) },
+      { randomToken: () => "" },
+    ];
+
+    for (const [index, override] of invalidOptions.entries()) {
+      const directory = join(root, String(index));
+      await expect(
+        acquireDeviceLease({
+          directory,
+          deviceKey: "device-a",
+          ownerId: "owner-a",
+          runId: "run-a",
+          ...override,
+        }),
+      ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
+      expect(await readdir(directory)).toEqual([]);
+    }
+  });
+
+  it("rejects a second contender without reading or exposing the proof", async () => {
+    const directory = await temporaryDirectory();
+    const first = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+
+    await expect(
+      acquireDeviceLease({
+        directory,
+        deviceKey: "device-a",
+        ownerId: "owner-b",
+        runId: "run-b",
+      }),
+    ).rejects.toMatchObject({
+      code: "DEVICE_LEASE_BUSY",
+      message: "The device lease is already held.",
+    });
     await first.release();
   });
 
   it("validates a matching inherited path, owner, and token without reacquiring or releasing the parent lease", async () => {
     const directory = await temporaryDirectory();
-    const parent = await acquireDeviceLease({ directory, deviceKey: "device-a", ownerId: "owner-a", runId: "run-a" });
+    const parent = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
     const inherited = await acquireDeviceLease({
       directory,
       deviceKey: "device-a",
@@ -74,7 +148,9 @@ describe("device lease", () => {
 
     expect(inherited.inherited).toBe(true);
     await inherited.release();
-    expect(await readFile(parent.path, "utf8")).toContain('"owner_id":"owner-a"');
+    expect(await readFile(parent.path, "utf8")).toContain(
+      '"owner_id":"owner-a"',
+    );
 
     await expect(
       acquireDeviceLease({
@@ -88,9 +164,41 @@ describe("device lease", () => {
     await parent.release();
   });
 
+  it("loads inherited proof from one protected reference without exporting a token", async () => {
+    const directory = await temporaryDirectory();
+    const parent = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+
+    await expect(loadDeviceLeaseProofReference(parent.path)).resolves.toEqual(
+      parent.proof,
+    );
+    await expect(
+      loadDeviceLeaseProofReference("relative-proof"),
+    ).rejects.toMatchObject({
+      code: "DEVICE_LEASE_PROOF_INVALID",
+    });
+    const missingParent = join(directory, "must-not-be-created");
+    await expect(
+      loadDeviceLeaseProofReference(join(missingParent, "proof.json")),
+    ).rejects.toMatchObject({
+      code: "DEVICE_LEASE_PROOF_INVALID",
+    });
+    await expect(stat(missingParent)).rejects.toMatchObject({ code: "ENOENT" });
+    await parent.release();
+  });
+
   it("releases the lease in finally when the protected operation throws", async () => {
     const directory = await temporaryDirectory();
-    const options = { directory, deviceKey: "device-a", ownerId: "owner-a", runId: "run-a" };
+    const options = {
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    };
 
     await expect(
       withDeviceLease(options, async () => {
@@ -98,8 +206,66 @@ describe("device lease", () => {
       }),
     ).rejects.toThrow("operation failed");
 
-    const next = await acquireDeviceLease({ ...options, ownerId: "owner-b", runId: "run-b" });
+    const next = await acquireDeviceLease({
+      ...options,
+      ownerId: "owner-b",
+      runId: "run-b",
+    });
     await next.release();
+  });
+
+  it("preserves the operation error when lease cleanup also fails", async () => {
+    const directory = await temporaryDirectory();
+    const original = new Error("operation failed first");
+
+    await expect(
+      withDeviceLease(
+        {
+          directory,
+          deviceKey: "device-a",
+          ownerId: "owner-a",
+          runId: "run-a",
+        },
+        async (lease) => {
+          const record = JSON.parse(await readFile(lease.path, "utf8"));
+          await writeFile(
+            lease.path,
+            JSON.stringify({ ...record, token: "replacement" }),
+            { mode: 0o600 },
+          );
+          throw original;
+        },
+      ),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof AggregateError &&
+        error.errors[0] === original &&
+        error.errors[1] instanceof DeviceLeaseError,
+    );
+  });
+
+  it("surfaces cleanup failure after a successful operation", async () => {
+    const directory = await temporaryDirectory();
+
+    await expect(
+      withDeviceLease(
+        {
+          directory,
+          deviceKey: "device-a",
+          ownerId: "owner-a",
+          runId: "run-a",
+        },
+        async (lease) => {
+          const record = JSON.parse(await readFile(lease.path, "utf8"));
+          await writeFile(
+            lease.path,
+            JSON.stringify({ ...record, token: "replacement" }),
+            { mode: 0o600 },
+          );
+          return "completed";
+        },
+      ),
+    ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
   });
 
   it("releases in finally when interrupted by a signal", async () => {
@@ -108,11 +274,18 @@ describe("device lease", () => {
     const started = Promise.withResolvers<void>();
     const interrupted = Promise.withResolvers<void>();
     const childExited = Promise.withResolvers<void>();
-    const options = { directory, deviceKey: "device-a", ownerId: "owner-a", runId: "run-a" };
+    const options = {
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    };
     const running = withDeviceLease(
       options,
       async (_lease, signal) => {
-        signal.addEventListener("abort", () => interrupted.resolve(), { once: true });
+        signal.addEventListener("abort", () => interrupted.resolve(), {
+          once: true,
+        });
         started.resolve();
         await childExited.promise;
       },
@@ -126,21 +299,38 @@ describe("device lease", () => {
       acquireDeviceLease({ ...options, ownerId: "owner-b", runId: "run-b" }),
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_BUSY" });
     childExited.resolve();
-    await expect(running).rejects.toMatchObject({ code: "DEVICE_LEASE_INTERRUPTED", signal: "SIGTERM" });
+    await expect(running).rejects.toMatchObject({
+      code: "DEVICE_LEASE_INTERRUPTED",
+      signal: "SIGTERM",
+    });
 
-    const next = await acquireDeviceLease({ ...options, ownerId: "owner-b", runId: "run-b" });
+    const next = await acquireDeviceLease({
+      ...options,
+      ownerId: "owner-b",
+      runId: "run-b",
+    });
     await next.release();
   });
 
   it("fails closed when stale ownership cannot be proven and removes only an exact confirmed-dead proof", async () => {
     const directory = await temporaryDirectory();
-    const lease = await acquireDeviceLease({ directory, deviceKey: "device-a", ownerId: "owner-a", runId: "run-a" });
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
 
-    await expect(removeStaleDeviceLease({ proof: lease.proof })).rejects.toMatchObject({
+    await expect(
+      removeStaleDeviceLease({ proof: lease.proof }),
+    ).rejects.toMatchObject({
       code: "DEVICE_LEASE_STALE_UNPROVEN",
     });
     await expect(
-      removeStaleDeviceLease({ proof: { ...lease.proof, token: "wrong" }, confirmOwnerDead: async () => true }),
+      removeStaleDeviceLease({
+        proof: { ...lease.proof, token: "wrong" },
+        confirmOwnerDead: async () => true,
+      }),
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
     await expect(
       removeStaleDeviceLease({
@@ -152,12 +342,61 @@ describe("device lease", () => {
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_STALE_UNPROVEN" });
     expect(await readFile(lease.path, "utf8")).toContain("owner-a");
 
-    await expect(removeStaleDeviceLease({ proof: lease.proof, confirmOwnerDead: async () => true })).resolves.toBeUndefined();
-    await expect(readFile(lease.path, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      removeStaleDeviceLease({
+        proof: lease.proof,
+        confirmOwnerDead: async () => true,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(readFile(lease.path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("serializes stale cleanup against a replacement acquire", async () => {
+    const directory = await temporaryDirectory();
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+    const cleanupEntered = Promise.withResolvers<void>();
+    const allowCleanup = Promise.withResolvers<void>();
+    const cleanup = removeStaleDeviceLease({
+      proof: lease.proof,
+      confirmOwnerDead: async () => {
+        cleanupEntered.resolve();
+        await allowCleanup.promise;
+        return true;
+      },
+    });
+    await cleanupEntered.promise;
+
+    let acquireSettled = false;
+    const replacement = acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-b",
+      runId: "run-b",
+    }).finally(() => {
+      acquireSettled = true;
+    });
+    await delay(25);
+    expect(acquireSettled).toBe(false);
+
+    allowCleanup.resolve();
+    await cleanup;
+    const acquiredReplacement = await replacement;
+    expect(acquiredReplacement.proof.ownerId).toBe("owner-b");
+    await acquiredReplacement.release();
   });
 
   it("uses stable non-secret lease errors", () => {
-    const error = new DeviceLeaseError("DEVICE_LEASE_BUSY", "The device lease is already held.");
+    const error = new DeviceLeaseError(
+      "DEVICE_LEASE_BUSY",
+      "The device lease is already held.",
+    );
     expect(JSON.stringify(error)).not.toContain("token");
   });
 });

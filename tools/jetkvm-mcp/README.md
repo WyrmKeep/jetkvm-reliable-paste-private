@@ -16,7 +16,7 @@ Run a device-affecting command under one device-keyed process lease:
 npm run device-lease:run -- --device-key "$DEVICE_KEY" -- command arg...
 ```
 
-The wrapper holds the lease until the child exits, forwards termination signals, and passes an inherited proof to child processes through the environment. Treat that environment as secret-bearing and never print it.
+The wrapper holds the lease until the child exits and forwards termination signals. A nested child receives only the path of the current-user-only `0600` proof file; the raw proof token is never added to its environment or output.
 
 ## License
 

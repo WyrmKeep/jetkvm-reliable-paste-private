@@ -39,7 +39,13 @@ export const ERROR_CODES = [
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
-export type ErrorPhase = "configure" | "connect" | "observe" | "admit" | "execute" | "release";
+export type ErrorPhase =
+  | "configure"
+  | "connect"
+  | "observe"
+  | "admit"
+  | "execute"
+  | "release";
 
 const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   CONFIG_INVALID: "The server configuration is invalid.",
@@ -61,7 +67,8 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   DISPLAY_CHANGED: "The display changed after the source view was captured.",
   INVALID_COORDINATE: "A coordinate is outside the source view.",
   INVALID_KEY: "A key is invalid or unsupported.",
-  UNSUPPORTED_CHARACTER: "A character cannot be entered with the effective keyboard layout.",
+  UNSUPPORTED_CHARACTER:
+    "A character cannot be entered with the effective keyboard layout.",
   UNSUPPORTED_SCROLL_AXIS: "Horizontal scrolling is unsupported.",
   USE_PASTE_TEXT: "Use computer_paste_text for this text.",
   INPUT_RELEASE_UNKNOWN: "Input release could not be acknowledged.",
@@ -114,9 +121,12 @@ export function makeFailure(input: MakeFailureInput): FailureEnvelope {
     retryable: outcome === "not_sent" ? (input.retryable ?? false) : false,
     effectsUnknown: outcome === "unknown",
   };
-  if (input.failedActionIndex !== undefined) error.failedActionIndex = input.failedActionIndex;
-  if (input.completedActionCount !== undefined) error.completedActionCount = input.completedActionCount;
-  if (input.requiredNextAction !== undefined) error.requiredNextAction = input.requiredNextAction;
+  if (input.failedActionIndex !== undefined)
+    error.failedActionIndex = input.failedActionIndex;
+  if (input.completedActionCount !== undefined)
+    error.completedActionCount = input.completedActionCount;
+  if (input.requiredNextAction !== undefined)
+    error.requiredNextAction = input.requiredNextAction;
 
   return input.operationId === undefined
     ? { ok: false, error }

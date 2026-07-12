@@ -1,12 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { EventEmitter } from "node:events";
-import { constants } from "node:fs";
-import { access, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { hostname as systemHostname, tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 export type DeviceLeaseErrorCode =
   | "DEVICE_LEASE_BUSY"
+  | "DEVICE_LEASE_DIRECTORY_UNSAFE"
   | "DEVICE_LEASE_PROOF_INVALID"
   | "DEVICE_LEASE_STALE_UNPROVEN"
   | "DEVICE_LEASE_INTERRUPTED";
@@ -15,7 +16,11 @@ export class DeviceLeaseError extends Error {
   readonly code: DeviceLeaseErrorCode;
   readonly signal?: NodeJS.Signals;
 
-  constructor(code: DeviceLeaseErrorCode, message: string, signal?: NodeJS.Signals) {
+  constructor(
+    code: DeviceLeaseErrorCode,
+    message: string,
+    signal?: NodeJS.Signals,
+  ) {
     super(message);
     this.name = "DeviceLeaseError";
     this.code = code;
@@ -66,21 +71,31 @@ export interface WithDeviceLeaseOptions {
 
 export interface RemoveStaleDeviceLeaseOptions {
   proof: DeviceLeaseProof;
-  confirmOwnerDead?: (record: Readonly<DeviceLeaseRecord>) => boolean | Promise<boolean>;
+  confirmOwnerDead?: (
+    record: Readonly<DeviceLeaseRecord>,
+  ) => boolean | Promise<boolean>;
 }
 
 const DEFAULT_LEASE_DIRECTORY = join(tmpdir(), "jetkvm-device-leases");
 const SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+const ADMIN_LOCK_ATTEMPTS = 500;
+const ADMIN_LOCK_RETRY_MS = 10;
 
 function tokenMatches(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual);
   const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+  return (
+    actualBytes.length === expectedBytes.length &&
+    timingSafeEqual(actualBytes, expectedBytes)
+  );
 }
 
 function validateRecord(value: unknown): DeviceLeaseRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The inherited device lease proof is invalid.");
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof is invalid.",
+    );
   }
   const record = value as Partial<DeviceLeaseRecord>;
   if (
@@ -98,7 +113,10 @@ function validateRecord(value: unknown): DeviceLeaseRecord {
     typeof record.token !== "string" ||
     record.token.length === 0
   ) {
-    throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The inherited device lease proof is invalid.");
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof is invalid.",
+    );
   }
   return record as DeviceLeaseRecord;
 }
@@ -108,13 +126,22 @@ async function readRecord(path: string): Promise<DeviceLeaseRecord> {
     return validateRecord(JSON.parse(await readFile(path, "utf8")));
   } catch (error) {
     if (error instanceof DeviceLeaseError) throw error;
-    throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The inherited device lease proof is invalid.");
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof is invalid.",
+    );
   }
 }
 
 function assertProof(record: DeviceLeaseRecord, proof: DeviceLeaseProof): void {
-  if (record.owner_id !== proof.ownerId || !tokenMatches(record.token, proof.token)) {
-    throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The inherited device lease proof is invalid.");
+  if (
+    record.owner_id !== proof.ownerId ||
+    !tokenMatches(record.token, proof.token)
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof is invalid.",
+    );
   }
 }
 
@@ -123,22 +150,179 @@ function leasePath(directory: string, deviceKey: string): string {
   return join(resolve(directory), `device-${digest}.lease.json`);
 }
 
-export async function acquireDeviceLease(options: AcquireDeviceLeaseOptions): Promise<DeviceLease> {
-  if (options.deviceKey.length === 0 || options.ownerId.length === 0 || options.runId.length === 0) {
-    throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The device lease identity is invalid.");
+async function assertSecureDirectory(directory: string): Promise<void> {
+  const information = await lstat(directory);
+  const currentUserId = process.getuid?.();
+  if (
+    !information.isDirectory() ||
+    information.isSymbolicLink() ||
+    (information.mode & 0o077) !== 0 ||
+    (currentUserId !== undefined && information.uid !== currentUserId)
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_DIRECTORY_UNSAFE",
+      "The device lease directory is not private to the current user.",
+    );
   }
-  const directory = options.directory ?? DEFAULT_LEASE_DIRECTORY;
+}
+
+async function ensureSecureDirectory(directory: string): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await assertSecureDirectory(directory);
+}
+
+async function acquireAdminLock(path: string): Promise<() => Promise<void>> {
+  const adminPath = `${path}.admin.lock`;
+  for (let attempt = 0; attempt < ADMIN_LOCK_ATTEMPTS; attempt += 1) {
+    try {
+      const handle = await open(adminPath, "wx", 0o600);
+      const identity = await handle.stat();
+      await handle.close();
+      return async () => {
+        const current = await lstat(adminPath);
+        if (
+          current.dev !== identity.dev ||
+          current.ino !== identity.ino ||
+          !current.isFile()
+        ) {
+          throw new DeviceLeaseError(
+            "DEVICE_LEASE_PROOF_INVALID",
+            "The device lease admin lock changed.",
+          );
+        }
+        await unlink(adminPath);
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (attempt === ADMIN_LOCK_ATTEMPTS - 1) {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_BUSY",
+          "The device lease is being administered.",
+        );
+      }
+      await delay(ADMIN_LOCK_RETRY_MS);
+    }
+  }
+  throw new DeviceLeaseError(
+    "DEVICE_LEASE_BUSY",
+    "The device lease is being administered.",
+  );
+}
+
+async function withAdminLock<T>(
+  path: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const releaseAdminLock = await acquireAdminLock(path);
+  let operationResult: T | undefined;
+  let operationError: unknown;
+  try {
+    operationResult = await operation();
+  } catch (error) {
+    operationError = error;
+  }
+
+  let cleanupError: unknown;
+  try {
+    await releaseAdminLock();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (operationError !== undefined && cleanupError !== undefined) {
+    throw new AggregateError(
+      [operationError, cleanupError],
+      "Device lease administration and cleanup both failed.",
+      {
+        cause: operationError,
+      },
+    );
+  }
+  if (operationError !== undefined) throw operationError;
+  if (cleanupError !== undefined) throw cleanupError;
+  return operationResult as T;
+}
+
+async function assertSecureProofFile(path: string): Promise<void> {
+  const information = await lstat(path);
+  const currentUserId = process.getuid?.();
+  if (
+    !information.isFile() ||
+    information.isSymbolicLink() ||
+    (information.mode & 0o077) !== 0 ||
+    (currentUserId !== undefined && information.uid !== currentUserId)
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof reference is invalid.",
+    );
+  }
+}
+
+export async function loadDeviceLeaseProofReference(
+  path: string,
+): Promise<DeviceLeaseProof> {
+  if (!isAbsolute(path)) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof reference is invalid.",
+    );
+  }
+  try {
+    await assertSecureDirectory(dirname(path));
+    await assertSecureProofFile(path);
+    const record = await readRecord(path);
+    return {
+      path: resolve(path),
+      ownerId: record.owner_id,
+      token: record.token,
+    };
+  } catch (error) {
+    if (error instanceof DeviceLeaseError) throw error;
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof reference is invalid.",
+    );
+  }
+}
+
+export async function acquireDeviceLease(
+  options: AcquireDeviceLeaseOptions,
+): Promise<DeviceLease> {
+  if (
+    options.deviceKey.length === 0 ||
+    options.ownerId.length === 0 ||
+    options.runId.length === 0
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease identity is invalid.",
+    );
+  }
+  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  await ensureSecureDirectory(directory);
   const path = leasePath(directory, options.deviceKey);
 
   if (options.inheritedProof !== undefined) {
-    if (!isAbsolute(options.inheritedProof.path) || resolve(options.inheritedProof.path) !== path) {
-      throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The inherited device lease proof is invalid.");
+    if (
+      !isAbsolute(options.inheritedProof.path) ||
+      resolve(options.inheritedProof.path) !== path
+    ) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_PROOF_INVALID",
+        "The inherited device lease proof is invalid.",
+      );
     }
-    const record = await readRecord(path);
-    assertProof(record, options.inheritedProof);
-    if (record.owner_id !== options.ownerId) {
-      throw new DeviceLeaseError("DEVICE_LEASE_PROOF_INVALID", "The inherited device lease proof is invalid.");
-    }
+    await withAdminLock(path, async () => {
+      await assertSecureProofFile(path);
+      const record = await readRecord(path);
+      assertProof(record, options.inheritedProof as DeviceLeaseProof);
+      if (record.owner_id !== options.ownerId) {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_PROOF_INVALID",
+          "The inherited device lease proof is invalid.",
+        );
+      }
+    });
     return {
       path,
       proof: options.inheritedProof,
@@ -147,38 +331,49 @@ export async function acquireDeviceLease(options: AcquireDeviceLeaseOptions): Pr
     };
   }
 
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const record: DeviceLeaseRecord = {
+  const acquiredDate = (options.now ?? (() => new Date()))();
+  const acquiredAt = Number.isFinite(acquiredDate.getTime())
+    ? acquiredDate.toISOString()
+    : "";
+  const record = validateRecord({
     version: 1,
     owner_id: options.ownerId,
     run_id: options.runId,
     hostname: options.hostname ?? systemHostname(),
     pid: options.pid ?? process.pid,
-    acquired_at: (options.now ?? (() => new Date()))().toISOString(),
+    acquired_at: acquiredAt,
     token: (options.randomToken ?? (() => randomBytes(32).toString("hex")))(),
-  };
+  });
 
-  let handle;
-  try {
-    handle = await open(path, "wx", 0o600);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new DeviceLeaseError("DEVICE_LEASE_BUSY", "The device lease is already held.");
+  await withAdminLock(path, async () => {
+    let handle;
+    try {
+      handle = await open(path, "wx", 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_BUSY",
+          "The device lease is already held.",
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+    try {
+      await handle.writeFile(JSON.stringify(record), { encoding: "utf8" });
+      await handle.sync();
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      await unlink(path).catch(() => undefined);
+      throw error;
+    }
+    await handle.close();
+  });
 
-  try {
-    await handle.writeFile(JSON.stringify(record), { encoding: "utf8" });
-    await handle.sync();
-  } catch (error) {
-    await handle.close().catch(() => undefined);
-    await unlink(path).catch(() => undefined);
-    throw error;
-  }
-  await handle.close();
-
-  const proof: DeviceLeaseProof = { path, ownerId: record.owner_id, token: record.token };
+  const proof: DeviceLeaseProof = {
+    path,
+    ownerId: record.owner_id,
+    token: record.token,
+  };
   let released = false;
   return {
     path,
@@ -186,9 +381,11 @@ export async function acquireDeviceLease(options: AcquireDeviceLeaseOptions): Pr
     inherited: false,
     async release() {
       if (released) return;
-      const current = await readRecord(path);
-      assertProof(current, proof);
-      await unlink(path);
+      await withAdminLock(path, async () => {
+        const current = await readRecord(path);
+        assertProof(current, proof);
+        await unlink(path);
+      });
       released = true;
     },
   };
@@ -217,53 +414,83 @@ export async function withDeviceLease<T>(
     source.on(signal, handler);
   }
 
+  let operationResult: T | undefined;
+  let operationError: unknown;
   try {
-    const result = await operation(lease, abortController.signal);
-    if (interruption !== undefined) throw interruption;
-    return result;
+    operationResult = await operation(lease, abortController.signal);
+    if (interruption !== undefined) operationError = interruption;
   } catch (error) {
-    if (interruption !== undefined) throw interruption;
-    throw error;
+    operationError = interruption ?? error;
   } finally {
     for (const [signal, handler] of handlers) source.off(signal, handler);
-    await lease.release();
   }
+
+  let cleanupError: unknown;
+  try {
+    await lease.release();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (operationError !== undefined && cleanupError !== undefined) {
+    throw new AggregateError(
+      [operationError, cleanupError],
+      "The operation and device lease cleanup both failed.",
+      {
+        cause: operationError,
+      },
+    );
+  }
+  if (operationError !== undefined) throw operationError;
+  if (cleanupError !== undefined) throw cleanupError;
+  return operationResult as T;
 }
 
-export async function removeStaleDeviceLease(options: RemoveStaleDeviceLeaseOptions): Promise<void> {
+export async function removeStaleDeviceLease(
+  options: RemoveStaleDeviceLeaseOptions,
+): Promise<void> {
   if (options.confirmOwnerDead === undefined) {
     throw new DeviceLeaseError(
       "DEVICE_LEASE_STALE_UNPROVEN",
       "Stale device lease ownership could not be proven dead.",
     );
   }
-  const before = await readRecord(options.proof.path);
-  assertProof(before, options.proof);
+  const confirmOwnerDead = options.confirmOwnerDead;
+  if (!isAbsolute(options.proof.path)) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The device lease proof is invalid.",
+    );
+  }
+  await assertSecureDirectory(dirname(options.proof.path));
+  await withAdminLock(options.proof.path, async () => {
+    await assertSecureProofFile(options.proof.path);
+    const before = await readRecord(options.proof.path);
+    assertProof(before, options.proof);
 
-  let confirmedDead = false;
-  try {
-    confirmedDead = await options.confirmOwnerDead(before);
-  } catch {
-    throw new DeviceLeaseError(
-      "DEVICE_LEASE_STALE_UNPROVEN",
-      "Stale device lease ownership could not be proven dead.",
-    );
-  }
-  if (!confirmedDead) {
-    throw new DeviceLeaseError(
-      "DEVICE_LEASE_STALE_UNPROVEN",
-      "Stale device lease ownership could not be proven dead.",
-    );
-  }
+    let confirmedDead = false;
+    try {
+      confirmedDead = await confirmOwnerDead(before);
+    } catch {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_STALE_UNPROVEN",
+        "Stale device lease ownership could not be proven dead.",
+      );
+    }
+    if (!confirmedDead) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_STALE_UNPROVEN",
+        "Stale device lease ownership could not be proven dead.",
+      );
+    }
 
-  const after = await readRecord(options.proof.path);
-  assertProof(after, options.proof);
-  if (JSON.stringify(after) !== JSON.stringify(before)) {
-    throw new DeviceLeaseError(
-      "DEVICE_LEASE_STALE_UNPROVEN",
-      "Stale device lease ownership changed during verification.",
-    );
-  }
-  await access(options.proof.path, constants.W_OK);
-  await unlink(options.proof.path);
+    const after = await readRecord(options.proof.path);
+    assertProof(after, options.proof);
+    if (JSON.stringify(after) !== JSON.stringify(before)) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_STALE_UNPROVEN",
+        "Stale device lease ownership changed during verification.",
+      );
+    }
+    await unlink(options.proof.path);
+  });
 }
