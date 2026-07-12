@@ -102,6 +102,8 @@ export interface RemoveStaleDeviceLeaseAdminLockOptions {
     record: Readonly<DeviceLeaseAdminRecord>,
   ) => boolean | Promise<boolean>;
   afterFinalCheck?: (adminPath: string) => void | Promise<void>;
+  afterCleanupClaimAcquired?: (claimPath: string) => void | Promise<void>;
+  afterAdminQuarantined?: (quarantinePath: string) => void | Promise<void>;
 }
 const DEFAULT_LEASE_DIRECTORY = join(tmpdir(), "jetkvm-device-leases");
 const SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -300,6 +302,59 @@ function createAdminRecord(
   });
 }
 
+function cleanupClaimPath(path: string): string {
+  return `${path}.admin.lock.cleanup.claim`;
+}
+
+async function markerExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function acquireCleanupClaim(
+  path: string,
+): Promise<{ path: string; release: () => Promise<void> }> {
+  await assertSecureDirectory(dirname(path));
+  const claimPath = cleanupClaimPath(path);
+  const record = createAdminRecord(path, {});
+  try {
+    await publishPrivateRecord(claimPath, record);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_BUSY",
+        "Device lease cleanup is already in progress.",
+      );
+    }
+    throw error;
+  }
+  const identity = await lstat(claimPath);
+  return {
+    path: claimPath,
+    async release() {
+      await assertSecureDirectory(dirname(path));
+      const currentIdentity = await lstat(claimPath);
+      const currentRecord = await readRecord(claimPath);
+      if (
+        currentIdentity.dev !== identity.dev ||
+        currentIdentity.ino !== identity.ino ||
+        JSON.stringify(currentRecord) !== JSON.stringify(record)
+      ) {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_PROOF_INVALID",
+          "The device lease cleanup claim changed.",
+        );
+      }
+      await unlink(claimPath);
+    },
+  };
+}
+
 async function acquireAdminLock(
   path: string,
   context: AdminLockContext = {},
@@ -308,6 +363,12 @@ async function acquireAdminLock(
   const adminPath = `${path}.admin.lock`;
   const record = createAdminRecord(path, context);
   for (let attempt = 0; attempt < ADMIN_LOCK_ATTEMPTS; attempt += 1) {
+    if (await markerExists(cleanupClaimPath(path))) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_BUSY",
+        "Device lease cleanup is in progress.",
+      );
+    }
     try {
       await publishPrivateRecord(
         adminPath,
@@ -334,7 +395,7 @@ async function acquireAdminLock(
         "The device lease admin lock changed before admission.",
       );
     }
-    return async () => {
+    const releaseAdminLock = async () => {
       await assertSecureDirectory(dirname(path));
       await assertSecureProofFile(adminPath);
       const currentIdentity = await lstat(adminPath);
@@ -351,6 +412,14 @@ async function acquireAdminLock(
       }
       await unlink(adminPath);
     };
+    if (await markerExists(cleanupClaimPath(path))) {
+      await releaseAdminLock();
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_BUSY",
+        "Device lease cleanup began before admission.",
+      );
+    }
+    return releaseAdminLock;
   }
   throw new DeviceLeaseError(
     "DEVICE_LEASE_BUSY",
@@ -493,6 +562,42 @@ export async function loadDeviceLeaseProofReference(
 export async function removeStaleDeviceLeaseAdminLock(
   options: RemoveStaleDeviceLeaseAdminLockOptions,
 ): Promise<void> {
+  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  await assertSecureDirectory(directory);
+  const path = leasePath(directory, options.deviceKey);
+  const claim = await acquireCleanupClaim(path);
+  let operationFailed = false;
+  let operationError: unknown;
+  try {
+    await options.afterCleanupClaimAcquired?.(claim.path);
+    await removeStaleDeviceLeaseAdminLockUnderClaim(options);
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+
+  let cleanupFailed = false;
+  let cleanupError: unknown;
+  try {
+    await claim.release();
+  } catch (error) {
+    cleanupFailed = true;
+    cleanupError = error;
+  }
+  if (operationFailed && cleanupFailed) {
+    throw new AggregateError(
+      [operationError, cleanupError],
+      "Stale admin cleanup and cleanup-claim release both failed.",
+      { cause: operationError },
+    );
+  }
+  if (operationFailed) throw operationError;
+  if (cleanupFailed) throw cleanupError;
+}
+
+async function removeStaleDeviceLeaseAdminLockUnderClaim(
+  options: RemoveStaleDeviceLeaseAdminLockOptions,
+): Promise<void> {
   if (options.confirmOwnerDead === undefined) {
     throw new DeviceLeaseError(
       "DEVICE_LEASE_STALE_UNPROVEN",
@@ -556,6 +661,7 @@ export async function removeStaleDeviceLeaseAdminLock(
       "Stale device lease administration could not be claimed.",
     );
   }
+  await options.afterAdminQuarantined?.(quarantinePath);
   const quarantinedIdentity = await lstat(quarantinePath);
   const quarantinedRecord = await readRecord(quarantinePath);
   if (
