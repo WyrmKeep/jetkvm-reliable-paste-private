@@ -80,11 +80,15 @@ describe("device lease", () => {
       pid: 123,
       acquired_at: "2026-07-12T12:00:00.000Z",
       token: "proof-a",
+      lease_path: lease.path,
     });
     expect(lease.path).not.toContain("secret-device");
     expect((await stat(lease.path)).mode & 0o777).toBe(0o600);
     expect(lease.proof.referencePath).not.toBe(lease.path);
     expect((await stat(lease.proof.referencePath)).mode & 0o777).toBe(0o600);
+    expect((await stat(lease.path)).ino).toBe(
+      (await stat(lease.proof.referencePath)).ino,
+    );
     await lease.release();
   });
 
@@ -151,6 +155,48 @@ describe("device lease", () => {
     await lease.release();
   });
 
+  it("removes a capability published before a crashed acquisition commit", async () => {
+    const directory = await temporaryDirectory();
+    const deviceKey = "device-a";
+    const path = adminLockPath(directory, deviceKey);
+    const stablePath = path.slice(0, -".admin.lock".length);
+    const capabilityPath = join(directory, "capability-orphan.json");
+    const leaseToken = "orphan-lease-token";
+    await writeFile(
+      capabilityPath,
+      JSON.stringify({
+        version: 1,
+        owner_id: "owner-a",
+        run_id: "run-a",
+        hostname: "host-a",
+        pid: 123,
+        acquired_at: "2026-07-12T12:00:00.000Z",
+        token: leaseToken,
+        lease_path: stablePath,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...adminRecord(),
+        lease_path: stablePath,
+        capability_path: capabilityPath,
+        lease_token: leaseToken,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+
+    await removeStaleDeviceLeaseAdminLock({
+      directory,
+      deviceKey,
+      confirmOwnerDead: async () => true,
+    });
+    await expect(readFile(capabilityPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("never deletes a replacement admin lock created during stale verification", async () => {
     const directory = await temporaryDirectory();
     const deviceKey = "device-a";
@@ -168,7 +214,8 @@ describe("device lease", () => {
       removeStaleDeviceLeaseAdminLock({
         directory,
         deviceKey,
-        confirmOwnerDead: async () => {
+        confirmOwnerDead: async () => true,
+        afterFinalCheck: async () => {
           await unlink(path);
           await writeFile(
             path,
@@ -180,7 +227,6 @@ describe("device lease", () => {
               mode: 0o600,
             },
           );
-          return true;
         },
       }),
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_STALE_UNPROVEN" });
@@ -213,6 +259,41 @@ describe("device lease", () => {
           ...override,
         }),
       ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
+      expect(await readdir(directory)).toEqual([]);
+    }
+  });
+
+  it("publishes only complete records and leaves no blocking final after pre-publish failure", async () => {
+    const phases = [
+      "admin-prepublish",
+      "capability-prepublish",
+      "before-commit",
+    ] as const;
+
+    for (const [index, phase] of phases.entries()) {
+      const directory = join(await temporaryDirectory(), String(index));
+      await expect(
+        acquireDeviceLease({
+          directory,
+          deviceKey: "device-a",
+          ownerId: "owner-a",
+          runId: "run-a",
+          afterRecordPrepared: async (finalPath) => {
+            if (
+              (phase === "admin-prepublish" &&
+                finalPath.endsWith(".admin.lock")) ||
+              (phase === "capability-prepublish" &&
+                finalPath.includes("/capability-"))
+            ) {
+              throw new Error("injected pre-publish crash");
+            }
+          },
+          beforeStableLink: async () => {
+            if (phase === "before-commit")
+              throw new Error("injected pre-publish crash");
+          },
+        }),
+      ).rejects.toThrow("injected pre-publish crash");
       expect(await readdir(directory)).toEqual([]);
     }
   });
@@ -441,14 +522,17 @@ describe("device lease", () => {
     const directory = await temporaryDirectory();
     let stablePath = "";
     let capabilityPath = "";
+    let failCapabilityOnce = true;
     const lease = await acquireDeviceLease({
       directory,
       deviceKey: "device-a",
       ownerId: "owner-a",
       runId: "run-a",
       unlinkFile: async (path) => {
-        if (path === capabilityPath)
+        if (path === capabilityPath && failCapabilityOnce) {
+          failCapabilityOnce = false;
           throw new Error("capability unlink failed");
+        }
         await unlink(path);
       },
     });
@@ -460,7 +544,18 @@ describe("device lease", () => {
       code: "ENOENT",
     });
     expect(await readFile(capabilityPath, "utf8")).toContain("owner-a");
-    await unlink(capabilityPath);
+    const replacement = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-b",
+      runId: "run-b",
+    });
+    await lease.release();
+    await expect(readFile(capabilityPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(replacement.path, "utf8")).toContain("owner-b");
+    await replacement.release();
   });
 
   it("releases in finally when interrupted by a signal", async () => {
@@ -631,8 +726,15 @@ describe("device lease", () => {
       runId: "run-b",
     });
     expect(await readFile(replacement.path, "utf8")).toContain("owner-b");
+    await removeStaleDeviceLease({
+      proof: lease.proof,
+      confirmOwnerDead: async () => true,
+    });
+    await expect(
+      readFile(lease.proof.referencePath, "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(replacement.path, "utf8")).toContain("owner-b");
     await replacement.release();
-    await unlink(lease.proof.referencePath);
   });
 
   it("serializes stale cleanup against a replacement acquire", async () => {
