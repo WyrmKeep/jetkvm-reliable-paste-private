@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   chmod,
@@ -7,6 +8,7 @@ import {
   readdir,
   rm,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +19,7 @@ import {
   DeviceLeaseError,
   acquireDeviceLease,
   removeStaleDeviceLease,
+  removeStaleDeviceLeaseAdminLock,
   withDeviceLease,
   loadDeviceLeaseProofReference,
 } from "./deviceLease.js";
@@ -27,6 +30,23 @@ async function temporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "jetkvm-lease-test-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function adminLockPath(directory: string, deviceKey: string): string {
+  const digest = createHash("sha256").update(deviceKey, "utf8").digest("hex");
+  return join(directory, `device-${digest}.lease.json.admin.lock`);
+}
+
+function adminRecord(ownerId = "admin-owner", token = "admin-token") {
+  return {
+    version: 1,
+    owner_id: ownerId,
+    run_id: "admin-run",
+    hostname: "admin-host",
+    pid: 123,
+    acquired_at: "2026-07-12T12:00:00.000Z",
+    token,
+  };
 }
 
 afterEach(async () => {
@@ -102,6 +122,75 @@ describe("device lease", () => {
 
     await chmod(directory, 0o700);
     await lease.release();
+  });
+
+  it("fails closed then removes a proven stale admin lock before any lease exists", async () => {
+    const directory = await temporaryDirectory();
+    const deviceKey = "device-a";
+    const path = adminLockPath(directory, deviceKey);
+    await writeFile(path, JSON.stringify(adminRecord()), {
+      flag: "wx",
+      mode: 0o600,
+    });
+
+    await expect(
+      removeStaleDeviceLeaseAdminLock({ directory, deviceKey }),
+    ).rejects.toMatchObject({ code: "DEVICE_LEASE_STALE_UNPROVEN" });
+    await removeStaleDeviceLeaseAdminLock({
+      directory,
+      deviceKey,
+      confirmOwnerDead: async (record) => record.pid === 123,
+    });
+
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey,
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+    await lease.release();
+  });
+
+  it("never deletes a replacement admin lock created during stale verification", async () => {
+    const directory = await temporaryDirectory();
+    const deviceKey = "device-a";
+    const path = adminLockPath(directory, deviceKey);
+    await writeFile(
+      path,
+      JSON.stringify(adminRecord("stale-owner", "stale-token")),
+      {
+        flag: "wx",
+        mode: 0o600,
+      },
+    );
+
+    await expect(
+      removeStaleDeviceLeaseAdminLock({
+        directory,
+        deviceKey,
+        confirmOwnerDead: async () => {
+          await unlink(path);
+          await writeFile(
+            path,
+            JSON.stringify(
+              adminRecord("replacement-owner", "replacement-token"),
+            ),
+            {
+              flag: "wx",
+              mode: 0o600,
+            },
+          );
+          return true;
+        },
+      }),
+    ).rejects.toMatchObject({ code: "DEVICE_LEASE_STALE_UNPROVEN" });
+    expect(await readFile(path, "utf8")).toContain("replacement-token");
+
+    await removeStaleDeviceLeaseAdminLock({
+      directory,
+      deviceKey,
+      confirmOwnerDead: async () => true,
+    });
   });
 
   it("validates injected record fields before creating a lease file", async () => {
@@ -274,6 +363,26 @@ describe("device lease", () => {
     await next.release();
   });
 
+  it("preserves an explicit rejection with undefined", async () => {
+    const directory = await temporaryDirectory();
+    let resolved = false;
+    try {
+      await withDeviceLease(
+        {
+          directory,
+          deviceKey: "device-a",
+          ownerId: "owner-a",
+          runId: "run-a",
+        },
+        async () => Promise.reject(undefined),
+      );
+      resolved = true;
+    } catch (error) {
+      expect(error).toBeUndefined();
+    }
+    expect(resolved).toBe(false);
+  });
+
   it("preserves the operation error when lease cleanup also fails", async () => {
     const directory = await temporaryDirectory();
     const original = new Error("operation failed first");
@@ -328,6 +437,32 @@ describe("device lease", () => {
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
   });
 
+  it("removes the stable lease before surfacing capability cleanup failure", async () => {
+    const directory = await temporaryDirectory();
+    let stablePath = "";
+    let capabilityPath = "";
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+      unlinkFile: async (path) => {
+        if (path === capabilityPath)
+          throw new Error("capability unlink failed");
+        await unlink(path);
+      },
+    });
+    stablePath = lease.path;
+    capabilityPath = lease.proof.referencePath;
+
+    await expect(lease.release()).rejects.toThrow("capability unlink failed");
+    await expect(readFile(stablePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(capabilityPath, "utf8")).toContain("owner-a");
+    await unlink(capabilityPath);
+  });
+
   it("releases in finally when interrupted by a signal", async () => {
     const directory = await temporaryDirectory();
     const signals = new EventEmitter();
@@ -372,6 +507,44 @@ describe("device lease", () => {
     await next.release();
   });
 
+  it("keeps signal handlers active until blocked release cleanup completes", async () => {
+    const directory = await temporaryDirectory();
+    const deviceKey = "device-a";
+    const signals = new EventEmitter();
+    const operationFinished = Promise.withResolvers<void>();
+    let leasePath = "";
+    let referencePath = "";
+    const path = adminLockPath(directory, deviceKey);
+    const running = withDeviceLease(
+      { directory, deviceKey, ownerId: "owner-a", runId: "run-a" },
+      async (lease) => {
+        leasePath = lease.path;
+        referencePath = lease.proof.referencePath;
+        await writeFile(path, JSON.stringify(adminRecord()), {
+          flag: "wx",
+          mode: 0o600,
+        });
+        operationFinished.resolve();
+      },
+      { signalSource: signals },
+    );
+    await operationFinished.promise;
+    await delay(25);
+
+    signals.emit("SIGTERM");
+    await unlink(path);
+    await expect(running).rejects.toMatchObject({
+      code: "DEVICE_LEASE_INTERRUPTED",
+      signal: "SIGTERM",
+    });
+    await expect(readFile(leasePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(referencePath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("fails closed when stale ownership cannot be proven and removes only an exact confirmed-dead proof", async () => {
     const directory = await temporaryDirectory();
     const lease = await acquireDeviceLease({
@@ -413,6 +586,55 @@ describe("device lease", () => {
     });
   });
 
+  it("recovers a proven stale admin lock during lease cleanup and unlinks stable lease first", async () => {
+    const directory = await temporaryDirectory();
+    const deviceKey = "device-a";
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey,
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+    const path = adminLockPath(directory, deviceKey);
+    await writeFile(path, JSON.stringify(adminRecord()), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await removeStaleDeviceLeaseAdminLock({
+      directory,
+      deviceKey,
+      confirmOwnerDead: async () => true,
+    });
+
+    await expect(
+      removeStaleDeviceLease({
+        proof: lease.proof,
+        confirmOwnerDead: async () => true,
+        unlinkFile: async (candidate) => {
+          if (candidate === lease.proof.referencePath)
+            throw new Error("capability unlink failed");
+          await unlink(candidate);
+        },
+      }),
+    ).rejects.toThrow("capability unlink failed");
+    await expect(readFile(lease.path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(lease.proof.referencePath, "utf8")).toContain(
+      "owner-a",
+    );
+
+    const replacement = await acquireDeviceLease({
+      directory,
+      deviceKey,
+      ownerId: "owner-b",
+      runId: "run-b",
+    });
+    expect(await readFile(replacement.path, "utf8")).toContain("owner-b");
+    await replacement.release();
+    await unlink(lease.proof.referencePath);
+  });
+
   it("serializes stale cleanup against a replacement acquire", async () => {
     const directory = await temporaryDirectory();
     const lease = await acquireDeviceLease({
@@ -432,6 +654,23 @@ describe("device lease", () => {
       },
     });
     await cleanupEntered.promise;
+    const activeAdminPath = adminLockPath(directory, "device-a");
+    const activeAdminRecord = JSON.parse(
+      await readFile(activeAdminPath, "utf8"),
+    );
+    expect(activeAdminRecord).toMatchObject({
+      version: 1,
+      owner_id: expect.any(String),
+      run_id: expect.any(String),
+      hostname: expect.any(String),
+      pid: expect.any(Number),
+      acquired_at: expect.any(String),
+      token: expect.any(String),
+    });
+    expect(Number.isFinite(Date.parse(activeAdminRecord.acquired_at))).toBe(
+      true,
+    );
+    expect((await stat(activeAdminPath)).mode & 0o777).toBe(0o600);
 
     let acquireSettled = false;
     const replacement = acquireDeviceLease({
