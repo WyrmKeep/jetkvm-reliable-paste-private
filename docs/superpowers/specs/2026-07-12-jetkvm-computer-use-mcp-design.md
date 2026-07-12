@@ -410,6 +410,8 @@ This idempotent path always cancels paste and sends wire `quiesceAndZero(operati
 
 Every result has a common envelope. Success:
 
+Production TypeScript domain objects use camelCase. `mcp/results.ts` performs an explicit field-by-field conversion to the exact snake_case wire object shown below before placing that one mapped object in both `structuredContent` and JSON text; screenshot image content remains separate. “The same object” below refers to that mapped wire object, never direct serialization of the internal domain object.
+
 ```json
 {
   "ok": true,
