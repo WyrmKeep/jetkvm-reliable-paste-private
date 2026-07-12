@@ -1,0 +1,23 @@
+# `@wyrmkeep/jetkvm-mcp`
+
+Production package boundary for the JetKVM computer-use MCP server.
+
+This package currently defines the shared computer-use domain, failure, runtime-policy, and exclusive device-lease contracts. The public MCP executable and its five tool registrations are not included in this scaffold.
+
+## Runtime
+
+Node.js `>=22.23.1 <23` is supported. Repository development and release evidence use Node.js 22.23.1 exactly.
+
+## Device lease wrapper
+
+Run a device-affecting command under one device-keyed process lease:
+
+```sh
+npm run device-lease:run -- --device-key "$DEVICE_KEY" -- command arg...
+```
+
+The wrapper holds the lease until the child exits, forwards termination signals, and passes an inherited proof to child processes through the environment. Treat that environment as secret-bearing and never print it.
+
+## License
+
+GPL-2.0-only. See `LICENSE`.
