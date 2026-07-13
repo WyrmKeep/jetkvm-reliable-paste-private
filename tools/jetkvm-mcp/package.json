@@ -15,12 +15,14 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/*.test.mjs",
     "test:task1": "vitest run src/domain.test.ts src/errors.test.ts src/runtimePolicy.test.ts src/deviceLease.test.ts src/deviceLeaseRunner.test.ts",
+    "test:device-go-runner": "node --test scripts/run-device-go-tests.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
     "device-lease:run": "node dist/deviceLeaseRunner.js",
-    "test:installed-lease": "npm run build && node scripts/installed-device-lease-smoke.mjs"
+    "test:installed-lease": "npm run build && node scripts/installed-device-lease-smoke.mjs",
+    "package:check": "npm run build && node scripts/check-package.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",

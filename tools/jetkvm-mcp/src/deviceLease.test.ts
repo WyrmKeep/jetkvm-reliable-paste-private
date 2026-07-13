@@ -13,7 +13,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DeviceLeaseError,
@@ -242,6 +241,49 @@ describe("device lease", () => {
     ).rejects.toMatchObject({ code: "DEVICE_LEASE_BUSY" });
     allowCleanup.resolve();
     await firstCleanup;
+  });
+
+  it("lets an owner release wait for a live cleanup claim to finish", async () => {
+    const directory = await temporaryDirectory();
+    const deviceKey = "device-a";
+    const releaseBlocked = Promise.withResolvers<void>();
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey,
+      ownerId: "owner-a",
+      runId: "run-a",
+      afterAdminLockBlocked: async () => releaseBlocked.resolve(),
+    });
+    const claimAcquired = Promise.withResolvers<void>();
+    const allowCleaner = Promise.withResolvers<void>();
+    const cleanup = removeStaleDeviceLeaseAdminLock({
+      directory,
+      deviceKey,
+      afterCleanupClaimAcquired: async () => {
+        claimAcquired.resolve();
+        await allowCleaner.promise;
+      },
+      confirmOwnerDead: async () => false,
+    });
+    await claimAcquired.promise;
+
+    let releaseSettled = false;
+    const release = lease.release().finally(() => {
+      releaseSettled = true;
+    });
+    await releaseBlocked.promise;
+    expect(releaseSettled).toBe(false);
+    allowCleaner.resolve();
+    await expect(cleanup).rejects.toMatchObject({
+      code: "DEVICE_LEASE_PROOF_INVALID",
+    });
+    await release;
+    await expect(readFile(lease.path, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readFile(lease.proof.referencePath, "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("removes a capability published before a crashed acquisition commit", async () => {
@@ -716,12 +758,19 @@ describe("device lease", () => {
     const directory = await temporaryDirectory();
     const deviceKey = "device-a";
     const signals = new EventEmitter();
+    const releaseBlocked = Promise.withResolvers<void>();
     const operationFinished = Promise.withResolvers<void>();
     let leasePath = "";
     let referencePath = "";
     const path = adminLockPath(directory, deviceKey);
     const running = withDeviceLease(
-      { directory, deviceKey, ownerId: "owner-a", runId: "run-a" },
+      {
+        directory,
+        deviceKey,
+        ownerId: "owner-a",
+        runId: "run-a",
+        afterAdminLockBlocked: async () => releaseBlocked.resolve(),
+      },
       async (lease) => {
         leasePath = lease.path;
         referencePath = lease.proof.referencePath;
@@ -734,7 +783,7 @@ describe("device lease", () => {
       { signalSource: signals },
     );
     await operationFinished.promise;
-    await delay(25);
+    await releaseBlocked.promise;
 
     signals.emit("SIGTERM");
     await unlink(path);
@@ -884,16 +933,18 @@ describe("device lease", () => {
     );
     expect((await stat(activeAdminPath)).mode & 0o777).toBe(0o600);
 
+    const acquireBlocked = Promise.withResolvers<void>();
     let acquireSettled = false;
     const replacement = acquireDeviceLease({
       directory,
       deviceKey: "device-a",
       ownerId: "owner-b",
       runId: "run-b",
+      afterAdminLockBlocked: async () => acquireBlocked.resolve(),
     }).finally(() => {
       acquireSettled = true;
     });
-    await delay(25);
+    await acquireBlocked.promise;
     expect(acquireSettled).toBe(false);
 
     allowCleanup.resolve();

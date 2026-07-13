@@ -47,6 +47,10 @@ export interface DeviceLeaseRecord {
   lease_path?: string;
   capability_path?: string;
   lease_token?: string;
+  supervisor_pid?: number;
+  supervisor_pgid?: number;
+  supervisor_liveness_id?: string;
+  supervisor_liveness_path?: string;
 }
 
 export type DeviceLeaseAdminRecord = DeviceLeaseRecord;
@@ -59,6 +63,13 @@ export interface DeviceLeaseProof {
   token: string;
 }
 
+export interface DeviceLeaseSupervisor {
+  pid: number;
+  pgid: number;
+  livenessId: string;
+  livenessPath: string;
+}
+
 export interface AcquireDeviceLeaseOptions {
   directory?: string;
   deviceKey: string;
@@ -69,9 +80,11 @@ export interface AcquireDeviceLeaseOptions {
   now?: () => Date;
   randomToken?: () => string;
   inheritedProof?: DeviceLeaseProof;
+  supervisor?: DeviceLeaseSupervisor;
   unlinkFile?: (path: string) => Promise<void>;
   afterRecordPrepared?: (finalPath: string) => void | Promise<void>;
   beforeStableLink?: () => void | Promise<void>;
+  afterAdminLockBlocked?: () => void | Promise<void>;
 }
 
 export interface DeviceLease {
@@ -119,6 +132,58 @@ function tokenMatches(actual: string, expected: string): boolean {
   );
 }
 
+async function assertSupervisorStopped(
+  record: DeviceLeaseRecord,
+): Promise<void> {
+  if (record.supervisor_pgid === undefined) return;
+  if (
+    record.supervisor_liveness_path === undefined ||
+    record.supervisor_liveness_id === undefined ||
+    process.platform === "win32"
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_STALE_UNPROVEN",
+      "Supervisor process-group liveness cannot be proven on this host.",
+    );
+  }
+  try {
+    const livenessIdentity = await lstat(record.supervisor_liveness_path);
+    const currentUserId = process.getuid?.();
+    if (
+      !livenessIdentity.isFile() ||
+      (livenessIdentity.mode & 0o777) !== 0o600 ||
+      (currentUserId !== undefined && livenessIdentity.uid !== currentUserId)
+    ) {
+      throw new Error("Unsafe supervisor liveness file.");
+    }
+    await assertSecureDirectory(dirname(record.supervisor_liveness_path));
+    const livenessId = await readFile(record.supervisor_liveness_path, "utf8");
+    if (!tokenMatches(livenessId, record.supervisor_liveness_id)) {
+      throw new Error("Supervisor liveness identity changed.");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_STALE_UNPROVEN",
+        "Supervisor liveness identity could not be verified.",
+      );
+    }
+  }
+  let groupAlive = false;
+  try {
+    process.kill(-record.supervisor_pgid, 0);
+    groupAlive = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") groupAlive = true;
+  }
+  if (groupAlive) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_STALE_UNPROVEN",
+      "The supervised command process group is still alive.",
+    );
+  }
+}
+
 function validateRecord(value: unknown): DeviceLeaseRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new DeviceLeaseError(
@@ -127,6 +192,21 @@ function validateRecord(value: unknown): DeviceLeaseRecord {
     );
   }
   const record = value as Partial<DeviceLeaseRecord>;
+  const hasSupervisor =
+    record.supervisor_pid !== undefined ||
+    record.supervisor_pgid !== undefined ||
+    record.supervisor_liveness_id !== undefined ||
+    record.supervisor_liveness_path !== undefined;
+  const invalidSupervisor =
+    hasSupervisor &&
+    (!Number.isSafeInteger(record.supervisor_pid) ||
+      (record.supervisor_pid ?? 0) <= 0 ||
+      !Number.isSafeInteger(record.supervisor_pgid) ||
+      (record.supervisor_pgid ?? 0) <= 0 ||
+      typeof record.supervisor_liveness_id !== "string" ||
+      record.supervisor_liveness_id.length === 0 ||
+      typeof record.supervisor_liveness_path !== "string" ||
+      !isAbsolute(record.supervisor_liveness_path));
   if (
     record.version !== 1 ||
     typeof record.owner_id !== "string" ||
@@ -140,6 +220,7 @@ function validateRecord(value: unknown): DeviceLeaseRecord {
     typeof record.acquired_at !== "string" ||
     !Number.isFinite(Date.parse(record.acquired_at)) ||
     typeof record.token !== "string" ||
+    invalidSupervisor ||
     record.token.length === 0
   ) {
     throw new DeviceLeaseError(
@@ -276,6 +357,9 @@ interface AdminLockContext {
   capabilityPath?: string;
   leaseToken?: string;
   afterRecordPrepared?: (finalPath: string) => void | Promise<void>;
+  waitForCleanupClaim?: boolean;
+  supervisor?: DeviceLeaseSupervisor;
+  afterBlocked?: () => void | Promise<void>;
 }
 
 function createAdminRecord(
@@ -298,6 +382,14 @@ function createAdminRecord(
       : {
           capability_path: context.capabilityPath,
           lease_token: context.leaseToken,
+        }),
+    ...(context.supervisor === undefined
+      ? {}
+      : {
+          supervisor_pid: context.supervisor.pid,
+          supervisor_pgid: context.supervisor.pgid,
+          supervisor_liveness_id: context.supervisor.livenessId,
+          supervisor_liveness_path: context.supervisor.livenessPath,
         }),
   });
 }
@@ -362,12 +454,23 @@ async function acquireAdminLock(
   await assertSecureDirectory(dirname(path));
   const adminPath = `${path}.admin.lock`;
   const record = createAdminRecord(path, context);
+  let blockedReported = false;
+  const reportBlocked = async () => {
+    if (blockedReported) return;
+    blockedReported = true;
+    await context.afterBlocked?.();
+  };
   for (let attempt = 0; attempt < ADMIN_LOCK_ATTEMPTS; attempt += 1) {
     if (await markerExists(cleanupClaimPath(path))) {
-      throw new DeviceLeaseError(
-        "DEVICE_LEASE_BUSY",
-        "Device lease cleanup is in progress.",
-      );
+      await reportBlocked();
+      if (!context.waitForCleanupClaim || attempt === ADMIN_LOCK_ATTEMPTS - 1) {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_BUSY",
+          "Device lease cleanup is in progress.",
+        );
+      }
+      await delay(ADMIN_LOCK_RETRY_MS);
+      continue;
     }
     try {
       await publishPrivateRecord(
@@ -377,6 +480,7 @@ async function acquireAdminLock(
       );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await reportBlocked();
       if (attempt === ADMIN_LOCK_ATTEMPTS - 1) {
         throw new DeviceLeaseError(
           "DEVICE_LEASE_BUSY",
@@ -680,6 +784,17 @@ async function removeStaleDeviceLeaseAdminLockUnderClaim(
       "Stale device lease administration changed while being claimed.",
     );
   }
+  try {
+    await assertSupervisorStopped(quarantinedRecord);
+  } catch (error) {
+    try {
+      await link(quarantinePath, adminPath);
+      await unlink(quarantinePath);
+    } catch {
+      // The cleanup claim remains held until this restoration attempt finishes.
+    }
+    throw error;
+  }
 
   if (
     typeof quarantinedRecord.capability_path === "string" &&
@@ -767,6 +882,26 @@ export async function acquireDeviceLease(
     };
   }
 
+  if (options.supervisor !== undefined) {
+    if (process.platform === "win32") {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_PROOF_INVALID",
+        "Supervised device leases require a POSIX control host.",
+      );
+    }
+    await assertSecureDirectory(dirname(options.supervisor.livenessPath));
+    await assertSecureProofFile(options.supervisor.livenessPath);
+    if (
+      (await readFile(options.supervisor.livenessPath, "utf8")) !==
+      options.supervisor.livenessId
+    ) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_PROOF_INVALID",
+        "The device lease supervisor liveness identity is invalid.",
+      );
+    }
+  }
+
   const acquiredDate = (options.now ?? (() => new Date()))();
   const acquiredAt = Number.isFinite(acquiredDate.getTime())
     ? acquiredDate.toISOString()
@@ -780,6 +915,14 @@ export async function acquireDeviceLease(
     acquired_at: acquiredAt,
     token: (options.randomToken ?? (() => randomBytes(32).toString("hex")))(),
     lease_path: path,
+    ...(options.supervisor === undefined
+      ? {}
+      : {
+          supervisor_pid: options.supervisor.pid,
+          supervisor_pgid: options.supervisor.pgid,
+          supervisor_liveness_id: options.supervisor.livenessId,
+          supervisor_liveness_path: options.supervisor.livenessPath,
+        }),
   });
   const referencePath = capabilityPath(directory);
   const proof: DeviceLeaseProof = {
@@ -824,6 +967,12 @@ export async function acquireDeviceLease(
       ...(options.afterRecordPrepared === undefined
         ? {}
         : { afterRecordPrepared: options.afterRecordPrepared }),
+      ...(options.supervisor === undefined
+        ? {}
+        : { supervisor: options.supervisor }),
+      ...(options.afterAdminLockBlocked === undefined
+        ? {}
+        : { afterBlocked: options.afterAdminLockBlocked }),
     },
   );
 
@@ -834,34 +983,43 @@ export async function acquireDeviceLease(
     inherited: false,
     async release() {
       if (released) return;
-      await withAdminLock(path, async () => {
-        await assertSecureProofFile(referencePath);
-        const capabilityRecord = await readCapabilityRecord(referencePath);
-        assertCapabilityRecord(capabilityRecord, proof);
-        const capabilityIdentity = await lstat(referencePath);
-        let stableIdentity;
-        try {
-          stableIdentity = await lstat(path);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        if (stableIdentity === undefined) {
+      await withAdminLock(
+        path,
+        async () => {
+          await assertSecureProofFile(referencePath);
+          const capabilityRecord = await readCapabilityRecord(referencePath);
+          assertCapabilityRecord(capabilityRecord, proof);
+          const capabilityIdentity = await lstat(referencePath);
+          let stableIdentity;
+          try {
+            stableIdentity = await lstat(path);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          if (stableIdentity === undefined) {
+            await unlinkLeaseFile(referencePath);
+            return;
+          }
+          const stableRecord = await readRecord(path);
+          if (
+            stableIdentity.dev !== capabilityIdentity.dev ||
+            stableIdentity.ino !== capabilityIdentity.ino ||
+            stableRecord.owner_id !== proof.ownerId ||
+            !tokenMatches(stableRecord.token, proof.token)
+          ) {
+            await unlinkLeaseFile(referencePath);
+            return;
+          }
+          await unlinkLeaseFile(path);
           await unlinkLeaseFile(referencePath);
-          return;
-        }
-        const stableRecord = await readRecord(path);
-        if (
-          stableIdentity.dev !== capabilityIdentity.dev ||
-          stableIdentity.ino !== capabilityIdentity.ino ||
-          stableRecord.owner_id !== proof.ownerId ||
-          !tokenMatches(stableRecord.token, proof.token)
-        ) {
-          await unlinkLeaseFile(referencePath);
-          return;
-        }
-        await unlinkLeaseFile(path);
-        await unlinkLeaseFile(referencePath);
-      });
+        },
+        {
+          waitForCleanupClaim: true,
+          ...(options.afterAdminLockBlocked === undefined
+            ? {}
+            : { afterBlocked: options.afterAdminLockBlocked }),
+        },
+      );
       released = true;
     },
   };
@@ -983,6 +1141,7 @@ export async function removeStaleDeviceLease(
       boundStable && stableRecord !== undefined
         ? stableRecord
         : capabilityRecord;
+    await assertSupervisorStopped(recordToConfirm);
     let confirmedDead = false;
     try {
       confirmedDead = await confirmOwnerDead(recordToConfirm);
