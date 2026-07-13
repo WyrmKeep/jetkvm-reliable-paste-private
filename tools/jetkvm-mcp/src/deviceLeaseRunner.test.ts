@@ -371,16 +371,35 @@ describe("device lease runner", () => {
     expect(group.disconnect).toHaveBeenCalledOnce();
   });
 
-  it("preserves liveness when acknowledged cleanup does not close in time", async () => {
+  it("preserves liveness while a disconnected group kills a TERM-ignoring descendant", async () => {
     vi.useFakeTimers();
     try {
       const { runtime, group, unlink } = await bindFakeSupervisor();
-      runtime.emit("message", { type: "stop", signal: "SIGTERM" });
-      group.emit("message", { type: "stopping" });
+      const groupRuntime = new FakeIpcProcess();
+      let descendantKilled = false;
+      runDeviceLeaseGroup({
+        runtime: groupRuntime,
+        signalGroup: (signal) => {
+          groupRuntime.kill(-groupRuntime.pid, signal);
+          if (signal === "SIGKILL") descendantKilled = true;
+        },
+        spawnCommand: vi.fn(() => new FakeCommandChild()),
+        cleanupGraceMs: 100,
+        killFallbackMs: 50,
+      });
+      runtime.connected = false;
+      groupRuntime.connected = false;
+      runtime.emit("disconnect");
+      groupRuntime.emit("disconnect");
       await vi.advanceTimersByTimeAsync(100);
       await runtime.disconnected.promise;
 
       expect(runtime.signals).toEqual([]);
+      expect(groupRuntime.signals).toEqual([
+        [-groupRuntime.pid, "SIGTERM"],
+        [-groupRuntime.pid, "SIGKILL"],
+      ]);
+      expect(descendantKilled).toBe(true);
       expect(unlink).not.toHaveBeenCalled();
       expect(runtime.sent).not.toContainEqual({
         type: "result",
@@ -394,7 +413,7 @@ describe("device lease runner", () => {
     }
   });
 
-  it("reports kill readiness after grace while staying connected", async () => {
+  it("reports kill readiness then self-kills if the supervisor hangs", async () => {
     vi.useFakeTimers();
     const runtime = new FakeIpcProcess();
     const command = new FakeCommandChild();
@@ -406,6 +425,7 @@ describe("device lease runner", () => {
         },
         spawnCommand: vi.fn(() => command),
         cleanupGraceMs: 100,
+        killFallbackMs: 100,
       });
       runtime.emit("message", {
         type: "start",
@@ -430,6 +450,11 @@ describe("device lease runner", () => {
       expect(runtime.signals).toEqual([[-runtime.pid, "SIGTERM"]]);
       expect(runtime.sent).toContainEqual({ type: "kill_ready" });
       expect(runtime.disconnect).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(runtime.signals).toEqual([
+        [-runtime.pid, "SIGTERM"],
+        [-runtime.pid, "SIGKILL"],
+      ]);
     } finally {
       vi.useRealTimers();
     }

@@ -33,9 +33,11 @@ interface DeviceLeaseGroupDependencies {
     },
   ): LeaseCommandChild;
   cleanupGraceMs?: number;
+  killFallbackMs?: number;
 }
 
 const DEFAULT_CLEANUP_GRACE_MS = 1_000;
+const DEFAULT_KILL_FALLBACK_MS = 250;
 const CLEANUP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 export function runDeviceLeaseGroup({
@@ -43,11 +45,13 @@ export function runDeviceLeaseGroup({
   signalGroup,
   spawnCommand,
   cleanupGraceMs = DEFAULT_CLEANUP_GRACE_MS,
+  killFallbackMs = DEFAULT_KILL_FALLBACK_MS,
 }: DeviceLeaseGroupDependencies): void {
   let commandChild: LeaseCommandChild | undefined;
   let commandSettled = false;
   let cleanupStarted = false;
   let killReadySent = false;
+  let fallbackKillIssued = false;
 
   function send(
     message: object,
@@ -62,15 +66,33 @@ export function runDeviceLeaseGroup({
     }
   }
 
+  function fallbackKillOwnGroup(): void {
+    if (fallbackKillIssued) return;
+    fallbackKillIssued = true;
+    try {
+      signalGroup("SIGKILL");
+    } catch {
+      runtime.exitCode = 1;
+    }
+  }
+
   function reportKillReady(): void {
     if (killReadySent) return;
     killReadySent = true;
+    let deliveryFailed = false;
     if (
       !send({ type: "kill_ready" }, (error) => {
-        if (error !== null) runtime.exitCode = 1;
+        if (error !== null) {
+          deliveryFailed = true;
+          fallbackKillOwnGroup();
+        }
       })
     ) {
-      runtime.exitCode = 1;
+      fallbackKillOwnGroup();
+      return;
+    }
+    if (!deliveryFailed) {
+      setTimeout(fallbackKillOwnGroup, killFallbackMs);
     }
   }
 
