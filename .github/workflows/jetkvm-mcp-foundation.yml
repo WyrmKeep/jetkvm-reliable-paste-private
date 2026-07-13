@@ -3,7 +3,8 @@ name: JetKVM MCP foundation
 on:
   pull_request:
     paths:
-      - ".github/workflows/jetkvm-mcp-foundation.yml"
+      - ".github/workflows/*.yml"
+      - "*.go"
       - "tools/jetkvm-mcp/**"
       - "internal/controlsession/**"
       - "internal/usbgadget/**"
@@ -11,7 +12,8 @@ on:
       - "go.sum"
   push:
     paths:
-      - ".github/workflows/jetkvm-mcp-foundation.yml"
+      - ".github/workflows/*.yml"
+      - "*.go"
       - "tools/jetkvm-mcp/**"
       - "internal/controlsession/**"
       - "internal/usbgadget/**"
