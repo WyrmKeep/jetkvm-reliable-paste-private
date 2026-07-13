@@ -175,6 +175,7 @@ export class FakeBrowserPlane implements BrowserPlane {
   private readonly observations = new Map<string, ObservationLedgerEntry>();
   private lastPublishedBinding?: DeviceRpcBinding;
   private closed = true;
+  private generationDrained = false;
 
   public constructor(
     public readonly deviceRpc: DeviceRpcAdapter,
@@ -207,6 +208,7 @@ export class FakeBrowserPlane implements BrowserPlane {
       throw new Error("Fake BrowserPlane connect result adapter is invalid.");
     }
     this.observations.clear();
+    this.generationDrained = false;
     this.closed = false;
     this.lastPublishedBinding = connection.binding;
     this.publishedConnection = {
@@ -220,6 +222,7 @@ export class FakeBrowserPlane implements BrowserPlane {
     ref: SessionRef,
     deadline: Deadline,
   ): Promise<BrowserConnection> {
+    this.assertPublishedRef(ref, true);
     const previous = this.lastPublishedBinding;
     if (previous === undefined) {
       throw new Error(
@@ -242,6 +245,7 @@ export class FakeBrowserPlane implements BrowserPlane {
       );
     }
     this.observations.clear();
+    this.generationDrained = false;
     this.closed = false;
     this.lastPublishedBinding = connection.binding;
     this.publishedConnection = {
@@ -413,28 +417,40 @@ export class FakeBrowserPlane implements BrowserPlane {
     deadline: Deadline,
   ): Promise<ReleaseReceipt> {
     this.assertPublishedRef(ref);
-    const result = this.requiredResult(
-      "release",
-      this.scenarios.consume(
+    try {
+      const result = this.requiredResult(
         "release",
-        { ref: { ...ref }, request: { requestId: request.requestId } },
-        deadline,
-      ),
-    );
-    const parsed = releaseReceiptSchema.safeParse(result);
-    if (
-      !parsed.success ||
-      parsed.data.requestId !== request.requestId ||
-      parsed.data.dispatchedCount !== 1 ||
-      parsed.data.completedCount !== 1
-    ) {
-      throw new Error("Fake BrowserPlane release receipt is invalid.");
+        this.scenarios.consume(
+          "release",
+          { ref: { ...ref }, request: { requestId: request.requestId } },
+          deadline,
+        ),
+      );
+      const parsed = releaseReceiptSchema.safeParse(result);
+      if (
+        !parsed.success ||
+        parsed.data.requestId !== request.requestId ||
+        parsed.data.dispatchedCount !== 1 ||
+        parsed.data.completedCount !== 1
+      ) {
+        throw new Error("Fake BrowserPlane release receipt is invalid.");
+      }
+      this.drainPublishedGeneration();
+      return parsed.data;
+    } catch (error) {
+      if (
+        error instanceof PlaneFaultError &&
+        error.writeBegan &&
+        error.outcome !== "not_sent"
+      ) {
+        this.drainPublishedGeneration();
+      }
+      throw error;
     }
-    return parsed.data;
   }
 
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
-    this.assertPublishedRef(ref);
+    this.assertPublishedRef(ref, true);
     const result = this.scenarios.consume(
       "close",
       { ref: { ...ref } },
@@ -596,8 +612,8 @@ export class FakeBrowserPlane implements BrowserPlane {
       observation.imageHeight <= request.maxHeight &&
       observation.imageWidth <= sourceWidth &&
       observation.imageHeight <= sourceHeight &&
-      observation.imageWidth * sourceHeight ===
-        observation.imageHeight * sourceWidth &&
+      observation.geometry.contentWidth * sourceHeight ===
+        observation.geometry.contentHeight * sourceWidth &&
       observation.geometry.contentX + observation.geometry.contentWidth <=
         observation.imageWidth &&
       observation.geometry.contentY + observation.geometry.contentHeight <=
@@ -605,7 +621,7 @@ export class FakeBrowserPlane implements BrowserPlane {
     );
   }
 
-  private assertPublishedRef(ref: SessionRef): void {
+  private assertPublishedRef(ref: SessionRef, allowDrained = false): void {
     this.assertCurrentRef(ref);
     const publication = this.publishedConnection;
     if (
@@ -616,6 +632,15 @@ export class FakeBrowserPlane implements BrowserPlane {
     ) {
       throw new Error("Fake BrowserPlane has no published connection.");
     }
+    if (this.generationDrained && !allowDrained) {
+      throw new Error("Fake BrowserPlane generation input is drained.");
+    }
+  }
+
+  private drainPublishedGeneration(): void {
+    if (this.closed || this.publishedConnection === undefined) return;
+    this.observations.clear();
+    this.generationDrained = true;
   }
 
   private assertCurrentRef(ref: SessionRef): void {

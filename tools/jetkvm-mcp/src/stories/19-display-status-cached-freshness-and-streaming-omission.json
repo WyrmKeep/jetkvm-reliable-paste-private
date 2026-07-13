@@ -156,7 +156,7 @@
     },
     {
       "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
-      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "after_step": "recover-after-device-rpc-adapter-release-loss",
       "boundary": "after_write",
       "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-power-control after exactly one ATX request write and before acknowledgement.",
       "expected_effect": "The ATX mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, one downstream write, and zero replay writes."
@@ -331,6 +331,23 @@
       },
       "timeout_ms": 1000,
       "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, one release write, a closed generation-13 mutation gate, and zero replay writes."
+    },
+    {
+      "id": "recover-after-device-rpc-adapter-release-loss",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-adapter-loss-input-release",
+        "closed_generation": 13,
+        "next_session_id": "opaque-session-adapter-loss-power-control",
+        "next_generation": 14,
+        "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "Retire the closed generation-13 release case, prove the fresh generation-14 power case ready, and restore and prove the recorded ATX baseline before the independently faulted power call."
     },
     {
       "id": "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",

@@ -331,19 +331,6 @@
       "expect": "applied for jetkvm_input_paste with its exact acknowledgement and verification strength."
     },
     {
-      "id": "definitive-acknowledgement-jetkvm-input-release",
-      "tool": "jetkvm_input_release",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-definitive-acknowledgement-session",
-        "session_generation": 9,
-        "request_id": "opaque-definitive-acknowledgement-input-release",
-        "timeout_ms": 1000
-      },
-      "timeout_ms": 1000,
-      "expect": "applied for jetkvm_input_release with its exact acknowledgement and verification strength."
-    },
-    {
       "id": "prove-definitive-power-baseline",
       "tool": null,
       "call": "acceptance-fixture/atx/prove-ready-baseline",
@@ -387,6 +374,19 @@
       },
       "timeout_ms": 30000,
       "expect": "After the final matrix power acknowledgement, restore the recorded ATX-observable baseline and re-prove the active extension, serial readiness, baseline, and exact current binding."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "request_id": "opaque-definitive-acknowledgement-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_release with its exact acknowledgement and verification strength."
     }
   ],
   "pass": [

@@ -35,6 +35,8 @@ export const CANONICAL_PHASE_NAMES = Object.freeze([
   "Hardware evidence and release",
 ]);
 
+const CANONICAL_PHASE_NUMBERS = Object.freeze([1, 2, 3, 4, 5, 6]);
+
 const REQUIRED_INSTALLED_SMOKE_SCRIPTS = Object.freeze({
   "smoke:installed-contracts":
     "npm run build && node scripts/installed-contracts-smoke.mjs",
@@ -73,9 +75,8 @@ function exactOrderedValues(actual, expected) {
   );
 }
 
-function uniqueMatches(text, pattern) {
-  const values = [...text.matchAll(pattern)].map((match) => match[1]);
-  return [...new Set(values)];
+function rawMatches(text, pattern) {
+  return [...text.matchAll(pattern)].map((match) => match[1]);
 }
 
 function extractStoryIds(section) {
@@ -89,29 +90,39 @@ function extractPlanPhaseBlocks(planText) {
   if (headings.length !== 6) {
     throw new Error("The plan must contain the exact six phase names once");
   }
+  const phaseNumbers = headings.map((heading) => Number(heading[1]));
+  if (!exactOrderedValues(phaseNumbers, CANONICAL_PHASE_NUMBERS)) {
+    throw new Error(
+      "Canonical plan phase numbers must be exactly [1, 2, 3, 4, 5, 6]",
+    );
+  }
 
   return headings.map((heading, index) => {
     const start = heading.index;
     const end = headings[index + 1]?.index ?? planText.length;
     return {
-      number: Number(heading[1]),
+      number: phaseNumbers[index],
       name: heading[2],
       text: planText.slice(start, end),
     };
   });
 }
 
-function extractDesignPhaseRow(designText, phase) {
-  const row = designText.match(
-    new RegExp(
-      `^\\|\\s*${phase}\\s*\\|\\s*\x60([^\x60]+)\x60\\s*\\|\\s*(.+?)\\s*\\|$`,
-      "m",
-    ),
-  );
-  if (row === null) {
-    throw new Error(`Canonical design is missing Phase ${phase}`);
+function extractDesignPhaseRows(designText) {
+  const rows = [
+    ...designText.matchAll(/^\|\s*(\d+)\s*\|\s*`([^`]+)`\s*\|\s*(.+?)\s*\|$/gm),
+  ];
+  const phaseNumbers = rows.map((row) => Number(row[1]));
+  if (!exactOrderedValues(phaseNumbers, CANONICAL_PHASE_NUMBERS)) {
+    throw new Error(
+      "Canonical design phase numbers must be exactly [1, 2, 3, 4, 5, 6]",
+    );
   }
-  return { branch: row[1], deliverable: row[2] };
+  return rows.map((row) => ({
+    number: Number(row[1]),
+    branch: row[2],
+    deliverable: row[3],
+  }));
 }
 
 const BROWSER_CONNECTION_CONTRACT = `interface BrowserConnection {
@@ -122,6 +133,13 @@ const BROWSER_CONNECTION_CONTRACT = `interface BrowserConnection {
   readonly browserChannelGeneration: number;
   readonly displayGeneration: number;
   readonly deviceRpc: DeviceRpcAdapter;
+}`;
+
+const OBSERVATION_GEOMETRY_CONTRACT = `interface ObservationGeometry {
+  readonly contentX: number;
+  readonly contentY: number;
+  readonly contentWidth: number;
+  readonly contentHeight: number;
 }`;
 
 const OBSERVATION_CONTRACT = `interface Observation {
@@ -143,6 +161,8 @@ const OBSERVATION_CONTRACT = `interface Observation {
   readonly sha256: string;
   readonly byteLength: number;
 }`;
+
+const BROWSER_CAPTURE_MIME_TYPE_CONTRACT = `type BrowserCaptureMimeType = "image/jpeg" | "image/png";`;
 
 const BROWSER_CAPTURE_IMAGE_CONTRACT = `interface BrowserCaptureImage {
   readonly mimeType: BrowserCaptureMimeType;
@@ -206,10 +226,24 @@ function assertCanonicalBrowserPlaneContract(text, label) {
     );
   }
   if (
+    countOccurrences(text, "interface ObservationGeometry {") !== 1 ||
+    !text.includes(OBSERVATION_GEOMETRY_CONTRACT)
+  ) {
+    throw new Error(`Canonical ${label} ObservationGeometry contract drifted`);
+  }
+  if (
     countOccurrences(text, "interface Observation {") !== 1 ||
     !text.includes(OBSERVATION_CONTRACT)
   ) {
     throw new Error(`Canonical ${label} must define byte-free Observation`);
+  }
+  if (
+    countOccurrences(text, "type BrowserCaptureMimeType =") !== 1 ||
+    !text.includes(BROWSER_CAPTURE_MIME_TYPE_CONTRACT)
+  ) {
+    throw new Error(
+      `Canonical ${label} BrowserCaptureMimeType contract drifted`,
+    );
   }
   if (
     countOccurrences(text, "interface BrowserCaptureImage {") !== 1 ||
@@ -314,14 +348,8 @@ export function checkDocsConsistency({
     "### 0.2 Exact public catalogue",
     "### 0.3 Shared public contracts",
   );
-  const designTools = uniqueMatches(
-    designToolSection,
-    /^\d+\. `([a-z0-9_]+)`$/gm,
-  );
-  const planTools = uniqueMatches(
-    planToolSection,
-    /^\|\s*`([a-z0-9_]+)`\s*\|/gm,
-  );
+  const designTools = rawMatches(designToolSection, /^\d+\. `([a-z0-9_]+)`$/gm);
+  const planTools = rawMatches(planToolSection, /^\|\s*`([a-z0-9_]+)`\s*\|/gm);
   if (
     !exactOrderedValues(designTools, CANONICAL_TOOL_NAMES) ||
     !exactOrderedValues(planTools, CANONICAL_TOOL_NAMES)
@@ -351,9 +379,7 @@ export function checkDocsConsistency({
     }
   }
 
-  const designPhaseRows = [1, 2, 3, 4, 5, 6].map((phase) =>
-    extractDesignPhaseRow(designText, phase),
-  );
+  const designPhaseRows = extractDesignPhaseRows(designText);
   const designBranches = designPhaseRows.map(({ branch }) => branch);
   const planPhaseBlocks = extractPlanPhaseBlocks(planText);
   const planPhaseNames = planPhaseBlocks.map(({ name }) => name);

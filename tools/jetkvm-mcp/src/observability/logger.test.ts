@@ -110,20 +110,20 @@ describe("structured redacting logger", () => {
       actions: [
         {
           type: "key",
-          key: "[REDACTED]",
+          redacted: "[REDACTED]",
           code: "KEY_DOWN",
           sequence: 1,
         },
         {
           type: "shortcut",
-          keys: "[REDACTED]",
+          redacted: "[REDACTED]",
           code: "SHORTCUT",
           sequence: 2,
         },
         {
           nested: {
-            KEY: "[REDACTED]",
-            KeYs: "[REDACTED]",
+            redacted: "[REDACTED]",
+            redacted_2: "[REDACTED]",
             monkey: "capuchin",
             keyCount: 2,
             code: "SAFE_CODE",
@@ -131,10 +131,10 @@ describe("structured redacting logger", () => {
         },
         {
           composites: {
-            typed_keys: "[REDACTED]",
-            PressedKeys: "[REDACTED]",
-            "held.keys": "[REDACTED]",
-            KEY_SEQUENCE: "[REDACTED]",
+            redacted: "[REDACTED]",
+            redacted_2: "[REDACTED]",
+            redacted_3: "[REDACTED]",
+            redacted_4: "[REDACTED]",
             keyCount: 4,
             monkey: "macaque",
             keyboardLayout: "ansi",
@@ -183,16 +183,16 @@ describe("structured redacting logger", () => {
 
     expect(redacted).toEqual({
       display: {
-        EDID: "[REDACTED]",
+        redacted: "[REDACTED]",
         fingerprints: [
           {
-            Manufacturer_ID: "[REDACTED]",
-            "PRODUCT-CODE": "[REDACTED]",
+            redacted: "[REDACTED]",
+            redacted_2: "[REDACTED]",
           },
           {
             nested: {
-              "Serial Number": "[REDACTED]",
-              "Display.Name": "[REDACTED]",
+              redacted: "[REDACTED]",
+              redacted_2: "[REDACTED]",
             },
           },
         ],
@@ -230,14 +230,54 @@ describe("structured redacting logger", () => {
     }).not.toThrow();
     expect(redacted).toEqual({
       actions: [
-        { key: "[REDACTED]", code: "KEY_DOWN" },
-        { keys: "[REDACTED]", count: 1 },
+        { redacted: "[REDACTED]", code: "KEY_DOWN" },
+        { redacted: "[REDACTED]", count: 1 },
       ],
       code: "ARRAY_READY",
     });
     expect(JSON.stringify(redacted)).not.toMatch(
       /array-key-secret|array-shortcut-secret|array-prototype-secret/,
     );
+  });
+
+  it("rejects oversized proxied arrays before own-key materialization", () => {
+    let ownKeysCalls = 0;
+    let indexedDescriptorCalls = 0;
+    let accessorCalls = 0;
+    const target = new Array<unknown>(10_001).fill(
+      "oversized-array-dense-secret",
+    );
+    Object.defineProperty(target, 0, {
+      configurable: true,
+      enumerable: true,
+      get(): string {
+        accessorCalls += 1;
+        return "oversized-array-accessor-secret";
+      },
+    });
+    const oversizedProxy = new Proxy(target, {
+      ownKeys(): never {
+        ownKeysCalls += 1;
+        throw new Error("ownKeys must not run");
+      },
+      getOwnPropertyDescriptor(
+        arrayTarget,
+        key,
+      ): PropertyDescriptor | undefined {
+        if (key !== "length") {
+          indexedDescriptorCalls += 1;
+        }
+        return Reflect.getOwnPropertyDescriptor(arrayTarget, key);
+      },
+    });
+
+    expect(redactStructuredData({ oversizedProxy, status: "ready" })).toEqual({
+      oversizedProxy: "[REDACTED]",
+      status: "ready",
+    });
+    expect(ownKeysCalls).toBe(0);
+    expect(indexedDescriptorCalls).toBe(0);
+    expect(accessorCalls).toBe(0);
   });
 
   it("unboxes primitives intrinsically and rejects unsupported objects", () => {
@@ -362,7 +402,7 @@ describe("structured redacting logger", () => {
         status: "ready",
         mimeType: "[REDACTED]",
       },
-      authorization: "[REDACTED]",
+      redacted: "[REDACTED]",
       safeMemo: "[REDACTED]",
     });
     expect(lines.join("")).not.toMatch(
@@ -558,14 +598,14 @@ describe("structured redacting logger", () => {
 
     expect(outer.status).toBe("still-useful");
     expect(nested).toMatchObject({
-      password: "[REDACTED]",
-      authorization: "[REDACTED]",
-      cookie: "[REDACTED]",
-      refreshToken: "[REDACTED]",
-      callbackURL: "[REDACTED]",
+      redacted: "[REDACTED]",
+      redacted_2: "[REDACTED]",
+      redacted_3: "[REDACTED]",
+      redacted_4: "[REDACTED]",
+      redacted_5: "[REDACTED]",
     });
     expect(JSON.parse(nested.values[0])).toEqual({
-      password: "[REDACTED]",
+      redacted: "[REDACTED]",
     });
     expect(redacted.malformed).toBe("[REDACTED]");
 
@@ -665,7 +705,7 @@ describe("structured redacting logger", () => {
       safeEscapedProse,
     });
     expect(JSON.parse(redacted.validEscapedJson)).toEqual({
-      image: "[REDACTED]",
+      redacted: "[REDACTED]",
       status: "valid-safe-sibling",
     });
     expect(JSON.stringify(redacted)).not.toMatch(
@@ -897,6 +937,56 @@ describe("structured redacting logger", () => {
     expect(Object.hasOwn(reparsed.error, "prototype")).toBe(true);
   });
 
+  it("replaces sensitive property names with deterministic collision-safe keys", () => {
+    const fields = {
+      authToken: "outer-token-secret",
+      redacted: "safe-redacted-value",
+      credential: "outer-credential-secret",
+      redacted_2: "safe-redacted-two-value",
+      nested: {
+        bearer: "nested-bearer-secret",
+        URL: "https://operator:secret@jetkvm.invalid/private",
+        token: "nested-token-secret",
+        paste: "nested-paste-secret",
+        credential: "nested-credential-secret",
+        ICE: "candidate:1 nested-ice-secret",
+        status: "ready",
+      },
+    };
+    const redacted = redactStructuredData(fields);
+    requireRecord(redacted);
+    requireRecord(redacted.nested);
+
+    expect(Object.getPrototypeOf(redacted)).toBeNull();
+    expect(Object.getPrototypeOf(redacted.nested)).toBeNull();
+    expect(redacted).toEqual({
+      redacted_3: "[REDACTED]",
+      redacted: "safe-redacted-value",
+      redacted_4: "[REDACTED]",
+      redacted_2: "safe-redacted-two-value",
+      nested: {
+        redacted: "[REDACTED]",
+        redacted_2: "[REDACTED]",
+        redacted_3: "[REDACTED]",
+        redacted_4: "[REDACTED]",
+        redacted_5: "[REDACTED]",
+        redacted_6: "[REDACTED]",
+        status: "ready",
+      },
+    });
+
+    const lines: string[] = [];
+    createStructuredLogger({ write: (line) => lines.push(line) }).info(
+      "sensitive-keys.received",
+      fields,
+    );
+    const serialized = `${JSON.stringify(redacted)}${lines.join("")}`;
+    expect(() => JSON.parse(lines[0] ?? "")).not.toThrow();
+    expect(serialized).not.toMatch(
+      /authToken|credential|bearer|URL|token|paste|ICE|outer-(?:token|credential)-secret|nested-(?:bearer|token|paste|credential|ice)-secret|jetkvm\.invalid/,
+    );
+  });
+
   it("redacts recursive error records without hiding safe siblings or losing cycle safety", () => {
     const cyclicError: Record<string, unknown> = {
       name: "RangeError",
@@ -1103,6 +1193,58 @@ describe("structured redacting logger", () => {
       expect(output).not.toContain(jpeg);
       expect(output).not.toContain("binary-secret");
     }
+  });
+
+  it("recognizes normalized own MIME descriptors without invoking accessors", () => {
+    let accessorCalls = 0;
+    const accessorImage: Record<string, unknown> = {
+      data: "accessor-snake-image-secret",
+      status: "ready",
+    };
+    Object.defineProperty(accessorImage, "mime_type", {
+      enumerable: true,
+      get(): string {
+        accessorCalls += 1;
+        return "image/png";
+      },
+    });
+    const fields = {
+      content: [
+        {
+          data: "snake-image-secret",
+          mime_type: "image/png",
+        },
+        {
+          data: "normalized-image-secret",
+          mimetype: "IMAGE/JPEG",
+        },
+        accessorImage,
+      ],
+    };
+
+    const redacted = redactStructuredData(fields);
+
+    expect(accessorCalls).toBe(0);
+    expect(redacted).toEqual({
+      content: [
+        {
+          data: "[REDACTED]",
+          mime_type: "image/png",
+        },
+        {
+          data: "[REDACTED]",
+          mimetype: "IMAGE/JPEG",
+        },
+        {
+          data: "[REDACTED]",
+          status: "ready",
+          mime_type: "[REDACTED]",
+        },
+      ],
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /snake-image-secret|normalized-image-secret|accessor-snake-image-secret/,
+    );
   });
 
   it("redacts own data for encoded-binary encoding descriptors", () => {

@@ -110,21 +110,21 @@ const display: CachedDisplayState = {
     observedAt: "2026-07-13T00:00:00.000Z",
     ageMs: 1,
     freshness: "fresh",
-    source: "cached_snapshot",
+    source: "cached_event",
   },
   resolution: {
     value: { width: 1920, height: 1080, refreshHz: 60 },
     observedAt: "2026-07-13T00:00:00.000Z",
     ageMs: 1,
     freshness: "fresh",
-    source: "cached_snapshot",
+    source: "cached_event",
   },
   fps: {
     value: 60,
     observedAt: "2026-07-13T00:00:00.000Z",
     ageMs: 1,
     freshness: "fresh",
-    source: "cached_snapshot",
+    source: "cached_event",
   },
   qualification: "current_binding",
 };
@@ -572,6 +572,100 @@ describe("FakeBrowserPlane", () => {
       ).rejects.toThrow(/authorized|format|MIME|byte length|SHA-256/i);
     },
   );
+
+  it("accepts letterboxed content whose geometry preserves the rotated source aspect ratio", async () => {
+    const letterboxed = {
+      ...observation,
+      rotation: 90,
+      imageWidth: 800,
+      imageHeight: 1000,
+      geometry: {
+        contentX: 130,
+        contentY: 20,
+        contentWidth: 540,
+        contentHeight: 960,
+      },
+    };
+    const plane = new FakeBrowserPlane(
+      new RecordingAdapter(),
+      undefined,
+      captureImage,
+    );
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref,
+            binding,
+            connectionEpoch: binding.connectionEpoch,
+            browserChannelGeneration: binding.browserChannelGeneration,
+            displayGeneration: observation.displayGeneration,
+          },
+        },
+        { operation: "capture", result: letterboxed },
+      ],
+    });
+    await plane.connect(ref, deadline);
+
+    await expect(
+      plane.capture(
+        ref,
+        { format: "png", maxWidth: 800, maxHeight: 1000 },
+        deadline,
+      ),
+    ).resolves.toMatchObject({
+      observation: { geometry: letterboxed.geometry },
+    });
+  });
+
+  it("rejects square content distortion even when the encoded canvas matches the source ratio", async () => {
+    const distorted = {
+      ...observation,
+      rotation: 90,
+      imageWidth: 405,
+      imageHeight: 720,
+      geometry: {
+        contentX: 0,
+        contentY: 157.5,
+        contentWidth: 405,
+        contentHeight: 405,
+      },
+    };
+    const plane = new FakeBrowserPlane(
+      new RecordingAdapter(),
+      undefined,
+      captureImage,
+    );
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref,
+            binding,
+            connectionEpoch: binding.connectionEpoch,
+            browserChannelGeneration: binding.browserChannelGeneration,
+            displayGeneration: observation.displayGeneration,
+          },
+        },
+        { operation: "capture", result: distorted },
+      ],
+    });
+    await plane.connect(ref, deadline);
+
+    await expect(
+      plane.capture(
+        ref,
+        { format: "png", maxWidth: 405, maxHeight: 720 },
+        deadline,
+      ),
+    ).rejects.toThrow(/capture result is invalid/i);
+  });
 
   it("strictly validates and correlates every fake browser result", async () => {
     const validConnection = {
@@ -1249,6 +1343,124 @@ describe("FakeBrowserPlane", () => {
       ).rejects.toBeInstanceOf(PlaneFaultError);
       expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
       await expect(plane.close(ref, deadline)).resolves.toBeUndefined();
+      expect(() => plane.assertExhausted()).not.toThrow();
+    },
+  );
+
+  it.each([
+    [
+      "applied",
+      {
+        result: {
+          ...releaseReceipt,
+          outcome: "applied",
+        },
+      },
+      false,
+    ],
+    [
+      "already-applied",
+      {
+        result: {
+          ...releaseReceipt,
+          outcome: "already_applied",
+        },
+      },
+      false,
+    ],
+    [
+      "unknown after write",
+      {
+        fault: "disconnect_after_write_before_ack",
+        dispatchedCount: 1,
+        completedCount: 0,
+      },
+      true,
+    ],
+  ] as const)(
+    "drains same-generation fake input after %s release until reconnect",
+    async (_caseName, terminal, rejects) => {
+      const adapter = new RecordingAdapter();
+      const plane = new FakeBrowserPlane(adapter, undefined, captureImage);
+      await publishFakeObservation(plane);
+      plane.loadScenario({
+        version: 1,
+        steps: [{ operation: "release", ...terminal }],
+      });
+
+      const releasing = plane.release(
+        ref,
+        { requestId: "request-a" },
+        deadline,
+      );
+      if (rejects) {
+        await expect(releasing).rejects.toMatchObject({
+          outcome: "unknown",
+          writeBegan: true,
+        });
+      } else {
+        await expect(releasing).resolves.toMatchObject({
+          generationDrained: true,
+        });
+      }
+
+      const nextBinding = {
+        ...binding,
+        connectionEpoch: binding.connectionEpoch + 1,
+        browserChannelGeneration: binding.browserChannelGeneration + 1,
+      };
+      plane.loadScenario({
+        version: 1,
+        steps: [
+          {
+            operation: "reconnect",
+            result: {
+              state: "ready",
+              ref,
+              binding: nextBinding,
+              connectionEpoch: nextBinding.connectionEpoch,
+              browserChannelGeneration: nextBinding.browserChannelGeneration,
+              displayGeneration: 1,
+            },
+          },
+        ],
+      });
+      await expect(
+        plane.mouse(
+          ref,
+          {
+            observationId: observation.observationId,
+            requestId: "request-after-release",
+            actions: [{ type: "move", x: 1, y: 1 }],
+          },
+          deadline,
+        ),
+      ).rejects.toThrow(/drained/i);
+
+      adapter.binding = nextBinding;
+      await plane.reconnect(ref, deadline);
+      plane.loadScenario({
+        version: 1,
+        steps: [
+          {
+            operation: "capture",
+            result: {
+              ...observation,
+              connectionEpoch: nextBinding.connectionEpoch,
+              displayGeneration: 1,
+            },
+          },
+        ],
+      });
+      await expect(
+        plane.capture(
+          ref,
+          { format: "png", maxWidth: 1280, maxHeight: 720 },
+          deadline,
+        ),
+      ).resolves.toMatchObject({
+        observation: { connectionEpoch: nextBinding.connectionEpoch },
+      });
       expect(() => plane.assertExhausted()).not.toThrow();
     },
   );

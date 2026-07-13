@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   CapabilitySnapshot,
   DisplayCaptureResult,
+  DisplayStatusResult,
   Success,
   ToolError,
 } from "../domain.js";
@@ -128,6 +129,64 @@ describe("MCP result mapping", () => {
     expect(mapped.content).toEqual([
       { type: "text", text: JSON.stringify(envelope) },
     ]);
+  });
+
+  it("rejects deprecated cached-snapshot provenance before MCP mapping", () => {
+    const snapshotFact = {
+      value: "present",
+      observed_at: "2026-07-13T00:00:00.000Z",
+      age_ms: 0,
+      freshness: "fresh",
+      source: "cached_snapshot",
+    } as const;
+    const envelope = {
+      ok: true,
+      tool: "jetkvm_display_status",
+      operation_id: "operation-status-1",
+      session_id: "session-1",
+      session_generation: 1,
+      duration_ms: 1,
+      result: {
+        signal: snapshotFact,
+        native_resolution: {
+          value: null,
+          observed_at: null,
+          age_ms: null,
+          freshness: "unknown",
+          source: "none",
+        },
+        fps: {
+          value: null,
+          observed_at: null,
+          age_ms: null,
+          freshness: "unknown",
+          source: "none",
+        },
+        edid: {
+          status: "unsupported",
+          read_completed: false,
+          reason: "edid_read_capability_absent",
+          observed_at: null,
+          data: null,
+        },
+      },
+    } as unknown as Success<DisplayStatusResult>;
+    const inbound = {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(envelope),
+        },
+      ],
+      structuredContent: envelope,
+    };
+
+    expect(() => toMcpSuccessResult(envelope)).toThrow(
+      "Invalid tool success envelope.",
+    );
+    expect(() =>
+      validateAndMapMcpResult("jetkvm_display_status", inbound),
+    ).toThrow("Invalid handler result.");
   });
 
   it("places screenshot bytes only in the authorized MCP image block", () => {

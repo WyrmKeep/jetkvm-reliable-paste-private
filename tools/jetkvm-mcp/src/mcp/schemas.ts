@@ -1310,7 +1310,7 @@ const observedFactSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
         observed_at: timestampSchema,
         age_ms: nonNegativeIntegerSchema,
         freshness: z.enum(["fresh", "stale"]),
-        source: z.enum(["cached_snapshot", "cached_event"]),
+        source: z.literal("cached_event"),
       })
       .strict(),
     z

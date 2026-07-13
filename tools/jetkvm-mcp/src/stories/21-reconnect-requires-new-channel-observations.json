@@ -207,19 +207,6 @@
       "expect": "BrowserPlane applies the Reliable Paste request using current opaque-observation-shared-paste-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
     },
     {
-      "id": "shared-device-rpc-adapter-binding-jetkvm-input-release",
-      "tool": "jetkvm_input_release",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
-        "request_id": "opaque-shared-device-rpc-adapter-binding-input-release",
-        "timeout_ms": 1000
-      },
-      "timeout_ms": 1000,
-      "expect": "BrowserPlane drains and acknowledges the current input generation with zero held state and zero DeviceRpcAdapter method calls; the exact shared adapter and sole channel identities remain unchanged."
-    },
-    {
       "id": "shared-device-rpc-adapter-binding-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
@@ -248,6 +235,19 @@
       },
       "timeout_ms": 30000,
       "expect": "Immediately after the shared power call, restore the recorded ATX-observable baseline and re-prove the active extension, serial readiness, baseline, and exact current binding before the session-connect case."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane drains and acknowledges the current input generation with zero held state and zero DeviceRpcAdapter method calls; the exact shared adapter and sole channel identities remain unchanged."
     },
     {
       "id": "prepare-shared-session-connect-case",
@@ -431,19 +431,6 @@
       "expect": "BrowserPlane applies the Reliable Paste request using current opaque-observation-replacement-paste-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
     },
     {
-      "id": "device-rpc-adapter-replacement-jetkvm-input-release",
-      "tool": "jetkvm_input_release",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-session-shared-connect",
-        "session_generation": 10,
-        "request_id": "opaque-device-rpc-adapter-replacement-input-release",
-        "timeout_ms": 1000
-      },
-      "timeout_ms": 1000,
-      "expect": "BrowserPlane drains and acknowledges generation 10 with zero held state and zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
-    },
-    {
       "id": "device-rpc-adapter-replacement-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
@@ -456,6 +443,19 @@
       },
       "timeout_ms": 1000,
       "expect": "The injected old four-part binding fails setATXPowerAction at adapter admission with public CONNECTION_LOST/not_sent, verification none, zero ATX transport writes, zero replay, and the current generation-10 bundle unchanged."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "request_id": "opaque-device-rpc-adapter-replacement-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane drains and acknowledges generation 10 with zero held state and zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
     },
     {
       "id": "prepare-replacement-session-connect-case",

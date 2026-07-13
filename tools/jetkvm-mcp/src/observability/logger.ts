@@ -15,6 +15,7 @@ const SAFE_ERROR_NAMES: Readonly<Record<string, true>> = {
   URIError: true,
 };
 const MAX_REDACTED_ARRAY_LENGTH = 10_000;
+const REDACTED_FIELD_NAME = "redacted";
 const MAX_PROTOTYPE_DEPTH = 16;
 const EXACT_SENSITIVE_FIELDS: Readonly<Record<string, true>> = {
   displayname: true,
@@ -223,9 +224,7 @@ function redactObjectValue(
   ancestors.add(value);
   try {
     if (isArray) {
-      const descriptors: Record<string, PropertyDescriptor> =
-        Object.getOwnPropertyDescriptors(value);
-      const lengthDescriptor = descriptors.length;
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
       const arrayLength: unknown =
         lengthDescriptor !== undefined && "value" in lengthDescriptor
           ? lengthDescriptor.value
@@ -241,7 +240,7 @@ function redactObjectValue(
 
       const redactedArray = new Array<unknown>(arrayLength);
       for (let index = 0; index < arrayLength; index += 1) {
-        const descriptor = descriptors[index];
+        const descriptor = Object.getOwnPropertyDescriptor(value, index);
         if (descriptor === undefined) {
           continue;
         }
@@ -254,13 +253,40 @@ function redactObjectValue(
     }
 
     const descriptors = Object.getOwnPropertyDescriptors(value);
+    const descriptorKeys = Object.keys(descriptors);
     const redactData = isEncodedBinaryDataContainer(descriptors);
     const errorRecord = isErrorRecord(descriptors, errorContext);
     const effectiveErrorContext = errorContext || errorRecord;
     const redacted = Object.create(null) as Record<string, unknown>;
-    for (const key of Object.keys(descriptors)) {
+    const reservedOutputKeys = new Set<string>();
+    for (const key of descriptorKeys) {
+      const descriptor = descriptors[key];
+      if (
+        descriptor !== undefined &&
+        descriptor.enumerable === true &&
+        !isSensitiveFieldName(normalizeFieldName(key))
+      ) {
+        reservedOutputKeys.add(key);
+      }
+    }
+    let redactedFieldSequence = 1;
+    for (const key of descriptorKeys) {
       const descriptor = descriptors[key];
       if (descriptor === undefined || descriptor.enumerable !== true) {
+        continue;
+      }
+      const normalizedKey = normalizeFieldName(key);
+      if (isSensitiveFieldName(normalizedKey)) {
+        let safeKey: string;
+        do {
+          safeKey =
+            redactedFieldSequence === 1
+              ? REDACTED_FIELD_NAME
+              : `${REDACTED_FIELD_NAME}_${redactedFieldSequence}`;
+          redactedFieldSequence += 1;
+        } while (reservedOutputKeys.has(safeKey));
+        reservedOutputKeys.add(safeKey);
+        redacted[safeKey] = REDACTED;
         continue;
       }
       if (!("value" in descriptor)) {
@@ -269,10 +295,8 @@ function redactObjectValue(
       }
 
       const nested: unknown = descriptor.value;
-      const normalizedKey = normalizeFieldName(key);
       if (
         (key === "data" && redactData) ||
-        isSensitiveFieldName(normalizedKey) ||
         (errorRecord && isErrorDiagnosticField(normalizedKey))
       ) {
         redacted[key] = REDACTED;
@@ -435,26 +459,40 @@ function isEncodedBinaryDataContainer(
     return false;
   }
   const typeDescriptor = descriptors.type;
-  const mimeTypeDescriptor = descriptors.mimeType;
   const encodingDescriptor = descriptors.encoding;
   if (
     (typeDescriptor !== undefined && !("value" in typeDescriptor)) ||
-    (mimeTypeDescriptor !== undefined && !("value" in mimeTypeDescriptor)) ||
     (encodingDescriptor !== undefined && !("value" in encodingDescriptor))
   ) {
     return true;
   }
   const type: unknown = typeDescriptor?.value;
-  const mimeType: unknown = mimeTypeDescriptor?.value;
   const encoding: unknown = encodingDescriptor?.value;
-  return (
+  if (
     type === "image" ||
     type === "Buffer" ||
-    (typeof mimeType === "string" &&
-      /^image\/(?:jpeg|png)$/iu.test(mimeType)) ||
     (typeof encoding === "string" &&
       Object.hasOwn(ENCODED_BINARY_ENCODINGS, normalizeFieldName(encoding)))
-  );
+  ) {
+    return true;
+  }
+  for (const key of Object.keys(descriptors)) {
+    if (normalizeFieldName(key) !== "mimetype") {
+      continue;
+    }
+    const mimeTypeDescriptor = descriptors[key];
+    if (mimeTypeDescriptor === undefined || !("value" in mimeTypeDescriptor)) {
+      return true;
+    }
+    const mimeType: unknown = mimeTypeDescriptor.value;
+    if (
+      typeof mimeType === "string" &&
+      /^image\/(?:jpeg|png)$/iu.test(mimeType)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

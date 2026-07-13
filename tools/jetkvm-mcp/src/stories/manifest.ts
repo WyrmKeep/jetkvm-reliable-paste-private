@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
@@ -1700,6 +1701,15 @@ function isSameRequest(
   );
 }
 
+function isExactRequestReplay(
+  first: AcceptanceStory["steps"][number],
+  second: AcceptanceStory["steps"][number],
+): boolean {
+  return (
+    isSameRequest(first, second) && isDeepStrictEqual(first.input, second.input)
+  );
+}
+
 function assertClosedGenerationRecovery(
   stories: readonly AcceptanceStory[],
 ): void {
@@ -1754,13 +1764,21 @@ function assertClosedGenerationRecovery(
 
       const inspection = recovery;
       const release = story.steps[recoveryIndex + 1];
-      const reconnect = story.steps[recoveryIndex + 2];
+      let reconnectIndex = recoveryIndex + 2;
+      while (
+        release !== undefined &&
+        story.steps[reconnectIndex] !== undefined &&
+        isExactRequestReplay(release, story.steps[reconnectIndex]!)
+      ) {
+        reconnectIndex += 1;
+      }
+      const reconnect = story.steps[reconnectIndex];
       if (
         inspection.tool === T.sessionStatus &&
         release?.tool === T.release &&
         reconnect?.tool === T.reconnect
       ) {
-        const next = story.steps[recoveryIndex + 3];
+        const next = story.steps[reconnectIndex + 1];
         const nextGeneration = next?.input.session_generation;
         if (
           inspection.input.session_generation !== currentGeneration ||
@@ -1798,26 +1816,42 @@ function assertClosedGenerationRecovery(
   }
 }
 
-const APPLIED_RELEASE_OUTCOME_PATTERN = /\b(?:outcome\s+)?applied\b/i;
-const GENERATION_DRAINED_TRUE_PATTERN =
-  /\bgeneration_drained\s*(?::|=|\bis\b)?\s*true\b/i;
+const PROVEN_NON_CLOSING_RELEASE_REQUIREMENT_LOOKUP: Readonly<
+  Record<string, true>
+> = Object.freeze({
+  "branch:strict-schema-rejection": true,
+  "branch:permission-denied": true,
+  "branch:capability-missing": true,
+  "branch:deadline-before-admission": true,
+  "branch:cancellation-before-write": true,
+  "branch:disconnect-before-write": true,
+  "branch:stale-session-generation": true,
+  "branch:duplicate-changed-digest": true,
+});
 
-function isAppliedGenerationDrainingRelease(
-  step: AcceptanceStory["steps"][number],
-): boolean {
-  return (
-    step.tool === T.release &&
-    APPLIED_RELEASE_OUTCOME_PATTERN.test(step.expect) &&
-    GENERATION_DRAINED_TRUE_PATTERN.test(step.expect)
-  );
-}
-
-function assertAppliedReleaseGenerationRecovery(
+function assertGenerationClosingReleaseRecovery(
   stories: readonly AcceptanceStory[],
+  matrix: ToolBehaviorMatrix,
 ): void {
+  const provenNonClosingReleaseKeys = new Set<string>();
+  for (const row of matrix) {
+    if (
+      PROVEN_NON_CLOSING_RELEASE_REQUIREMENT_LOOKUP[row.requirement] !== true
+    ) {
+      continue;
+    }
+    const cell = row.cells[T.release];
+    if (cell.applicability === "applicable") {
+      provenNonClosingReleaseKeys.add(`${cell.story_id}\u0000${cell.step_id}`);
+    }
+  }
+
   for (const story of stories) {
     for (const [releaseIndex, release] of story.steps.entries()) {
-      if (!isAppliedGenerationDrainingRelease(release)) {
+      if (
+        release.tool !== T.release ||
+        provenNonClosingReleaseKeys.has(`${story.id}\u0000${release.id}`)
+      ) {
         continue;
       }
 
@@ -1830,33 +1864,100 @@ function assertAppliedReleaseGenerationRecovery(
         !Number.isInteger(closedGeneration)
       ) {
         throw new Error(
-          `Story ${story.id} applied generation-draining release ${release.id} must identify its exact closed session and generation`,
+          `Story ${story.id} generation-closing release ${release.id} must identify its exact closed session and generation`,
         );
       }
 
-      let recovery: AcceptanceStory["steps"][number] | undefined;
+      let hasRecovery = false;
       let verifiedRecoverySuccessor = false;
+      let nextTool: string | undefined;
+      let nextSessionId: string | undefined;
+      let nextGeneration: number | undefined;
+      let nextObservationId: string | undefined;
+      let restoreAtxBaseline = false;
+      let connectsWithoutIncumbent = false;
+
       for (const later of story.steps.slice(releaseIndex + 1)) {
-        if (
-          later.tool === null &&
-          later.input.closed_session_id === closedSessionId &&
-          later.input.closed_generation === closedGeneration &&
-          typeof later.input.next_session_id === "string" &&
-          typeof later.input.next_generation === "number" &&
-          Number.isInteger(later.input.next_generation) &&
-          later.input.next_generation > closedGeneration &&
-          later.input.reprove_session_ready === true &&
-          /\b(?:recover|reconnect|bind)\b/i.test(
-            `${later.call} ${later.expect}`,
-          )
-        ) {
-          recovery = later;
+        if (later.tool === null) {
+          const nextCase =
+            typeof later.input.next_case === "string"
+              ? story.steps.find(
+                  (candidate) => candidate.id === later.input.next_case,
+                )
+              : undefined;
+          const isCaseRecovery =
+            nextCase !== undefined && later.input.emergency_release === true;
+          const isRecovery =
+            later.call.startsWith("acceptance-fixture/session/") &&
+            (typeof later.input.next_tool === "string" ||
+              nextCase !== undefined) &&
+            later.input.closed_session_id === closedSessionId &&
+            (later.input.closed_generation === undefined ||
+              later.input.closed_generation === closedGeneration);
+          if (!isRecovery) {
+            continue;
+          }
+
+          nextTool =
+            typeof later.input.next_tool === "string"
+              ? later.input.next_tool
+              : (nextCase?.tool ?? undefined);
+          connectsWithoutIncumbent =
+            nextTool === T.connect && later.input.require_no_incumbent === true;
+          const inspectedRecovery =
+            later.call.includes("/inspect-and-recover-for-next-tool") &&
+            later.input.inspect_device_state === true &&
+            later.input.emergency_release === true;
+          nextSessionId =
+            typeof later.input.next_session_id === "string"
+              ? later.input.next_session_id
+              : undefined;
+          nextGeneration =
+            typeof later.input.next_generation === "number" &&
+            Number.isInteger(later.input.next_generation)
+              ? later.input.next_generation
+              : undefined;
+          nextObservationId =
+            typeof later.input.next_observation_id === "string"
+              ? later.input.next_observation_id
+              : undefined;
+          restoreAtxBaseline = later.input.restore_atx_baseline === true;
+
+          if (
+            typeof nextTool !== "string" ||
+            (nextTool === T.connect
+              ? !connectsWithoutIncumbent
+              : nextSessionId === undefined ||
+                nextGeneration === undefined ||
+                nextGeneration <= closedGeneration ||
+                (later.input.reprove_session_ready !== true &&
+                  !inspectedRecovery &&
+                  !isCaseRecovery))
+          ) {
+            throw new Error(
+              `Story ${story.id} generation-closing release ${release.id} has an incomplete explicit recovery ${later.id}`,
+            );
+          }
+          hasRecovery = true;
+          continue;
+        }
+
+        if (MUTATION_TOOL_LOOKUP[later.tool] !== true) {
           continue;
         }
         if (
-          later.tool === null ||
-          MUTATION_TOOL_LOOKUP[later.tool] !== true ||
-          isSameRequest(release, later)
+          later.tool === T.release &&
+          provenNonClosingReleaseKeys.has(`${story.id}\u0000${later.id}`)
+        ) {
+          continue;
+        }
+        if (isExactRequestReplay(release, later)) {
+          continue;
+        }
+        if (
+          later.tool === release.tool &&
+          typeof release.input.request_id === "string" &&
+          later.input.request_id === release.input.request_id
         ) {
           continue;
         }
@@ -1864,35 +1965,40 @@ function assertAppliedReleaseGenerationRecovery(
         const reusesClosedGeneration =
           later.input.session_id === closedSessionId &&
           later.input.session_generation === closedGeneration;
-        if (recovery === undefined || reusesClosedGeneration) {
+        if (
+          !hasRecovery &&
+          later.tool === T.reconnect &&
+          reusesClosedGeneration
+        ) {
+          hasRecovery = true;
+          nextSessionId = closedSessionId;
+          nextGeneration = closedGeneration + 1;
+          continue;
+        }
+        if (reusesClosedGeneration || !hasRecovery) {
           throw new Error(
-            `Story ${story.id} applied generation-draining release ${release.id} closes ${closedSessionId} generation ${closedGeneration}; explicit recovery is required before later mutation ${later.id}`,
+            `Story ${story.id} generation-closing release ${release.id} closes ${closedSessionId} generation ${closedGeneration}; explicit recovery is required before later mutation ${later.id}`,
           );
         }
 
         if (!verifiedRecoverySuccessor) {
-          const nextTool = recovery.input.next_tool;
-          const nextSessionId = recovery.input.next_session_id;
-          const nextGeneration = recovery.input.next_generation;
           const consumesObservation =
             later.tool === T.keyboard ||
             later.tool === T.mouse ||
             later.tool === T.paste;
           if (
-            (typeof nextTool === "string" && later.tool !== nextTool) ||
-            (later.tool !== T.connect &&
-              (later.input.session_id !== nextSessionId ||
-                later.input.session_generation !== nextGeneration)) ||
-            (later.tool === T.power &&
-              recovery.input.restore_atx_baseline !== true) ||
+            (nextTool !== undefined && later.tool !== nextTool) ||
+            (later.tool === T.connect
+              ? !connectsWithoutIncumbent
+              : later.input.session_id !== nextSessionId ||
+                later.input.session_generation !== nextGeneration) ||
+            (later.tool === T.power && !restoreAtxBaseline) ||
             (consumesObservation &&
-              (recovery.input.capture_fresh_observation !== true ||
-                typeof recovery.input.next_observation_id !== "string" ||
-                later.input.observation_id !==
-                  recovery.input.next_observation_id))
+              nextObservationId !== undefined &&
+              later.input.observation_id !== nextObservationId)
           ) {
             throw new Error(
-              `Story ${story.id} applied generation-draining release ${release.id} requires explicit recovery to re-prove the exact later mutation ${later.id} successor state`,
+              `Story ${story.id} generation-closing release ${release.id} requires explicit recovery to re-prove the exact later mutation ${later.id} successor state`,
             );
           }
           verifiedRecoverySuccessor = true;
@@ -2946,8 +3052,8 @@ export function validateAcceptanceStories(
   assertOneShotFaultBrackets(stories, matrix);
   assertPartialVerificationFaultBrackets(stories);
   assertAtxBindingLossCases(stories);
+  assertGenerationClosingReleaseRecovery(stories, matrix);
   assertClosedGenerationRecovery(stories);
-  assertAppliedReleaseGenerationRecovery(stories);
   assertFixtureRecoveryTransitions(stories);
   assertStorySessionLifecycle(stories);
   assertObservationReachability(stories);

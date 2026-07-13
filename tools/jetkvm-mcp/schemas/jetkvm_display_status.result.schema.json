@@ -62,10 +62,7 @@
                     },
                     "source": {
                       "type": "string",
-                      "enum": [
-                        "cached_snapshot",
-                        "cached_event"
-                      ]
+                      "const": "cached_event"
                     }
                   },
                   "required": [
@@ -165,10 +162,7 @@
                     },
                     "source": {
                       "type": "string",
-                      "enum": [
-                        "cached_snapshot",
-                        "cached_event"
-                      ]
+                      "const": "cached_event"
                     }
                   },
                   "required": [
@@ -243,10 +237,7 @@
                     },
                     "source": {
                       "type": "string",
-                      "enum": [
-                        "cached_snapshot",
-                        "cached_event"
-                      ]
+                      "const": "cached_event"
                     }
                   },
                   "required": [

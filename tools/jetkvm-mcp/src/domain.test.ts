@@ -15,6 +15,7 @@ import {
   type InputPasteResult,
   type InputReleaseResult,
   type PhysicalKey,
+  type ObservedFact,
   type SessionConnectInput,
   type SessionConnectResult,
   type PowerControlResult,
@@ -74,6 +75,57 @@ describe("canonical domain contracts", () => {
       "power_control",
       "edid_read",
     ]);
+  });
+
+  it("limits public observed facts to canonical event or none provenance", () => {
+    type NullableNumberFact = ObservedFact<number | null, null>;
+    expectTypeOf<NullableNumberFact["source"]>().toEqualTypeOf<
+      "cached_event" | "none"
+    >();
+    expectTypeOf<
+      Extract<NullableNumberFact, { source: "none" }>["value"]
+    >().toEqualTypeOf<null>();
+    expectTypeOf<
+      Extract<NullableNumberFact, { source: "cached_event" }>["observed_at"]
+    >().toEqualTypeOf<string>();
+
+    const eventFact = {
+      value: "present",
+      observed_at: "2026-07-13T00:00:00.000Z",
+      age_ms: 0,
+      freshness: "fresh",
+      source: "cached_event",
+    } as const;
+    const noneFact = {
+      value: null,
+      observed_at: null,
+      age_ms: null,
+      freshness: "unknown",
+      source: "none",
+    } as const;
+    const displayStatus = {
+      signal: eventFact,
+      native_resolution: noneFact,
+      fps: noneFact,
+      edid: {
+        status: "unsupported",
+        read_completed: false,
+        reason: "edid_read_capability_absent",
+        observed_at: null,
+        data: null,
+      },
+    } as const;
+
+    expect(
+      TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_status.safeParse(displayStatus)
+        .success,
+    ).toBe(true);
+    expect(
+      TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_status.safeParse({
+        ...displayStatus,
+        signal: { ...eventFact, source: "cached_snapshot" },
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps connect target-free and places issued session identity in the envelope", () => {

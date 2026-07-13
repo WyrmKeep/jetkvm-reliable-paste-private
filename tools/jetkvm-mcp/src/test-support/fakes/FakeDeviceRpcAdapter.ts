@@ -4,6 +4,7 @@ import {
   DeviceRpcError,
   OPAQUE_ID_PATTERN,
   mapDeviceRpcBindingToWire,
+  validateDeviceRpcBindingReplacement,
   type AtxAction,
   type AtxWireReceipt,
   type CachedDisplayState,
@@ -34,7 +35,7 @@ const cachedFactSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
         observedAt: z.string().datetime(),
         ageMs: nonNegativeIntegerSchema,
         freshness: z.enum(["fresh", "stale"]),
-        source: z.enum(["cached_snapshot", "cached_event"]),
+        source: z.literal("cached_event"),
       })
       .strict(),
     z
@@ -206,6 +207,7 @@ export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
   }
 
   public replaceBinding(next: DeviceRpcBinding): void {
+    validateDeviceRpcBindingReplacement(this.currentBinding, next);
     mapDeviceRpcBindingToWire(next);
     this.currentBinding = Object.freeze({ ...next });
   }

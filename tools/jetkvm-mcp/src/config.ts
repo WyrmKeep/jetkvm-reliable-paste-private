@@ -166,6 +166,8 @@ export interface LegacySseSecurityPolicy {
   readonly responseBackpressureTimeoutMs: number;
 }
 
+const PARSED_LEGACY_SSE_POLICIES = new WeakSet<LegacySseSecurityPolicy>();
+
 export interface OperatorConfig {
   readonly targetUrl: string;
   readonly allowInsecureHttp: boolean;
@@ -179,6 +181,21 @@ export class OperatorConfigError extends Error {
     super(message);
     this.name = "OperatorConfigError";
   }
+}
+
+export function assertParsedLegacySseSecurityPolicy(
+  policy: LegacySseSecurityPolicy,
+): void {
+  if (
+    typeof policy === "object" &&
+    policy !== null &&
+    PARSED_LEGACY_SSE_POLICIES.has(policy)
+  ) {
+    return;
+  }
+  throw new OperatorConfigError(
+    "Legacy SSE security policy must be created by parseLegacySsePolicy",
+  );
 }
 
 export function parseOperatorConfig(
@@ -514,7 +531,7 @@ export function parseLegacySsePolicy(
     "Legacy SSE response backpressure timeout",
   );
 
-  return Object.freeze({
+  const policy: Readonly<LegacySseSecurityPolicy> = Object.freeze({
     enabled,
     scheme,
     bindHost,
@@ -549,6 +566,8 @@ export function parseLegacySsePolicy(
     keepAliveTimeoutMs,
     responseBackpressureTimeoutMs,
   });
+  PARSED_LEGACY_SSE_POLICIES.add(policy);
+  return policy;
 }
 
 export function assertPublicContractContainsNoOperatorSecrets(

@@ -58,7 +58,7 @@ const factSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
         observedAt: timestampSchema,
         ageMs: nonNegativeIntegerSchema,
         freshness: z.enum(["fresh", "stale"]),
-        source: z.enum(["cached_snapshot", "cached_event"]),
+        source: z.literal("cached_event"),
       })
       .strict(),
     z
@@ -143,10 +143,10 @@ const edidSchema = z.discriminatedUnion("status", [
       data: z
         .object({
           sha256: sha256Schema,
-          manufacturerId: z.string().nullable(),
-          productCode: nonNegativeIntegerSchema.nullable(),
-          serialNumber: z.string().nullable(),
-          displayName: z.string().nullable(),
+          manufacturerId: z.null(),
+          productCode: z.null(),
+          serialNumber: z.null(),
+          displayName: z.null(),
           preferredResolution: z
             .object({
               width: positiveIntegerSchema,
@@ -1280,8 +1280,8 @@ const browserCaptureResponseMatchesRequest: ReplayResponseCorrelation = (
     typedResponse.imageHeight <= typedRequest.request.maxHeight &&
     typedResponse.imageWidth <= sourceWidth &&
     typedResponse.imageHeight <= sourceHeight &&
-    typedResponse.imageWidth * sourceHeight ===
-      typedResponse.imageHeight * sourceWidth &&
+    typedResponse.geometry.contentWidth * sourceHeight ===
+      typedResponse.geometry.contentHeight * sourceWidth &&
     typedResponse.geometry.contentX + typedResponse.geometry.contentWidth <=
       typedResponse.imageWidth &&
     typedResponse.geometry.contentY + typedResponse.geometry.contentHeight <=
@@ -1610,24 +1610,26 @@ export function validateSanitizedReplayTape(
 ): SanitizedReplayTape {
   const structural = structuralTapeSchema.safeParse(input);
   if (!structural.success) throw new Error("Invalid sanitized replay tape.");
-  scanForForbiddenContent(structural.data, "$tape");
+  structural.data.exchanges.forEach((exchange, index) =>
+    scanForForbiddenContent(exchange, index),
+  );
   const parsed = strictTapeSchema.safeParse(structural.data);
   if (!parsed.success) throw new Error("Invalid sanitized replay tape.");
   return parsed.data as SanitizedReplayTape;
 }
 
-function scanForForbiddenContent(value: unknown, path: string): void {
+function scanForForbiddenContent(value: unknown, exchangeIndex: number): void {
   if (typeof value === "string") {
     if (FORBIDDEN_VALUE.test(value)) {
-      throw new Error(`Forbidden replay tape content at ${path}.`);
+      throw new Error(
+        `Forbidden replay tape content at exchange index ${exchangeIndex}.`,
+      );
     }
     return;
   }
   if (value === null || typeof value !== "object") return;
   if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      scanForForbiddenContent(entry, `${path}[${index}]`),
-    );
+    value.forEach((entry) => scanForForbiddenContent(entry, exchangeIndex));
     return;
   }
   for (const [key, entry] of Object.entries(value)) {
@@ -1648,9 +1650,11 @@ function scanForForbiddenContent(value: unknown, path: string): void {
         normalizedKey === "image" ||
         FORBIDDEN_KEY_PARTS.some((part) => normalizedKey.includes(part)))
     ) {
-      throw new Error(`Forbidden replay tape content at ${path}.${key}.`);
+      throw new Error(
+        `Forbidden replay tape content at exchange index ${exchangeIndex}.`,
+      );
     }
-    scanForForbiddenContent(entry, `${path}.${key}`);
+    scanForForbiddenContent(entry, exchangeIndex);
   }
 }
 

@@ -968,6 +968,45 @@ describe("DeviceSessionClient", () => {
     );
   });
 
+  it("continues across fresh frozen equal session and binding snapshots", async () => {
+    const browser = new FakeBrowserPlane();
+    const originalConnect = browser.connect.bind(browser);
+    browser.connect = async (ref, deadline) => {
+      const connection = await originalConnect(ref, deadline);
+      const refValue = { ...connection.ref };
+      const bindingValue = { ...connection.binding };
+      const deviceRpc = Object.freeze({
+        get binding() {
+          return Object.freeze({ ...bindingValue });
+        },
+      }) as DeviceRpcAdapter;
+      browser.deviceRpc = deviceRpc;
+      return {
+        get ref() {
+          return Object.freeze({ ...refValue });
+        },
+        get binding() {
+          return Object.freeze({ ...bindingValue });
+        },
+        deviceRpc,
+        state: connection.state,
+        connectionEpoch: connection.connectionEpoch,
+        browserChannelGeneration: connection.browserChannelGeneration,
+        displayGeneration: connection.displayGeneration,
+      };
+    };
+    const { client } = makeClient({ browser });
+
+    const connected = await client.connect("principal-a", connectInput());
+
+    expect(connected.result).toMatchObject({
+      outcome: "applied",
+      connection_epoch: 10,
+      display_generation: 20,
+    });
+    expect(browser.events.map((event) => event.kind)).toEqual(["connect"]);
+  });
+
   it("rejects connection evidence mutated coherently during capability qualification", async () => {
     const browser = new FakeBrowserPlane();
     const originalConnect = browser.connect.bind(browser);

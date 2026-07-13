@@ -276,6 +276,70 @@ describe("strict canonical tool schemas", () => {
     }
   });
 
+  it("accepts only canonical display fact provenance in runtime and generated result schemas", () => {
+    const documents = generateJsonSchemaDocuments();
+    const ajv = new Ajv({ strict: false });
+    const eventFact = {
+      value: "present",
+      observed_at: "2026-07-13T00:00:00.000Z",
+      age_ms: 0,
+      freshness: "fresh",
+    } as const;
+    const displayStatus = validPayloads.jetkvm_display_status as Record<
+      string,
+      unknown
+    >;
+    const sessionStatus = validPayloads.jetkvm_session_status as Record<
+      string,
+      unknown
+    >;
+    const nativeCaptureFacts = sessionStatus.native_capture_facts as Record<
+      string,
+      unknown
+    >;
+    const cases = [
+      {
+        tool: "jetkvm_display_status",
+        resultForSource: (source: string) => ({
+          ...displayStatus,
+          signal: { ...eventFact, source },
+        }),
+      },
+      {
+        tool: "jetkvm_session_status",
+        resultForSource: (source: string) => ({
+          ...sessionStatus,
+          native_capture_facts: {
+            ...nativeCaptureFacts,
+            signal: { ...eventFact, source },
+          },
+        }),
+      },
+    ] as const;
+
+    for (const { tool, resultForSource } of cases) {
+      const runtimeSchema = TOOL_RESULT_PAYLOAD_SCHEMAS[tool];
+      const validateGenerated = ajv.compile(
+        documents[`${tool}.result.schema.json`]!,
+      );
+      const eventResult = resultForSource("cached_event");
+      expect(runtimeSchema.safeParse(eventResult).success).toBe(true);
+      expect(validateGenerated(successEnvelope(tool, eventResult))).toBe(true);
+
+      const snapshotResult = resultForSource("cached_snapshot");
+      expect(runtimeSchema.safeParse(snapshotResult).success).toBe(false);
+      expect(validateGenerated(successEnvelope(tool, snapshotResult))).toBe(
+        false,
+      );
+
+      const malformedNone = resultForSource("none");
+      expect(runtimeSchema.safeParse(malformedNone).success).toBe(false);
+      expect(validateGenerated(successEnvelope(tool, malformedNone))).toBe(
+        false,
+      );
+    }
+  });
+
   it("requires timeout_ms and enforces every canonical timeout bound", () => {
     const limits: Record<JetKvmToolName, readonly [number, number]> = {
       jetkvm_display_capture: [100, 60_000],

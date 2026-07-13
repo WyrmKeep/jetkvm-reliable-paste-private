@@ -5,13 +5,19 @@ import {
   fstatSync,
   lstatSync,
   openSync,
-  readFileSync,
+  readSync,
   type Stats,
 } from "node:fs";
 import { inspect } from "node:util";
 import type { LegacySseSecurityPolicy } from "../config.js";
 
+/**
+ * Maximum UTF-8 byte length accepted for every activated credential source.
+ * Keeping this fixed also bounds stored-secret hashing during authentication.
+ */
+export const CREDENTIAL_MAX_BYTES = 4_096;
 const REDACTED = "[REDACTED]";
+const CREDENTIAL_TOO_LARGE_MESSAGE = "Credential exceeds maximum size";
 const PROTECTED_CREDENTIAL_FILE_MESSAGE =
   "Credential source must be a protected regular file";
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/;
@@ -108,6 +114,9 @@ export class DisposableSecret implements Disposable {
     if (value.length === 0) {
       throw new CredentialConfigurationError("Credential is empty");
     }
+    if (!isCredentialUtf8WithinLimit(value)) {
+      throw new CredentialConfigurationError(CREDENTIAL_TOO_LARGE_MESSAGE);
+    }
     return new DisposableSecret(allocator.allocateUtf8(value));
   }
 
@@ -118,6 +127,7 @@ export class DisposableSecret implements Disposable {
     if (value.byteLength === 0) {
       throw new CredentialConfigurationError("Credential is empty");
     }
+    assertCredentialByteLength(value.byteLength);
     return new DisposableSecret(allocator.copyBytes(value));
   }
 
@@ -205,7 +215,14 @@ export function loadCredentialSecret(
       throw new CredentialConfigurationError("Credential is empty");
     }
     const secret = DisposableSecret.fromUtf8(environmentValue);
-    access.deleteEnvironment(source.environmentVariable);
+    try {
+      access.deleteEnvironment(source.environmentVariable);
+    } catch {
+      secret.dispose();
+      throw new CredentialConfigurationError(
+        "Credential environment source could not be cleared",
+      );
+    }
     return secret;
   }
 
@@ -216,14 +233,14 @@ export function loadCredentialSecret(
   const bytes = (access.readProtectedFile ?? readProtectedCredentialFile)(
     source.filePath,
   );
-  const normalized = stripOneTerminalLineEnding(bytes);
+  let normalized: Uint8Array | undefined;
   try {
+    assertCredentialByteLength(bytes.byteLength);
+    normalized = stripOneTerminalLineEnding(bytes);
     return DisposableSecret.fromBytes(normalized);
   } finally {
-    normalized.fill(0);
-    if (bytes !== normalized) {
-      bytes.fill(0);
-    }
+    normalized?.fill(0);
+    bytes.fill(0);
   }
 }
 
@@ -341,6 +358,14 @@ function authenticateRequest(
   if (!policy.requiresBearer) {
     return "local-operator";
   }
+  if (
+    authorization !== undefined &&
+    (authorization.length > "Bearer ".length + CREDENTIAL_MAX_BYTES ||
+      Buffer.byteLength(authorization, "utf8") >
+        "Bearer ".length + CREDENTIAL_MAX_BYTES)
+  ) {
+    throw new HttpBoundaryError(401);
+  }
   if (authenticateBearer !== undefined) {
     try {
       const principal = authenticateBearer(authorization);
@@ -368,6 +393,9 @@ function authenticateRequest(
 }
 
 function matchesSecret(candidate: string, secret: DisposableSecret): boolean {
+  if (!isCredentialUtf8WithinLimit(candidate)) {
+    return false;
+  }
   let candidateDigest: Buffer | undefined;
   let secretDigest: Buffer | undefined;
   try {
@@ -392,6 +420,19 @@ function normalizeOptionalPath(path: string | undefined): string | undefined {
     throw new CredentialConfigurationError("Credential file source is invalid");
   }
   return path;
+}
+
+function isCredentialUtf8WithinLimit(value: string): boolean {
+  if (value.length > CREDENTIAL_MAX_BYTES) {
+    return false;
+  }
+  return Buffer.byteLength(value, "utf8") <= CREDENTIAL_MAX_BYTES;
+}
+
+function assertCredentialByteLength(byteLength: number): void {
+  if (byteLength > CREDENTIAL_MAX_BYTES) {
+    throw new CredentialConfigurationError(CREDENTIAL_TOO_LARGE_MESSAGE);
+  }
 }
 
 function stripOneTerminalLineEnding(bytes: Uint8Array): Uint8Array {
@@ -428,6 +469,7 @@ function readProtectedCredentialFile(path: string): Uint8Array {
     },
     currentUid,
   );
+  assertCredentialByteLength(before.size);
 
   let descriptor: number;
   try {
@@ -436,6 +478,8 @@ function readProtectedCredentialFile(path: string): Uint8Array {
     throw new CredentialConfigurationError(PROTECTED_CREDENTIAL_FILE_MESSAGE);
   }
 
+  let bytes: Uint8Array | undefined;
+  let failure: CredentialConfigurationError | undefined;
   try {
     const opened = fstatSync(descriptor);
     validateCredentialFileMetadata(
@@ -452,9 +496,67 @@ function readProtectedCredentialFile(path: string): Uint8Array {
         "Credential file changed while opening",
       );
     }
-    return readFileSync(descriptor);
-  } finally {
+    assertCredentialByteLength(opened.size);
+
+    bytes = readBoundedCredentialBytes(descriptor);
+
+    const afterRead = fstatSync(descriptor);
+    validateCredentialFileMetadata(
+      {
+        uid: afterRead.uid,
+        mode: afterRead.mode,
+        isFile: afterRead.isFile(),
+        isSymbolicLink: false,
+      },
+      currentUid,
+    );
+    assertCredentialByteLength(afterRead.size);
+  } catch (error) {
+    failure =
+      error instanceof CredentialConfigurationError
+        ? error
+        : new CredentialConfigurationError(PROTECTED_CREDENTIAL_FILE_MESSAGE);
+  }
+
+  try {
     closeSync(descriptor);
+  } catch {
+    failure ??= new CredentialConfigurationError(
+      PROTECTED_CREDENTIAL_FILE_MESSAGE,
+    );
+  }
+
+  if (failure !== undefined) {
+    bytes?.fill(0);
+    throw failure;
+  }
+  if (bytes === undefined) {
+    throw new CredentialConfigurationError(PROTECTED_CREDENTIAL_FILE_MESSAGE);
+  }
+  return bytes;
+}
+
+function readBoundedCredentialBytes(descriptor: number): Uint8Array {
+  const staging = Buffer.allocUnsafe(CREDENTIAL_MAX_BYTES + 1);
+  try {
+    let bytesRead = 0;
+    while (bytesRead < staging.byteLength) {
+      const read = readSync(
+        descriptor,
+        staging,
+        bytesRead,
+        staging.byteLength - bytesRead,
+        null,
+      );
+      if (read === 0) {
+        break;
+      }
+      bytesRead += read;
+    }
+    assertCredentialByteLength(bytesRead);
+    return Uint8Array.from(staging.subarray(0, bytesRead));
+  } finally {
+    staging.fill(0);
   }
 }
 

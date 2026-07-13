@@ -27,21 +27,21 @@ const display: CachedDisplayState = {
     observedAt: "2026-07-13T00:00:00.000Z",
     ageMs: 1,
     freshness: "fresh",
-    source: "cached_snapshot",
+    source: "cached_event",
   },
   resolution: {
     value: { width: 1920, height: 1080, refreshHz: 60 },
     observedAt: "2026-07-13T00:00:00.000Z",
     ageMs: 1,
     freshness: "fresh",
-    source: "cached_snapshot",
+    source: "cached_event",
   },
   fps: {
     value: 60,
     observedAt: "2026-07-13T00:00:00.000Z",
     ageMs: 1,
     freshness: "fresh",
-    source: "cached_snapshot",
+    source: "cached_event",
   },
   qualification: "current_binding",
 };
@@ -128,6 +128,92 @@ describe("FakeDeviceRpcAdapter", () => {
           acknowledged: false,
         }),
       );
+    },
+  );
+
+  it.each([
+    ["equal", binding, { ...binding }],
+    [
+      "connection rollback",
+      binding,
+      { ...binding, connectionEpoch: binding.connectionEpoch - 1 },
+    ],
+    [
+      "channel rollback",
+      binding,
+      {
+        ...binding,
+        browserChannelGeneration: binding.browserChannelGeneration - 1,
+      },
+    ],
+    [
+      "mixed advance and rollback",
+      binding,
+      {
+        ...binding,
+        connectionEpoch: binding.connectionEpoch + 1,
+        browserChannelGeneration: binding.browserChannelGeneration - 1,
+      },
+    ],
+    [
+      "session-generation rollback mixed with an epoch advance",
+      { ...binding, sessionGeneration: 2 },
+      {
+        ...binding,
+        sessionGeneration: 1,
+        connectionEpoch: binding.connectionEpoch + 1,
+      },
+    ],
+  ] as const)(
+    "rejects %s with the production-owned replacement transition rule",
+    (_name, current, next) => {
+      const fake = new FakeDeviceRpcAdapter(current);
+
+      expect(() => fake.replaceBinding(next)).toThrow(/advance monotonically/i);
+      expect(fake.binding).toEqual(current);
+    },
+  );
+
+  it.each([
+    [
+      "connection-only advance",
+      { ...binding, connectionEpoch: binding.connectionEpoch + 1 },
+    ],
+    [
+      "channel-only advance",
+      {
+        ...binding,
+        browserChannelGeneration: binding.browserChannelGeneration + 1,
+      },
+    ],
+    [
+      "session-generation-only advance",
+      { ...binding, sessionGeneration: binding.sessionGeneration + 1 },
+    ],
+    [
+      "componentwise advance",
+      {
+        ...binding,
+        connectionEpoch: binding.connectionEpoch + 1,
+        browserChannelGeneration: binding.browserChannelGeneration + 1,
+      },
+    ],
+    [
+      "different-session reset",
+      {
+        sessionId: "session-b",
+        sessionGeneration: 1,
+        connectionEpoch: 1,
+        browserChannelGeneration: 1,
+      },
+    ],
+  ] as const)(
+    "accepts a legal %s with exact fake/production parity",
+    (_name, next) => {
+      const fake = new FakeDeviceRpcAdapter(binding);
+
+      expect(() => fake.replaceBinding(next)).not.toThrow();
+      expect(fake.binding).toEqual(next);
     },
   );
 

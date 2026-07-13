@@ -113,13 +113,21 @@ export type ToolError = {
   };
 };
 
-export type ObservedFact<T> = {
-  value: T;
-  observed_at: string | null;
-  age_ms: number | null;
-  freshness: "fresh" | "stale" | "unknown";
-  source: "cached_snapshot" | "cached_event" | "none";
-};
+export type ObservedFact<T, U extends T = T> =
+  | {
+      value: T;
+      observed_at: string;
+      age_ms: number;
+      freshness: "fresh" | "stale";
+      source: "cached_event";
+    }
+  | {
+      value: U;
+      observed_at: null;
+      age_ms: null;
+      freshness: "unknown";
+      source: "none";
+    };
 
 export type SessionConnectInput = {
   request_id: string;
@@ -164,10 +172,11 @@ export type SessionStatusResult = {
   decoded_video: "ready" | "stalled" | "unavailable" | "unknown";
   native_capture_facts: {
     signal: ObservedFact<
-      "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown"
+      "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown",
+      "unknown"
     >;
-    resolution: ObservedFact<{ width: number; height: number } | null>;
-    fps: ObservedFact<number | null>;
+    resolution: ObservedFact<{ width: number; height: number } | null, null>;
+    fps: ObservedFact<number | null, null>;
   };
   active_mutation: boolean;
   fresh_capture_required: boolean;
@@ -271,14 +280,18 @@ export type EdidResult =
     };
 export type DisplayStatusResult = {
   signal: ObservedFact<
-    "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown"
+    "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown",
+    "unknown"
   >;
-  native_resolution: ObservedFact<{
-    width: number;
-    height: number;
-    refresh_hz: number | null;
-  } | null>;
-  fps: ObservedFact<number | null>;
+  native_resolution: ObservedFact<
+    {
+      width: number;
+      height: number;
+      refresh_hz: number | null;
+    } | null,
+    null
+  >;
+  fps: ObservedFact<number | null, null>;
   edid: EdidResult;
 };
 

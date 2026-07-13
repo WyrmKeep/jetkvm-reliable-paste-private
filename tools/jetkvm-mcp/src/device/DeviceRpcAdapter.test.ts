@@ -4,6 +4,7 @@ import {
   DeviceRpcError,
   GenerationFencedDeviceRpcAdapter,
   mapDeviceRpcBindingToWire,
+  validateDeviceRpcBindingReplacement,
   type DeviceRpcBinding,
 } from "./DeviceRpcAdapter.js";
 import { FakeDeviceRpcChannel } from "../test-support/fakes/FakeDeviceRpcChannel.js";
@@ -30,8 +31,87 @@ function displayWireResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
+
+function correlationIdForWrite(
+  channel: FakeDeviceRpcChannel,
+  index: number,
+): string {
+  const request = channel.decodedWrite(index);
+  if (
+    typeof request !== "object" ||
+    request === null ||
+    !("id" in request) ||
+    typeof request.id !== "string"
+  ) {
+    throw new Error(`Write ${index} has no string correlation id.`);
+  }
+  return request.id;
+}
+
+function displayResponsePayloadAtUtf8Bytes(
+  correlationId: string,
+  targetBytes: number,
+): string {
+  const emptyPayload = JSON.stringify({
+    jsonrpc: "2.0",
+    id: correlationId,
+    result: displayWireResult({ error: "" }),
+  });
+  const paddingBytes = targetBytes - Buffer.byteLength(emptyPayload, "utf8");
+  if (paddingBytes < 0) throw new Error("Target payload is too small.");
+  const payload = JSON.stringify({
+    jsonrpc: "2.0",
+    id: correlationId,
+    result: displayWireResult({ error: "x".repeat(paddingBytes) }),
+  });
+  if (Buffer.byteLength(payload, "utf8") !== targetBytes) {
+    throw new Error("Payload byte sizing failed.");
+  }
+  return payload;
+}
+
+const EDID_BLOCK_BYTES = 128;
+const EDID_MAX_EXTENSIONS = 255;
 const RAW_EDID =
-  "00ffffffffffff0052620188008888881c150103800000780a0dc9a05747982712484c00000001010101010101010101010101010101023a801871382d40582c4500c48e2100001e011d007251d01e206e285500c48e2100001e000000fc00543734392d6648443732300a20000000fd00147801ff1d000a202020202020017b";
+  "00ffffffffffff0052620188008888881c150103800000780a0dc9a05747982712484c00000001010101010101010101010101010101023a801871382d40582c4500c48e2100001e011d007251d01e206e285500c48e2100001e000000fc00543734392d6648443732300a20000000fd00147801ff1d000a202020202020007c";
+
+function edidHexWithExtensionCount(extensionCount: number): string {
+  if (
+    !Number.isInteger(extensionCount) ||
+    extensionCount < 0 ||
+    extensionCount > EDID_MAX_EXTENSIONS
+  ) {
+    throw new Error("Invalid EDID extension count.");
+  }
+  const base = Buffer.from(RAW_EDID, "hex");
+  if (base.length !== EDID_BLOCK_BYTES) {
+    throw new Error("Base EDID fixture must contain exactly one block.");
+  }
+  const bytes = Buffer.alloc((extensionCount + 1) * EDID_BLOCK_BYTES);
+  base.copy(bytes);
+  bytes[126] = extensionCount;
+  bytes[127] = 0;
+  for (let index = 0; index < EDID_BLOCK_BYTES - 1; index += 1) {
+    bytes[127] = (bytes[127]! - bytes[index]!) & 0xff;
+  }
+  for (let block = 1; block <= extensionCount; block += 1) {
+    const offset = block * EDID_BLOCK_BYTES;
+    bytes[offset] = 0x02;
+    bytes[offset + 1] = 0x03;
+    bytes[offset + 2] = 0x04;
+    let checksum = 0;
+    for (
+      let index = offset;
+      index < offset + EDID_BLOCK_BYTES - 1;
+      index += 1
+    ) {
+      checksum = (checksum - bytes[index]!) & 0xff;
+    }
+    bytes[offset + EDID_BLOCK_BYTES - 1] = checksum;
+  }
+  return bytes.toString("hex");
+}
 
 function expectDeviceError(error: unknown, expected: Partial<DeviceRpcError>) {
   expect(error).toBeInstanceOf(DeviceRpcError);
@@ -46,6 +126,26 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
       connection_epoch: 11,
       browser_channel_generation: 13,
     });
+  });
+
+  it("exports the canonical pure binding replacement validator", () => {
+    const current = Object.freeze({ ...BINDING });
+    const next = Object.freeze({
+      ...BINDING,
+      connectionEpoch: BINDING.connectionEpoch + 1,
+    });
+
+    expect(() =>
+      validateDeviceRpcBindingReplacement(current, next),
+    ).not.toThrow();
+    expect(current).toEqual(BINDING);
+    expect(next).toEqual({
+      ...BINDING,
+      connectionEpoch: BINDING.connectionEpoch + 1,
+    });
+    expect(() =>
+      validateDeviceRpcBindingReplacement(current, { ...current }),
+    ).toThrow(/advance monotonically/i);
   });
 
   it.each([
@@ -164,6 +264,36 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
     expect(adapter.binding).toEqual(BINDING);
     expect(oldChannel.isClosed()).toBe(false);
     expect(published).toBe(false);
+  });
+
+  it("rejects a channel alias before mutation and keeps the old binding usable", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    let published = false;
+
+    expect(() =>
+      adapter.replaceBinding(
+        { ...BINDING, browserChannelGeneration: 14 },
+        channel,
+        () => {
+          published = true;
+        },
+      ),
+    ).toThrow(/distinct replacement channel/i);
+
+    expect(adapter.binding).toEqual(BINDING);
+    expect(channel.isClosed()).toBe(false);
+    expect(published).toBe(false);
+
+    const stillCurrent = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    expect(correlationIdForWrite(channel, 0)).toBe("device-rpc:adapter-a:1:1");
+    channel.respondToWrite(0, displayWireResult());
+    await expect(stillCurrent).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
   });
 
   it.each([
@@ -636,6 +766,80 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
+  it("ignores oversized foreign UTF-8 traffic without parsing or disturbing the pending call", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "ui-private:1",
+      result: "é".repeat(SHARED_CHANNEL_MAX_UTF8_BYTES / 2),
+    });
+    expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(
+      SHARED_CHANNEL_MAX_UTF8_BYTES,
+    );
+
+    const parse = vi.spyOn(JSON, "parse");
+    channel.emitRaw(payload);
+    const parseCalls = parse.mock.calls.length;
+    parse.mockRestore();
+
+    expect(parseCalls).toBe(0);
+    channel.respondToWrite(0, displayWireResult());
+    await expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+  });
+
+  it("fails an oversized adapter-correlated frame closed without parsing it", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const outcome = pending.catch((error: unknown) => error);
+    await channel.waitForWrites(1);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: correlationIdForWrite(channel, 0),
+      result: "x".repeat(SHARED_CHANNEL_MAX_UTF8_BYTES),
+    });
+    expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(
+      SHARED_CHANNEL_MAX_UTF8_BYTES,
+    );
+
+    const parse = vi.spyOn(JSON, "parse");
+    channel.emitRaw(payload);
+    const parseCalls = parse.mock.calls.length;
+    parse.mockRestore();
+    const error = await outcome;
+
+    expect(parseCalls).toBe(0);
+    expectDeviceError(error, {
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
+
+  it("parses a correlated frame exactly at the shared-channel UTF-8 byte ceiling", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const payload = displayResponsePayloadAtUtf8Bytes(
+      correlationIdForWrite(channel, 0),
+      SHARED_CHANNEL_MAX_UTF8_BYTES,
+    );
+
+    channel.emitRaw(payload);
+
+    await expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+  });
+
   it("ignores a delayed retired response while awaiting the current correlation id", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
@@ -967,6 +1171,89 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
           height: 1080,
         },
       },
+    });
+  });
+
+  it("accepts the EDID protocol maximum of one base plus 255 extension blocks", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readEdid(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const maximumEdid = edidHexWithExtensionCount(EDID_MAX_EXTENSIONS);
+    expect(maximumEdid).toHaveLength(
+      (EDID_MAX_EXTENSIONS + 1) * EDID_BLOCK_BYTES * 2,
+    );
+
+    channel.respondToWrite(0, maximumEdid);
+
+    await expect(pending).resolves.toMatchObject({
+      status: "available",
+      data: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    });
+  });
+
+  it("rejects an EDID beyond the extension-count maximum before normalization, regex, or byte allocation", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readEdid(BINDING, deadline());
+    const outcome = pending.catch((error: unknown) => error);
+    await channel.waitForWrites(1);
+    const validExtension = edidHexWithExtensionCount(1).slice(
+      EDID_BLOCK_BYTES * 2,
+    );
+    const oversizedEdid =
+      edidHexWithExtensionCount(EDID_MAX_EXTENSIONS) + validExtension;
+    expect(oversizedEdid).toHaveLength(
+      (EDID_MAX_EXTENSIONS + 2) * EDID_BLOCK_BYTES * 2,
+    );
+
+    const trim = vi.spyOn(String.prototype, "trim");
+    const lower = vi.spyOn(String.prototype, "toLowerCase");
+    const match = vi.spyOn(String.prototype, "match");
+    const allocate = vi.spyOn(Uint8Array, "from");
+    channel.respondToWrite(0, oversizedEdid);
+    const error = await outcome;
+    const calls = {
+      trim: trim.mock.calls.length,
+      lower: lower.mock.calls.length,
+      match: match.mock.calls.length,
+      allocate: allocate.mock.calls.length,
+    };
+    trim.mockRestore();
+    lower.mockRestore();
+    match.mockRestore();
+    allocate.mockRestore();
+
+    expect(calls).toEqual({ trim: 0, lower: 0, match: 0, allocate: 0 });
+    expectDeviceError(error, {
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
+
+  it.each([
+    [
+      "a missing declared extension",
+      edidHexWithExtensionCount(1).slice(0, EDID_BLOCK_BYTES * 2),
+    ],
+    [
+      "an undeclared extension",
+      edidHexWithExtensionCount(0) +
+        edidHexWithExtensionCount(1).slice(EDID_BLOCK_BYTES * 2),
+    ],
+  ])("rejects %s as malformed EDID", async (_case, mismatchedEdid) => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readEdid(BINDING, deadline());
+    await channel.waitForWrites(1);
+
+    channel.respondToWrite(0, mismatchedEdid);
+
+    await expect(pending).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
     });
   });
 

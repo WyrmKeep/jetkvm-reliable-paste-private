@@ -158,12 +158,9 @@ type DeadlineScope = {
   dispose(): void;
 };
 type ConnectionEvidenceSnapshot = {
-  readonly refIdentity: SessionRef;
   readonly refValue: SessionRef;
-  readonly bindingIdentity: DeviceRpcBinding;
   readonly bindingValue: DeviceRpcBinding;
   readonly deviceRpcIdentity: DeviceRpcAdapter;
-  readonly rpcBindingIdentity: DeviceRpcBinding;
   readonly rpcBindingValue: DeviceRpcBinding;
   readonly connectionEpoch: number;
   readonly browserChannelGeneration: number;
@@ -971,12 +968,9 @@ export class DeviceSessionClient {
   ): ConnectionEvidenceSnapshot {
     const rpcBinding = connection.deviceRpc.binding;
     return {
-      refIdentity: connection.ref,
       refValue: { ...connection.ref },
-      bindingIdentity: connection.binding,
       bindingValue: { ...connection.binding },
       deviceRpcIdentity: connection.deviceRpc,
-      rpcBindingIdentity: rpcBinding,
       rpcBindingValue: { ...rpcBinding },
       connectionEpoch: connection.connectionEpoch,
       browserChannelGeneration: connection.browserChannelGeneration,
@@ -988,23 +982,19 @@ export class DeviceSessionClient {
     connection: BrowserConnection,
     snapshot: ConnectionEvidenceSnapshot,
   ): void {
+    const ref = connection.ref;
+    const binding = connection.binding;
     const rpcBinding = connection.deviceRpc.binding;
     if (
-      connection.ref !== snapshot.refIdentity ||
-      connection.ref.sessionId !== snapshot.refValue.sessionId ||
-      connection.ref.sessionGeneration !==
-        snapshot.refValue.sessionGeneration ||
-      connection.binding !== snapshot.bindingIdentity ||
-      connection.binding.sessionId !== snapshot.bindingValue.sessionId ||
-      connection.binding.sessionGeneration !==
-        snapshot.bindingValue.sessionGeneration ||
-      connection.binding.connectionEpoch !==
-        snapshot.bindingValue.connectionEpoch ||
-      connection.binding.browserChannelGeneration !==
+      ref.sessionId !== snapshot.refValue.sessionId ||
+      ref.sessionGeneration !== snapshot.refValue.sessionGeneration ||
+      binding.sessionId !== snapshot.bindingValue.sessionId ||
+      binding.sessionGeneration !== snapshot.bindingValue.sessionGeneration ||
+      binding.connectionEpoch !== snapshot.bindingValue.connectionEpoch ||
+      binding.browserChannelGeneration !==
         snapshot.bindingValue.browserChannelGeneration ||
       connection.deviceRpc !== snapshot.deviceRpcIdentity ||
       this.#browser.deviceRpc !== snapshot.deviceRpcIdentity ||
-      rpcBinding !== snapshot.rpcBindingIdentity ||
       rpcBinding.sessionId !== snapshot.rpcBindingValue.sessionId ||
       rpcBinding.sessionGeneration !==
         snapshot.rpcBindingValue.sessionGeneration ||

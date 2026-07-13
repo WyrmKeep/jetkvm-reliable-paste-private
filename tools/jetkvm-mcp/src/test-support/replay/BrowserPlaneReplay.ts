@@ -176,6 +176,8 @@ type CaptureReservation = {
   readonly binding: DeviceRpcBinding;
   readonly deviceRpc: DeviceRpcAdapter;
   readonly entry: ObservationLedgerEntry;
+  readonly lifecycleToken: number;
+  readonly lifecycleSignal: AbortSignal;
 };
 
 export class BrowserPlaneReplay implements BrowserPlane {
@@ -184,7 +186,11 @@ export class BrowserPlaneReplay implements BrowserPlane {
   private publishedConnection?: PublishedConnection;
   private readonly observations = new Map<string, ObservationLedgerEntry>();
   private lastPublishedBinding?: DeviceRpcBinding;
-  private closed = true;
+  private lifecycleState: "closed" | "published" | "reconnecting" = "closed";
+  private lifecycleToken = 0;
+  private lifecycleAbort = new AbortController();
+  private reconnectingRef?: SessionRef;
+  private generationDrained = false;
 
   public constructor(
     deviceRpc: DeviceRpcAdapter,
@@ -223,12 +229,14 @@ export class BrowserPlaneReplay implements BrowserPlane {
       );
     }
     this.observations.clear();
-    this.closed = false;
+    this.generationDrained = false;
     this.lastPublishedBinding = parsed.data.binding;
     this.publishedConnection = {
       binding: parsed.data.binding,
       displayGeneration: parsed.data.displayGeneration,
     };
+    delete this.reconnectingRef;
+    this.advanceLifecycle("published");
     return { ...parsed.data, deviceRpc: this.deviceRpc };
   }
 
@@ -237,6 +245,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
     deadline: Deadline,
   ): Promise<BrowserConnection> {
     this.validateDeadline(deadline);
+    this.assertPublishedRef(ref, true);
     const previousBinding = this.lastPublishedBinding;
     if (previousBinding === undefined) {
       throw new Error(
@@ -257,31 +266,64 @@ export class BrowserPlaneReplay implements BrowserPlane {
     ) {
       throw new Error("Replay reconnect generations must strictly increase.");
     }
-    const previous = this.deviceRpc;
     if (this.replaceDeviceRpc === undefined) {
       throw new Error("Replay reconnect requires an adapter replacement.");
     }
+
+    const previous = this.deviceRpc;
+    const lifecycleToken = this.advanceLifecycle("reconnecting");
+    const lifecycleSignal = this.lifecycleAbort.signal;
+    this.reconnectingRef = { ...ref };
+    delete this.publishedConnection;
     this.observations.clear();
-    await this.replaceDeviceRpc.invalidate(previous);
-    const replacement = await this.replaceDeviceRpc.createReplacement(
-      parsed.data.binding,
-    );
-    if (
-      replacement === previous ||
-      !this.bindingMatches(replacement.binding, parsed.data.binding)
-    ) {
-      throw new Error(
-        "Replay reconnect replacement must be a new adapter with the recorded binding.",
+    this.generationDrained = true;
+    try {
+      await this.replaceDeviceRpc.invalidate(previous);
+      this.assertReconnectLifecycle(
+        lifecycleToken,
+        lifecycleSignal,
+        this.reconnectingRef,
       );
+      const replacement = await this.replaceDeviceRpc.createReplacement(
+        parsed.data.binding,
+      );
+      this.assertReconnectLifecycle(
+        lifecycleToken,
+        lifecycleSignal,
+        this.reconnectingRef,
+      );
+      if (
+        replacement === previous ||
+        !this.bindingMatches(replacement.binding, parsed.data.binding)
+      ) {
+        throw new Error(
+          "Replay reconnect replacement must be a new adapter with the recorded binding.",
+        );
+      }
+
+      this.currentDeviceRpc = replacement;
+      this.lastPublishedBinding = parsed.data.binding;
+      this.publishedConnection = {
+        binding: parsed.data.binding,
+        displayGeneration: parsed.data.displayGeneration,
+      };
+      this.generationDrained = false;
+      delete this.reconnectingRef;
+      this.advanceLifecycle("published");
+      return { ...parsed.data, deviceRpc: replacement };
+    } catch (error) {
+      if (
+        this.lifecycleToken === lifecycleToken &&
+        this.lifecycleState === "reconnecting"
+      ) {
+        delete this.reconnectingRef;
+        delete this.publishedConnection;
+        this.observations.clear();
+        this.generationDrained = true;
+        this.advanceLifecycle("closed");
+      }
+      throw error;
     }
-    this.currentDeviceRpc = replacement;
-    this.closed = false;
-    this.lastPublishedBinding = parsed.data.binding;
-    this.publishedConnection = {
-      binding: parsed.data.binding,
-      displayGeneration: parsed.data.displayGeneration,
-    };
-    return { ...parsed.data, deviceRpc: replacement };
   }
 
   public async capture(
@@ -342,12 +384,18 @@ export class BrowserPlaneReplay implements BrowserPlane {
       binding: publishedBinding,
       deviceRpc,
       entry,
+      lifecycleToken: this.lifecycleToken,
+      lifecycleSignal: this.lifecycleAbort.signal,
     };
     this.observations.set(parsed.data.observationId, entry);
     try {
       const artifact: BrowserCaptureArtifact = {
         observation: parsed.data,
-        image: await this.resolveCaptureImage(parsed.data),
+        image: await this.resolveCaptureWithinLifecycle(
+          parsed.data,
+          deadline,
+          reservation,
+        ),
       };
       this.assertCaptureReservationIsCurrent(reservation);
       assertBrowserCaptureArtifact(artifact);
@@ -448,25 +496,40 @@ export class BrowserPlaneReplay implements BrowserPlane {
     request: ReleaseRequest,
     deadline: Deadline,
   ): Promise<ReleaseReceipt> {
-    return this.consumeReceipt(
-      "release",
-      ref,
-      request,
-      deadline,
-      releaseReceiptSchema,
-      1,
-    );
+    try {
+      const receipt = await this.consumeReceipt(
+        "release",
+        ref,
+        request,
+        deadline,
+        releaseReceiptSchema,
+        1,
+      );
+      this.drainPublishedGeneration();
+      return receipt;
+    } catch (error) {
+      if (
+        error instanceof ReplayRecordedError &&
+        error.writeBegan &&
+        error.outcome !== "not_sent"
+      ) {
+        this.drainPublishedGeneration();
+      }
+      throw error;
+    }
   }
 
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
     this.validateDeadline(deadline);
-    this.assertPublishedRef(ref);
+    this.assertCloseRef(ref);
     const response = this.replay.consume("close", { ref: { ...ref } });
     if (response !== null)
       throw new Error("Replay close response must be null.");
-    this.closed = true;
     delete this.publishedConnection;
+    delete this.reconnectingRef;
     this.observations.clear();
+    this.generationDrained = true;
+    this.advanceLifecycle("closed");
   }
 
   private assertCaptureResponseMatches(
@@ -491,8 +554,8 @@ export class BrowserPlaneReplay implements BrowserPlane {
       observation.imageHeight > request.maxHeight ||
       observation.imageWidth > sourceWidth ||
       observation.imageHeight > sourceHeight ||
-      observation.imageWidth * sourceHeight !==
-        observation.imageHeight * sourceWidth ||
+      observation.geometry.contentWidth * sourceHeight !==
+        observation.geometry.contentHeight * sourceWidth ||
       observation.geometry.contentX + observation.geometry.contentWidth >
         observation.imageWidth ||
       observation.geometry.contentY + observation.geometry.contentHeight >
@@ -507,10 +570,20 @@ export class BrowserPlaneReplay implements BrowserPlane {
   private assertCaptureReservationIsCurrent(
     reservation: CaptureReservation,
   ): void {
-    const { binding, deviceRpc, entry, publication, ref, request } =
-      reservation;
+    const {
+      binding,
+      deviceRpc,
+      entry,
+      lifecycleSignal,
+      lifecycleToken,
+      publication,
+      ref,
+      request,
+    } = reservation;
     if (
-      this.closed ||
+      this.lifecycleState !== "published" ||
+      lifecycleSignal.aborted ||
+      this.lifecycleToken !== lifecycleToken ||
       this.publishedConnection !== publication ||
       this.deviceRpc !== deviceRpc ||
       this.observations.get(entry.observation.observationId) !== entry ||
@@ -645,16 +718,103 @@ export class BrowserPlaneReplay implements BrowserPlane {
     return tick;
   }
 
-  private assertPublishedRef(ref: SessionRef): void {
+  private assertPublishedRef(ref: SessionRef, allowDrained = false): void {
     this.assertCurrentRef(ref);
     const publication = this.publishedConnection;
     if (
-      this.closed ||
+      this.lifecycleState !== "published" ||
       publication === undefined ||
       publication.binding.sessionId !== ref.sessionId ||
       publication.binding.sessionGeneration !== ref.sessionGeneration
     ) {
       throw new Error("Replay BrowserPlane has no published connection.");
+    }
+    if (this.generationDrained && !allowDrained) {
+      throw new Error("Replay BrowserPlane generation input is drained.");
+    }
+  }
+
+  private assertCloseRef(ref: SessionRef): void {
+    if (this.lifecycleState === "reconnecting") {
+      if (
+        this.reconnectingRef?.sessionId !== ref.sessionId ||
+        this.reconnectingRef.sessionGeneration !== ref.sessionGeneration
+      ) {
+        throw new Error("Replay BrowserPlane session reference is stale.");
+      }
+      return;
+    }
+    this.assertPublishedRef(ref, true);
+  }
+
+  private assertReconnectLifecycle(
+    lifecycleToken: number,
+    lifecycleSignal: AbortSignal,
+    reconnectingRef: SessionRef | undefined,
+  ): void {
+    if (
+      lifecycleSignal.aborted ||
+      lifecycleToken !== this.lifecycleToken ||
+      this.lifecycleState !== "reconnecting" ||
+      reconnectingRef === undefined ||
+      this.reconnectingRef !== reconnectingRef
+    ) {
+      throw new Error("Replay reconnect lifecycle was closed or replaced.");
+    }
+  }
+
+  private drainPublishedGeneration(): void {
+    if (this.lifecycleState !== "published") return;
+    this.observations.clear();
+    this.generationDrained = true;
+  }
+
+  private advanceLifecycle(
+    state: "closed" | "published" | "reconnecting",
+  ): number {
+    this.lifecycleAbort.abort();
+    this.lifecycleAbort = new AbortController();
+    this.lifecycleToken += 1;
+    this.lifecycleState = state;
+    return this.lifecycleToken;
+  }
+
+  private async resolveCaptureWithinLifecycle(
+    observation: Observation,
+    deadline: Deadline,
+    reservation: CaptureReservation,
+  ): Promise<BrowserCaptureImage> {
+    const interruption = Promise.withResolvers<never>();
+    let interrupted = false;
+    const rejectOnce = (error: Error): void => {
+      if (interrupted) return;
+      interrupted = true;
+      interruption.reject(error);
+    };
+    const onDeadlineAbort = (): void =>
+      rejectOnce(new Error("Replay capture was cancelled."));
+    const onLifecycleAbort = (): void =>
+      rejectOnce(new Error("Replay capture lifecycle changed."));
+    const timeout = setTimeout(
+      () => rejectOnce(new Error("Replay capture deadline exceeded.")),
+      deadline.timeoutMs,
+    );
+    deadline.signal.addEventListener("abort", onDeadlineAbort, { once: true });
+    reservation.lifecycleSignal.addEventListener("abort", onLifecycleAbort, {
+      once: true,
+    });
+    if (deadline.signal.aborted) onDeadlineAbort();
+    if (reservation.lifecycleSignal.aborted) onLifecycleAbort();
+    try {
+      const resolution = Promise.resolve(this.resolveCaptureImage(observation));
+      return await Promise.race([resolution, interruption.promise]);
+    } finally {
+      clearTimeout(timeout);
+      deadline.signal.removeEventListener("abort", onDeadlineAbort);
+      reservation.lifecycleSignal.removeEventListener(
+        "abort",
+        onLifecycleAbort,
+      );
     }
   }
 

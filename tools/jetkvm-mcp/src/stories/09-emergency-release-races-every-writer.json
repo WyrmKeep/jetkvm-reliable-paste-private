@@ -54,7 +54,7 @@
     },
     {
       "id": "arm-cleanup-failure-jetkvm-input-keyboard",
-      "after_step": "release-all-input",
+      "after_step": "recover-after-release-all-input",
       "boundary": "during_cleanup",
       "action": "Restore the fixture baseline, provision ready case-owned session opaque-session-cleanup-failure-input-keyboard generation 8, capture opaque-observation-cleanup-failure-input-keyboard, and arm a one-shot cleanup failure for only the next jetkvm_input_keyboard call.",
       "expected_effect": "The keyboard operation reaches its cleanup branch in fresh generation 8 and retains cleanup-phase error evidence without replay or fabricated restoration."
@@ -110,7 +110,7 @@
     },
     {
       "id": "arm-cleanup-failure-jetkvm-power-control",
-      "after_step": "cleanup-failure-jetkvm-input-release",
+      "after_step": "recover-after-cleanup-failure-input-release",
       "boundary": "during_cleanup",
       "action": "Provision ready case-owned session opaque-session-cleanup-failure-power-control generation 12 and arm a one-shot cleanup failure for only the next jetkvm_power_control call.",
       "expected_effect": "The ATX operation reaches its cleanup branch in fresh generation 12 and retains cleanup-phase error evidence without replay or fabricated restoration."
@@ -164,6 +164,24 @@
       },
       "timeout_ms": 1000,
       "expect": "The gate closes, generations drain, producers join, paste stops, and correlated zero-state facts are returned."
+    },
+    {
+      "id": "recover-after-release-all-input",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-release-race",
+        "closed_generation": 7,
+        "next_session_id": "opaque-session-cleanup-failure-input-keyboard",
+        "next_generation": 8,
+        "next_tool": "jetkvm_input_keyboard",
+        "reprove_session_ready": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-cleanup-failure-input-keyboard",
+        "restore_atx_baseline": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Retire the drained generation 7, prove the fresh generation-8 case session ready, and capture its exact fresh keyboard observation before the cleanup-failure call."
     },
     {
       "id": "cleanup-failure-jetkvm-input-keyboard",
@@ -233,6 +251,23 @@
       },
       "timeout_ms": 1000,
       "expect": "The jetkvm_input_release cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "recover-after-cleanup-failure-input-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-cleanup-failure-input-release",
+        "closed_generation": 11,
+        "next_session_id": "opaque-session-cleanup-failure-power-control",
+        "next_generation": 12,
+        "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "Retire the drained generation 11, prove the fresh generation-12 case session ready, and restore and prove the recorded ATX baseline before the cleanup-failure power call."
     },
     {
       "id": "cleanup-failure-jetkvm-power-control",

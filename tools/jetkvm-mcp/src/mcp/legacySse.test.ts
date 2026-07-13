@@ -26,6 +26,7 @@ import {
   MCP_TRANSPORT_MAX_REQUEST_BYTES,
   parseLegacySsePolicy,
   type LegacySseConfigInput,
+  type LegacySseSecurityPolicy,
 } from "../config.js";
 import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
 import {
@@ -448,6 +449,125 @@ describe("legacy SSE adapter", () => {
         ).toThrowError(/handler registry/i);
         expect(transportFactory).not.toHaveBeenCalled();
       } finally {
+        credential.secret.dispose();
+        targetSecret.dispose();
+      }
+    },
+  );
+
+  it("rejects a hand-built security policy before any server can be created", () => {
+    const parsed = parseLegacySsePolicy();
+    const forged = {
+      ...parsed,
+      enabled: true,
+      scheme: "http",
+      bindHost: "0.0.0.0",
+      networkExposed: true,
+      hostAuthorities: [],
+      allowedOrigins: [],
+      rejectMissingOrigin: false,
+      requiresBearer: false,
+      requiresAntiCsrf: false,
+      bearerCredential: null,
+    } as LegacySseSecurityPolicy;
+
+    expect(() => new LegacySseAdapter({ securityPolicy: forged })).toThrowError(
+      /parseLegacySsePolicy/i,
+    );
+  });
+
+  it.each([
+    ["http", undefined, "missing"],
+    ["http", "Bearer invalid", "invalid"],
+    ["https", undefined, "missing"],
+    ["https", "Bearer invalid", "invalid"],
+  ] as const)(
+    "does not let injected authentication bypass the activated bearer over raw %s (%s)",
+    async (scheme, authorization, _case) => {
+      const targetSecret = DisposableSecret.fromUtf8("bypass-target");
+      const credential = activateIndependentLegacySseBearerCredential(
+        targetSecret,
+        {
+          principalId: PRINCIPAL,
+          secret: DisposableSecret.fromUtf8(TOKEN),
+        },
+      );
+      const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
+      const policy = parseLegacySsePolicy({
+        enabled: true,
+        scheme,
+        bindHost: "0.0.0.0",
+        allowNetworkExposure: true,
+        hostAuthorities: [AUTHORITY],
+        allowedOrigins: [ORIGIN],
+        bearerEnvironmentVariable: "JETKVM_TEST_SSE_BEARER",
+        ...(scheme === "http"
+          ? {
+              allowPlaintextHttp: true,
+              allowDangerousNetworkPlaintext: true,
+            }
+          : {}),
+      });
+      const adapter = new LegacySseAdapter({
+        handlerRegistry: completeRegistry(),
+        securityPolicy: policy,
+        bearerCredential: credential,
+        authenticateBearer,
+      });
+      const server =
+        scheme === "http"
+          ? adapter.createHttpServer()
+          : adapter.createHttpsServer({
+              key: TEST_TLS_KEY,
+              cert: TEST_TLS_CERT,
+            });
+      const listening = Promise.withResolvers<void>();
+      server.once("listening", listening.resolve);
+      server.listen(0, policy.bindHost);
+      await listening.promise;
+      const port = (server.address() as AddressInfo).port;
+      let socket: Socket | undefined;
+
+      try {
+        if (scheme === "http") {
+          socket = await connectRaw(port);
+        } else {
+          const tlsSocket = connectTls({
+            host: "127.0.0.1",
+            port,
+            rejectUnauthorized: false,
+          });
+          const secured = Promise.withResolvers<void>();
+          tlsSocket.once("secureConnect", secured.resolve);
+          tlsSocket.once("error", secured.reject);
+          await secured.promise;
+          socket = tlsSocket;
+        }
+        socket.write(
+          [
+            "POST /messages?sessionId=00000000-0000-4000-8000-000000000000 HTTP/1.1",
+            `Host: ${AUTHORITY}`,
+            `Origin: ${ORIGIN}`,
+            "X-JetKVM-CSRF: 1",
+            ...(authorization === undefined
+              ? []
+              : [`Authorization: ${authorization}`]),
+            "Content-Type: application/json",
+            "Content-Length: 2",
+            "Connection: close",
+            "",
+            "{}",
+          ].join("\r\n"),
+        );
+
+        const response = await waitForSocketClose(socket, 500);
+        expect(response).toMatch(/^HTTP\/1\.1 401 Unauthorized\r\n/);
+        expect(response.endsWith("Unauthorized")).toBe(true);
+        expect(authenticateBearer).not.toHaveBeenCalled();
+      } finally {
+        socket?.destroy();
+        await adapter.close();
+        await closeServer(server);
         credential.secret.dispose();
         targetSecret.dispose();
       }
@@ -957,6 +1077,7 @@ describe("legacy SSE adapter", () => {
   it("keeps malformed/missing routing separate from safe indistinguishable 404 cases", async () => {
     const streamClosed = Promise.withResolvers<void>();
     const { baseUrl } = await startAdapter({
+      policy: { bindHost: "127.0.0.1" },
       authenticateBearer: (authorization) => ({
         principalId:
           authorization === "Bearer other-token" ? "operator-b" : PRINCIPAL,
@@ -1253,6 +1374,7 @@ describe("legacy SSE adapter", () => {
     );
     const { baseUrl } = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentStreams: 12,
         maxConcurrentStreamsPerPrincipal: 6,
         streamOpenRateLimit: 30,
@@ -2003,7 +2125,7 @@ describe("legacy SSE adapter", () => {
     });
     expect(limited.status).toBe(429);
     expect(await limited.text()).toBe("Too Many Requests");
-    expect(authenticateBearer).toHaveBeenCalledTimes(2);
+    expect(authenticateBearer).toHaveBeenCalledTimes(1);
     expect(transportFactory).not.toHaveBeenCalled();
 
     now -= 1;
@@ -2140,6 +2262,7 @@ describe("legacy SSE adapter", () => {
     );
     const global = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentStreams: 1,
         maxConcurrentStreamsPerPrincipal: 1,
       },
@@ -2248,6 +2371,7 @@ describe("legacy SSE adapter", () => {
     const globalRouted = Promise.withResolvers<void>();
     const global = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentPosts: 1,
         maxConcurrentPostsPerPrincipal: 1,
         maxConcurrentPostsPerSession: 1,
@@ -2345,6 +2469,7 @@ describe("legacy SSE adapter", () => {
   it("keeps routed POST rate quota principal-bound before lookup", async () => {
     const value = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         postRateLimit: 10,
         postRateLimitPerPrincipal: 10,
         postRateLimitPerSession: 1,
@@ -2389,6 +2514,7 @@ describe("legacy SSE adapter", () => {
     const routed = Promise.withResolvers<void>();
     const value = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentPosts: 4,
         maxConcurrentPostsPerPrincipal: 2,
         maxConcurrentPostsPerSession: 1,
@@ -2450,6 +2576,7 @@ describe("legacy SSE adapter", () => {
 
     const perPrincipal = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         postRateLimit: 10,
         postRateLimitPerPrincipal: 1,
         postRateLimitPerSession: 10,
@@ -2474,6 +2601,7 @@ describe("legacy SSE adapter", () => {
 
     const global = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         postRateLimit: 1,
         postRateLimitPerPrincipal: 1,
         postRateLimitPerSession: 1,
@@ -2523,7 +2651,7 @@ describe("legacy SSE adapter", () => {
       const firstPath =
         "/messages?sessionId=00000000-0000-4000-8000-000000000001";
       const value = await startAdapter({
-        policy,
+        policy: { ...policy, bindHost: "127.0.0.1" },
         authenticateBearer: (authorization) => ({
           principalId:
             authorization === "Bearer second-token" ? "operator-b" : PRINCIPAL,
@@ -2984,6 +3112,7 @@ describe("legacy SSE adapter", () => {
     const diagnostics: string[] = [];
     const value = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentStreams: 8,
         maxConcurrentStreamsPerPrincipal: 2,
         streamOpenRateLimit: 20,
@@ -3650,6 +3779,7 @@ describe("legacy SSE adapter", () => {
   it("reserves the global body budget atomically and releases capacity", async () => {
     const value = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentStreams: 32,
         maxConcurrentStreamsPerPrincipal: 7,
         streamOpenRateLimit: 100,
@@ -3759,6 +3889,7 @@ describe("legacy SSE adapter", () => {
   it("isolates per-session and per-principal body capacity and recovers", async () => {
     const value = await startAdapter({
       policy: {
+        bindHost: "127.0.0.1",
         maxConcurrentStreams: 12,
         maxConcurrentStreamsPerPrincipal: 10,
         streamOpenRateLimit: 100,
@@ -3915,6 +4046,81 @@ describe("legacy SSE adapter", () => {
       /closed legacy SSE adapter/i,
     );
     stream.response.destroy();
+  });
+
+  it("awaits retiring stream cleanup after the routing entry is removed", async () => {
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const cleanup = Promise.withResolvers<void>();
+    const handler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        entered.resolve();
+        if (!context.signal.aborted) {
+          const signalAborted = Promise.withResolvers<void>();
+          context.signal.addEventListener(
+            "abort",
+            () => signalAborted.resolve(),
+            { once: true },
+          );
+          await signalAborted.promise;
+        }
+        aborted.resolve();
+        await cleanup.promise;
+        return businessError("jetkvm_session_connect");
+      },
+    );
+    const value = await startAdapter({
+      handlerRegistry: completeRegistry({ jetkvm_session_connect: handler }),
+    });
+    const stream = await openSse(value.baseUrl);
+    const initialized = await post(
+      value.baseUrl,
+      stream.endpoint,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "retiring-close-test", version: "1.0.0" },
+        },
+      }),
+    );
+    expect(initialized.status).toBe(202);
+    await stream.nextFrame();
+    const called = await post(
+      value.baseUrl,
+      stream.endpoint,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "jetkvm_session_connect",
+          arguments: { request_id: "retiring-close", timeout_ms: 60_000 },
+        },
+      }),
+    );
+    expect(called.status).toBe(202);
+    await entered.promise;
+
+    stream.response.destroy();
+    await aborted.promise;
+    let closeSettled = false;
+    const close = value.adapter.close();
+    void close.then(() => {
+      closeSettled = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeSettled).toBe(false);
+
+    cleanup.resolve();
+    await close;
+    expect(closeSettled).toBe(true);
   });
 
   it("rejects a declared body larger than 2 MiB without dispatch", async () => {

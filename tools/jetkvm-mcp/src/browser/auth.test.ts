@@ -2,10 +2,12 @@ import { mkdtempSync, symlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
 import { parseOperatorConfig } from "../config.js";
 import type { SecretByteAllocator } from "./auth.js";
 import {
   activateIndependentLegacySseBearerCredential,
+  CREDENTIAL_MAX_BYTES,
   CredentialConfigurationError,
   DisposableSecret,
   HttpBoundaryError,
@@ -15,7 +17,58 @@ import {
   validateCredentialFileMetadata,
 } from "./auth.js";
 
+const protectedCredentialReadHooks = vi.hoisted(() => ({
+  afterOpen: undefined as (() => void) | undefined,
+  beforeRead: undefined as (() => void) | undefined,
+}));
+
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("node:fs");
+  const actualReadSync = actual["readSync"];
+  const actualOpenSync = actual["openSync"];
+  if (typeof actualReadSync !== "function") {
+    throw new Error("node:fs readSync is unavailable");
+  }
+  if (typeof actualOpenSync !== "function") {
+    throw new Error("node:fs openSync is unavailable");
+  }
+  return {
+    ...actual,
+    openSync(path: string, flags: number, mode?: number): number {
+      const descriptor = Reflect.apply(actualOpenSync, actual, [
+        path,
+        flags,
+        mode,
+      ]) as number;
+      protectedCredentialReadHooks.afterOpen?.();
+      return descriptor;
+    },
+    readSync(
+      descriptor: number,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number | bigint | null,
+    ): number {
+      protectedCredentialReadHooks.beforeRead?.();
+      return Reflect.apply(actualReadSync, actual, [
+        descriptor,
+        buffer,
+        offset,
+        length,
+        position,
+      ]) as number;
+    },
+  };
+});
+
+const EXPECTED_CREDENTIAL_MAX_BYTES = 4_096;
+
 describe("credential source selection", () => {
+  it("keeps the documented credential cap fixed at 4096 bytes", () => {
+    expect(CREDENTIAL_MAX_BYTES).toBe(EXPECTED_CREDENTIAL_MAX_BYTES);
+  });
+
   it("uses the CLI file location ahead of the environment file location", () => {
     expect(
       selectCredentialSource({
@@ -81,6 +134,89 @@ describe("credential source selection", () => {
     secret.dispose();
   });
 
+  it("zeroes the environment allocation when clearing its source fails", () => {
+    const sentinel = "PRIVATE_ENVIRONMENT_DELETE_FAILURE_SENTINEL";
+    const allocations: Uint8Array[] = [];
+    const originalEncode = TextEncoder.prototype.encode;
+    const encodeSpy = vi
+      .spyOn(TextEncoder.prototype, "encode")
+      .mockImplementation(function (
+        this: TextEncoder,
+        value?: string,
+      ): Uint8Array<ArrayBuffer> {
+        const bytes = originalEncode.call(
+          this,
+          value,
+        ) as Uint8Array<ArrayBuffer>;
+        allocations.push(bytes);
+        return bytes;
+      });
+    let caught: unknown;
+
+    try {
+      loadCredentialSecret(
+        { environmentVariable: "JETKVM_CREDENTIAL" },
+        {
+          readEnvironment: () => "environment-secret",
+          deleteEnvironment: () => {
+            throw new Error(sentinel);
+          },
+        },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      encodeSpy.mockRestore();
+    }
+
+    expect(caught).toBeInstanceOf(CredentialConfigurationError);
+    expect((caught as Error).message).toBe(
+      "Credential environment source could not be cleared",
+    );
+    expect((caught as Error).message).not.toContain(sentinel);
+    expect(allocations).toHaveLength(1);
+    expect([...allocations[0]!]).toEqual(
+      new Array(allocations[0]!.byteLength).fill(0),
+    );
+  });
+
+  it("accepts an environment credential at the fixed UTF-8 byte cap", () => {
+    const value = "é".repeat(EXPECTED_CREDENTIAL_MAX_BYTES / 2);
+    const secret = loadCredentialSecret(
+      { environmentVariable: "JETKVM_CREDENTIAL" },
+      {
+        readEnvironment: () => value,
+        deleteEnvironment: () => undefined,
+      },
+    );
+
+    expect(secret.useUtf8((candidate) => candidate)).toBe(value);
+    secret.dispose();
+  });
+
+  it("rejects an environment credential one UTF-8 byte over the cap without echoing it", () => {
+    const sentinel = "PRIVATE_OVERSIZED_ENVIRONMENT_CREDENTIAL_SENTINEL";
+    const value = `${sentinel.padEnd(EXPECTED_CREDENTIAL_MAX_BYTES, "x")}x`;
+    let unexpectedSecret: DisposableSecret | undefined;
+    let caught: unknown;
+
+    try {
+      unexpectedSecret = loadCredentialSecret(
+        { environmentVariable: "JETKVM_CREDENTIAL" },
+        {
+          readEnvironment: () => value,
+          deleteEnvironment: () => undefined,
+        },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      unexpectedSecret?.dispose();
+    }
+
+    expectCredentialSizeError(caught, sentinel);
+  });
+
   it("loads only a current-user regular file with no group/other permission bits", () => {
     const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-"));
     const path = join(directory, "credential");
@@ -95,6 +231,151 @@ describe("credential source selection", () => {
     );
     expect(secret.useUtf8((value) => value)).toBe("file-secret");
     secret.dispose();
+  });
+
+  it("accepts an owner-only credential file at the fixed byte cap", () => {
+    const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-max-file-"));
+    const path = join(directory, "credential");
+    writeFileSync(path, Buffer.alloc(EXPECTED_CREDENTIAL_MAX_BYTES, 0x61), {
+      mode: 0o600,
+    });
+
+    const secret = loadCredentialSecret(
+      { environmentVariable: "UNSET", filePath: path },
+      {
+        readEnvironment: () => undefined,
+        deleteEnvironment: () => undefined,
+      },
+    );
+    expect(secret.useBytes((bytes) => bytes.byteLength)).toBe(
+      EXPECTED_CREDENTIAL_MAX_BYTES,
+    );
+    secret.dispose();
+  });
+
+  it("rejects an owner-only credential file one byte over the cap with a path-free error", () => {
+    const sentinel =
+      "Bearer_PRIVATE_BEARER_SENTINEL_PRIVATE_OVERSIZED_FILE_PATH_SENTINEL";
+    const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-max-file-"));
+    const path = join(directory, sentinel);
+    writeFileSync(path, Buffer.alloc(EXPECTED_CREDENTIAL_MAX_BYTES + 1, 0x61), {
+      mode: 0o600,
+    });
+    let unexpectedSecret: DisposableSecret | undefined;
+    let caught: unknown;
+    let opened = false;
+    let readAttempted = false;
+    protectedCredentialReadHooks.afterOpen = () => {
+      opened = true;
+    };
+    protectedCredentialReadHooks.beforeRead = () => {
+      readAttempted = true;
+    };
+
+    try {
+      unexpectedSecret = loadCredentialSecret(
+        { environmentVariable: "UNSET", filePath: path },
+        {
+          readEnvironment: () => undefined,
+          deleteEnvironment: () => undefined,
+        },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      unexpectedSecret?.dispose();
+      protectedCredentialReadHooks.afterOpen = undefined;
+      protectedCredentialReadHooks.beforeRead = undefined;
+    }
+
+    expectCredentialSizeError(caught, sentinel);
+    expect(opened).toBe(false);
+    expect(readAttempted).toBe(false);
+  });
+
+  it("rejects growth between lstat and fstat without reading the file", () => {
+    const sentinel = "PRIVATE_FSTAT_GROWTH_CREDENTIAL_PATH_SENTINEL";
+    const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-grow-file-"));
+    const path = join(directory, sentinel);
+    const appendByte = Buffer.from([0x62]);
+    writeFileSync(path, Buffer.alloc(EXPECTED_CREDENTIAL_MAX_BYTES, 0x61), {
+      mode: 0o600,
+    });
+    let injected = false;
+    let readAttempted = false;
+    let caught: unknown;
+
+    protectedCredentialReadHooks.afterOpen = () => {
+      injected = true;
+      writeFileSync(path, appendByte, { flag: "a" });
+    };
+    protectedCredentialReadHooks.beforeRead = () => {
+      readAttempted = true;
+    };
+    try {
+      loadCredentialSecret(
+        { environmentVariable: "UNSET", filePath: path },
+        {
+          readEnvironment: () => undefined,
+          deleteEnvironment: () => undefined,
+        },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      protectedCredentialReadHooks.afterOpen = undefined;
+      protectedCredentialReadHooks.beforeRead = undefined;
+    }
+
+    expect(injected).toBe(true);
+    expect(readAttempted).toBe(false);
+    expectCredentialSizeError(caught, sentinel);
+  });
+
+  it("rejects a protected file that grows after its opened-file size check", () => {
+    const sentinel = "PRIVATE_GROWING_CREDENTIAL_PATH_SENTINEL";
+    const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-grow-file-"));
+    const path = join(directory, sentinel);
+    writeFileSync(path, Buffer.alloc(EXPECTED_CREDENTIAL_MAX_BYTES, 0x61), {
+      mode: 0o600,
+    });
+    const appendByte = Buffer.from([0x62]);
+    let staging: Buffer<ArrayBuffer> | undefined;
+    const allocUnsafeSpy = vi
+      .spyOn(Buffer, "allocUnsafe")
+      .mockImplementationOnce((size) => {
+        staging = Buffer.alloc(size, 0x7f);
+        return staging;
+      });
+    let injected = false;
+    let caught: unknown;
+
+    protectedCredentialReadHooks.beforeRead = () => {
+      if (injected) {
+        return;
+      }
+      injected = true;
+      writeFileSync(path, appendByte, { flag: "a" });
+    };
+    try {
+      loadCredentialSecret(
+        { environmentVariable: "UNSET", filePath: path },
+        {
+          readEnvironment: () => undefined,
+          deleteEnvironment: () => undefined,
+        },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      protectedCredentialReadHooks.beforeRead = undefined;
+      allocUnsafeSpy.mockRestore();
+    }
+
+    expect(injected).toBe(true);
+    expectCredentialSizeError(caught, sentinel);
+    expect(staging).toBeDefined();
+    expect([...staging!]).toEqual(new Array(staging!.byteLength).fill(0));
   });
 
   it.each([
@@ -152,6 +433,34 @@ describe("credential source selection", () => {
     expect(secret.useUtf8((value) => value)).toBe("file-secret");
     expect([...source]).toEqual(new Array(source.byteLength).fill(0));
     secret.dispose();
+  });
+
+  it("zeroes an over-cap protected-file buffer on rejection", () => {
+    const sentinel = "PRIVATE_OVERSIZED_READER_PATH_SENTINEL";
+    const source = Buffer.alloc(EXPECTED_CREDENTIAL_MAX_BYTES + 1, 0x61);
+    let unexpectedSecret: DisposableSecret | undefined;
+    let caught: unknown;
+
+    try {
+      unexpectedSecret = loadCredentialSecret(
+        {
+          environmentVariable: "UNSET",
+          filePath: `/protected/${sentinel}`,
+        },
+        {
+          readEnvironment: () => undefined,
+          deleteEnvironment: () => undefined,
+          readProtectedFile: () => source,
+        },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      unexpectedSecret?.dispose();
+    }
+
+    expectCredentialSizeError(caught, sentinel);
+    expect([...source]).toEqual(new Array(source.byteLength).fill(0));
   });
 
   it.each([0o640, 0o604, 0o666])("rejects credential file mode %s", (mode) => {
@@ -331,6 +640,36 @@ describe("DisposableSecret", () => {
     expect(() =>
       DisposableSecret.fromBytes(new Uint8Array(), allocator),
     ).toThrowError("Credential is empty");
+    expect(allocations).toEqual([]);
+  });
+
+  it("allocates no secret bytes when construction rejects an over-cap input", () => {
+    const allocations: Uint8Array[] = [];
+    const allocator: SecretByteAllocator = {
+      allocateUtf8(value) {
+        const bytes = new TextEncoder().encode(value);
+        allocations.push(bytes);
+        return bytes;
+      },
+      copyBytes(value) {
+        const bytes = Uint8Array.from(value);
+        allocations.push(bytes);
+        return bytes;
+      },
+    };
+
+    expect(() =>
+      DisposableSecret.fromUtf8(
+        "x".repeat(EXPECTED_CREDENTIAL_MAX_BYTES + 1),
+        allocator,
+      ),
+    ).toThrowError("Credential exceeds maximum size");
+    expect(() =>
+      DisposableSecret.fromBytes(
+        new Uint8Array(EXPECTED_CREDENTIAL_MAX_BYTES + 1),
+        allocator,
+      ),
+    ).toThrowError("Credential exceeds maximum size");
     expect(allocations).toEqual([]);
   });
 });
@@ -537,6 +876,72 @@ describe("legacy SSE HTTP security boundary", () => {
     },
   );
 
+  it("rejects a one-byte-over bearer before parsing or hashing it", () => {
+    const sentinel = "PRIVATE_OVERSIZED_REQUEST_BEARER_SENTINEL";
+    const candidate = sentinel.padEnd(EXPECTED_CREDENTIAL_MAX_BYTES + 1, "x");
+    const bearer = DisposableSecret.fromUtf8("correct-bearer");
+    const useBytesSpy = vi.spyOn(bearer, "useBytes");
+    const regexpExecSpy = vi.spyOn(RegExp.prototype, "exec");
+    let regexpExecCalls = 0;
+    let useBytesCalls = 0;
+    let caught: unknown;
+
+    try {
+      evaluateLegacySseRequest(
+        {
+          method: "GET",
+          host: "127.0.0.1:9311",
+          authorization: `Bearer ${candidate}`,
+        },
+        { ...localConfig, requiresBearer: true },
+        { principalId: "operator-1", secret: bearer },
+      );
+    } catch (error) {
+      caught = error;
+    } finally {
+      regexpExecCalls = regexpExecSpy.mock.calls.length;
+      useBytesCalls = useBytesSpy.mock.calls.length;
+      regexpExecSpy.mockRestore();
+      useBytesSpy.mockRestore();
+      bearer.dispose();
+    }
+
+    expect(regexpExecCalls).toBe(0);
+    expect(useBytesCalls).toBe(0);
+    expect(caught).toBeInstanceOf(HttpBoundaryError);
+    expect((caught as HttpBoundaryError).statusCode).toBe(401);
+    expect((caught as Error).message).not.toContain(sentinel);
+  });
+
+  it("rejects an over-cap bearer before invoking a custom verifier", () => {
+    const sentinel = "PRIVATE_OVERSIZED_CUSTOM_BEARER_SENTINEL";
+    const candidate = sentinel.padEnd(EXPECTED_CREDENTIAL_MAX_BYTES + 1, "x");
+    const authenticateBearer = vi.fn(() => ({ principalId: "operator-1" }));
+    let caught: unknown;
+
+    try {
+      evaluateLegacySseRequest(
+        {
+          method: "GET",
+          host: "127.0.0.1:9311",
+          authorization: `Bearer ${candidate}`,
+        },
+        { ...localConfig, requiresBearer: true },
+        undefined,
+        authenticateBearer,
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    const authenticateCalls = authenticateBearer.mock.calls.length;
+    authenticateBearer.mockClear();
+    expect(authenticateCalls).toBe(0);
+    expect(caught).toBeInstanceOf(HttpBoundaryError);
+    expect((caught as HttpBoundaryError).statusCode).toBe(401);
+    expect((caught as Error).message).not.toContain(sentinel);
+  });
+
   it("never accepts the JetKVM credential as the MCP bearer boundary", () => {
     expectBoundaryStatus(
       () =>
@@ -552,6 +957,21 @@ describe("legacy SSE HTTP security boundary", () => {
     );
   });
 });
+
+function expectCredentialSizeError(error: unknown, sentinel: string): void {
+  expect(error).toBeInstanceOf(CredentialConfigurationError);
+  expect((error as Error).message).toBe("Credential exceeds maximum size");
+  expect(error).not.toHaveProperty("code");
+  expect(error).not.toHaveProperty("cause");
+
+  for (const surface of [
+    (error as Error).message,
+    (error as Error).stack ?? "",
+    JSON.stringify(error),
+  ]) {
+    expect(surface).not.toContain(sentinel);
+  }
+}
 
 function expectBoundaryStatus(
   action: () => unknown,

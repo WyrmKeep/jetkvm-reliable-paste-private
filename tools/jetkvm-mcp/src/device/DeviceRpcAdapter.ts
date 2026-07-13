@@ -47,7 +47,7 @@ export interface BrowserOwnedRpcChannel {
 }
 
 export type FactFreshness = "fresh" | "stale" | "unknown";
-export type FactSource = "cached_snapshot" | "cached_event" | "none";
+export type FactSource = "cached_event" | "none";
 
 export interface QualifiedFact<T> {
   readonly value: T;
@@ -235,6 +235,20 @@ const nativeVideoStateSchema = z
   .strict();
 
 const rawEdidResultSchema = z.string().nullable();
+// EDID 1.4 byte 126 is an unsigned extension-block count.
+const EDID_BLOCK_BYTES = 128;
+const EDID_EXTENSION_COUNT_OFFSET = 126;
+const EDID_MAX_EXTENSION_COUNT = 0xff;
+const EDID_MAX_BYTES = (EDID_MAX_EXTENSION_COUNT + 1) * EDID_BLOCK_BYTES;
+const EDID_MAX_HEX_CHARACTERS = EDID_MAX_BYTES * 2;
+
+function hexNibbleAt(value: string, index: number): number {
+  const code = value.charCodeAt(index);
+  if (code >= 0x30 && code <= 0x39) return code - 0x30;
+  if (code >= 0x41 && code <= 0x46) return code - 0x41 + 10;
+  if (code >= 0x61 && code <= 0x66) return code - 0x61 + 10;
+  return -1;
+}
 
 const eventEnvelopeSchema = z
   .object({
@@ -273,6 +287,160 @@ const responseEnvelopeSchema = z.union([
 const atxActionSchema = z.enum(["press_power", "hold_power", "press_reset"]);
 
 const CORRELATION_ID_PREFIX = "device-rpc";
+// Accommodates the 64 KiB maximum EDID hex result with over 15x envelope headroom.
+const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
+
+function findJsonStringEnd(payload: string, start: number): number {
+  for (let index = start + 1; index < payload.length; index += 1) {
+    const code = payload.charCodeAt(index);
+    if (code === 0x22) return index;
+    if (code === 0x5c) {
+      index += 1;
+      if (index >= payload.length) return -1;
+    } else if (code < 0x20) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+function jsonStringTokenMatches(
+  payload: string,
+  start: number,
+  end: number,
+  target: string,
+  prefixOnly: boolean,
+): boolean {
+  let targetIndex = 0;
+  for (let index = start + 1; index < end; ) {
+    let code = payload.charCodeAt(index);
+    index += 1;
+    if (code === 0x5c) {
+      if (index >= end) return false;
+      const escape = payload.charCodeAt(index);
+      index += 1;
+      if (escape === 0x75) {
+        if (index + 4 > end) return false;
+        code = 0;
+        for (let offset = 0; offset < 4; offset += 1) {
+          const hex = payload.charCodeAt(index + offset);
+          const nibble =
+            hex >= 0x30 && hex <= 0x39
+              ? hex - 0x30
+              : hex >= 0x41 && hex <= 0x46
+                ? hex - 0x41 + 10
+                : hex >= 0x61 && hex <= 0x66
+                  ? hex - 0x61 + 10
+                  : -1;
+          if (nibble < 0) return false;
+          code = code * 16 + nibble;
+        }
+        index += 4;
+      } else {
+        code =
+          escape === 0x22 || escape === 0x5c || escape === 0x2f
+            ? escape
+            : escape === 0x62
+              ? 0x08
+              : escape === 0x66
+                ? 0x0c
+                : escape === 0x6e
+                  ? 0x0a
+                  : escape === 0x72
+                    ? 0x0d
+                    : escape === 0x74
+                      ? 0x09
+                      : -1;
+        if (code < 0) return false;
+      }
+    } else if (code < 0x20) {
+      return false;
+    }
+    if (
+      targetIndex >= target.length ||
+      code !== target.charCodeAt(targetIndex)
+    ) {
+      return false;
+    }
+    targetIndex += 1;
+    if (prefixOnly && targetIndex === target.length) return true;
+  }
+  return targetIndex === target.length;
+}
+
+function oversizedPayloadClaimsOwnedCorrelation(
+  payload: string,
+  ownedPrefix: string,
+): boolean {
+  let index = 0;
+  while (
+    index < payload.length &&
+    (payload.charCodeAt(index) === 0x09 ||
+      payload.charCodeAt(index) === 0x0a ||
+      payload.charCodeAt(index) === 0x0d ||
+      payload.charCodeAt(index) === 0x20)
+  ) {
+    index += 1;
+  }
+  if (payload.charCodeAt(index) !== 0x7b) return false;
+  index += 1;
+  let depth = 1;
+  let claimsOwnedCorrelation = false;
+  while (index < payload.length && depth > 0) {
+    const code = payload.charCodeAt(index);
+    if (code === 0x22) {
+      const end = findJsonStringEnd(payload, index);
+      if (end < 0) return claimsOwnedCorrelation;
+      if (
+        depth === 1 &&
+        jsonStringTokenMatches(payload, index, end, "id", false)
+      ) {
+        let valueStart = end + 1;
+        while (
+          valueStart < payload.length &&
+          (payload.charCodeAt(valueStart) === 0x09 ||
+            payload.charCodeAt(valueStart) === 0x0a ||
+            payload.charCodeAt(valueStart) === 0x0d ||
+            payload.charCodeAt(valueStart) === 0x20)
+        ) {
+          valueStart += 1;
+        }
+        if (payload.charCodeAt(valueStart) === 0x3a) {
+          valueStart += 1;
+          while (
+            valueStart < payload.length &&
+            (payload.charCodeAt(valueStart) === 0x09 ||
+              payload.charCodeAt(valueStart) === 0x0a ||
+              payload.charCodeAt(valueStart) === 0x0d ||
+              payload.charCodeAt(valueStart) === 0x20)
+          ) {
+            valueStart += 1;
+          }
+          if (payload.charCodeAt(valueStart) === 0x22) {
+            const valueEnd = findJsonStringEnd(payload, valueStart);
+            if (valueEnd < 0) return claimsOwnedCorrelation;
+            claimsOwnedCorrelation = jsonStringTokenMatches(
+              payload,
+              valueStart,
+              valueEnd,
+              ownedPrefix,
+              true,
+            );
+            index = valueEnd + 1;
+            continue;
+          }
+          claimsOwnedCorrelation = false;
+        }
+      }
+      index = end + 1;
+      continue;
+    }
+    if (code === 0x7b || code === 0x5b) depth += 1;
+    else if (code === 0x7d || code === 0x5d) depth -= 1;
+    index += 1;
+  }
+  return claimsOwnedCorrelation;
+}
 
 export function mapDeviceRpcBindingToWire(
   binding: DeviceRpcBinding,
@@ -313,10 +481,12 @@ function bindingsEqual(
   );
 }
 
-function assertMonotonicBindingTransition(
+export function validateDeviceRpcBindingReplacement(
   current: DeviceRpcBinding,
   next: DeviceRpcBinding,
 ): void {
+  assertValidBinding(current);
+  assertValidBinding(next);
   if (current.sessionId !== next.sessionId) return;
   const componentsDoNotRegress =
     next.sessionGeneration >= current.sessionGeneration &&
@@ -407,8 +577,12 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     nextChannel: BrowserOwnedRpcChannel,
     publish?: () => void,
   ): void {
-    assertValidBinding(next);
-    assertMonotonicBindingTransition(this.currentBinding, next);
+    validateDeviceRpcBindingReplacement(this.currentBinding, next);
+    if (nextChannel === this.channel) {
+      throw new Error(
+        "Binding replacement requires a distinct replacement channel.",
+      );
+    }
     if (nextChannel.readyState !== "open") {
       throw new Error("Replacement channel is closed.");
     }
@@ -717,6 +891,23 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     rawPayload: string,
   ): void {
     if (source !== this.channel || sourceRevision !== this.revision) return;
+    if (Buffer.byteLength(rawPayload, "utf8") > SHARED_CHANNEL_MAX_UTF8_BYTES) {
+      const pending = this.pendingExchange;
+      if (
+        pending !== undefined &&
+        !pending.settled &&
+        oversizedPayloadClaimsOwnedCorrelation(
+          rawPayload,
+          `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:`,
+        )
+      ) {
+        this.finishExchangeError(
+          pending,
+          this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+        );
+      }
+      return;
+    }
     let decoded: unknown;
     try {
       decoded = JSON.parse(rawPayload) as unknown;
@@ -1091,16 +1282,29 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         data: null,
       };
     }
-    const normalized = raw.trim().toLowerCase();
     if (
-      normalized.length < 256 ||
-      normalized.length % 256 !== 0 ||
-      !/^[a-f0-9]+$/.test(normalized)
+      raw.length > EDID_MAX_HEX_CHARACTERS ||
+      raw.length < EDID_BLOCK_BYTES * 2 ||
+      raw.length % (EDID_BLOCK_BYTES * 2) !== 0
     ) {
       throw this.protocolError("MALFORMED_RESPONSE", true);
     }
-    const bytes = Uint8Array.from(normalized.match(/.{2}/g) ?? [], (value) =>
-      Number.parseInt(value, 16),
+    if (!/^[a-fA-F0-9]+$/.test(raw)) {
+      throw this.protocolError("MALFORMED_RESPONSE", true);
+    }
+    const extensionCountOffset = EDID_EXTENSION_COUNT_OFFSET * 2;
+    const extensionCount =
+      hexNibbleAt(raw, extensionCountOffset) * 16 +
+      hexNibbleAt(raw, extensionCountOffset + 1);
+    const expectedBytes = (extensionCount + 1) * EDID_BLOCK_BYTES;
+    if (raw.length !== expectedBytes * 2) {
+      throw this.protocolError("MALFORMED_RESPONSE", true);
+    }
+    const byteLength = raw.length / 2;
+    const bytes = Uint8Array.from(
+      { length: byteLength } as ArrayLike<undefined>,
+      (_value, index) =>
+        hexNibbleAt(raw, index * 2) * 16 + hexNibbleAt(raw, index * 2 + 1),
     );
     const header = [0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00];
     if (header.some((value, index) => bytes[index] !== value)) {

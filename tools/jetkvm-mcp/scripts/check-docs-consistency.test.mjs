@@ -46,6 +46,14 @@ const validPackageJson = {
   },
 };
 
+const observationGeometryDeclaration = `interface ObservationGeometry {
+  readonly contentX: number;
+  readonly contentY: number;
+  readonly contentWidth: number;
+  readonly contentHeight: number;
+}`;
+const browserCaptureMimeTypeDeclaration = `type BrowserCaptureMimeType = "image/jpeg" | "image/png";`;
+
 function check(overrides = {}) {
   return checkDocsConsistency({
     designText,
@@ -121,6 +129,70 @@ test("rejects BrowserPlane byte, artifact, capture-return, and shared-binding dr
   }
 });
 
+test("rejects nested bytes and extra fields in ObservationGeometry in either canonical document", () => {
+  for (const [label, textKey, text] of [
+    ["design", "designText", designText],
+    ["plan", "planText", planText],
+  ]) {
+    const nestedBytes = text.replace(
+      "  readonly contentHeight: number;\n}",
+      "  readonly contentHeight: number;\n  readonly bytes: Uint8Array;\n}",
+    );
+    assert.throws(
+      () => check({ [textKey]: nestedBytes }),
+      /ObservationGeometry/i,
+      `${label} must keep ObservationGeometry byte-free`,
+    );
+
+    const extraGeometryField = text.replace(
+      "  readonly contentHeight: number;\n}",
+      "  readonly contentHeight: number;\n  readonly scale: number;\n}",
+    );
+    assert.throws(
+      () => check({ [textKey]: extraGeometryField }),
+      /ObservationGeometry/i,
+      `${label} must keep ObservationGeometry exact`,
+    );
+  }
+});
+
+test("rejects widened or duplicate referenced capture declarations in either canonical document", () => {
+  for (const [label, textKey, text] of [
+    ["design", "designText", designText],
+    ["plan", "planText", planText],
+  ]) {
+    const widenedMimeType = text.replace(
+      browserCaptureMimeTypeDeclaration,
+      `type BrowserCaptureMimeType = "image/jpeg" | "image/png" | "image/webp";`,
+    );
+    assert.throws(
+      () => check({ [textKey]: widenedMimeType }),
+      /BrowserCaptureMimeType/i,
+      `${label} must reject MIME widening`,
+    );
+
+    const duplicateGeometry = text.replace(
+      observationGeometryDeclaration,
+      `${observationGeometryDeclaration}\n\n${observationGeometryDeclaration}`,
+    );
+    assert.throws(
+      () => check({ [textKey]: duplicateGeometry }),
+      /ObservationGeometry/i,
+      `${label} must define ObservationGeometry once`,
+    );
+
+    const duplicateMimeType = text.replace(
+      browserCaptureMimeTypeDeclaration,
+      `${browserCaptureMimeTypeDeclaration}\n${browserCaptureMimeTypeDeclaration}`,
+    );
+    assert.throws(
+      () => check({ [textKey]: duplicateMimeType }),
+      /BrowserCaptureMimeType/i,
+      `${label} must define BrowserCaptureMimeType once`,
+    );
+  }
+});
+
 test("rejects native video status provenance drift in either canonical document", () => {
   for (const [textKey, text] of [
     ["designText", designText],
@@ -186,6 +258,26 @@ test("rejects drift in each of the exact ten tool inventories", () => {
   );
 });
 
+test("rejects a duplicate tool row in either canonical inventory", () => {
+  const duplicateDesignRow = designText.replace(
+    "10. `jetkvm_power_control`",
+    "10. `jetkvm_power_control`\n10. `jetkvm_power_control`",
+  );
+  assert.throws(
+    () => check({ designText: duplicateDesignRow }),
+    /exact ten tool names/i,
+  );
+
+  const duplicatePlanRow = planText.replace(
+    /^(\|\s*`jetkvm_power_control`[^\n]*)$/m,
+    "$1\n$1",
+  );
+  assert.throws(
+    () => check({ planText: duplicatePlanRow }),
+    /exact ten tool names/i,
+  );
+});
+
 test("rejects nullable success identity in either canonical document", () => {
   const makeSuccessIdentityNullable = (text) =>
     text.replace(
@@ -244,6 +336,17 @@ test("rejects branch and phase-name drift", () => {
   assert.throws(
     () => check({ planText: missingBranchDeclaration }),
     /missing its branch name/i,
+  );
+});
+
+test("rejects duplicate and missing parsed phase numbers", () => {
+  const duplicateTwoMissingThree = planText.replace(
+    "# Phase 3 — Input and display PR",
+    "# Phase 2 — Input and display PR",
+  );
+  assert.throws(
+    () => check({ planText: duplicateTwoMissingThree }),
+    /phase numbers.*1.*2.*3.*4.*5.*6/i,
   );
 });
 

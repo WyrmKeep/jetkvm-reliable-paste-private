@@ -27,6 +27,7 @@ import {
   type LegacySseRequestHeaders,
 } from "../browser/auth.js";
 import {
+  assertParsedLegacySseSecurityPolicy,
   LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES,
   LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL,
   LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION,
@@ -156,6 +157,7 @@ export class LegacySseAdapter {
   readonly #activeRequestBodyBytesByPrincipal = new Map<string, number>();
   readonly #activeRequestBodyBytesBySession = new Map<string, number>();
   readonly #activePostLifecycles = new Set<ActivePostLifecycle>();
+  readonly #retiringServerCloses = new Set<Promise<void>>();
   readonly #queuedResponseBytesByPrincipal = new Map<string, number>();
   readonly #queuedResponseBytesByStream = new WeakMap<object, number>();
   #routeAttemptCount = 0;
@@ -174,8 +176,18 @@ export class LegacySseAdapter {
   constructor(options: LegacySseAdapterOptions) {
     const handlerRegistry = options.handlerRegistry ?? {};
     assertHandlerRegistry(handlerRegistry);
+    assertParsedLegacySseSecurityPolicy(options.securityPolicy);
     if (options.bearerCredential !== undefined) {
       assertIndependentLegacySseBearerCredential(options.bearerCredential);
+    }
+    if (
+      options.securityPolicy.enabled &&
+      options.securityPolicy.networkExposed &&
+      options.bearerCredential === undefined
+    ) {
+      throw new Error(
+        "Network-exposed legacy SSE requires an activated bearer credential",
+      );
     }
     this.#handlerRegistry = handlerRegistry;
     this.#securityPolicy = options.securityPolicy;
@@ -496,14 +508,22 @@ export class LegacySseAdapter {
       const origin = singleHeader(request, "origin");
       const authorization = singleHeader(request, "authorization");
       const antiCsrf = singleHeader(request, "x-jetkvm-csrf");
+      const requestHeaders: LegacySseRequestHeaders = {
+        method,
+        ...(host === undefined ? {} : { host }),
+        ...(origin === undefined ? {} : { origin }),
+        ...(authorization === undefined ? {} : { authorization }),
+        ...(antiCsrf === undefined ? {} : { antiCsrf }),
+      };
+      if (this.#securityPolicy.networkExposed) {
+        evaluateLegacySseRequest(
+          requestHeaders,
+          this.#securityPolicy,
+          this.#bearerCredential,
+        );
+      }
       return evaluateLegacySseRequest(
-        {
-          method,
-          ...(host === undefined ? {} : { host }),
-          ...(origin === undefined ? {} : { origin }),
-          ...(authorization === undefined ? {} : { authorization }),
-          ...(antiCsrf === undefined ? {} : { antiCsrf }),
-        },
+        requestHeaders,
         this.#securityPolicy,
         this.#bearerCredential,
         this.#authenticateBearer,
@@ -573,9 +593,7 @@ export class LegacySseAdapter {
       };
       transport.onclose = () => {
         if (!this.#removeEntry(sessionId, entry!, "transport_closed")) return;
-        void entry!.server.close().catch(() => {
-          this.#onDiagnostic?.({ code: "unexpected_error" });
-        });
+        void this.#retireServer(entry!);
       };
       this.#entries.set(sessionId, entry);
       this.#refreshIdleTimer(sessionId, entry);
@@ -969,11 +987,18 @@ export class LegacySseAdapter {
 
   async #expireEntry(sessionId: string, entry: RoutingEntry): Promise<void> {
     if (!this.#removeEntry(sessionId, entry, "transport_closed")) return;
-    try {
-      await entry.server.close();
-    } catch {
+    await this.#retireServer(entry);
+  }
+
+  #retireServer(entry: RoutingEntry): Promise<void> {
+    const retirement = entry.server.close().catch(() => {
       this.#onDiagnostic?.({ code: "unexpected_error" });
-    }
+    });
+    this.#retiringServerCloses.add(retirement);
+    void retirement.then(() => {
+      this.#retiringServerCloses.delete(retirement);
+    });
+    return retirement;
   }
 
   #removeEntry(
@@ -1016,14 +1041,11 @@ export class LegacySseAdapter {
     this.#postRateWindowStartedAt = undefined;
     this.#postRateByPrincipal.clear();
     this.#postRateBySession.clear();
+    for (const [, entry] of entries) {
+      void this.#retireServer(entry);
+    }
     await Promise.all([
-      ...entries.map(async ([, entry]) => {
-        try {
-          await entry.server.close();
-        } catch {
-          this.#onDiagnostic?.({ code: "unexpected_error" });
-        }
-      }),
+      ...this.#retiringServerCloses,
       ...activePosts.map(({ settled }) => settled),
     ]);
     if (

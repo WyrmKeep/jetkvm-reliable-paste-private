@@ -29,7 +29,7 @@ const factMetadata = {
   observedAt: z.string().datetime().nullable(),
   ageMs: z.number().int().nonnegative().nullable(),
   freshness: z.enum(["fresh", "stale", "unknown"]),
-  source: z.enum(["cached_snapshot", "cached_event", "none"]),
+  source: z.enum(["cached_event", "none"]),
 } as const;
 const displaySchema = z
   .object({
@@ -92,10 +92,10 @@ const edidSchema = z.discriminatedUnion("status", [
       data: z
         .object({
           sha256: z.string().regex(/^[a-f0-9]{64}$/),
-          manufacturerId: z.string().nullable(),
-          productCode: z.number().int().nonnegative().nullable(),
-          serialNumber: z.string().nullable(),
-          displayName: z.string().nullable(),
+          manufacturerId: z.null(),
+          productCode: z.null(),
+          serialNumber: z.null(),
+          displayName: z.null(),
           preferredResolution: z
             .object({
               width: z.number().int().positive(),

@@ -473,6 +473,7 @@
         "next_session_id": "opaque-session-power",
         "next_generation": 15,
         "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
         "capture_fresh_observation": false,
         "restore_atx_baseline": true
       },

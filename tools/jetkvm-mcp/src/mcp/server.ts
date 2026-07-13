@@ -222,8 +222,22 @@ export function createMcpServer(
     if (serverClosePromise !== undefined) return serverClosePromise;
     const drain = beginClosing();
     serverClosePromise = (async () => {
-      await sdkClose();
-      await drain;
+      const sdkCloseResult = Promise.resolve().then(sdkClose);
+      const [sdkCloseOutcome, drainOutcome] = await Promise.allSettled([
+        sdkCloseResult,
+        drain,
+      ]);
+      if (
+        sdkCloseOutcome.status === "rejected" &&
+        drainOutcome.status === "rejected"
+      ) {
+        throw new AggregateError(
+          [sdkCloseOutcome.reason, drainOutcome.reason],
+          "MCP server close and handler drain both failed",
+        );
+      }
+      if (sdkCloseOutcome.status === "rejected") throw sdkCloseOutcome.reason;
+      if (drainOutcome.status === "rejected") throw drainOutcome.reason;
     })();
     return serverClosePromise;
   };

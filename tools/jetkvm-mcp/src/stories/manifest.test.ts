@@ -888,6 +888,45 @@ describe("every-handler behavior matrix", () => {
     }
   });
 });
+const PROVEN_NON_CLOSING_RELEASE_REQUIREMENTS: Readonly<Record<string, true>> =
+  Object.freeze({
+    "branch:strict-schema-rejection": true,
+    "branch:permission-denied": true,
+    "branch:capability-missing": true,
+    "branch:deadline-before-admission": true,
+    "branch:cancellation-before-write": true,
+    "branch:disconnect-before-write": true,
+    "branch:stale-session-generation": true,
+    "branch:duplicate-changed-digest": true,
+  });
+
+function generationClosingReleaseCoordinates(
+  stories: readonly AcceptanceStory[],
+): readonly {
+  readonly storyIndex: number;
+  readonly releaseIndex: number;
+  readonly label: string;
+}[] {
+  const provenNonClosing = new Set(
+    TOOL_BEHAVIOR_MATRIX.flatMap((row) => {
+      if (PROVEN_NON_CLOSING_RELEASE_REQUIREMENTS[row.requirement] !== true) {
+        return [];
+      }
+      const cell = row.cells.jetkvm_input_release;
+      return cell.applicability === "applicable"
+        ? [`${cell.story_id}\u0000${cell.step_id}`]
+        : [];
+    }),
+  );
+  return stories.flatMap((story, storyIndex) =>
+    story.steps.flatMap((step, releaseIndex) =>
+      step.tool === "jetkvm_input_release" &&
+      !provenNonClosing.has(`${story.id}\u0000${step.id}`)
+        ? [{ storyIndex, releaseIndex, label: `${story.id}/${step.id}` }]
+        : [],
+    ),
+  );
+}
 
 describe("reviewed story branch execution", () => {
   it("rejects one-shot faults without an immediate linked-call clear", async () => {
@@ -939,63 +978,132 @@ describe("reviewed story branch execution", () => {
     );
   });
 
-  for (const { storyId, releaseId, recoveryId, laterMutationId } of [
-    {
-      storyId: "session-connect-without-takeover-busy",
-      releaseId: "retry-deadline-before-admission-jetkvm-input-release",
-      recoveryId: "recover-after-applied-deadline-release",
-      laterMutationId: "retry-deadline-before-admission-jetkvm-power-control",
-    },
-    {
-      storyId: "mouse-observation-fence-and-single-use",
-      releaseId: "retry-cancel-before-write-jetkvm-input-release",
-      recoveryId: "recover-after-applied-cancellation-release",
-      laterMutationId: "retry-cancel-before-write-jetkvm-power-control",
-    },
-  ] as const) {
-    it(`rejects ${storyId} reusing an applied generation-draining release identity`, async () => {
-      const stories = await loadAcceptanceStories(storiesDirectory);
-      const story = stories.find(({ id }) => id === storyId)!;
-      const release = story.steps.find(({ id }) => id === releaseId)!;
-      const laterMutation = story.steps.find(
-        ({ id }) => id === laterMutationId,
-      )!;
-      release.expect +=
-        " The exact result-produced assertion is outcome applied with generation_drained true.";
-      story.steps = story.steps.filter(({ id }) => id !== recoveryId);
-      story.fault_script.find(
-        ({ after_step }) => after_step === recoveryId,
-      )!.after_step = releaseId;
-      for (const mutation of story.steps.filter(
-        (candidate) =>
-          candidate.tool === laterMutation.tool &&
-          candidate.input.request_id === laterMutation.input.request_id,
-      )) {
-        mutation.input.session_id = release.input.session_id;
-        mutation.input.session_generation = release.input.session_generation;
+  it("derives every generation-closing release from machine-readable call coverage, not expectation prose", async () => {
+    const canonical = await loadAcceptanceStories(storiesDirectory);
+    const releases = generationClosingReleaseCoordinates(canonical);
+    expect(releases.length).toBeGreaterThan(0);
+
+    for (const { storyIndex, releaseIndex, label } of releases) {
+      const exactReplay = structuredClone(canonical);
+      const replayStory = exactReplay[storyIndex]!;
+      const replayRelease = replayStory.steps[releaseIndex]!;
+      replayRelease.expect =
+        "The release is applied under its contract-defined terminal result.";
+      replayStory.steps.splice(releaseIndex + 1, 0, {
+        ...structuredClone(replayRelease),
+        id: `exact-replay-after-${replayRelease.id}`,
+      });
+      expect(
+        () => validateAcceptanceStories(exactReplay),
+        `${label} exact replay`,
+      ).not.toThrow();
+
+      const freshAdmission = structuredClone(canonical);
+      const admissionStory = freshAdmission[storyIndex]!;
+      const admissionRelease = admissionStory.steps[releaseIndex]!;
+      admissionRelease.expect =
+        "The release is applied under its contract-defined terminal result.";
+      admissionStory.steps.splice(releaseIndex + 1, 0, {
+        ...structuredClone(admissionRelease),
+        id: `fresh-admission-after-${admissionRelease.id}`,
+        input: {
+          ...admissionRelease.input,
+          request_id: `${String(admissionRelease.input.request_id)}-fresh`,
+        },
+      });
+      expect(
+        () => validateAcceptanceStories(freshAdmission),
+        `${label} fresh admission`,
+      ).toThrow(/generation-closing release.*later mutation/i);
+    }
+  });
+
+  it("rejects deleting any declared successor recovery after a generation-closing release", async () => {
+    const canonical = await loadAcceptanceStories(storiesDirectory);
+    const recoveryCases: string[] = [];
+
+    for (const {
+      storyIndex,
+      releaseIndex,
+      label,
+    } of generationClosingReleaseCoordinates(canonical)) {
+      const originalStory = canonical[storyIndex]!;
+      const originalRelease = originalStory.steps[releaseIndex]!;
+      const recoveryIndex = originalStory.steps.findIndex(
+        (candidate, candidateIndex) =>
+          candidateIndex > releaseIndex &&
+          candidate.tool === null &&
+          candidate.input.closed_session_id ===
+            originalRelease.input.session_id &&
+          (candidate.input.closed_generation === undefined ||
+            candidate.input.closed_generation ===
+              originalRelease.input.session_generation) &&
+          candidate.call.includes("recover-for-next-tool"),
+      );
+      if (recoveryIndex < 0) {
+        continue;
+      }
+      recoveryCases.push(label);
+      const malformed = structuredClone(canonical);
+      const story = malformed[storyIndex]!;
+      const recovery = story.steps[recoveryIndex]!;
+      const release = story.steps[releaseIndex]!;
+      release.expect =
+        "The release is applied under its contract-defined terminal result.";
+      story.steps.splice(recoveryIndex, 1);
+      for (const fault of story.fault_script) {
+        if (fault.after_step === recovery.id) {
+          fault.after_step = originalRelease.id;
+        }
       }
 
-      expect(() => validateAcceptanceStories(stories)).toThrow(
-        /applied generation-draining release.*explicit recovery.*later mutation/i,
+      expect(
+        () => validateAcceptanceStories(malformed),
+        `${label} deleted recovery`,
+      ).toThrow(
+        /generation-closing release.*explicit recovery|closed generation.*recover/i,
       );
-    });
+    }
 
-    it(`rejects ${storyId} missing recovery proof for its release successor`, async () => {
-      const stories = await loadAcceptanceStories(storiesDirectory);
-      const story = stories.find(({ id }) => id === storyId)!;
-      const release = story.steps.find(({ id }) => id === releaseId)!;
-      release.expect +=
-        " The exact result-produced assertion is outcome applied with generation_drained true.";
-      story.steps = story.steps.filter(({ id }) => id !== recoveryId);
-      story.fault_script.find(
-        ({ after_step }) => after_step === recoveryId,
-      )!.after_step = releaseId;
+    expect(recoveryCases.length).toBeGreaterThan(0);
+  });
 
-      expect(() => validateAcceptanceStories(stories)).toThrow(
-        /applied generation-draining release.*explicit recovery.*later mutation/i,
+  it("keeps the Story 10 and Story 21 release-to-power cases serially executable", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const story10 = stories[9]!;
+    expect(story10.steps.slice(-4).map(({ id }) => id)).toEqual([
+      "prove-definitive-power-baseline",
+      "definitive-acknowledgement-jetkvm-power-control",
+      "restore-and-prove-after-definitive-power",
+      "definitive-acknowledgement-jetkvm-input-release",
+    ]);
+
+    const story21 = stories[20]!;
+    for (const orderedIds of [
+      [
+        "shared-device-rpc-adapter-binding-jetkvm-power-control",
+        "restore-and-prove-after-shared-power",
+        "shared-device-rpc-adapter-binding-jetkvm-input-release",
+        "prepare-shared-session-connect-case",
+      ],
+      [
+        "device-rpc-adapter-replacement-jetkvm-power-control",
+        "device-rpc-adapter-replacement-jetkvm-input-release",
+        "prepare-replacement-session-connect-case",
+      ],
+    ] as const) {
+      const positions = orderedIds.map((id) =>
+        story21.steps.findIndex((candidate) => candidate.id === id),
       );
-    });
-  }
+      expect(positions, orderedIds.join(" -> ")).not.toContain(-1);
+      expect(
+        positions.every(
+          (position, index) => index === 0 || position > positions[index - 1]!,
+        ),
+        orderedIds.join(" -> "),
+      ).toBe(true);
+    }
+  });
 
   it("rejects fixture recovery state that cannot reach the next tool call", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
@@ -1023,7 +1131,7 @@ describe("reviewed story branch execution", () => {
       ({ id }) => id !== "prepare-duplicate-session-connect-case",
     );
     expect(() => validateAcceptanceStories(missingRecovery)).toThrow(
-      /drained or replaced session.*fixture recovery/i,
+      /generation-closing release.*explicit recovery|drained or replaced session.*fixture recovery/i,
     );
 
     const missingCapture = structuredClone(stories);

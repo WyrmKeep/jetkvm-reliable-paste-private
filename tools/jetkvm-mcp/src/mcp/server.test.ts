@@ -2276,6 +2276,100 @@ describe("createMcpServer", () => {
     ).resolves.toMatchObject({ isError: true });
   });
 
+  it("preserves a transport close rejection only after handler cleanup releases admission", async () => {
+    const admissionKey = {};
+    const cleanup = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    let enteredCount = 0;
+    let abortedCount = 0;
+    const handler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        enteredCount += 1;
+        if (enteredCount === TOOL_HANDLER_PER_SESSION_CAPACITY)
+          entered.resolve();
+        if (!context.signal.aborted) {
+          const signalAborted = Promise.withResolvers<void>();
+          context.signal.addEventListener(
+            "abort",
+            () => signalAborted.resolve(),
+            { once: true },
+          );
+          await signalAborted.promise;
+        }
+        abortedCount += 1;
+        if (abortedCount === TOOL_HANDLER_PER_SESSION_CAPACITY)
+          aborted.resolve();
+        await cleanup.promise;
+        return businessError("jetkvm_session_status");
+      },
+    );
+    const server = createMcpServer(
+      completeRegistry({ jetkvm_session_status: handler }),
+      { admissionKey },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const closeError = new Error("transport close failed");
+    serverTransport.close = vi
+      .fn()
+      .mockRejectedValueOnce(closeError)
+      .mockResolvedValue(undefined);
+    await server.connect(serverTransport);
+    const client = new Client({
+      name: "close-error-drain-test",
+      version: "1.0.0",
+    });
+    openClients.push(client);
+    await client.connect(clientTransport);
+    const statusArguments = {
+      session_id: "close-error-drain-session",
+      session_generation: 1,
+      timeout_ms: 100,
+    };
+    const active = Array.from(
+      { length: TOOL_HANDLER_PER_SESSION_CAPACITY },
+      () =>
+        client.callTool({
+          name: "jetkvm_session_status",
+          arguments: statusArguments,
+        }),
+    );
+    await entered.promise;
+
+    let closeRejected = false;
+    const close = server.close();
+    void close.catch(() => {
+      closeRejected = true;
+    });
+    await aborted.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeRejected).toBe(false);
+
+    const replacement = await connectedClient(completeRegistry(), undefined, {
+      admissionKey,
+    });
+    await expect(
+      replacement.callTool({
+        name: "jetkvm_session_status",
+        arguments: statusArguments,
+      }),
+    ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+
+    cleanup.resolve();
+    await expect(close).rejects.toBe(closeError);
+    await Promise.allSettled(active);
+    await expect(
+      replacement.callTool({
+        name: "jetkvm_session_status",
+        arguments: statusArguments,
+      }),
+    ).resolves.toMatchObject({ isError: true });
+  });
+
   it("never admits pre-aborted lifetime or request signals", async () => {
     const admissionKey = {};
     const handler = vi.fn(async () => businessError("jetkvm_session_connect"));
