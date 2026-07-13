@@ -52,11 +52,66 @@ var wheelReportWrite = func(wheelY int8) error {
 	return gadget.AbsMouseWheelReport(wheelY)
 }
 
-var maintenanceHIDDevicesRead = func() usbgadget.Devices {
-	if config == nil || config.UsbDevices == nil {
-		return defaultUsbDevices
+type maintenanceHIDDeviceTracker struct {
+	mu          sync.RWMutex
+	applied     usbgadget.Devices
+	pending     usbgadget.Devices
+	hasApplied  bool
+	applyFailed bool
+}
+
+func (t *maintenanceHIDDeviceTracker) recordApplied(devices usbgadget.Devices) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.applied = devices
+	t.pending = devices
+	t.hasApplied = true
+	t.applyFailed = false
+}
+
+func (t *maintenanceHIDDeviceTracker) beginApply(devices usbgadget.Devices) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pending = devices
+	if !t.hasApplied {
+		t.applied = devices
+		t.hasApplied = true
 	}
-	return *config.UsbDevices
+	t.applyFailed = true
+}
+
+func (t *maintenanceHIDDeviceTracker) finishApply(devices usbgadget.Devices, err error) {
+	if err != nil {
+		return
+	}
+	t.recordApplied(devices)
+}
+
+func (t *maintenanceHIDDeviceTracker) read(fallback usbgadget.Devices) usbgadget.Devices {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if !t.hasApplied {
+		return fallback
+	}
+	if !t.applyFailed {
+		return t.applied
+	}
+	return usbgadget.Devices{
+		AbsoluteMouse: t.applied.AbsoluteMouse || t.pending.AbsoluteMouse,
+		RelativeMouse: t.applied.RelativeMouse || t.pending.RelativeMouse,
+		Keyboard:      t.applied.Keyboard || t.pending.Keyboard,
+		MassStorage:   t.applied.MassStorage || t.pending.MassStorage,
+	}
+}
+
+var effectiveHIDDevices maintenanceHIDDeviceTracker
+var usbConfigApplyLock sync.Mutex
+var maintenanceHIDDevicesRead = func() usbgadget.Devices {
+	fallback := defaultUsbDevices
+	if config != nil && config.UsbDevices != nil {
+		fallback = *config.UsbDevices
+	}
+	return effectiveHIDDevices.read(fallback)
 }
 
 type absolutePointerPosition struct {
@@ -124,6 +179,7 @@ func initUsbGadget() {
 		config.UsbConfig,
 		usbLogger,
 	)
+	effectiveHIDDevices.recordApplied(*config.UsbDevices)
 
 	usbMonitorInstance = newUsbMonitor(
 		gadget,

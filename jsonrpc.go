@@ -656,6 +656,8 @@ func rpcSetUsbConfig(session *Session, usbConfig usbgadget.Config) error {
 		return errStaleControlSession
 	}
 	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
+		usbConfigApplyLock.Lock()
+		defer usbConfigApplyLock.Unlock()
 		LoadConfig()
 		config.UsbConfig = &usbConfig
 		gadget.SetGadgetConfig(config.UsbConfig)
@@ -877,9 +879,14 @@ func rpcSetUsbDevices(session *Session, usbDevices usbgadget.Devices) error {
 		return errStaleControlSession
 	}
 	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
+		usbConfigApplyLock.Lock()
+		defer usbConfigApplyLock.Unlock()
+		effectiveHIDDevices.beginApply(usbDevices)
 		config.UsbDevices = &usbDevices
 		gadget.SetGadgetDevices(config.UsbDevices)
-		return updateUsbRelatedConfig()
+		err := updateUsbRelatedConfig()
+		effectiveHIDDevices.finishApply(usbDevices, err)
+		return err
 	})
 }
 
@@ -888,20 +895,27 @@ func rpcSetUsbDeviceState(session *Session, device string, enabled bool) error {
 		return errStaleControlSession
 	}
 	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
+		usbConfigApplyLock.Lock()
+		defer usbConfigApplyLock.Unlock()
+		usbDevices := *config.UsbDevices
 		switch device {
 		case "absoluteMouse":
-			config.UsbDevices.AbsoluteMouse = enabled
+			usbDevices.AbsoluteMouse = enabled
 		case "relativeMouse":
-			config.UsbDevices.RelativeMouse = enabled
+			usbDevices.RelativeMouse = enabled
 		case "keyboard":
-			config.UsbDevices.Keyboard = enabled
+			usbDevices.Keyboard = enabled
 		case "massStorage":
-			config.UsbDevices.MassStorage = enabled
+			usbDevices.MassStorage = enabled
 		default:
 			return fmt.Errorf("invalid device: %s", device)
 		}
+		effectiveHIDDevices.beginApply(usbDevices)
+		config.UsbDevices = &usbDevices
 		gadget.SetGadgetDevices(config.UsbDevices)
-		return updateUsbRelatedConfig()
+		err := updateUsbRelatedConfig()
+		effectiveHIDDevices.finishApply(usbDevices, err)
+		return err
 	})
 }
 

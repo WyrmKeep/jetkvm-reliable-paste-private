@@ -214,6 +214,39 @@ func TestMaintenanceZeroSkipsDisabledHIDFunctions(t *testing.T) {
 	}
 }
 
+func TestMaintenanceZeroCoversAppliedEndpointAfterFailedDisable(t *testing.T) {
+	session, generation, calls := installPointerZeroTestSeams(t, nil, nil)
+	tracker := &maintenanceHIDDeviceTracker{}
+	applied := usbgadget.Devices{AbsoluteMouse: true}
+	disabled := usbgadget.Devices{}
+	tracker.recordApplied(applied)
+	tracker.beginApply(disabled)
+	tracker.finishApply(disabled, errors.New("disable failed before apply"))
+	maintenanceHIDDevicesRead = func() usbgadget.Devices {
+		return tracker.read(defaultUsbDevices)
+	}
+
+	if err := rpcAbsMouseReportForSession(session, 410, 420, 1); err != nil {
+		t.Fatalf("absolute press: %v", err)
+	}
+	receipt := sessionManager.QuiesceAndZero(
+		context.Background(),
+		generation,
+		"failed-disable-zero",
+		zeroInputWithMaintenanceLease,
+	)
+	if receipt.Outcome != controlsession.OutcomeReleased || !receipt.PointerZero {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+	want := []pointerWriterCall{
+		{interfaceName: "absolute", x: 410, y: 420, buttons: 1},
+		{interfaceName: "absolute", x: 410, y: 420, buttons: 0},
+	}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("pointer writes=%+v, want %+v", *calls, want)
+	}
+}
+
 func TestPointerZeroWithoutCurrentMaintenanceLeaseDoesNotWrite(t *testing.T) {
 	oldAbs := absMouseReportWrite
 	oldRel := relMouseReportWrite
