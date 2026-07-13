@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,6 +52,18 @@ var wheelReportWrite = func(wheelY int8) error {
 	return gadget.AbsMouseWheelReport(wheelY)
 }
 
+type absolutePointerPosition struct {
+	mu sync.Mutex
+	x  int
+	y  int
+}
+
+var lastAbsolutePointerPosition absolutePointerPosition
+
+var maintenanceAbsPointerZeroWrite = func(x int, y int) error {
+	return absMouseReportWrite(x, y, 0)
+}
+
 var errStaleControlSession = errors.New("control session is stale or draining")
 
 func withOrdinaryGeneration(generation controlsession.Generation, write func() error) error {
@@ -73,7 +86,19 @@ var maintenancePointerZeroWrite = func(lease controlsession.MaintenanceLease) er
 	if !lease.Valid() {
 		return errStaleControlSession
 	}
-	return relMouseReportWrite(0, 0, 0)
+
+	lastAbsolutePointerPosition.mu.Lock()
+	defer lastAbsolutePointerPosition.mu.Unlock()
+	absoluteErr := maintenanceAbsPointerZeroWrite(lastAbsolutePointerPosition.x, lastAbsolutePointerPosition.y)
+	relativeErr := relMouseReportWrite(0, 0, 0)
+	switch {
+	case absoluteErr == nil:
+		return relativeErr
+	case relativeErr == nil:
+		return absoluteErr
+	default:
+		return errors.Join(absoluteErr, relativeErr)
+	}
 }
 
 func zeroInputWithMaintenanceLease(lease controlsession.MaintenanceLease) (error, error) {
@@ -166,7 +191,7 @@ func rpcKeyboardReportForSession(session *Session, modifier byte, keys []byte) e
 	if session == nil {
 		return errStaleControlSession
 	}
-	return rpcKeyboardReportForGeneration(session.managerGeneration, modifier, keys)
+	return rpcKeyboardReportForGeneration(session.managerGenerationLoad(), modifier, keys)
 }
 
 func rpcKeyboardReport(modifier byte, keys []byte) error {
@@ -186,7 +211,7 @@ func rpcKeypressReportForSession(session *Session, key byte, press bool) error {
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		return keypressReportWrite(key, press)
 	})
 }
@@ -195,8 +220,15 @@ func rpcAbsMouseReportForSession(session *Session, x int, y int, buttons uint8) 
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
-		return absMouseReportWrite(x, y, buttons)
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
+		lastAbsolutePointerPosition.mu.Lock()
+		defer lastAbsolutePointerPosition.mu.Unlock()
+		if err := absMouseReportWrite(x, y, buttons); err != nil {
+			return err
+		}
+		lastAbsolutePointerPosition.x = x
+		lastAbsolutePointerPosition.y = y
+		return nil
 	})
 }
 
@@ -204,7 +236,7 @@ func rpcRelMouseReportForSession(session *Session, dx int8, dy int8, buttons uin
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		return relMouseReportWrite(dx, dy, buttons)
 	})
 }
@@ -213,7 +245,7 @@ func rpcWheelReportForSession(session *Session, wheelY int8) error {
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		return wheelReportWrite(wheelY)
 	})
 }
