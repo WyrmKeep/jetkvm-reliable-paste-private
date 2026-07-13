@@ -1207,6 +1207,94 @@ function buildToolBehaviorMatrix(): ToolBehaviorMatrix {
 
 export const TOOL_BEHAVIOR_MATRIX = buildToolBehaviorMatrix();
 
+export type FocusedAssertionExecutionResult = Readonly<{
+  focused_assertion_id: string;
+  test_identity: string;
+  result: "pass" | "fail" | "skip" | "todo";
+}>;
+
+const focusedAssertionExecutionResultSchema = z
+  .object({
+    focused_assertion_id: z.string().min(1),
+    test_identity: z.string().min(1),
+    result: z.enum(["pass", "fail", "skip", "todo"]),
+  })
+  .strict();
+
+export function validateFocusedAssertionExecutions(
+  ownerPhase: FocusedAssertionOwnerPhase,
+  values: readonly unknown[],
+  matrix: ToolBehaviorMatrix = TOOL_BEHAVIOR_MATRIX,
+): FocusedAssertionExecutionResult[] {
+  const results = values.map((value, index) => {
+    const parsed = focusedAssertionExecutionResultSchema.safeParse(value);
+    if (!parsed.success) {
+      throw new Error(
+        `Focused assertion execution result ${index} must contain only focused_assertion_id, test_identity, and result.`,
+      );
+    }
+    return parsed.data;
+  });
+
+  const ownerById = new Map<string, FocusedAssertionOwnerPhase>();
+  const expectedIds: string[] = [];
+  for (const row of matrix) {
+    for (const cell of Object.values(row.cells)) {
+      if (cell.applicability !== "applicable") continue;
+      const existingOwner = ownerById.get(cell.focused_assertion_id);
+      if (existingOwner !== undefined) {
+        throw new Error(
+          `Behavior matrix has duplicate focused assertion ID ${cell.focused_assertion_id}.`,
+        );
+      }
+      ownerById.set(
+        cell.focused_assertion_id,
+        cell.focused_assertion_owner_phase,
+      );
+      if (cell.focused_assertion_owner_phase === ownerPhase) {
+        expectedIds.push(cell.focused_assertion_id);
+      }
+    }
+  }
+
+  const seenIds = new Set<string>();
+  const seenIdentities = new Set<string>();
+  for (const result of results) {
+    if (seenIds.has(result.focused_assertion_id)) {
+      throw new Error(
+        `Duplicate focused assertion ID ${result.focused_assertion_id}.`,
+      );
+    }
+    seenIds.add(result.focused_assertion_id);
+    if (seenIdentities.has(result.test_identity)) {
+      throw new Error(`Duplicate test identity ${result.test_identity}.`);
+    }
+    seenIdentities.add(result.test_identity);
+    if (result.result !== "pass") {
+      throw new Error(
+        `Focused assertion ${result.focused_assertion_id} must pass; execution result was ${result.result}.`,
+      );
+    }
+    const actualOwner = ownerById.get(result.focused_assertion_id);
+    if (actualOwner !== ownerPhase) {
+      const ownership =
+        actualOwner === undefined ? "not reserved" : `owned by ${actualOwner}`;
+      throw new Error(
+        `Unexpected focused assertion ${result.focused_assertion_id} for ${ownerPhase}: ${ownership}.`,
+      );
+    }
+  }
+
+  const missingIds = expectedIds.filter((id) => !seenIds.has(id));
+  if (missingIds.length > 0) {
+    throw new Error(
+      `Missing focused assertion executions for ${ownerPhase}: ${missingIds.join(", ")}.`,
+    );
+  }
+
+  return results;
+}
+
 const storyConditionSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),

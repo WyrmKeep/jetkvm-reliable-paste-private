@@ -942,6 +942,169 @@ describe("FakeBrowserPlane", () => {
       }),
     );
   });
+  it("preserves canonical held keys as an immutable keyboard snapshot after a persisted terminal fault", async () => {
+    const plane = new FakeBrowserPlane(
+      new RecordingAdapter(),
+      undefined,
+      captureImage,
+    );
+    await publishFakeObservation(plane);
+    const expectedHeldKeys = ["KeyA", "KeyB"] as const;
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "keyboard",
+          fault: "disconnect_after_persisted_terminal",
+          result: {
+            ...receipt,
+            dispatchedCount: 2,
+            completedCount: 2,
+            heldKeys: expectedHeldKeys,
+          },
+        },
+      ],
+    });
+
+    const result = (await plane.keyboard(
+      ref,
+      {
+        observationId: "observation-a",
+        requestId: "request-a",
+        actions: [
+          { type: "key_press", key: "KeyA" },
+          { type: "key_press", key: "KeyB" },
+        ],
+      },
+      deadline,
+    )) as typeof receipt & { readonly heldKeys: readonly string[] };
+
+    expect(result).toMatchObject({
+      dispatchedCount: 2,
+      completedCount: 2,
+      heldKeys: expectedHeldKeys,
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.heldKeys)).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(result, "heldKeys")).toMatchObject({
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
+    expect(() => (result.heldKeys as string[]).push("KeyC")).toThrow(TypeError);
+    expect(plane.events()).toContainEqual(
+      expect.objectContaining({
+        fault: "disconnect_after_persisted_terminal",
+        terminalPersisted: true,
+      }),
+    );
+  });
+
+  it.each([
+    ["missing", { ...receipt, dispatchedCount: 2, completedCount: 2 }],
+    [
+      "unknown",
+      {
+        ...receipt,
+        dispatchedCount: 2,
+        completedCount: 2,
+        heldKeys: ["UnknownKey"],
+      },
+    ],
+    [
+      "duplicate",
+      {
+        ...receipt,
+        dispatchedCount: 2,
+        completedCount: 2,
+        heldKeys: ["KeyA", "KeyA"],
+      },
+    ],
+    [
+      "out of canonical order",
+      {
+        ...receipt,
+        dispatchedCount: 2,
+        completedCount: 2,
+        heldKeys: ["KeyB", "KeyA"],
+      },
+    ],
+  ] as const)(
+    "fails closed when a keyboard receipt has %s held keys",
+    async (_caseName, result) => {
+      const plane = new FakeBrowserPlane(
+        new RecordingAdapter(),
+        undefined,
+        captureImage,
+      );
+      await publishFakeObservation(plane);
+      plane.loadScenario({
+        version: 1,
+        steps: [{ operation: "keyboard", result }],
+      });
+
+      await expect(
+        plane.keyboard(
+          ref,
+          {
+            observationId: "observation-a",
+            requestId: "request-a",
+            actions: [
+              { type: "key_press", key: "KeyA" },
+              { type: "key_press", key: "KeyB" },
+            ],
+          },
+          deadline,
+        ),
+      ).rejects.toThrow(/keyboard receipt is invalid/i);
+    },
+  );
+
+  it.each([
+    ["mouse", { ...receipt, heldKeys: ["KeyA"] }],
+    ["paste", { ...pasteReceipt, heldKeys: ["KeyA"] }],
+    ["release", { ...releaseReceipt, unexpected: true }],
+  ] as const)("rejects a widened %s receipt", async (operation, result) => {
+    const plane = new FakeBrowserPlane(
+      new RecordingAdapter(),
+      undefined,
+      captureImage,
+    );
+    await publishFakeObservation(plane);
+    plane.loadScenario({ version: 1, steps: [{ operation, result }] });
+
+    if (operation === "mouse") {
+      await expect(
+        plane.mouse(
+          ref,
+          {
+            observationId: "observation-a",
+            requestId: "request-a",
+            actions: [{ type: "move", x: 1, y: 2 }],
+          },
+          deadline,
+        ),
+      ).rejects.toThrow(/mouse receipt is invalid/i);
+      return;
+    }
+    if (operation === "paste") {
+      await expect(
+        plane.paste(
+          ref,
+          {
+            observationId: "observation-a",
+            requestId: "request-a",
+            text: pasteText,
+          },
+          deadline,
+        ),
+      ).rejects.toThrow(/paste receipt is invalid/i);
+      return;
+    }
+    await expect(
+      plane.release(ref, { requestId: "request-a" }, deadline),
+    ).rejects.toThrow(/release receipt is invalid/i);
+  });
 
   it("does not retain paste text or frame bytes in events", async () => {
     const plane = new FakeBrowserPlane(
@@ -1475,7 +1638,9 @@ describe("FakeNativeControlPlane", () => {
       steps: [{ operation: "displayStatus" }, { operation: "powerControl" }],
     });
 
-    await expect(native.displayStatus(ref, deadline)).resolves.toEqual({
+    await expect(
+      native.displayStatus(ref, { edidReadSupported: true }, deadline),
+    ).resolves.toEqual({
       ...display,
       edid,
     });
@@ -1493,6 +1658,28 @@ describe("FakeNativeControlPlane", () => {
       "performAtx",
     ]);
     expect(native.deviceRpc).toBe(adapter);
+  });
+  it("models capability-absent EDID with zero adapter EDID call", async () => {
+    const adapter = new RecordingAdapter();
+    const native = new FakeNativeControlPlane(adapter);
+    native.loadScenario({
+      version: 1,
+      steps: [{ operation: "displayStatus" }],
+    });
+
+    await expect(
+      native.displayStatus(ref, { edidReadSupported: false }, deadline),
+    ).resolves.toEqual({
+      ...display,
+      edid: {
+        status: "unsupported",
+        readCompleted: false,
+        reason: "edid_read_capability_absent",
+        observedAt: null,
+        data: null,
+      },
+    });
+    expect(adapter.calls).toEqual(["readDisplayState"]);
   });
 
   it("rejects incoherent explicit ATX provenance instead of weakening the native fake", async () => {
@@ -1618,7 +1805,11 @@ describe("FakeNativeControlPlane", () => {
         operation === "sessionStatus"
           ? native.sessionStatus(staleRef, deadline)
           : operation === "displayStatus"
-            ? native.displayStatus(staleRef, deadline)
+            ? native.displayStatus(
+                staleRef,
+                { edidReadSupported: true },
+                deadline,
+              )
             : native.powerControl(
                 staleRef,
                 { requestId: "power-a", action: "press_power" },

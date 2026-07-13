@@ -175,6 +175,7 @@ export type DeviceRpcErrorCode =
   | "MALFORMED_RESPONSE"
   | "DUPLICATE_RESPONSE"
   | "DOWNSTREAM_ERROR"
+  | "EDID_READ_FAILED"
   | "INCOMPATIBLE_DOWNSTREAM";
 export type DeviceRpcBoundary = "admission" | "queue" | "send" | "ack";
 export type DeviceRpcOutcome = "not_sent" | "unknown" | "applied";
@@ -192,6 +193,7 @@ const SAFE_ERROR_MESSAGES: Record<DeviceRpcErrorCode, string> = {
   MALFORMED_RESPONSE: "The device RPC response was malformed.",
   DUPLICATE_RESPONSE: "The device RPC response was duplicated.",
   DOWNSTREAM_ERROR: "The device RPC operation failed downstream.",
+  EDID_READ_FAILED: "The native EDID read failed.",
   INCOMPATIBLE_DOWNSTREAM:
     "The current device RPC router cannot provide the required receipt.",
 };
@@ -245,6 +247,7 @@ const nativeVideoStateSchema = z
   })
   .strict();
 
+const EDID_READ_FAILED_MARKER = "EDID_READ_FAILED";
 const rawEdidResultSchema = z.string().nullable();
 // EDID 1.4 byte 126 is an unsigned extension-block count.
 const EDID_BLOCK_BYTES = 128;
@@ -666,6 +669,7 @@ interface ExchangeResult {
 
 interface PendingExchange {
   readonly ref: DeviceRpcBinding;
+  readonly method: RpcMethod;
   readonly expectedRevision: number;
   readonly expectedChannel: BrowserOwnedRpcChannel;
   readonly correlationId: string;
@@ -976,6 +980,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       }
       const exchange: PendingExchange = {
         ref,
+        method,
         expectedRevision,
         expectedChannel,
         correlationId,
@@ -1185,9 +1190,14 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     }
     pending.responseSeen = true;
     if ("error" in envelope.data) {
+      const code: DeviceRpcErrorCode =
+        pending.method === "getEDID" &&
+        envelope.data.error.data === EDID_READ_FAILED_MARKER
+          ? "EDID_READ_FAILED"
+          : "DOWNSTREAM_ERROR";
       this.finishExchangeError(
         pending,
-        new DeviceRpcError("DOWNSTREAM_ERROR", "ack", "unknown", true, false),
+        new DeviceRpcError(code, "ack", "unknown", true, false),
       );
       return;
     }

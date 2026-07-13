@@ -568,12 +568,16 @@ function protocolDiagnostic(error: Error): string {
   return `jetkvm-mcp: ${diagnostic}\n`;
 }
 
+const STDIO_LOCAL_PRINCIPAL_ID = "jetkvm-mcp-stdio-local";
+
 export async function startStdioServer(
   handlerRegistry: HandlerRegistry = {},
   options: StdioServerOptions = {},
 ): Promise<StdioServerHandle> {
   assertHandlerRegistry(handlerRegistry);
-  const server = createMcpServer(handlerRegistry);
+  const server = createMcpServer(handlerRegistry, {
+    localPrincipalId: STDIO_LOCAL_PRINCIPAL_ID,
+  });
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
   const ownsDefaultProcessStdio =

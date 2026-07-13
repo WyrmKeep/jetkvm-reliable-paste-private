@@ -1,10 +1,12 @@
-import type {
-  CapabilitySnapshot,
-  PermissionName,
-  SessionConnectInput,
-  SessionConnectResult,
-  SessionReconnectInput,
-  SessionReconnectResult,
+import {
+  CAPABILITY_NAMES,
+  PERMISSION_NAMES,
+  type CapabilitySnapshot,
+  type PermissionName,
+  type SessionConnectInput,
+  type SessionConnectResult,
+  type SessionReconnectInput,
+  type SessionReconnectResult,
 } from "../domain.js";
 import {
   ERROR_CODES,
@@ -65,6 +67,14 @@ export interface DeviceSessionSnapshot {
   readonly displayGeneration: number;
   readonly browserChannelGeneration: number | null;
   readonly freshCaptureRequired: boolean;
+  readonly permissions: readonly PermissionName[];
+  readonly capabilities: CapabilitySnapshot;
+}
+
+export interface CurrentCaptureEvidence {
+  readonly ref: SessionRef;
+  readonly connectionEpoch: number;
+  readonly displayGeneration: number;
 }
 
 export interface DeviceSessionConnectSuccess {
@@ -147,6 +157,8 @@ type SessionRecord = {
   displayGeneration: number;
   browserChannelGeneration: number | null;
   freshCaptureRequired: boolean;
+  permissions: readonly PermissionName[];
+  capabilities: CapabilitySnapshot | null;
   lifecycle: AbortController;
 };
 
@@ -166,6 +178,43 @@ type ConnectionEvidenceSnapshot = {
   readonly browserChannelGeneration: number;
   readonly displayGeneration: number;
 };
+
+function immutablePermissions(
+  permissions: readonly PermissionName[],
+): readonly PermissionName[] {
+  if (
+    !permissions.every((permission) =>
+      PERMISSION_NAMES.some((candidate) => candidate === permission),
+    )
+  ) {
+    throw new TypeError("Permission snapshot is invalid.");
+  }
+  return Object.freeze([...permissions]);
+}
+
+function immutableCapabilities(
+  capabilities: CapabilitySnapshot,
+): CapabilitySnapshot {
+  const keys = Object.keys(capabilities).sort();
+  const expectedKeys = [...CAPABILITY_NAMES].sort();
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index]) ||
+    CAPABILITY_NAMES.some(
+      (capability) => typeof capabilities[capability] !== "boolean",
+    )
+  ) {
+    throw new TypeError("Capability snapshot is invalid.");
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      CAPABILITY_NAMES.map((capability) => [
+        capability,
+        capabilities[capability],
+      ]),
+    ) as unknown as CapabilitySnapshot,
+  );
+}
 
 class DeadlineAbort extends Error {
   public constructor(public readonly kind: "caller" | "deadline") {
@@ -255,7 +304,9 @@ export class DeviceSessionClient {
     let irreversibleTransition = false;
     try {
       this.#throwIfAborted(scope, false);
-      const permissions = [...this.#permissionsForPrincipal(principal)];
+      const permissions = immutablePermissions(
+        this.#permissionsForPrincipal(principal),
+      );
       if (!permissions.includes("session.connect")) {
         throw clientError(
           "PERMISSION_DENIED",
@@ -364,6 +415,8 @@ export class DeviceSessionClient {
           displayGeneration: 0,
           browserChannelGeneration: null,
           freshCaptureRequired: true,
+          permissions,
+          capabilities: null,
           lifecycle: new AbortController(),
         };
         this.#sessions.set(sessionId, record);
@@ -379,9 +432,11 @@ export class DeviceSessionClient {
           this.#assertConnection(connection, ref);
           const connectionEvidence =
             this.#captureConnectionEvidence(connection);
-          const capabilities = await this.#capabilitiesForConnection(
-            connection,
-            scope.remaining(),
+          const capabilities = immutableCapabilities(
+            await this.#capabilitiesForConnection(
+              connection,
+              scope.remaining(),
+            ),
           );
           this.#throwIfAborted(scope, true);
           this.#assertConnection(connection, ref);
@@ -399,7 +454,7 @@ export class DeviceSessionClient {
               display_generation: connection.displayGeneration,
               takeover_performed: takeoverPerformed,
               fresh_capture_required: true,
-              permissions,
+              permissions: [...permissions],
               capabilities,
             },
           };
@@ -421,6 +476,8 @@ export class DeviceSessionClient {
           record.connectionEpoch = connection.connectionEpoch;
           record.displayGeneration = connection.displayGeneration;
           record.browserChannelGeneration = connection.browserChannelGeneration;
+          record.permissions = permissions;
+          record.capabilities = capabilities;
           this.#activeSessionId = sessionId;
           return result;
         } catch (error) {
@@ -493,7 +550,9 @@ export class DeviceSessionClient {
     let irreversibleTransition = false;
     try {
       this.#throwIfAborted(scope, false);
-      const permissions = [...this.#permissionsForPrincipal(principal)];
+      const permissions = immutablePermissions(
+        this.#permissionsForPrincipal(principal),
+      );
       if (!permissions.includes("session.reconnect")) {
         throw clientError(
           "PERMISSION_DENIED",
@@ -648,7 +707,12 @@ export class DeviceSessionClient {
           });
           const connectionEvidence =
             this.#captureConnectionEvidence(connection);
-          await this.#capabilitiesForConnection(connection, scope.remaining());
+          const capabilities = immutableCapabilities(
+            await this.#capabilitiesForConnection(
+              connection,
+              scope.remaining(),
+            ),
+          );
           this.#throwIfAborted(scope, true);
           this.#assertConnection(connection, nextRef, {
             connectionEpoch: previousConnectionEpoch,
@@ -689,6 +753,8 @@ export class DeviceSessionClient {
           record.connectionEpoch = connection.connectionEpoch;
           record.displayGeneration = connection.displayGeneration;
           record.browserChannelGeneration = connection.browserChannelGeneration;
+          record.permissions = permissions;
+          record.capabilities = capabilities;
           this.#activeSessionId = record.sessionId;
           return result;
         } catch (error) {
@@ -766,6 +832,9 @@ export class DeviceSessionClient {
         "reconnect_then_capture",
       );
     }
+    if (record.capabilities === null) {
+      throw new Error("Ready device session lacks capability evidence.");
+    }
     return {
       ref: this.#ref(record),
       state: record.state,
@@ -773,7 +842,31 @@ export class DeviceSessionClient {
       displayGeneration: record.displayGeneration,
       browserChannelGeneration: record.browserChannelGeneration,
       freshCaptureRequired: record.freshCaptureRequired,
+      permissions: record.permissions,
+      capabilities: record.capabilities,
     };
+  }
+
+  public acknowledgeCurrentCapture(
+    principal: string,
+    evidence: CurrentCaptureEvidence,
+  ): boolean {
+    const record = this.#sessions.get(evidence.ref.sessionId);
+    if (
+      record === undefined ||
+      record.principal !== principal ||
+      record.state !== "ready" ||
+      this.#activeSessionId !== record.sessionId ||
+      record.sessionGeneration !== evidence.ref.sessionGeneration ||
+      record.connectionEpoch !== evidence.connectionEpoch ||
+      !Number.isSafeInteger(evidence.displayGeneration) ||
+      evidence.displayGeneration < record.displayGeneration
+    ) {
+      return false;
+    }
+    record.displayGeneration = evidence.displayGeneration;
+    record.freshCaptureRequired = false;
+    return true;
   }
 
   #deadline(timeoutMs: number, callerSignal?: AbortSignal): DeadlineScope {

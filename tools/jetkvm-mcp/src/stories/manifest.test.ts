@@ -16,7 +16,9 @@ import {
   acceptanceStorySchema,
   loadAcceptanceStories,
   validateAcceptanceStories,
+  validateFocusedAssertionExecutions,
   type AcceptanceStory,
+  type FocusedAssertionExecutionResult,
   type FocusedAssertionOwnerPhase,
 } from "./manifest.js";
 
@@ -1665,5 +1667,114 @@ describe("canonical story files", () => {
       2,
     )}\n`;
     await expect(readFile(generatedSchemaPath, "utf8")).resolves.toBe(expected);
+  });
+});
+
+function focusedExecutionRecords(
+  ownerPhase: FocusedAssertionOwnerPhase,
+): FocusedAssertionExecutionResult[] {
+  return TOOL_BEHAVIOR_MATRIX.flatMap((row) =>
+    Object.values(row.cells).flatMap((cell) =>
+      cell.applicability === "applicable" &&
+      cell.focused_assertion_owner_phase === ownerPhase
+        ? [
+            {
+              focused_assertion_id: cell.focused_assertion_id,
+              test_identity: `executed ${cell.focused_assertion_id}`,
+              result: "pass" as const,
+            },
+          ]
+        : [],
+    ),
+  );
+}
+
+describe("owning-phase focused assertion execution gate", () => {
+  it("accepts the exact unique execution-produced Phase 3 pass set", () => {
+    const results = focusedExecutionRecords("phase_3");
+
+    expect(validateFocusedAssertionExecutions("phase_3", results)).toEqual(
+      results,
+    );
+    expect(results).toHaveLength(103);
+  });
+
+  it("rejects a missing Phase 3 assertion", () => {
+    const results = focusedExecutionRecords("phase_3");
+
+    expect(() =>
+      validateFocusedAssertionExecutions("phase_3", results.slice(1)),
+    ).toThrow(/missing focused assertion/i);
+  });
+
+  it("rejects duplicate assertion IDs and duplicate test identities", () => {
+    const results = focusedExecutionRecords("phase_3");
+    expect(() =>
+      validateFocusedAssertionExecutions("phase_3", [
+        ...results,
+        {
+          ...results[0]!,
+          test_identity: "another executed identity",
+        },
+      ]),
+    ).toThrow(/duplicate focused assertion id/i);
+
+    const duplicateIdentity = results.map((result, index) =>
+      index === 1
+        ? { ...result, test_identity: results[0]!.test_identity }
+        : result,
+    );
+    expect(() =>
+      validateFocusedAssertionExecutions("phase_3", duplicateIdentity),
+    ).toThrow(/duplicate test identity/i);
+  });
+
+  it.each(["fail", "skip", "todo"] as const)(
+    "rejects an execution result of %s",
+    (result) => {
+      const results = focusedExecutionRecords("phase_3");
+      results[0] = { ...results[0]!, result };
+
+      expect(() =>
+        validateFocusedAssertionExecutions("phase_3", results),
+      ).toThrow(new RegExp(`must pass.*${result}|${result}.*must pass`, "i"));
+    },
+  );
+
+  it("rejects fabricated extras and unresolved Phase 4 or Phase 5 IDs", () => {
+    const phase3 = focusedExecutionRecords("phase_3");
+    expect(() =>
+      validateFocusedAssertionExecutions("phase_3", [
+        ...phase3,
+        {
+          focused_assertion_id: "unit:invented:extra",
+          test_identity: "executed fabricated extra",
+          result: "pass",
+        },
+      ]),
+    ).toThrow(/unexpected focused assertion/i);
+
+    for (const laterPhase of ["phase_4", "phase_5"] as const) {
+      expect(() =>
+        validateFocusedAssertionExecutions("phase_3", [
+          ...phase3,
+          focusedExecutionRecords(laterPhase)[0]!,
+        ]),
+      ).toThrow(
+        new RegExp(`unexpected.*${laterPhase}|${laterPhase}.*unexpected`, "i"),
+      );
+    }
+  });
+
+  it("rejects non-record and extra-field values rather than accepting metadata-shaped prose", () => {
+    const results: unknown[] = focusedExecutionRecords("phase_3");
+    results[0] = {
+      ...focusedExecutionRecords("phase_3")[0],
+      file: "named-but-not-executed.test.ts",
+    };
+
+    expect(() =>
+      validateFocusedAssertionExecutions("phase_3", results),
+    ).toThrow(/execution result/i);
   });
 });

@@ -21,17 +21,27 @@ const planPath = resolve(
   "docs/superpowers/plans/2026-07-12-jetkvm-computer-use-mcp.md",
 );
 const storiesDirectory = resolve(packageRoot, "src/stories");
+const readmePath = resolve(packageRoot, "README.md");
+const securityPath = resolve(packageRoot, "SECURITY.md");
 
-const [designText, planText, storyFileNames] = await Promise.all([
-  readFile(designPath, "utf8"),
-  readFile(planPath, "utf8"),
-  readdir(storiesDirectory),
-]);
+const [designText, planText, readmeText, securityText, storyFileNames] =
+  await Promise.all([
+    readFile(designPath, "utf8"),
+    readFile(planPath, "utf8"),
+    readFile(readmePath, "utf8"),
+    readFile(securityPath, "utf8"),
+    readdir(storiesDirectory),
+  ]);
 
 const storyIds = storyFileNames
   .filter((name) => name.endsWith(".json"))
   .sort()
   .map((name) => name.replace(/^\d{2}-/, "").replace(/\.json$/, ""));
+
+const mcpPhase3Command =
+  "vitest run src/browser/bridgeProtocol.test.ts src/browser/BrowserController.test.ts src/browser/frames.test.ts src/browser/geometry.test.ts src/handlers/inputDisplay.matrix.test.ts src/native/JetKvmNativeControlPlane.test.ts src/planes/JetKvmBrowserPlane.test.ts src/test-support/PlaneSeams.test.ts src/test-support/ReplayPlanes.test.ts src/test-support/uiFixture.test.ts src/stories/manifest.test.ts src/stories/phase3.acceptance.test.ts && node --test scripts/check-docs-consistency.test.mjs";
+const uiPhase3Command =
+  "vitest run --config vitest.config.ts src/automation/bridge.test.ts src/automation/capture.test.ts src/automation/controller.test.ts src/automation/inputGuard.test.ts src/automation/paste.test.ts src/hooks/hidRpc.test.ts src/hooks/useJsonRpc.test.ts src/utils/hidRpcTransport.test.ts src/utils/keepaliveScheduler.test.ts src/utils/pasteBatches.test.ts src/utils/pasteMacro.test.ts src/utils/pasteText.test.ts";
 
 const validPackageJson = {
   scripts: {
@@ -43,6 +53,14 @@ const validPackageJson = {
       "npm run build && node scripts/installed-stdio-protocol-smoke.mjs",
     "smoke:installed-sse-protocol":
       "npm run build && node scripts/installed-sse-protocol-smoke.mjs",
+    "test:phase3": mcpPhase3Command,
+    typecheck: "tsc -p tsconfig.json --noEmit",
+  },
+};
+const validUiPackageJson = {
+  scripts: {
+    "test:phase3": uiPhase3Command,
+    typecheck: "npm run i18n:compile && tsc --noEmit -p tsconfig.app.json",
   },
 };
 
@@ -58,7 +76,10 @@ function check(overrides = {}) {
   return checkDocsConsistency({
     designText,
     planText,
+    readmeText,
+    securityText,
     packageJson: validPackageJson,
+    uiPackageJson: validUiPackageJson,
     storyIds,
     ...overrides,
   });
@@ -547,5 +568,76 @@ test("rejects missing package docs and schema consistency hooks", () => {
         },
       }),
     /schemas:check/i,
+  );
+});
+
+test("rejects missing or drifted Phase 3 MCP/UI test and typecheck hooks", () => {
+  for (const [packageKey, valid, scriptName] of [
+    ["packageJson", validPackageJson, "test:phase3"],
+    ["packageJson", validPackageJson, "typecheck"],
+    ["uiPackageJson", validUiPackageJson, "test:phase3"],
+    ["uiPackageJson", validUiPackageJson, "typecheck"],
+  ]) {
+    const candidate = structuredClone(valid);
+    delete candidate.scripts[scriptName];
+    assert.throws(
+      () => check({ [packageKey]: candidate }),
+      new RegExp(`Phase 3.*${scriptName}|${scriptName}.*Phase 3`, "i"),
+    );
+
+    candidate.scripts[scriptName] = "vitest run";
+    assert.throws(
+      () => check({ [packageKey]: candidate }),
+      new RegExp(`Phase 3.*${scriptName}|${scriptName}.*Phase 3`, "i"),
+    );
+  }
+});
+
+test("rejects Phase 3 documentation drift or a false production activation claim", () => {
+  for (const [replacement, expected] of [
+    [
+      "Coordinates are interpreted against the source image geometry",
+      /coordinate.*observation/i,
+    ],
+    [
+      "Physical keyboard actions accept canonical physical keys only",
+      /physical keyboard.*paste/i,
+    ],
+    ["nominal ~91 source characters per second", /91.*terminal/i],
+    ["Release is the recovery primitive", /release.*recovery/i],
+    ["per-fact provenance", /display.*provenance/i],
+    ["read-only EDID", /read-only EDID/i],
+  ]) {
+    assert.throws(
+      () => check({ readmeText: readmeText.replace(replacement, "drifted") }),
+      expected,
+    );
+  }
+
+  assert.throws(
+    () =>
+      check({
+        readmeText: `${readmeText}\nAll ten production handlers are registered and active.\n`,
+      }),
+    /production registry.*inactive|false activation/i,
+  );
+  assert.throws(
+    () =>
+      check({
+        securityText: securityText
+          .replace("browser sandbox", "browser isolation")
+          .replace("authorized MCP image content block", "ordinary log"),
+      }),
+    /browser sandbox.*image privacy/i,
+  );
+  assert.throws(
+    () =>
+      check({
+        securityText: securityText.replace(
+          "paste text is ephemeral",
+          "paste text may be retained",
+        ),
+      }),
+    /paste text.*ephemeral/i,
   );
 });

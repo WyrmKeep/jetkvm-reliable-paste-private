@@ -65,6 +65,7 @@ export type HandlerRegistry = Readonly<
 export type CreateMcpServerOptions = Readonly<{
   admissionKey?: object;
   lifetimeSignal?: AbortSignal;
+  localPrincipalId?: string;
 }>;
 
 type AdmissionToken = {
@@ -318,7 +319,9 @@ export function createMcpServer(
       throw new RequestCancelledError();
     }
 
-    const principalId = sanitizedPrincipalId(extra.authInfo?.clientId);
+    const principalId = sanitizedPrincipalId(
+      extra.authInfo?.clientId ?? options.localPrincipalId,
+    );
     const requestKey = canonicalRequestId(extra.requestId);
     const duplicateControllers =
       invocationControllersByRequestId.get(requestKey);

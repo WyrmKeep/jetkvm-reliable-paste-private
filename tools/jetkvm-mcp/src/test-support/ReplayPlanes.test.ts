@@ -12,6 +12,7 @@ import type {
 } from "../device/DeviceRpcAdapter.js";
 import type {
   BrowserCaptureImage,
+  MutationReceipt,
   Observation,
 } from "../planes/BrowserPlane.js";
 import { BrowserPlaneReplay } from "./replay/BrowserPlaneReplay.js";
@@ -216,6 +217,16 @@ function browserMutationReceipt(requestId: string) {
     completedCount: 1,
     acknowledgedAt: "2026-07-13T00:00:00.000Z",
   };
+}
+
+function hasHeldKeys(
+  receipt: MutationReceipt,
+): receipt is MutationReceipt & { readonly heldKeys: readonly string[] } {
+  return (
+    Object.hasOwn(receipt, "heldKeys") &&
+    Object.prototype.propertyIsEnumerable.call(receipt, "heldKeys") &&
+    Array.isArray(Reflect.get(receipt, "heldKeys"))
+  );
 }
 
 function browserPasteReceipt(requestId: string) {
@@ -674,6 +685,70 @@ describe("sanitized versioned replay tapes", () => {
         }),
       ).toThrow(/invalid sanitized replay tape/i);
     }
+  });
+
+  it.each([
+    ["missing", {}],
+    ["unknown", { heldKeys: ["UnknownKey"] }],
+    ["duplicate", { heldKeys: ["KeyA", "KeyA"] }],
+    ["out of canonical order", { heldKeys: ["KeyB", "KeyA"] }],
+  ] as const)(
+    "rejects a replay keyboard receipt with %s held keys",
+    (_caseName, heldKeys) => {
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([
+            {
+              operation: "keyboard",
+              request: browserMutationRequests.keyboard,
+              response: {
+                ...browserMutationReceipt("keyboard-request"),
+                dispatchedCount: 2,
+                completedCount: 2,
+                ...heldKeys,
+              },
+            },
+          ]),
+        ),
+      ).toThrow(/invalid sanitized replay tape/i);
+    },
+  );
+
+  it.each([
+    [
+      "mouse",
+      {
+        ...browserMutationReceipt("mouse-request"),
+        dispatchedCount: 2,
+        completedCount: 2,
+        heldKeys: [],
+      },
+    ],
+    [
+      "paste",
+      {
+        ...browserPasteReceipt("paste-request"),
+        dispatchedCount: 4,
+        completedCount: 4,
+        heldKeys: [],
+      },
+    ],
+    [
+      "release",
+      { ...browserReleaseReceipt("release-request"), unexpected: true },
+    ],
+  ] as const)("rejects a widened replay %s receipt", (operation, response) => {
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation,
+            request: browserMutationRequests[operation],
+            response,
+          },
+        ]),
+      ),
+    ).toThrow(/invalid sanitized replay tape/i);
   });
 
   it("accepts generation zero while preserving the other connection and capture fences", () => {
@@ -2198,6 +2273,55 @@ describe("BrowserPlaneReplay", () => {
     expect(serializedTape).not.toContain('"bytes"');
   });
 
+  it("replays canonical held keys as an immutable keyboard snapshot without raw text or image", async () => {
+    const expectedHeldKeys = ["KeyA", "KeyB"] as const;
+    const tape = browserTape([
+      ...runtimeBrowserPrelude(),
+      {
+        operation: "keyboard",
+        request: browserMutationRequests.keyboard,
+        response: {
+          ...browserMutationReceipt("keyboard-request"),
+          dispatchedCount: 2,
+          completedCount: 2,
+          heldKeys: expectedHeldKeys,
+        },
+      },
+    ]);
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      tape,
+      resolveReplayImage,
+    );
+    await publishReplayObservation(replay);
+
+    const result = await replay.keyboard(
+      ref,
+      browserMutationRequests.keyboard.request,
+      deadline,
+    );
+    if (!hasHeldKeys(result)) {
+      throw new Error("Replay keyboard receipt has no held-key snapshot.");
+    }
+
+    expect(result).toMatchObject({
+      dispatchedCount: 2,
+      completedCount: 2,
+      heldKeys: expectedHeldKeys,
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.heldKeys)).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(result, "heldKeys")).toMatchObject({
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
+    expect(() => (result.heldKeys as string[]).push("KeyC")).toThrow(TypeError);
+    expect(JSON.stringify(tape)).not.toContain('"text"');
+    expect(JSON.stringify(tape)).not.toContain('"image"');
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
   it("accepts replay artifacts whose letterboxed content preserves the rotated source ratio", async () => {
     const geometry = {
       contentX: 130,
@@ -3552,7 +3676,7 @@ describe("NativeControlPlaneReplay", () => {
       exchanges: [
         {
           operation: "displayStatus",
-          request: { ref },
+          request: { ref, request: { edidReadSupported: true } },
           response: jsonValue({ ...display, edid }),
         },
         {
@@ -3567,7 +3691,9 @@ describe("NativeControlPlaneReplay", () => {
     };
     const replay = new NativeControlPlaneReplay(adapter, tape);
 
-    await expect(replay.displayStatus(ref, deadline)).resolves.toEqual({
+    await expect(
+      replay.displayStatus(ref, { edidReadSupported: true }, deadline),
+    ).resolves.toEqual({
       ...display,
       edid,
     });
@@ -3675,7 +3801,7 @@ describe("NativeControlPlaneReplay", () => {
       exchanges: [
         {
           operation: "displayStatus",
-          request: { ref },
+          request: { ref, request: { edidReadSupported: true } },
           response: jsonValue({
             ...display,
             qualification: "binding_lost_cached_only",
@@ -3689,8 +3815,8 @@ describe("NativeControlPlaneReplay", () => {
     };
     const replay = new NativeControlPlaneReplay(adapter, tape);
 
-    await expect(replay.displayStatus(ref, deadline)).rejects.toBeInstanceOf(
-      ReplayMismatchError,
-    );
+    await expect(
+      replay.displayStatus(ref, { edidReadSupported: true }, deadline),
+    ).rejects.toBeInstanceOf(ReplayMismatchError);
   });
 });
