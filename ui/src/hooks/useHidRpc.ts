@@ -191,10 +191,7 @@ export function useHidRpc(
   }, [rpcHidChannel, rpcHidProtocolVersion, rpcHidUnreliableReady, hidRpcDisabled]);
 
   const sendMessage = useCallback(
-    (
-      message: RpcMessage,
-      params: HidRpcSendMessageParams = {},
-    ) => {
+    (message: RpcMessage, params: HidRpcSendMessageParams = {}) => {
       sendHidRpcMessage(
         message,
         {

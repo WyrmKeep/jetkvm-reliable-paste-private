@@ -12,7 +12,7 @@ function fakeChannel(readyState = "open") {
 }
 
 const sentBytes = (channel: HidRpcSendChannel) =>
-  Array.from((vi.mocked(channel.send).mock.calls[0][0] as unknown) as Uint8Array);
+  Array.from(vi.mocked(channel.send).mock.calls[0][0] as unknown as Uint8Array);
 
 describe("sendHidRpcMessage", () => {
   test("falls back to the reliable channel when ordered unreliable is unavailable", () => {
