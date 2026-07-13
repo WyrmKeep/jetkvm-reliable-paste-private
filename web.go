@@ -534,7 +534,7 @@ func handleWebRTCSignalWsMessages(
 			}
 
 			if req.OidcGoogle != "" {
-				l.Info().Str("oidcGoogle", req.OidcGoogle).Msg("new session request with OIDC Google")
+				l.Info().Msg("new session request with OIDC Google")
 			}
 
 			metricConnectionSessionRequestCount.WithLabelValues(sourceType, source).Inc()
@@ -547,7 +547,7 @@ func handleWebRTCSignalWsMessages(
 				continue
 			}
 		} else if message.Type == "new-ice-candidate" {
-			l.Info().Str("data", string(message.Data)).Msg("The client sent us a new ICE candidate")
+			l.Info().Int("byte_count", len(message.Data)).Msg("The client sent us a new ICE candidate")
 			var candidate webrtc.ICECandidateInit
 
 			// Attempt to unmarshal as a ICECandidateInit
@@ -561,14 +561,12 @@ func handleWebRTCSignalWsMessages(
 				continue
 			}
 
-			l.Info().Str("data", fmt.Sprintf("%v", candidate)).Msg("unmarshalled incoming ICE candidate")
-
 			if signallingSession == nil {
 				l.Warn().Msg("no session for this signalling connection, skipping incoming ICE candidate")
 				continue
 			}
 
-			l.Info().Str("data", fmt.Sprintf("%v", candidate)).Msg("adding incoming ICE candidate to originating session")
+			l.Info().Msg("adding incoming ICE candidate to originating session")
 			if err = routeSignallingCandidate(signallingSession, candidate); err != nil {
 				l.Warn().Str("error", err.Error()).Msg("failed to add incoming ICE candidate to our peer connection")
 			}

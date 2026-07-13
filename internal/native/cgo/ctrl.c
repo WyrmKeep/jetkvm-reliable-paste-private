@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/un.h>
 #include <sys/socket.h>
@@ -400,13 +401,31 @@ int jetkvm_video_set_edid(const char *edid_hex) {
     return set_edid(edid, edid_len);
 }
 
-char *jetkvm_video_get_edid_hex() {
+jetkvm_edid_read_status_t jetkvm_video_get_edid_hex(char **edid_hex_out) {
+    if (edid_hex_out == NULL) {
+        return JETKVM_EDID_READ_FAILED;
+    }
+    *edid_hex_out = NULL;
+
     uint8_t edid[256];
     int edid_len = get_edid(edid, 256);
     if (edid_len < 0) {
-        return NULL;
+        return JETKVM_EDID_READ_FAILED;
     }
-    return (char *)bytes_to_hex(edid, edid_len);
+    if (edid_len == 0) {
+        *edid_hex_out = malloc(1);
+        if (*edid_hex_out == NULL) {
+            return JETKVM_EDID_READ_FAILED;
+        }
+        (*edid_hex_out)[0] = '\0';
+        return JETKVM_EDID_READ_SUCCESS;
+    }
+
+    *edid_hex_out = (char *)bytes_to_hex(edid, edid_len);
+    if (*edid_hex_out == NULL) {
+        return JETKVM_EDID_READ_FAILED;
+    }
+    return JETKVM_EDID_READ_SUCCESS;
 }
 
 jetkvm_video_state_t *jetkvm_video_get_status() {

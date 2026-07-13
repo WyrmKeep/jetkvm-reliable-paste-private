@@ -391,7 +391,14 @@ func videoGetEDID() (string, error) {
 	cgoLock.Lock()
 	defer cgoLock.Unlock()
 
-	edidCStr := C.jetkvm_video_get_edid_hex()
+	var edidCStr *C.char
+	status := C.jetkvm_video_get_edid_hex(&edidCStr)
+	if edidCStr != nil {
+		defer C.free(unsafe.Pointer(edidCStr))
+	}
+	if status != C.JETKVM_EDID_READ_SUCCESS || edidCStr == nil {
+		return "", ErrEDIDReadFailed
+	}
 	return C.GoString(edidCStr), nil
 }
 

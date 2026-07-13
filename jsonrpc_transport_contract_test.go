@@ -1,10 +1,14 @@
 package kvm
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/jetkvm/kvm/internal/hidrpc"
 	"github.com/jetkvm/kvm/internal/native"
 	"github.com/rs/zerolog"
 )
@@ -13,10 +17,9 @@ func dispatchFixture(t *testing.T, handler RPCHandler, params map[string]any) (a
 	t.Helper()
 	return riskyCallRPCHandler(zerolog.Nop(), handler, params, nil)
 }
-
-func marshalSuccessEnvelope(t *testing.T, result any) map[string]any {
+func marshalEnvelope(t *testing.T, response JSONRPCResponse) map[string]any {
 	t.Helper()
-	encoded, err := json.Marshal(JSONRPCResponse{JSONRPC: "2.0", Result: result, ID: "contract"})
+	encoded, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal JSON-RPC response: %v", err)
 	}
@@ -27,6 +30,10 @@ func marshalSuccessEnvelope(t *testing.T, result any) map[string]any {
 	return decoded
 }
 
+func marshalSuccessEnvelope(t *testing.T, result any) map[string]any {
+	t.Helper()
+	return marshalEnvelope(t, JSONRPCResponse{JSONRPC: "2.0", Result: result, ID: "contract"})
+}
 func TestTransportGetVideoStateResultIsFlatNativeStruct(t *testing.T) {
 	registered, ok := rpcHandlers["getVideoState"]
 	if !ok {
@@ -64,7 +71,7 @@ func TestTransportGetVideoStateResultIsFlatNativeStruct(t *testing.T) {
 	}
 }
 
-func TestTransportGetEDIDResultIsRawStringOrError(t *testing.T) {
+func TestTransportGetEDIDResultIsRawEmptyOrQualifiedError(t *testing.T) {
 	registered, ok := rpcHandlers["getEDID"]
 	if !ok {
 		t.Fatal("getEDID handler is not registered")
@@ -82,11 +89,73 @@ func TestTransportGetEDIDResultIsRawStringOrError(t *testing.T) {
 		t.Fatalf("result = %#v, want raw EDID string", got)
 	}
 
-	result, err = dispatchFixture(t, RPCHandler{Func: func() (string, error) {
-		return "", errors.New("edid read failed")
-	}}, nil)
-	if err == nil || result != nil {
-		t.Fatalf("error fixture result = %#v, err = %v; want nil result and error", result, err)
+	result, err = dispatchFixture(t, RPCHandler{Func: func() (string, error) { return "", nil }}, nil)
+	if err != nil {
+		t.Fatalf("dispatch empty fixture: %v", err)
+	}
+	emptyEnvelope := marshalSuccessEnvelope(t, result)
+	if got, present := emptyEnvelope["result"]; !present || got != "" {
+		t.Fatalf("empty result = %#v, present = %t; want explicit empty string", got, present)
+	}
+
+	qualified := marshalEnvelope(t, newJSONRPCHandlerErrorResponse("contract", native.ErrEDIDReadFailed))
+	qualifiedError, ok := qualified["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("qualified error = %#v, want object", qualified["error"])
+	}
+	if _, present := qualified["result"]; present {
+		t.Fatalf("qualified error unexpectedly emitted a result member: %#v", qualified)
+	}
+	if got := qualifiedError["data"]; got != native.ErrEDIDReadFailed.Error() {
+		t.Fatalf("qualified error data = %#v, want exact stable marker", got)
+	}
+
+	const rawFailure = "open /dev/v4l-subdev2: permission denied"
+	generic := marshalEnvelope(t, newJSONRPCHandlerErrorResponse("contract", errors.New(rawFailure)))
+	genericError, ok := generic["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("generic error = %#v, want object", generic["error"])
+	}
+	if _, present := genericError["data"]; present {
+		t.Fatalf("generic error leaked data: %#v", genericError)
+	}
+	encodedGeneric, err := json.Marshal(generic)
+	if err != nil {
+		t.Fatalf("marshal decoded generic error: %v", err)
+	}
+	if bytes.Contains(encodedGeneric, []byte(rawFailure)) {
+		t.Fatalf("generic response leaked raw lower-layer error: %s", encodedGeneric)
+	}
+}
+func TestTransportSensitiveLogsDoNotExposeEDIDOrKeyboardMacroPayloads(t *testing.T) {
+	const edidSentinel = "EDID-SENTINEL-DO-NOT-LOG"
+	var output bytes.Buffer
+	testLogger := zerolog.New(&output).Level(zerolog.TraceLevel)
+
+	logRPCHandlerSuccess(testLogger, "getEDID", time.Millisecond, edidSentinel)
+	if strings.Contains(output.String(), edidSentinel) {
+		t.Fatalf("EDID success log leaked result: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "RPC handler returned") {
+		t.Fatalf("EDID success log lost status metadata: %s", output.String())
+	}
+
+	output.Reset()
+	macro := []hidrpc.KeyboardMacroStep{{
+		Modifier: 0x02,
+		Keys:     []byte{4, 5, 6, 7, 8, 9},
+		Delay:    10,
+	}}
+	logKeyboardMacroExecution(&testLogger, macro)
+	logged := output.String()
+	if strings.Contains(logged, "\"macro\"") ||
+		strings.Contains(logged, "\"Modifier\"") ||
+		strings.Contains(logged, "\"Keys\"") ||
+		strings.Contains(logged, "[4,5,6,7,8,9]") {
+		t.Fatalf("keyboard macro log leaked payload: %s", logged)
+	}
+	if !strings.Contains(logged, "\"step_count\":1") {
+		t.Fatalf("keyboard macro log lost safe step count: %s", logged)
 	}
 }
 
@@ -113,7 +182,7 @@ func TestTransportSetATXPowerActionHasNoStructuredReceipt(t *testing.T) {
 	if result != nil {
 		t.Fatalf("result = %#v, want nil for error-only handler", result)
 	}
-	if _, present := marshalSuccessEnvelope(t, result)["result"]; present {
-		t.Fatal("error-only ATX handler unexpectedly emitted a structured result")
+	if got, present := marshalSuccessEnvelope(t, result)["result"]; !present || got != nil {
+		t.Fatalf("error-only ATX handler result = %#v, present = %t; want explicit null", got, present)
 	}
 }
