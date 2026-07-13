@@ -33,7 +33,12 @@ function displayWireResult(overrides: Record<string, unknown> = {}) {
 
 const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
 const SHARED_CHANNEL_MAX_CODE_UNITS = SHARED_CHANNEL_MAX_UTF8_BYTES;
-const OVERSIZED_CORRELATION_PREFIX_CODE_UNITS = 1_024;
+const PRIVATE_CORRELATION_ID_MAX_CODE_UNITS =
+  "device-rpc".length + 3 + 128 + String(Number.MAX_SAFE_INTEGER).length * 2;
+const OVERSIZED_CORRELATION_PREFIX_CODE_UNITS =
+  '{"jsonrpc":"2.0","id":"'.length +
+  PRIVATE_CORRELATION_ID_MAX_CODE_UNITS * 6 +
+  1;
 
 function correlationIdForWrite(
   channel: FakeDeviceRpcChannel,
@@ -256,6 +261,31 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
     expect(
       mapDeviceRpcBindingToWire({ ...BINDING, sessionId }).session_id,
     ).toBe(sessionId);
+  });
+
+  it.each([
+    ["empty", ""],
+    ["leading punctuation", "-unsafe"],
+    ["whitespace", "unsafe namespace"],
+    ["overlong", `n${"a".repeat(128)}`],
+  ])("rejects the %s injected correlation namespace", (_case, idNamespace) => {
+    let error: unknown;
+    try {
+      new GenerationFencedDeviceRpcAdapter(
+        BINDING,
+        new FakeDeviceRpcChannel(),
+        { idNamespace },
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expectDeviceError(error, {
+      code: "INVALID_REQUEST",
+      boundary: "admission",
+      outcome: "not_sent",
+      writeBegan: false,
+    });
   });
 
   it("rejects malformed binding values before changing the active binding", () => {
@@ -850,6 +880,149 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
       boundary: "ack",
       outcome: "unknown",
     });
+  });
+
+  it("fails an oversized escaped exact-current frame with a 128-unit supplied namespace", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const idNamespace = `n${"a".repeat(127)}`;
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace,
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const rejected = expect(pending).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+    await channel.waitForWrites(1);
+    const correlationId = correlationIdForWrite(channel, 0);
+    expect(correlationId).toBe(`device-rpc:${idNamespace}:1:1`);
+    const escapedId = [...correlationId]
+      .map(
+        (character) =>
+          `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      )
+      .join("");
+    const payload = `{"jsonrpc":"2.0","id":"${escapedId}","result":"${"x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS)}"}`;
+    expect(payload.slice(0, OVERSIZED_CORRELATION_PREFIX_CODE_UNITS)).toContain(
+      `"id":"${escapedId}"`,
+    );
+
+    const work = emitRawMeasuringOversizedWork(channel, payload);
+    channel.respondToWrite(0, displayWireResult());
+
+    expect(work).toMatchObject({ byteLengthCalls: 0, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
+    await rejected;
+  });
+
+  it("fails an oversized issued ID from a prior binding revision", async () => {
+    const oldChannel = new FakeDeviceRpcChannel();
+    const nextChannel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel, {
+      idNamespace: "adapter-a",
+    });
+    const prior = adapter.readDisplayState(BINDING, deadline());
+    await oldChannel.waitForWrites(1);
+    const priorRevisionId = correlationIdForWrite(oldChannel, 0);
+    oldChannel.respondToWrite(0, displayWireResult());
+    await prior;
+
+    const nextBinding = { ...BINDING, browserChannelGeneration: 14 };
+    adapter.replaceBinding(nextBinding, nextChannel);
+    const current = adapter.readDisplayState(nextBinding, deadline());
+    const rejected = expect(current).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+    await nextChannel.waitForWrites(1);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: priorRevisionId,
+      result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+    });
+
+    nextChannel.emitRaw(payload);
+    nextChannel.respondToWrite(0, displayWireResult());
+
+    await rejected;
+  });
+
+  it("fails an oversized unissued future ID in the current revision", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const rejected = expect(pending).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+    await channel.waitForWrites(1);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "device-rpc:adapter-a:1:2",
+      result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+    });
+
+    channel.emitRaw(payload);
+    channel.respondToWrite(0, displayWireResult());
+
+    await rejected;
+  });
+
+  it("fails an oversized overlong owned ID using only its bounded token prefix", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const rejected = expect(pending).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+    await channel.waitForWrites(1);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: `device-rpc:adapter-a:${"9".repeat(OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 2)}`,
+      result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+    });
+
+    const work = emitRawMeasuringOversizedWork(channel, payload);
+    channel.respondToWrite(0, displayWireResult());
+
+    expect(work).toMatchObject({ byteLengthCalls: 0, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
+    await rejected;
+  });
+
+  it("ignores an oversized malformed owned-looking ID token", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const result = expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+    await channel.waitForWrites(1);
+    const payload = `{"jsonrpc":"2.0","id":"device-rpc:adapter-a:1:\\q","result":"${"x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS)}"}`;
+
+    const work = emitRawMeasuringOversizedWork(channel, payload);
+    channel.respondToWrite(0, displayWireResult());
+
+    expect(work).toMatchObject({ byteLengthCalls: 0, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
+    await result;
   });
 
   it("ignores a giant frame whose current id occurs after the bounded prefix", async () => {

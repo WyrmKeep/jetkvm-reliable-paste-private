@@ -4171,6 +4171,105 @@ describe("legacy SSE adapter", () => {
     },
   );
 
+  it("settles transport retirement when its diagnostic hook throws", async () => {
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const cleanup = Promise.withResolvers<void>();
+    const diagnosed = Promise.withResolvers<void>();
+    let value: RunningAdapter;
+    let stream: OpenSse | undefined;
+    let reentrantClose: Promise<void> | undefined;
+    const handler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        entered.resolve();
+        if (!context.signal.aborted) {
+          const signalAborted = Promise.withResolvers<void>();
+          context.signal.addEventListener(
+            "abort",
+            () => signalAborted.resolve(),
+            { once: true },
+          );
+          await signalAborted.promise;
+        }
+        aborted.resolve();
+        await cleanup.promise;
+        return businessError("jetkvm_session_connect");
+      },
+    );
+    value = await startAdapter({
+      handlerRegistry: completeRegistry({ jetkvm_session_connect: handler }),
+      onDiagnostic: (event) => {
+        if (event.code !== "transport_closed") return;
+        reentrantClose = value.adapter.close();
+        diagnosed.resolve();
+        throw new Error("hostile transport diagnostic");
+      },
+    });
+    running.splice(running.indexOf(value), 1);
+
+    try {
+      stream = await openSse(value.baseUrl);
+      const initialized = await post(
+        value.baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: {
+              name: "hostile-diagnostic-test",
+              version: "1.0.0",
+            },
+          },
+        }),
+      );
+      expect(initialized.status).toBe(202);
+      await stream.nextFrame();
+      const called = await post(
+        value.baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: "jetkvm_session_connect",
+            arguments: {
+              request_id: "hostile-diagnostic",
+              timeout_ms: 60_000,
+            },
+          },
+        }),
+      );
+      expect(called.status).toBe(202);
+      await entered.promise;
+
+      stream.response.destroy();
+      await Promise.all([aborted.promise, diagnosed.promise]);
+      expect(reentrantClose).toBeDefined();
+      let closeSettled = false;
+      void reentrantClose!.then(() => {
+        closeSettled = true;
+      });
+      cleanup.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closeSettled).toBe(true);
+      await expect(reentrantClose).resolves.toBeUndefined();
+    } finally {
+      cleanup.resolve();
+      stream?.response.destroy();
+      value.targetSecret.dispose();
+      value.credential.secret.dispose();
+      await closeServer(value.server);
+    }
+  });
+
   it.each(["throws synchronously", "rejects"] as const)(
     "reports and settles a retirement when server close %s",
     async (failureMode) => {

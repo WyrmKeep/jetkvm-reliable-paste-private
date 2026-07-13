@@ -200,6 +200,14 @@ export class LegacySseAdapter {
     this.#onDiagnostic = options.onDiagnostic;
   }
 
+  #emitDiagnostic(event: LegacySseDiagnostic): void {
+    try {
+      this.#onDiagnostic?.(event);
+    } catch {
+      // Diagnostics are observability-only and cannot control transport state.
+    }
+  }
+
   #createPostLifecycle(
     request: IncomingMessage,
     response: ServerResponse,
@@ -485,7 +493,7 @@ export class LegacySseAdapter {
       if (expectation === "continue") response.writeContinue();
       await this.#handlePost(request, response, url, principal);
     } catch {
-      this.#onDiagnostic?.({ code: "unexpected_error" });
+      this.#emitDiagnostic({ code: "unexpected_error" });
       if (!response.headersSent && !response.writableEnded) {
         sendPreBodyRejection(request, response, 500, "Internal Server Error");
       }
@@ -572,7 +580,7 @@ export class LegacySseAdapter {
             byteLength,
           ),
         () => {
-          this.#onDiagnostic?.({ code: "response_capacity_exceeded" });
+          this.#emitDiagnostic({ code: "response_capacity_exceeded" });
         },
       );
       transport = this.#transportFactory("/messages", response);
@@ -647,7 +655,7 @@ export class LegacySseAdapter {
         sendPreBodyRejection(request, response, 404, "Not Found");
         return;
       }
-      this.#onDiagnostic?.({ code: "post_routed" });
+      this.#emitDiagnostic({ code: "post_routed" });
 
       if (singleHeader(request, "content-type") !== "application/json") {
         sendPreBodyRejection(request, response, 400, "Invalid Content-Type");
@@ -745,7 +753,7 @@ export class LegacySseAdapter {
           this.#refreshIdleTimer(sessionId, entry);
         }
       } catch {
-        this.#onDiagnostic?.({ code: "post_transport_closed" });
+        this.#emitDiagnostic({ code: "post_transport_closed" });
         if (!response.headersSent && !response.writableEnded) {
           sendText(response, 500, "Internal Server Error");
         }
@@ -1015,11 +1023,8 @@ export class LegacySseAdapter {
     void Promise.resolve()
       .then(() => entry.server.close())
       .then(settle, () => {
-        try {
-          this.#onDiagnostic?.({ code: "unexpected_error" });
-        } finally {
-          settle();
-        }
+        this.#emitDiagnostic({ code: "unexpected_error" });
+        settle();
       })
       .catch(() => undefined);
     return retirement;
@@ -1039,7 +1044,7 @@ export class LegacySseAdapter {
     entry.abortController.abort();
     entry.cleanupWriter();
     this.#releaseAdmission(entry.admission);
-    if (diagnostic !== undefined) this.#onDiagnostic?.({ code: diagnostic });
+    if (diagnostic !== undefined) this.#emitDiagnostic({ code: diagnostic });
     return true;
   }
 

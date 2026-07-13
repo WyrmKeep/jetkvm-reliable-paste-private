@@ -290,12 +290,22 @@ const responseEnvelopeSchema = z.union([
 const atxActionSchema = z.enum(["press_power", "hold_power", "press_reset"]);
 
 const CORRELATION_ID_PREFIX = "device-rpc";
+const MAX_SAFE_INTEGER_CODE_UNITS = String(Number.MAX_SAFE_INTEGER).length;
+const PRIVATE_CORRELATION_ID_MAX_CODE_UNITS =
+  CORRELATION_ID_PREFIX.length +
+  3 +
+  CANONICAL_OPAQUE_ID_MAX_CODE_UNITS +
+  MAX_SAFE_INTEGER_CODE_UNITS * 2;
+const WORST_CASE_JSON_ESCAPE_CODE_UNITS = 6;
+// 23 leading envelope units + 173 fully escaped ID units + its closing quote.
+const OVERSIZED_CORRELATION_PREFIX_CODE_UNITS =
+  '{"jsonrpc":"2.0","id":"'.length +
+  PRIVATE_CORRELATION_ID_MAX_CODE_UNITS * WORST_CASE_JSON_ESCAPE_CODE_UNITS +
+  1;
 // Accommodates the 64 KiB maximum EDID hex result with over 15x envelope headroom.
 const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
 // Any string over this equal code-unit ceiling is necessarily over the UTF-8 ceiling.
 const SHARED_CHANNEL_MAX_CODE_UNITS = SHARED_CHANNEL_MAX_UTF8_BYTES;
-// Covers a maximum canonical ID encoded entirely as six-code-unit JSON escapes.
-const OVERSIZED_CORRELATION_PREFIX_CODE_UNITS = 1_024;
 
 function findJsonStringEnd(payload: string, start: number): number {
   for (let index = start + 1; index < payload.length; index += 1) {
@@ -316,6 +326,7 @@ function jsonStringTokenMatches(
   start: number,
   end: number,
   target: string,
+  mode: "exact" | "prefix",
 ): boolean {
   let targetIndex = 0;
   for (let index = start + 1; index < end; ) {
@@ -362,21 +373,21 @@ function jsonStringTokenMatches(
     } else if (code < 0x20) {
       return false;
     }
-    if (
-      targetIndex >= target.length ||
-      code !== target.charCodeAt(targetIndex)
-    ) {
+    if (targetIndex < target.length) {
+      if (code !== target.charCodeAt(targetIndex)) return false;
+      targetIndex += 1;
+    } else if (mode === "exact") {
       return false;
     }
-    targetIndex += 1;
   }
   return targetIndex === target.length;
 }
 
-function decodeCanonicalOpaqueId(
+function decodeBoundedJsonString(
   payload: string,
   start: number,
   end: number,
+  maxCodeUnits: number,
 ): string | undefined {
   let value = "";
   for (let index = start + 1; index < end; ) {
@@ -403,28 +414,30 @@ function decodeCanonicalOpaqueId(
           code = code * 16 + nibble;
         }
         index += 4;
-      } else if (escape === 0x22 || escape === 0x5c || escape === 0x2f) {
-        code = escape;
       } else {
-        return undefined;
+        code =
+          escape === 0x22 || escape === 0x5c || escape === 0x2f
+            ? escape
+            : escape === 0x62
+              ? 0x08
+              : escape === 0x66
+                ? 0x0c
+                : escape === 0x6e
+                  ? 0x0a
+                  : escape === 0x72
+                    ? 0x0d
+                    : escape === 0x74
+                      ? 0x09
+                      : -1;
+        if (code < 0) return undefined;
       }
-    }
-    const valueIndex = value.length;
-    const alphaNumeric =
-      (code >= 0x30 && code <= 0x39) ||
-      (code >= 0x41 && code <= 0x5a) ||
-      (code >= 0x61 && code <= 0x7a);
-    if (
-      valueIndex >= CANONICAL_OPAQUE_ID_MAX_CODE_UNITS ||
-      (!alphaNumeric &&
-        (valueIndex === 0 ||
-          (code !== 0x2e && code !== 0x3a && code !== 0x5f && code !== 0x2d)))
-    ) {
+    } else if (code < 0x20) {
       return undefined;
     }
+    if (value.length >= maxCodeUnits) return undefined;
     value += String.fromCharCode(code);
   }
-  return value.length > 0 ? value : undefined;
+  return value;
 }
 
 function isIssuedNoncurrentCorrelationId(
@@ -444,11 +457,16 @@ function isIssuedNoncurrentCorrelationId(
   );
 }
 
-type OversizedCorrelationClassification = "current" | "retired" | "other";
+type OversizedCorrelationClassification =
+  | "current"
+  | "retired"
+  | "owned_other"
+  | "other";
 
 function classifyOversizedPayloadPrefix(
   payload: string,
   currentId: string,
+  ownedPrefix: string,
   issuedPrefix: string,
   currentSequence: number,
 ): OversizedCorrelationClassification {
@@ -471,7 +489,10 @@ function classifyOversizedPayloadPrefix(
     if (code === 0x22) {
       const end = findJsonStringEnd(payload, index);
       if (end < 0) return classification;
-      if (depth === 1 && jsonStringTokenMatches(payload, index, end, "id")) {
+      if (
+        depth === 1 &&
+        jsonStringTokenMatches(payload, index, end, "id", "exact")
+      ) {
         let valueStart = end + 1;
         while (
           valueStart < payload.length &&
@@ -495,23 +516,49 @@ function classifyOversizedPayloadPrefix(
           }
           if (payload.charCodeAt(valueStart) === 0x22) {
             const valueEnd = findJsonStringEnd(payload, valueStart);
-            if (valueEnd < 0) return classification;
-            const candidate = decodeCanonicalOpaqueId(
-              payload,
-              valueStart,
-              valueEnd,
-            );
-            if (candidate === currentId) return "current";
+            const tokenEnd = valueEnd < 0 ? payload.length : valueEnd;
             if (
+              valueEnd >= 0 &&
+              jsonStringTokenMatches(
+                payload,
+                valueStart,
+                valueEnd,
+                currentId,
+                "exact",
+              )
+            ) {
+              return "current";
+            }
+            const candidate =
+              valueEnd < 0
+                ? undefined
+                : decodeBoundedJsonString(
+                    payload,
+                    valueStart,
+                    valueEnd,
+                    PRIVATE_CORRELATION_ID_MAX_CODE_UNITS,
+                  );
+            const retired =
               candidate !== undefined &&
               isIssuedNoncurrentCorrelationId(
                 candidate,
                 issuedPrefix,
                 currentSequence,
+              );
+            if (retired) {
+              if (classification === "other") classification = "retired";
+            } else if (
+              jsonStringTokenMatches(
+                payload,
+                valueStart,
+                tokenEnd,
+                ownedPrefix,
+                "prefix",
               )
             ) {
-              classification = "retired";
+              classification = "owned_other";
             }
+            if (valueEnd < 0) return classification;
             index = valueEnd + 1;
             continue;
           }
@@ -647,9 +694,19 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     } = {},
   ) {
     assertValidBinding(binding);
+    const correlationNamespace = options.idNamespace ?? crypto.randomUUID();
+    if (!isCanonicalOpaqueId(correlationNamespace)) {
+      throw new DeviceRpcError(
+        "INVALID_REQUEST",
+        "admission",
+        "not_sent",
+        false,
+        false,
+      );
+    }
     this.currentBinding = freezeBinding(binding);
     this.channel = channel;
-    this.correlationNamespace = options.idNamespace ?? crypto.randomUUID();
+    this.correlationNamespace = correlationNamespace;
     this.attachChannel(channel, this.revision);
   }
 
@@ -985,10 +1042,11 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         const classification = classifyOversizedPayloadPrefix(
           rawPayload.slice(0, OVERSIZED_CORRELATION_PREFIX_CODE_UNITS),
           pending.correlationId,
+          `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:`,
           pending.correlationPrefix,
           pending.correlationSequence,
         );
-        if (classification === "current") {
+        if (classification === "current" || classification === "owned_other") {
           this.finishExchangeError(
             pending,
             this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
