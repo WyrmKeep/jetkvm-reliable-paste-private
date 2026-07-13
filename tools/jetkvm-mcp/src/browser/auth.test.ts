@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { parseOperatorConfig } from "../config.js";
+import type { SecretByteAllocator } from "./auth.js";
 import {
   activateIndependentLegacySseBearerCredential,
   CredentialConfigurationError,
@@ -197,6 +198,99 @@ describe("DisposableSecret", () => {
     expect(() => secret.useUtf8((value) => value)).toThrowError(
       "Secret has been disposed",
     );
+  });
+
+  it("zeroes its sole captured UTF-8 allocation after true, false, and error consumers", () => {
+    for (const outcome of ["true", "false", "error"] as const) {
+      const allocations: Uint8Array[] = [];
+      const allocator: SecretByteAllocator = {
+        allocateUtf8(value) {
+          const bytes = new TextEncoder().encode(value);
+          allocations.push(bytes);
+          return bytes;
+        },
+        copyBytes(value) {
+          const bytes = Uint8Array.from(value);
+          allocations.push(bytes);
+          return bytes;
+        },
+      };
+      const secret = DisposableSecret.fromUtf8("sëcret-bytes", allocator);
+
+      try {
+        if (outcome === "error") {
+          expect(() =>
+            secret.useUtf8(() => {
+              throw new Error("consumer failed");
+            }),
+          ).toThrowError("consumer failed");
+        } else {
+          expect(secret.useUtf8(() => outcome === "true")).toBe(
+            outcome === "true",
+          );
+        }
+        expect(allocations).toHaveLength(1);
+      } finally {
+        secret.dispose();
+      }
+
+      expect(allocations).toHaveLength(1);
+      expect([...allocations[0]!]).toEqual(
+        new Array(allocations[0]!.byteLength).fill(0),
+      );
+    }
+  });
+
+  it("zeroes the captured owned copy without mutating caller-owned input", () => {
+    const source = new TextEncoder().encode("caller-owned-secret");
+    const expectedSource = [...source];
+    const allocations: Uint8Array[] = [];
+    const allocator: SecretByteAllocator = {
+      allocateUtf8(value) {
+        const bytes = new TextEncoder().encode(value);
+        allocations.push(bytes);
+        return bytes;
+      },
+      copyBytes(value) {
+        const bytes = Uint8Array.from(value);
+        allocations.push(bytes);
+        return bytes;
+      },
+    };
+
+    const secret = DisposableSecret.fromBytes(source, allocator);
+    expect(secret.useUtf8((value) => value)).toBe("caller-owned-secret");
+    secret.dispose();
+
+    expect(source).toEqual(Uint8Array.from(expectedSource));
+    expect(allocations).toHaveLength(1);
+    expect([...allocations[0]!]).toEqual(
+      new Array(allocations[0]!.byteLength).fill(0),
+    );
+  });
+
+  it("allocates no internal byte storage when construction rejects empty input", () => {
+    const allocations: Uint8Array[] = [];
+    const allocator: SecretByteAllocator = {
+      allocateUtf8(value) {
+        const bytes = new TextEncoder().encode(value);
+        allocations.push(bytes);
+        return bytes;
+      },
+      copyBytes(value) {
+        const bytes = Uint8Array.from(value);
+        allocations.push(bytes);
+        return bytes;
+      },
+    };
+
+    expect(() => DisposableSecret.fromUtf8("", allocator)).toThrowError(
+      "Credential is empty",
+    );
+    expect(() =>
+      DisposableSecret.fromBytes(new Uint8Array(), allocator),
+    ).toThrowError("Credential is empty");
+    expect(allocations).toEqual([]);
   });
 });
 

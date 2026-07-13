@@ -112,11 +112,13 @@ function browserObservation(
 ) {
   return {
     observationId: "observation-a",
+    sessionId: ref.sessionId,
     sessionGeneration,
     connectionEpoch: 1,
     displayGeneration: 1,
     frameId: "frame-a",
     capturedAt: "2026-07-13T00:00:00.000Z",
+    monotonicAgeMs: 0,
     sourceWidth: 1920,
     sourceHeight: 1080,
     imageWidth: 1920,
@@ -128,11 +130,9 @@ function browserObservation(
       contentWidth: 1920,
       contentHeight: 1080,
     },
-    artifact: {
-      mimeType,
-      sha256: "a".repeat(64),
-      byteLength,
-    },
+    format: mimeType === "image/jpeg" ? ("jpeg" as const) : ("png" as const),
+    sha256: "a".repeat(64),
+    byteLength,
   };
 }
 
@@ -642,6 +642,39 @@ describe("sanitized versioned replay tapes", () => {
         ]),
       ),
     ).not.toThrow();
+  });
+
+  it("requires a safe nonnegative monotonic observation age and one root artifact representation", () => {
+    const valid = browserObservation("image/jpeg", 1);
+    const { monotonicAgeMs: _age, ...missingAge } = valid;
+    for (const response of [
+      missingAge,
+      { ...valid, monotonicAgeMs: -1 },
+      { ...valid, monotonicAgeMs: Number.MAX_SAFE_INTEGER + 1 },
+      {
+        ...valid,
+        artifact: {
+          mimeType: "image/jpeg",
+          sha256: valid.sha256,
+          byteLength: valid.byteLength,
+        },
+      },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([
+            {
+              operation: "capture",
+              request: {
+                ref,
+                request: { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+              },
+              response,
+            },
+          ]),
+        ),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
   });
 
   it("requires strict cached-versus-unobserved fact metadata and qualified binding-loss freshness", () => {
@@ -1895,11 +1928,56 @@ function jsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
+function runtimeBrowserPrelude(
+  observationOverrides: Readonly<Record<string, JsonValue>> = {},
+): SanitizedReplayTape["exchanges"] {
+  return [
+    {
+      operation: "connect",
+      request: { ref },
+      response: jsonValue({
+        state: "ready",
+        ref,
+        binding,
+        connectionEpoch: binding.connectionEpoch,
+        browserChannelGeneration: binding.browserChannelGeneration,
+        displayGeneration: 1,
+      }),
+    },
+    {
+      operation: "capture",
+      request: {
+        ref,
+        request: { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      },
+      response: jsonValue({
+        ...browserObservation("image/jpeg", 1),
+        sessionId: ref.sessionId,
+        connectionEpoch: binding.connectionEpoch,
+        displayGeneration: 1,
+        ...observationOverrides,
+      }),
+    },
+  ];
+}
+
+async function publishReplayObservation(
+  replay: BrowserPlaneReplay,
+): Promise<void> {
+  await replay.connect(ref, deadline);
+  await replay.capture(
+    ref,
+    { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+    deadline,
+  );
+}
+
 describe("BrowserPlaneReplay", () => {
   it("consumes calls in exact order and rejects an unexpected operation", async () => {
     const replay = new BrowserPlaneReplay(
       new ReplayAdapter(),
       browserTape([
+        ...runtimeBrowserPrelude(),
         {
           operation: "mouse",
           request: {
@@ -1922,9 +2000,10 @@ describe("BrowserPlaneReplay", () => {
       ]),
     );
 
+    await publishReplayObservation(replay);
     await expect(replay.close(ref, deadline)).rejects.toMatchObject({
       name: "ReplayMismatchError",
-      index: 0,
+      index: 2,
     });
     expect(() => replay.assertExhausted()).toThrow(/1 replay exchange/i);
   });
@@ -1932,9 +2011,13 @@ describe("BrowserPlaneReplay", () => {
   it("accepts any positive safe internal deadline", async () => {
     const replay = new BrowserPlaneReplay(
       new ReplayAdapter(),
-      browserTape([{ operation: "close", request: { ref }, response: null }]),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        { operation: "close", request: { ref }, response: null },
+      ]),
     );
 
+    await publishReplayObservation(replay);
     await expect(
       replay.close(ref, {
         timeoutMs: 1,
@@ -1994,6 +2077,7 @@ describe("BrowserPlaneReplay", () => {
     const replay = new BrowserPlaneReplay(
       new ReplayAdapter(),
       browserTape([
+        ...runtimeBrowserPrelude(),
         {
           operation: "mouse",
           request: {
@@ -2016,6 +2100,7 @@ describe("BrowserPlaneReplay", () => {
       ]),
     );
 
+    await publishReplayObservation(replay);
     await expect(
       replay.mouse(
         ref,
@@ -2035,6 +2120,7 @@ describe("BrowserPlaneReplay", () => {
     const replay = new BrowserPlaneReplay(
       new ReplayAdapter(),
       browserTape([
+        ...runtimeBrowserPrelude(),
         {
           operation: "paste",
           request: {
@@ -2071,6 +2157,7 @@ describe("BrowserPlaneReplay", () => {
       ]),
     );
 
+    await publishReplayObservation(replay);
     await expect(
       replay.paste(
         ref,
@@ -2079,6 +2166,106 @@ describe("BrowserPlaneReplay", () => {
       ),
     ).resolves.toMatchObject({ requestId: "request-a", outcome: "applied" });
     expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("enforces boundary observation age and one-shot consumption before replay dispatch", async () => {
+    const mouseExchange = (requestId: string) => ({
+      operation: "mouse",
+      request: {
+        ref,
+        request: {
+          observationId: "observation-a",
+          requestId,
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+      },
+      response: {
+        ...browserMutationReceipt(requestId),
+        dispatchedCount: 1,
+        completedCount: 1,
+      },
+    });
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude({ monotonicAgeMs: 30_000 }),
+        mouseExchange("request-a"),
+        mouseExchange("request-b"),
+      ]),
+    );
+    await publishReplayObservation(replay);
+    await expect(
+      replay.mouse(
+        ref,
+        {
+          observationId: "observation-a",
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).resolves.toMatchObject({ requestId: "request-a" });
+    await expect(
+      replay.mouse(
+        ref,
+        {
+          observationId: "observation-a",
+          requestId: "request-b",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).rejects.toThrow(/observation/i);
+    expect(() => replay.assertExhausted()).toThrow(/1 replay exchange/i);
+
+    const stale = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude({ monotonicAgeMs: 30_001 }),
+        mouseExchange("request-a"),
+      ]),
+    );
+    await publishReplayObservation(stale);
+    await expect(
+      stale.mouse(
+        ref,
+        {
+          observationId: "observation-a",
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).rejects.toThrow(/observation/i);
+    expect(() => stale.assertExhausted()).toThrow(/1 replay exchange/i);
+  });
+
+  it("invalidates observations and publication before close returns", async () => {
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        { operation: "close", request: { ref }, response: null },
+        {
+          operation: "capture",
+          request: {
+            ref,
+            request: { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+          },
+          response: jsonValue(browserObservation("image/jpeg", 1)),
+        },
+      ]),
+    );
+    await publishReplayObservation(replay);
+    await replay.close(ref, deadline);
+    await expect(
+      replay.capture(
+        ref,
+        { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+        deadline,
+      ),
+    ).rejects.toThrow(/published connection/i);
+    expect(() => replay.assertExhausted()).toThrow(/1 replay exchange/i);
   });
 
   it("replaces the Browser-owned adapter across a recorded reconnect", async () => {
@@ -2124,7 +2311,6 @@ describe("BrowserPlaneReplay", () => {
           response: jsonValue(connection(nextBinding, 0)),
         },
       ]),
-      undefined,
       {
         invalidate: async (previous) => {
           expect(previous).toBe(initial);
@@ -2201,7 +2387,6 @@ describe("BrowserPlaneReplay", () => {
             }),
           },
         ]),
-        undefined,
         {
           invalidate: async (previous) => {
             invalidations.push(previous);

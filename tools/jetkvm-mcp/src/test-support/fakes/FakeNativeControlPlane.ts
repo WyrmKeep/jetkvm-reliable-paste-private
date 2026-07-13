@@ -80,6 +80,7 @@ export class FakeNativeControlPlane implements NativeControlPlane {
     ref: SessionRef,
     deadline: Deadline,
   ): Promise<NativeSessionStatus> {
+    const binding = this.bindingFor(ref);
     const explicit = this.scenarios.consume(
       "sessionStatus",
       { ref: { ...ref } },
@@ -94,10 +95,7 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       }
       return parsed.data;
     }
-    const display = await this.deviceRpc.readDisplayState(
-      this.bindingFor(ref),
-      deadline,
-    );
+    const display = await this.deviceRpc.readDisplayState(binding, deadline);
     const bindingLost = display.qualification === "binding_lost_cached_only";
     return {
       rpcReachability: bindingLost ? "unreachable" : "reachable",
@@ -110,6 +108,7 @@ export class FakeNativeControlPlane implements NativeControlPlane {
     ref: SessionRef,
     deadline: Deadline,
   ): Promise<NativeDisplayStatus> {
+    const binding = this.bindingFor(ref);
     const explicit = this.scenarios.consume(
       "displayStatus",
       { ref: { ...ref } },
@@ -132,7 +131,6 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       }
       return { ...parsedDisplay.data, edid: parsedEdid.data };
     }
-    const binding = this.bindingFor(ref);
     const display = await this.deviceRpc.readDisplayState(binding, deadline);
     const edid = await this.deviceRpc.readEdid(binding, deadline);
     return { ...display, edid };
@@ -143,6 +141,7 @@ export class FakeNativeControlPlane implements NativeControlPlane {
     request: PowerRequest,
     deadline: Deadline,
   ): Promise<PowerReceipt> {
+    const binding = this.bindingFor(ref);
     const explicit = this.scenarios.consume(
       "powerControl",
       {
@@ -152,12 +151,7 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       deadline,
     );
     const result =
-      explicit ??
-      (await this.deviceRpc.performAtx(
-        this.bindingFor(ref),
-        request,
-        deadline,
-      ));
+      explicit ?? (await this.deviceRpc.performAtx(binding, request, deadline));
     const parsed = fakeAtxReceiptSchema.safeParse(result);
     if (!parsed.success) {
       throw new Error("Fake NativeControlPlane ATX result shape is invalid.");
@@ -176,12 +170,7 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       binding.sessionId !== ref.sessionId ||
       binding.sessionGeneration !== ref.sessionGeneration
     ) {
-      return {
-        sessionId: ref.sessionId,
-        sessionGeneration: ref.sessionGeneration,
-        connectionEpoch: binding.connectionEpoch,
-        browserChannelGeneration: binding.browserChannelGeneration,
-      };
+      throw new Error("Fake NativeControlPlane session reference is stale.");
     }
     return binding;
   }

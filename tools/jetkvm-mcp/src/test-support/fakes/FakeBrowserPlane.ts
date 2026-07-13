@@ -10,20 +10,22 @@ import {
   type DeviceRpcBinding,
   type SessionRef,
 } from "../../device/DeviceRpcAdapter.js";
-import type {
-  BrowserConnection,
-  BrowserPlane,
-  CaptureRequest,
-  KeyboardRequest,
-  MouseRequest,
-  MutationReceipt,
-  Observation,
-  PasteReceipt,
-  PasteRequest,
-  ReleaseReceipt,
-  ReleaseRequest,
+import {
+  MAX_OBSERVATION_AGE_MS,
+  type BrowserConnection,
+  type BrowserPlane,
+  type CaptureRequest,
+  type KeyboardRequest,
+  type MouseRequest,
+  type MutationReceipt,
+  type Observation,
+  type PasteReceipt,
+  type PasteRequest,
+  type ReleaseReceipt,
+  type ReleaseRequest,
 } from "../../planes/BrowserPlane.js";
 import {
+  PlaneFaultError,
   PlaneScenarioEngine,
   type PlaneEvent,
   type PlaneScenario,
@@ -92,11 +94,13 @@ const releaseReceiptSchema = mutationReceiptSchema
 const observationSchema = z
   .object({
     observationId: opaqueIdSchema,
+    sessionId: opaqueIdSchema,
     sessionGeneration: positiveIntegerSchema,
     connectionEpoch: positiveIntegerSchema,
     displayGeneration: nonNegativeIntegerSchema,
     frameId: opaqueIdSchema,
     capturedAt: z.string().datetime(),
+    monotonicAgeMs: nonNegativeIntegerSchema,
     sourceWidth: positiveIntegerSchema,
     sourceHeight: positiveIntegerSchema,
     imageWidth: positiveIntegerSchema,
@@ -115,15 +119,22 @@ const observationSchema = z
         contentHeight: z.number().positive().finite(),
       })
       .strict(),
-    image: z
-      .object({
-        mimeType: z.enum(["image/jpeg", "image/png"]),
-        sha256: z.string().regex(/^[a-f0-9]{64}$/),
-        bytes: z.instanceof(Uint8Array),
-      })
-      .strict(),
+    format: z.enum(["jpeg", "png"]),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    byteLength: positiveIntegerSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((observation, context) => {
+    const maximumBytes =
+      observation.format === "jpeg" ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
+    if (observation.byteLength > maximumBytes) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["byteLength"],
+        message: "Observation artifact exceeds its format limit.",
+      });
+    }
+  });
 
 function normalizePasteText(text: string): string {
   return (text.startsWith("\uFEFF") ? text.slice(1) : text)
@@ -144,12 +155,20 @@ function bindingMatches(
   );
 }
 
+type ObservationLedgerEntry = {
+  readonly observation: Observation;
+  state: "available" | "reserved" | "consumed";
+};
+
 export class FakeBrowserPlane implements BrowserPlane {
   private readonly scenarios = new PlaneScenarioEngine();
   private publishedConnection?: {
     readonly binding: DeviceRpcBinding;
     readonly displayGeneration: number;
   };
+  private readonly observations = new Map<string, ObservationLedgerEntry>();
+  private lastPublishedBinding?: DeviceRpcBinding;
+  private closed = true;
 
   public constructor(public readonly deviceRpc: DeviceRpcAdapter) {}
 
@@ -177,6 +196,9 @@ export class FakeBrowserPlane implements BrowserPlane {
     if (!bindingMatches(this.deviceRpc.binding, connection.binding)) {
       throw new Error("Fake BrowserPlane connect result adapter is invalid.");
     }
+    this.observations.clear();
+    this.closed = false;
+    this.lastPublishedBinding = connection.binding;
     this.publishedConnection = {
       binding: connection.binding,
       displayGeneration: connection.displayGeneration,
@@ -188,10 +210,10 @@ export class FakeBrowserPlane implements BrowserPlane {
     ref: SessionRef,
     deadline: Deadline,
   ): Promise<BrowserConnection> {
-    const previous = this.publishedConnection;
+    const previous = this.lastPublishedBinding;
     if (previous === undefined) {
       throw new Error(
-        "Fake BrowserPlane reconnect requires a published connection.",
+        "Fake BrowserPlane reconnect requires a prior published connection.",
       );
     }
     const result = this.requiredResult(
@@ -200,15 +222,18 @@ export class FakeBrowserPlane implements BrowserPlane {
     );
     const connection = this.parseConnection("reconnect", result, ref);
     if (
-      connection.connectionEpoch <= previous.binding.connectionEpoch ||
+      connection.connectionEpoch <= previous.connectionEpoch ||
       connection.browserChannelGeneration <=
-        previous.binding.browserChannelGeneration ||
+        previous.browserChannelGeneration ||
       !bindingMatches(this.deviceRpc.binding, connection.binding)
     ) {
       throw new Error(
         "Fake BrowserPlane reconnect result generations are invalid.",
       );
     }
+    this.observations.clear();
+    this.closed = false;
+    this.lastPublishedBinding = connection.binding;
     this.publishedConnection = {
       binding: connection.binding,
       displayGeneration: connection.displayGeneration,
@@ -221,7 +246,7 @@ export class FakeBrowserPlane implements BrowserPlane {
     request: CaptureRequest,
     deadline: Deadline,
   ): Promise<Observation> {
-    this.assertCurrentRef(ref);
+    this.assertPublishedRef(ref);
     const result = this.requiredResult(
       "capture",
       this.scenarios.consume(
@@ -238,9 +263,17 @@ export class FakeBrowserPlane implements BrowserPlane {
       ),
     );
     const parsed = observationSchema.safeParse(result);
-    if (!parsed.success || !this.captureMatches(request, parsed.data)) {
+    if (
+      !parsed.success ||
+      !this.captureMatches(request, parsed.data) ||
+      this.observations.has(parsed.data.observationId)
+    ) {
       throw new Error("Fake BrowserPlane capture result is invalid.");
     }
+    this.observations.set(parsed.data.observationId, {
+      observation: parsed.data,
+      state: "available",
+    });
     return parsed.data;
   }
 
@@ -249,28 +282,29 @@ export class FakeBrowserPlane implements BrowserPlane {
     request: MouseRequest,
     deadline: Deadline,
   ): Promise<MutationReceipt> {
-    this.assertCurrentRef(ref);
-    const result = this.requiredResult(
-      "mouse",
-      this.scenarios.consume(
+    return this.withObservation(ref, request.observationId, () => {
+      const result = this.requiredResult(
         "mouse",
-        {
-          ref: { ...ref },
-          request: {
-            observationId: request.observationId,
-            requestId: request.requestId,
-            actionCount: request.actions.length,
+        this.scenarios.consume(
+          "mouse",
+          {
+            ref: { ...ref },
+            request: {
+              observationId: request.observationId,
+              requestId: request.requestId,
+              actionCount: request.actions.length,
+            },
           },
-        },
-        deadline,
-      ),
-    );
-    return this.parseMutationReceipt(
-      "mouse",
-      result,
-      request.requestId,
-      request.actions.length,
-    );
+          deadline,
+        ),
+      );
+      return this.parseMutationReceipt(
+        "mouse",
+        result,
+        request.requestId,
+        request.actions.length,
+      );
+    });
   }
 
   public async keyboard(
@@ -278,28 +312,29 @@ export class FakeBrowserPlane implements BrowserPlane {
     request: KeyboardRequest,
     deadline: Deadline,
   ): Promise<MutationReceipt> {
-    this.assertCurrentRef(ref);
-    const result = this.requiredResult(
-      "keyboard",
-      this.scenarios.consume(
+    return this.withObservation(ref, request.observationId, () => {
+      const result = this.requiredResult(
         "keyboard",
-        {
-          ref: { ...ref },
-          request: {
-            observationId: request.observationId,
-            requestId: request.requestId,
-            actionCount: request.actions.length,
+        this.scenarios.consume(
+          "keyboard",
+          {
+            ref: { ...ref },
+            request: {
+              observationId: request.observationId,
+              requestId: request.requestId,
+              actionCount: request.actions.length,
+            },
           },
-        },
-        deadline,
-      ),
-    );
-    return this.parseMutationReceipt(
-      "keyboard",
-      result,
-      request.requestId,
-      request.actions.length,
-    );
+          deadline,
+        ),
+      );
+      return this.parseMutationReceipt(
+        "keyboard",
+        result,
+        request.requestId,
+        request.actions.length,
+      );
+    });
   }
 
   public async paste(
@@ -307,47 +342,48 @@ export class FakeBrowserPlane implements BrowserPlane {
     request: PasteRequest,
     deadline: Deadline,
   ): Promise<PasteReceipt> {
-    this.assertCurrentRef(ref);
-    const normalizedText = normalizePasteText(request.text);
-    const originalBytes = Buffer.from(request.text, "utf8");
-    const normalizedBytes = Buffer.from(normalizedText, "utf8");
-    const originalSha256 = createHash("sha256")
-      .update(originalBytes)
-      .digest("hex");
-    const normalizedSha256 = createHash("sha256")
-      .update(normalizedBytes)
-      .digest("hex");
-    const result = this.requiredResult(
-      "paste",
-      this.scenarios.consume(
+    return this.withObservation(ref, request.observationId, () => {
+      const normalizedText = normalizePasteText(request.text);
+      const originalBytes = Buffer.from(request.text, "utf8");
+      const normalizedBytes = Buffer.from(normalizedText, "utf8");
+      const originalSha256 = createHash("sha256")
+        .update(originalBytes)
+        .digest("hex");
+      const normalizedSha256 = createHash("sha256")
+        .update(normalizedBytes)
+        .digest("hex");
+      const result = this.requiredResult(
         "paste",
-        {
-          ref: { ...ref },
-          request: {
-            observationId: request.observationId,
-            requestId: request.requestId,
-            originalByteCount: originalBytes.byteLength,
-            originalSha256,
-            normalizedByteCount: normalizedBytes.byteLength,
-            normalizedSha256,
+        this.scenarios.consume(
+          "paste",
+          {
+            ref: { ...ref },
+            request: {
+              observationId: request.observationId,
+              requestId: request.requestId,
+              originalByteCount: originalBytes.byteLength,
+              originalSha256,
+              normalizedByteCount: normalizedBytes.byteLength,
+              normalizedSha256,
+            },
           },
-        },
-        deadline,
-      ),
-    );
-    const parsed = pasteReceiptSchema.safeParse(result);
-    if (
-      !parsed.success ||
-      parsed.data.requestId !== request.requestId ||
-      parsed.data.dispatchedCount !== normalizedBytes.byteLength ||
-      parsed.data.completedCount !== normalizedBytes.byteLength ||
-      parsed.data.originalByteCount !== originalBytes.byteLength ||
-      parsed.data.normalizedByteCount !== normalizedBytes.byteLength ||
-      parsed.data.normalizedSha256 !== normalizedSha256
-    ) {
-      throw new Error("Fake BrowserPlane paste receipt is invalid.");
-    }
-    return parsed.data;
+          deadline,
+        ),
+      );
+      const parsed = pasteReceiptSchema.safeParse(result);
+      if (
+        !parsed.success ||
+        parsed.data.requestId !== request.requestId ||
+        parsed.data.dispatchedCount !== normalizedBytes.byteLength ||
+        parsed.data.completedCount !== normalizedBytes.byteLength ||
+        parsed.data.originalByteCount !== originalBytes.byteLength ||
+        parsed.data.normalizedByteCount !== normalizedBytes.byteLength ||
+        parsed.data.normalizedSha256 !== normalizedSha256
+      ) {
+        throw new Error("Fake BrowserPlane paste receipt is invalid.");
+      }
+      return parsed.data;
+    });
   }
 
   public async release(
@@ -355,7 +391,7 @@ export class FakeBrowserPlane implements BrowserPlane {
     request: ReleaseRequest,
     deadline: Deadline,
   ): Promise<ReleaseReceipt> {
-    this.assertCurrentRef(ref);
+    this.assertPublishedRef(ref);
     const result = this.requiredResult(
       "release",
       this.scenarios.consume(
@@ -377,7 +413,10 @@ export class FakeBrowserPlane implements BrowserPlane {
   }
 
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
-    this.assertCurrentRef(ref);
+    this.assertPublishedRef(ref);
+    this.closed = true;
+    delete this.publishedConnection;
+    this.observations.clear();
     const result = this.scenarios.consume(
       "close",
       { ref: { ...ref } },
@@ -385,6 +424,67 @@ export class FakeBrowserPlane implements BrowserPlane {
     );
     if (result !== undefined) {
       throw new Error("Fake BrowserPlane close result is invalid.");
+    }
+  }
+
+  private withObservation<T>(
+    ref: SessionRef,
+    observationId: string,
+    operation: () => T,
+  ): T {
+    const entry = this.reserveObservation(ref, observationId);
+    const eventCount = this.scenarios.events().length;
+    try {
+      this.assertObservationMatches(ref, entry, "reserved");
+      const result = operation();
+      entry.state = "consumed";
+      return result;
+    } catch (error) {
+      const stepConsumed = this.scenarios.events().length !== eventCount;
+      entry.state =
+        !stepConsumed ||
+        (error instanceof PlaneFaultError &&
+          error.outcome === "not_sent" &&
+          !error.writeBegan)
+          ? "available"
+          : "consumed";
+      throw error;
+    }
+  }
+
+  private reserveObservation(
+    ref: SessionRef,
+    observationId: string,
+  ): ObservationLedgerEntry {
+    this.assertPublishedRef(ref);
+    const entry = this.observations.get(observationId);
+    if (entry === undefined) {
+      throw new Error("Fake BrowserPlane observation is unseen.");
+    }
+    this.assertObservationMatches(ref, entry, "available");
+    entry.state = "reserved";
+    return entry;
+  }
+
+  private assertObservationMatches(
+    ref: SessionRef,
+    entry: ObservationLedgerEntry,
+    expectedState: ObservationLedgerEntry["state"],
+  ): void {
+    const publication = this.publishedConnection;
+    const observation = entry.observation;
+    if (
+      publication === undefined ||
+      entry.state !== expectedState ||
+      observation.sessionId !== ref.sessionId ||
+      observation.sessionGeneration !== ref.sessionGeneration ||
+      observation.connectionEpoch !== publication.binding.connectionEpoch ||
+      observation.displayGeneration !== publication.displayGeneration ||
+      observation.monotonicAgeMs > MAX_OBSERVATION_AGE_MS
+    ) {
+      throw new Error(
+        "Fake BrowserPlane observation is stale, foreign, or consumed.",
+      );
     }
   }
 
@@ -440,21 +540,13 @@ export class FakeBrowserPlane implements BrowserPlane {
     const sourceHeight = rotated
       ? observation.sourceWidth
       : observation.sourceHeight;
-    const expectedMimeType =
-      request.format === "jpeg" ? "image/jpeg" : "image/png";
-    const maximumBytes =
-      observation.image.mimeType === "image/jpeg"
-        ? 2 * 1024 * 1024
-        : 8 * 1024 * 1024;
+    const expectedFormat = request.format;
     return (
+      observation.sessionId === published.binding.sessionId &&
       observation.sessionGeneration === published.binding.sessionGeneration &&
       observation.connectionEpoch === published.binding.connectionEpoch &&
       observation.displayGeneration === published.displayGeneration &&
-      observation.image.mimeType === expectedMimeType &&
-      observation.image.bytes.byteLength > 0 &&
-      observation.image.bytes.byteLength <= maximumBytes &&
-      createHash("sha256").update(observation.image.bytes).digest("hex") ===
-        observation.image.sha256 &&
+      observation.format === expectedFormat &&
       observation.imageWidth <= request.maxWidth &&
       observation.imageHeight <= request.maxHeight &&
       observation.imageWidth <= sourceWidth &&
@@ -466,6 +558,19 @@ export class FakeBrowserPlane implements BrowserPlane {
       observation.geometry.contentY + observation.geometry.contentHeight <=
         observation.imageHeight
     );
+  }
+
+  private assertPublishedRef(ref: SessionRef): void {
+    this.assertCurrentRef(ref);
+    const publication = this.publishedConnection;
+    if (
+      this.closed ||
+      publication === undefined ||
+      publication.binding.sessionId !== ref.sessionId ||
+      publication.binding.sessionGeneration !== ref.sessionGeneration
+    ) {
+      throw new Error("Fake BrowserPlane has no published connection.");
+    }
   }
 
   private assertCurrentRef(ref: SessionRef): void {

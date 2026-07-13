@@ -19,69 +19,19 @@ function deadline(timeoutMs = 1_000, signal = new AbortController().signal) {
   return { timeoutMs, signal };
 }
 
-function displayWireResult() {
+function displayWireResult(overrides: Record<string, unknown> = {}) {
   return {
-    signal: {
-      value: "present",
-      observed_at: "2026-07-13T00:00:00.000Z",
-      age_ms: 5,
-      freshness: "fresh",
-      source: "cached_snapshot",
-    },
-    resolution: {
-      value: { width: 1920, height: 1080, refresh_hz: 60 },
-      observed_at: "2026-07-13T00:00:00.000Z",
-      age_ms: 5,
-      freshness: "fresh",
-      source: "cached_snapshot",
-    },
-    fps: {
-      value: 60,
-      observed_at: "2026-07-13T00:00:00.000Z",
-      age_ms: 5,
-      freshness: "fresh",
-      source: "cached_snapshot",
-    },
-  };
-}
-
-function atxWireResult(overrides: Record<string, unknown> = {}) {
-  return {
-    request_id: "request-a",
-    action: "press_power",
-    wire_action: "power-short",
-    fixed_press_ms: 200,
-    serial_sequence_completed: true,
-    acknowledged_at: "2026-07-13T00:00:00.000Z",
-    atx_led_observation: {
-      power: null,
-      hdd: null,
-      observed_at: null,
-      freshness: "unknown",
-    },
+    ready: true,
+    streaming: 1,
+    width: 1920,
+    height: 1080,
+    fps: 60,
     ...overrides,
   };
 }
-function edidWireResult() {
-  return {
-    status: "available",
-    read_completed: true,
-    reason: null,
-    observed_at: "2026-07-13T00:00:00.000Z",
-    data: {
-      sha256: "a".repeat(64),
-      manufacturer_id: null,
-      product_code: 1,
-      serial_number: "serial-a",
-      display_name: null,
-      preferred_resolution: {
-        width: 1920,
-        height: 1080,
-        refresh_hz: 60,
-      },
-    },
-  };
-}
+
+const RAW_EDID =
+  "00ffffffffffff0052620188008888881c150103800000780a0dc9a05747982712484c00000001010101010101010101010101010101023a801871382d40582c4500c48e2100001e011d007251d01e206e285500c48e2100001e000000fc00543734392d6648443732300a20000000fd00147801ff1d000a202020202020017b";
 
 function expectDeviceError(error: unknown, expected: Partial<DeviceRpcError>) {
   expect(error).toBeInstanceOf(DeviceRpcError);
@@ -194,6 +144,73 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
     expect(adapter.binding).toEqual(BINDING);
     expect(channel.isClosed()).toBe(false);
   });
+  it("rejects an already-closed replacement before invalidating the old binding", () => {
+    const oldChannel = new FakeDeviceRpcChannel();
+    const nextChannel = new FakeDeviceRpcChannel();
+    nextChannel.close();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+    let published = false;
+
+    expect(() =>
+      adapter.replaceBinding(
+        { ...BINDING, browserChannelGeneration: 14 },
+        nextChannel,
+        () => {
+          published = true;
+        },
+      ),
+    ).toThrow(/replacement channel is closed/i);
+
+    expect(adapter.binding).toEqual(BINDING);
+    expect(oldChannel.isClosed()).toBe(false);
+    expect(published).toBe(false);
+  });
+
+  it("rechecks replacement readiness after old invalidation and before publish", () => {
+    const nextChannel = new FakeDeviceRpcChannel();
+    const oldChannel = new FakeDeviceRpcChannel({
+      onClose: () => nextChannel.close(),
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+    let published = false;
+
+    expect(() =>
+      adapter.replaceBinding(
+        { ...BINDING, browserChannelGeneration: 14 },
+        nextChannel,
+        () => {
+          published = true;
+        },
+      ),
+    ).toThrow(/replacement channel closed during takeover/i);
+
+    expect(adapter.binding).toEqual(BINDING);
+    expect(published).toBe(false);
+  });
+
+  it("detaches the old event source during replacement", async () => {
+    const oldChannel = new FakeDeviceRpcChannel();
+    const nextChannel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+    const nextBinding = { ...BINDING, browserChannelGeneration: 14 };
+    adapter.replaceBinding(nextBinding, nextChannel);
+
+    oldChannel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "videoInputState",
+        params: displayWireResult(),
+      }),
+    );
+    nextChannel.close();
+
+    await expect(
+      adapter.readDisplayState(nextBinding, deadline()),
+    ).rejects.toMatchObject({
+      code: "CONNECTION_LOST",
+      outcome: "not_sent",
+    });
+  });
 });
 
 describe("DeviceRpcAdapter timing and replacement fences", () => {
@@ -251,11 +268,7 @@ describe("DeviceRpcAdapter timing and replacement fences", () => {
     const oldChannel = new FakeDeviceRpcChannel();
     const nextChannel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
-    const first = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
+    const first = adapter.readDisplayState(BINDING, deadline());
     await oldChannel.waitForWrites(1);
     const queued = adapter.readEdid(BINDING, deadline());
 
@@ -294,11 +307,7 @@ describe("DeviceRpcAdapter timing and replacement fences", () => {
     adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
 
     const error = await adapter
-      .performAtx(
-        BINDING,
-        { requestId: "request-a", action: "press_power" },
-        deadline(),
-      )
+      .readDisplayState(BINDING, deadline())
       .catch((caught) => caught);
 
     expectDeviceError(error, {
@@ -313,11 +322,7 @@ describe("DeviceRpcAdapter timing and replacement fences", () => {
     const oldChannel = new FakeDeviceRpcChannel();
     const nextChannel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
+    const pending = adapter.readDisplayState(BINDING, deadline());
     await oldChannel.waitForWrites(1);
 
     adapter.replaceBinding({ ...BINDING, sessionGeneration: 8 }, nextChannel);
@@ -373,138 +378,123 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
 
     await expect(pending).resolves.toMatchObject({
       signal: { value: "present", source: "cached_snapshot" },
-      resolution: { value: { width: 1920, height: 1080, refreshHz: 60 } },
+      resolution: { value: { width: 1920, height: 1080, refreshHz: null } },
     });
   });
 
-  it.each([
-    [
-      "source-none metadata with an observation timestamp",
-      {
-        value: "unknown",
-        observed_at: "2026-06-10T10:00:00.000Z",
-        age_ms: null,
-        freshness: "unknown",
-        source: "none",
-      },
-    ],
-    [
-      "source-none metadata with an observation age",
-      {
-        value: "unknown",
-        observed_at: null,
-        age_ms: 1,
-        freshness: "unknown",
-        source: "none",
-      },
-    ],
-    [
-      "source-none metadata marked fresh",
-      {
-        value: "unknown",
-        observed_at: null,
-        age_ms: null,
-        freshness: "fresh",
-        source: "none",
-      },
-    ],
-    [
-      "cached metadata without an observation timestamp",
-      {
-        value: "present",
-        observed_at: null,
-        age_ms: 1,
-        freshness: "fresh",
-        source: "cached_snapshot",
-      },
-    ],
-    [
-      "cached metadata without an observation age",
-      {
-        value: "present",
-        observed_at: "2026-06-10T10:00:00.000Z",
-        age_ms: null,
-        freshness: "fresh",
-        source: "cached_event",
-      },
-    ],
-    [
-      "cached metadata with unknown freshness",
-      {
-        value: "present",
-        observed_at: "2026-06-10T10:00:00.000Z",
-        age_ms: 1,
-        freshness: "unknown",
-        source: "cached_snapshot",
-      },
-    ],
-  ] as const)("fails closed on %s", async (_label, signal) => {
+  it("adapts the actual flat native.VideoState snapshot and omits proxy streaming", async () => {
     const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      observedAt: () => "2026-07-13T00:00:00.000Z",
+    });
     const pending = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
-    channel.respondToWrite(0, { ...displayWireResult(), signal });
-
-    const error = await pending.catch((caught) => caught);
-
-    expectDeviceError(error, {
-      code: "MALFORMED_RESPONSE",
-      boundary: "ack",
-      outcome: "unknown",
-    });
-  });
-
-  it("maps every legal wire fact variant without weakening qualification", async () => {
-    const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.readDisplayState(BINDING, deadline());
-    await channel.waitForWrites(1);
-    channel.respondToWrite(0, {
-      signal: {
-        value: "no_lock",
-        observed_at: "2026-06-10T10:00:00.000Z",
-        age_ms: 42,
-        freshness: "stale",
-        source: "cached_event",
-      },
-      resolution: {
-        value: { width: 1920, height: 1080, refresh_hz: 60 },
-        observed_at: "2026-06-10T10:00:01.000Z",
-        age_ms: 0,
-        freshness: "fresh",
-        source: "cached_snapshot",
-      },
-      fps: {
-        value: null,
-        observed_at: null,
-        age_ms: null,
-        freshness: "unknown",
-        source: "none",
-      },
-    });
+    channel.respondToWrite(
+      0,
+      displayWireResult({
+        ready: false,
+        streaming: 2,
+        error: "no_lock",
+      }),
+    );
 
     await expect(pending).resolves.toEqual({
       signal: {
         value: "no_lock",
-        observedAt: "2026-06-10T10:00:00.000Z",
-        ageMs: 42,
-        freshness: "stale",
-        source: "cached_event",
+        observedAt: "2026-07-13T00:00:00.000Z",
+        ageMs: 0,
+        freshness: "fresh",
+        source: "cached_snapshot",
       },
       resolution: {
-        value: { width: 1920, height: 1080, refreshHz: 60 },
-        observedAt: "2026-06-10T10:00:01.000Z",
+        value: { width: 1920, height: 1080, refreshHz: null },
+        observedAt: "2026-07-13T00:00:00.000Z",
         ageMs: 0,
         freshness: "fresh",
         source: "cached_snapshot",
       },
       fps: {
-        value: null,
-        observedAt: null,
-        ageMs: null,
-        freshness: "unknown",
-        source: "none",
+        value: 60,
+        observedAt: "2026-07-13T00:00:00.000Z",
+        ageMs: 0,
+        freshness: "fresh",
+        source: "cached_snapshot",
       },
+      qualification: "current_binding",
+    });
+  });
+
+  it("accepts an idle videoInputState event as cached_event without an RPC call", async () => {
+    let nowMs = 10_000;
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      now: () => nowMs,
+      observedAt: () => "2026-07-13T00:00:00.000Z",
+    });
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "videoInputState",
+        params: displayWireResult({
+          ready: false,
+          streaming: 0,
+          error: "no_signal",
+          width: 0,
+          height: 0,
+          fps: 0,
+        }),
+      }),
+    );
+    nowMs += 250;
+    channel.close();
+
+    await expect(
+      adapter.readDisplayState(BINDING, deadline()),
+    ).resolves.toMatchObject({
+      signal: {
+        value: "no_signal",
+        source: "cached_event",
+        ageMs: 250,
+        freshness: "stale",
+      },
+      resolution: {
+        value: null,
+        source: "cached_event",
+        ageMs: 250,
+        freshness: "stale",
+      },
+      fps: {
+        value: null,
+        source: "cached_event",
+        ageMs: 250,
+        freshness: "stale",
+      },
+      qualification: "binding_lost_cached_only",
+    });
+    expect(channel.writes()).toHaveLength(0);
+  });
+
+  it("routes an interleaved videoInputState event without failing the correlated response", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      observedAt: () => "2026-07-13T00:00:00.000Z",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "videoInputState",
+        params: displayWireResult({
+          ready: false,
+          error: "out_of_range",
+        }),
+      }),
+    );
+    channel.respondToWrite(0, displayWireResult());
+
+    await expect(pending).resolves.toMatchObject({
+      signal: { value: "present", source: "cached_snapshot" },
       qualification: "current_binding",
     });
   });
@@ -664,7 +654,7 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
     const pending = adapter.readEdid(BINDING, deadline());
     await oldChannel.waitForWrites(1);
-    oldChannel.respondToWrite(0, edidWireResult());
+    oldChannel.respondToWrite(0, RAW_EDID);
     await Promise.resolve();
     adapter.replaceBinding(
       { ...BINDING, browserChannelGeneration: 14 },
@@ -726,19 +716,17 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     expect(channel.writes()).toHaveLength(0);
   });
 
-  it("rejects an invalid semantic power request before admission", async () => {
+  it("rejects an invalid semantic power request without a write", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
 
-    const error = await adapter
-      .performAtx(
+    await expect(
+      adapter.performAtx(
         BINDING,
         { requestId: "request-a", action: "arbitrary_duration" as never },
         deadline(),
-      )
-      .catch((caught) => caught);
-
-    expectDeviceError(error, {
+      ),
+    ).rejects.toMatchObject({
       code: "INVALID_REQUEST",
       boundary: "admission",
       outcome: "not_sent",
@@ -747,9 +735,9 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
   });
 
   it.each(["request id", "-request", `r${"a".repeat(128)}`])(
-    "rejects a noncanonical opaque request ID %s",
+    "rejects a noncanonical opaque power request ID %s without a write",
     async (requestId) => {
-      const channel = new FakeDeviceRpcChannel({ rejectWrite: true });
+      const channel = new FakeDeviceRpcChannel();
       const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
 
       await expect(
@@ -766,126 +754,36 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     },
   );
 
-  it("accepts the 128-character opaque request ID boundary", async () => {
+  it("fails a current compatible-looking ATX request closed without calling the best-effort router", async () => {
     const requestId = `r${"a".repeat(127)}`;
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId, action: "press_power" },
-      deadline(),
-    );
-    await channel.waitForWrites(1);
-    channel.respondToWrite(0, atxWireResult({ request_id: requestId }));
 
-    await expect(pending).resolves.toMatchObject({ requestId });
-  });
-
-  it.each([
-    [
-      "fresh observation without a timestamp",
-      { power: true, hdd: false, observed_at: null, freshness: "fresh" },
-    ],
-    [
-      "unknown observation with a timestamp",
-      {
-        power: null,
-        hdd: null,
-        observed_at: "2026-07-13T00:00:00.000Z",
-        freshness: "unknown",
-      },
-    ],
-    [
-      "unknown observation with an LED fact",
-      { power: true, hdd: null, observed_at: null, freshness: "unknown" },
-    ],
-  ] as const)(
-    "rejects an incoherent ATX %s",
-    async (_label, atxLedObservation) => {
-      const channel = new FakeDeviceRpcChannel();
-      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-      const pending = adapter.performAtx(
+    await expect(
+      adapter.performAtx(
         BINDING,
-        { requestId: "request-a", action: "press_power" },
+        { requestId, action: "press_power" },
         deadline(),
-      );
-      await channel.waitForWrites(1);
-      channel.respondToWrite(
-        0,
-        atxWireResult({ atx_led_observation: atxLedObservation }),
-      );
-
-      const error = await pending.catch((caught) => caught);
-
-      expectDeviceError(error, {
-        code: "MALFORMED_RESPONSE",
-        boundary: "ack",
-        outcome: "unknown",
-      });
-    },
-  );
-
-  it("maps an observed ATX LED snapshot with qualified provenance", async () => {
-    const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
-    await channel.waitForWrites(1);
-    channel.respondToWrite(
-      0,
-      atxWireResult({
-        atx_led_observation: {
-          power: true,
-          hdd: null,
-          observed_at: "2026-07-13T00:00:00.000Z",
-          freshness: "stale",
-        },
-      }),
-    );
-
-    await expect(pending).resolves.toMatchObject({
-      atxLedObservation: {
-        power: true,
-        hdd: null,
-        observedAt: "2026-07-13T00:00:00.000Z",
-        freshness: "stale",
-      },
+      ),
+    ).rejects.toMatchObject({
+      code: "INCOMPATIBLE_DOWNSTREAM",
+      boundary: "admission",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
     });
+    expect(channel.writes()).toHaveLength(0);
   });
 
-  it.each([
-    [
-      "fact age",
-      {
-        ...displayWireResult(),
-        signal: {
-          ...displayWireResult().signal,
-          age_ms: Number.MAX_SAFE_INTEGER + 1,
-        },
-      },
-    ],
-    [
-      "resolution width",
-      {
-        ...displayWireResult(),
-        resolution: {
-          ...displayWireResult().resolution,
-          value: {
-            ...displayWireResult().resolution.value,
-            width: Number.MAX_SAFE_INTEGER + 1,
-          },
-        },
-      },
-    ],
-  ])("rejects an unsafe display integer in %s", async (_label, response) => {
+  it("rejects unsafe flat native.VideoState dimensions", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
     const pending = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
-    channel.respondToWrite(0, response);
+    channel.respondToWrite(
+      0,
+      displayWireResult({ width: Number.MAX_SAFE_INTEGER + 1 }),
+    );
 
     await expect(pending).rejects.toMatchObject({
       code: "MALFORMED_RESPONSE",
@@ -893,97 +791,90 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
-  it("rejects unsafe EDID and preferred-resolution integers", async () => {
-    const base = edidWireResult();
-    const unsafe = Number.MAX_SAFE_INTEGER + 1;
-    const responses = [
-      { ...base, data: { ...base.data, product_code: unsafe } },
-      {
-        ...base,
-        data: {
-          ...base.data,
-          preferred_resolution: {
-            ...base.data.preferred_resolution,
-            height: unsafe,
-          },
-        },
-      },
-    ];
-
-    for (const response of responses) {
-      const channel = new FakeDeviceRpcChannel();
-      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-      const pending = adapter.readEdid(BINDING, deadline());
-      await channel.waitForWrites(1);
-      channel.respondToWrite(0, response);
-      await expect(pending).rejects.toMatchObject({
-        code: "MALFORMED_RESPONSE",
-        outcome: "unknown",
-      });
-    }
-  });
-
-  it("maps maximum-safe display and EDID integer boundaries", async () => {
+  it("maps the maximum-safe flat native.VideoState dimension", async () => {
     const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const displayResult = displayWireResult();
-    const displayPending = adapter.readDisplayState(BINDING, deadline());
-    await channel.waitForWrites(1);
-    channel.respondToWrite(0, {
-      ...displayResult,
-      signal: {
-        ...displayResult.signal,
-        age_ms: Number.MAX_SAFE_INTEGER,
-      },
-      resolution: {
-        ...displayResult.resolution,
-        value: {
-          ...displayResult.resolution.value,
-          width: Number.MAX_SAFE_INTEGER,
-        },
-      },
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      observedAt: () => "2026-07-13T00:00:00.000Z",
     });
-    await expect(displayPending).resolves.toMatchObject({
-      signal: { ageMs: Number.MAX_SAFE_INTEGER },
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(
+      0,
+      displayWireResult({ width: Number.MAX_SAFE_INTEGER }),
+    );
+
+    await expect(pending).resolves.toMatchObject({
       resolution: { value: { width: Number.MAX_SAFE_INTEGER } },
     });
+  });
 
-    const edidResult = edidWireResult();
-    const edidPending = adapter.readEdid(BINDING, deadline());
-    await channel.waitForWrites(2);
-    channel.respondToWrite(1, {
-      ...edidResult,
-      data: {
-        ...edidResult.data,
-        product_code: Number.MAX_SAFE_INTEGER,
-        preferred_resolution: {
-          ...edidResult.data.preferred_resolution,
-          width: Number.MAX_SAFE_INTEGER,
-          height: Number.MAX_SAFE_INTEGER,
-        },
-      },
+  it("adapts the actual raw getEDID string result", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      observedAt: () => "2026-07-13T00:00:00.000Z",
     });
-    await expect(edidPending).resolves.toMatchObject({
+    const pending = adapter.readEdid(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, RAW_EDID);
+
+    await expect(pending).resolves.toMatchObject({
+      status: "available",
+      readCompleted: true,
+      reason: null,
+      observedAt: "2026-07-13T00:00:00.000Z",
       data: {
-        productCode: Number.MAX_SAFE_INTEGER,
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        manufacturerId: "TSB",
+        productCode: 34_817,
+        displayName: "T749-fHD720",
         preferredResolution: {
-          width: Number.MAX_SAFE_INTEGER,
-          height: Number.MAX_SAFE_INTEGER,
+          width: 1920,
+          height: 1080,
         },
       },
     });
   });
 
-  it("redacts malformed downstream payloads and classifies them after write as unknown", async () => {
+  it.each(["", null])(
+    "maps a successful empty getEDID result %p only to unavailable",
+    async (result) => {
+      const channel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+        observedAt: () => "2026-07-13T00:00:00.000Z",
+      });
+      const pending = adapter.readEdid(BINDING, deadline());
+      await channel.waitForWrites(1);
+      channel.respondToWrite(0, result);
+
+      await expect(pending).resolves.toEqual({
+        status: "unavailable",
+        readCompleted: true,
+        reason: "successful_read_reported_no_edid",
+        observedAt: "2026-07-13T00:00:00.000Z",
+        data: null,
+      });
+    },
+  );
+
+  it("preserves a getEDID router error instead of fabricating unavailable", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
+    const pending = adapter.readEdid(BINDING, deadline());
     await channel.waitForWrites(1);
+    channel.respondWithError(0);
 
+    await expect(pending).rejects.toMatchObject({
+      code: "DOWNSTREAM_ERROR",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
+
+  it("redacts malformed downstream payloads on the read path", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
     channel.emitRaw('{"credential":"super-secret","id":');
     const error = await pending.catch((caught) => caught);
 
@@ -996,132 +887,44 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     expect(JSON.stringify(error)).not.toContain("super-secret");
   });
 
-  it("rejects a duplicate correlated response instead of accepting ambiguous acknowledgement", async () => {
+  it("rejects a duplicate correlated read response", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
+    const pending = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
+    channel.respondToWrite(0, displayWireResult(), { duplicate: true });
 
-    channel.respondToWrite(0, atxWireResult(), { duplicate: true });
-    const error = await pending.catch((caught) => caught);
-
-    expectDeviceError(error, {
+    await expect(pending).rejects.toMatchObject({
       code: "DUPLICATE_RESPONSE",
       boundary: "ack",
       outcome: "unknown",
     });
   });
 
-  it("preserves a definitive acknowledgement when its post-read failed", async () => {
+  it("classifies channel loss after a read write as unknown", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
+    const pending = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
-
-    channel.respondToWrite(
-      0,
-      atxWireResult({ post_read_error: { code: "LED_READ_UNAVAILABLE" } }),
-    );
-
-    await expect(pending).resolves.toMatchObject({
-      requestId: "request-a",
-      serialSequenceCompleted: true,
-      verification: "device_ack_only",
-      postRead: { status: "unavailable" },
-    });
-  });
-
-  it("classifies mid-flight loss and close after mutation write as unknown", async () => {
-    const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
-    const pending = adapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(),
-    );
-    await channel.waitForWrites(1);
-
     channel.close();
-    const error = await pending.catch((caught) => caught);
 
-    expectDeviceError(error, {
+    await expect(pending).rejects.toMatchObject({
       code: "CONNECTION_LOST",
       boundary: "ack",
       outcome: "unknown",
     });
   });
 
-  it("cancels before write as not_sent and after write as unknown", async () => {
-    const before = new AbortController();
-    before.abort();
-    const beforeChannel = new FakeDeviceRpcChannel();
-    const beforeAdapter = new GenerationFencedDeviceRpcAdapter(
-      BINDING,
-      beforeChannel,
-    );
-    const beforeError = await beforeAdapter
-      .performAtx(
-        BINDING,
-        { requestId: "request-a", action: "press_power" },
-        deadline(1_000, before.signal),
-      )
-      .catch((caught) => caught);
-    expectDeviceError(beforeError, {
-      code: "CANCELLED",
-      boundary: "admission",
-      outcome: "not_sent",
-    });
-
-    const after = new AbortController();
-    const afterChannel = new FakeDeviceRpcChannel();
-    const afterAdapter = new GenerationFencedDeviceRpcAdapter(
-      BINDING,
-      afterChannel,
-    );
-    const pending = afterAdapter.performAtx(
-      BINDING,
-      { requestId: "request-a", action: "press_power" },
-      deadline(1_000, after.signal),
-    );
-    await afterChannel.waitForWrites(1);
-    after.abort();
-    const afterError = await pending.catch((caught) => caught);
-    expectDeviceError(afterError, {
-      code: "CANCELLED",
-      boundary: "ack",
-      outcome: "unknown",
-    });
-  });
-
-  it("ages only observed cached facts and preserves source-none facts", async () => {
+  it("ages every observed native.VideoState fact from the local observation time", async () => {
     let nowMs = 10_000;
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
       now: () => nowMs,
+      observedAt: () => "2026-07-13T00:00:00.000Z",
     });
     const first = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
-    const wireResult = displayWireResult();
-    channel.respondToWrite(0, {
-      ...wireResult,
-      resolution: { ...wireResult.resolution, age_ms: 20 },
-      fps: {
-        ...wireResult.fps,
-        value: null,
-        observed_at: null,
-        age_ms: null,
-        freshness: "unknown",
-        source: "none",
-      },
-    });
+    channel.respondToWrite(0, displayWireResult());
     await first;
     nowMs += 1_250;
     channel.close();
@@ -1129,15 +932,9 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     const cached = await adapter.readDisplayState(BINDING, deadline());
 
     expect(cached).toMatchObject({
-      signal: { ageMs: 1_255, freshness: "stale" },
-      resolution: { ageMs: 1_270, freshness: "stale" },
-      fps: {
-        value: null,
-        observedAt: null,
-        ageMs: null,
-        freshness: "unknown",
-        source: "none",
-      },
+      signal: { ageMs: 1_250, freshness: "stale" },
+      resolution: { ageMs: 1_250, freshness: "stale" },
+      fps: { ageMs: 1_250, freshness: "stale" },
       qualification: "binding_lost_cached_only",
     });
     expect(channel.writes()).toHaveLength(1);

@@ -59,6 +59,14 @@ export type MutationState = {
   required_next_step: RequiredNextStep;
 };
 
+export type DefinitiveMutationState = {
+  request_id: string;
+  outcome: "applied" | "already_applied";
+  verification: "device_state_verified" | "device_ack_only";
+  safe_to_retry: false;
+  required_next_step: "none";
+};
+
 export type Success<T> = {
   ok: true;
   tool: JetKvmToolName;
@@ -118,7 +126,7 @@ export type SessionConnectInput = {
   takeover?: boolean;
   timeout_ms: number;
 };
-export type SessionConnectResult = MutationState & {
+export type SessionConnectResult = DefinitiveMutationState & {
   state: "ready";
   connection_epoch: number;
   display_generation: number;
@@ -181,7 +189,7 @@ export type SessionReconnectInput = {
   takeover?: boolean;
   timeout_ms: number;
 };
-export type SessionReconnectResult = MutationState & {
+export type SessionReconnectResult = DefinitiveMutationState & {
   previous_session_generation: number;
   new_session_generation: number;
   connection_epoch: number;
@@ -290,7 +298,7 @@ export type InputMouseInput = {
   actions: MouseAction[];
   timeout_ms: number;
 };
-export type InputMouseResult = MutationState & {
+export type InputMouseResult = DefinitiveMutationState & {
   dispatched_action_count: number;
   completed_action_count: number;
   post_capture: DisplayCaptureResult | null;
@@ -416,7 +424,7 @@ export type InputKeyboardInput = {
   actions: KeyboardAction[];
   timeout_ms: number;
 };
-export type InputKeyboardResult = MutationState & {
+export type InputKeyboardResult = DefinitiveMutationState & {
   dispatched_action_count: number;
   completed_action_count: number;
   held_keys: PhysicalKey[];
@@ -431,7 +439,7 @@ export type InputPasteInput = {
   text: string;
   timeout_ms: number;
 };
-export type InputPasteResult = MutationState & {
+export type InputPasteResult = DefinitiveMutationState & {
   original_byte_count: number;
   normalized_byte_count: number;
   normalized_sha256: string;
@@ -448,14 +456,15 @@ export type InputReleaseInput = {
   request_id: string;
   timeout_ms: number;
 };
-export type InputReleaseResult = MutationState & {
-  mutation_gate_closed: boolean;
-  deferred_producers_joined: boolean;
-  paste_terminal: "cancelled" | "inactive" | "unknown";
-  ordinary_leases_zero: boolean | null;
-  keyboard_zero: boolean | null;
-  pointer_zero: boolean | null;
-  generation_drained: boolean;
+export type InputReleaseResult = DefinitiveMutationState & {
+  verification: "device_state_verified";
+  mutation_gate_closed: true;
+  deferred_producers_joined: true;
+  paste_terminal: "cancelled" | "inactive";
+  ordinary_leases_zero: true;
+  keyboard_zero: true;
+  pointer_zero: true;
+  generation_drained: true;
 };
 
 export type PowerAction = "press_power" | "hold_power" | "press_reset";
@@ -480,13 +489,29 @@ export type AtxLedObservation =
       freshness: "unknown";
     };
 
-export type PowerControlResult = MutationState & {
-  action: PowerAction;
-  wire_action: "power-short" | "power-long" | "reset";
-  fixed_press_ms: 200 | 5000;
-  serial_sequence_completed: boolean;
+type PowerControlResultBase = DefinitiveMutationState & {
+  verification: "device_ack_only";
+  serial_sequence_completed: true;
   atx_led_observation: AtxLedObservation;
 };
+export type PowerControlResult = PowerControlResultBase &
+  (
+    | {
+        action: "press_power";
+        wire_action: "power-short";
+        fixed_press_ms: 200;
+      }
+    | {
+        action: "hold_power";
+        wire_action: "power-long";
+        fixed_press_ms: 5000;
+      }
+    | {
+        action: "press_reset";
+        wire_action: "reset";
+        fixed_press_ms: 200;
+      }
+  );
 
 export type ToolInputByName = {
   jetkvm_display_capture: DisplayCaptureInput;

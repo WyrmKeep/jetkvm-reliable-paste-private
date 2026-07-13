@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export interface SessionRef {
@@ -162,7 +163,8 @@ export type DeviceRpcErrorCode =
   | "WRITE_REJECTED"
   | "MALFORMED_RESPONSE"
   | "DUPLICATE_RESPONSE"
-  | "DOWNSTREAM_ERROR";
+  | "DOWNSTREAM_ERROR"
+  | "INCOMPATIBLE_DOWNSTREAM";
 export type DeviceRpcBoundary = "admission" | "queue" | "send" | "ack";
 export type DeviceRpcOutcome = "not_sent" | "unknown" | "applied";
 
@@ -179,6 +181,8 @@ const SAFE_ERROR_MESSAGES: Record<DeviceRpcErrorCode, string> = {
   MALFORMED_RESPONSE: "The device RPC response was malformed.",
   DUPLICATE_RESPONSE: "The device RPC response was duplicated.",
   DOWNSTREAM_ERROR: "The device RPC operation failed downstream.",
+  INCOMPATIBLE_DOWNSTREAM:
+    "The current device RPC router cannot provide the required receipt.",
 };
 
 export class DeviceRpcError extends Error {
@@ -219,135 +223,24 @@ const positiveSafeIntegerSchema = z
   .min(1)
   .max(Number.MAX_SAFE_INTEGER);
 
-const cachedWireFactMetadataSchema = z
+const nativeVideoStateSchema = z
   .object({
-    observed_at: z.string().datetime(),
-    age_ms: nonNegativeSafeIntegerSchema,
-    freshness: z.enum(["fresh", "stale"]),
-    source: z.enum(["cached_snapshot", "cached_event"]),
-  })
-  .strict();
-const unobservedWireFactMetadataSchema = z
-  .object({
-    observed_at: z.null(),
-    age_ms: z.null(),
-    freshness: z.literal("unknown"),
-    source: z.literal("none"),
-  })
-  .strict();
-const wireFactSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
-  valueSchema: T,
-  unobservedValueSchema: U,
-) =>
-  z.discriminatedUnion("source", [
-    cachedWireFactMetadataSchema.extend({ value: valueSchema }).strict(),
-    unobservedWireFactMetadataSchema
-      .extend({ value: unobservedValueSchema })
-      .strict(),
-  ]);
-const signalFactSchema = wireFactSchema(
-  z.enum(["present", "no_signal", "no_lock", "out_of_range", "unknown"]),
-  z.literal("unknown"),
-);
-const resolutionValueSchema = z
-  .object({
-    width: positiveSafeIntegerSchema,
-    height: positiveSafeIntegerSchema,
-    refresh_hz: z.number().positive().nullable(),
-  })
-  .strict()
-  .nullable();
-const resolutionFactSchema = wireFactSchema(resolutionValueSchema, z.null());
-const fpsFactSchema = wireFactSchema(
-  z.number().nonnegative().nullable(),
-  z.null(),
-);
-const displayStateResultSchema = z
-  .object({
-    signal: signalFactSchema,
-    resolution: resolutionFactSchema,
-    fps: fpsFactSchema,
+    ready: z.boolean(),
+    streaming: z.number().int().min(0).max(2),
+    error: z.string().optional().default(""),
+    width: nonNegativeSafeIntegerSchema,
+    height: nonNegativeSafeIntegerSchema,
+    fps: z.number().nonnegative().finite(),
   })
   .strict();
 
-const edidResultSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      status: z.literal("unsupported"),
-      read_completed: z.literal(false),
-      reason: z.literal("edid_read_capability_absent"),
-      observed_at: z.null(),
-      data: z.null(),
-    })
-    .strict(),
-  z
-    .object({
-      status: z.literal("unavailable"),
-      read_completed: z.literal(true),
-      reason: z.literal("successful_read_reported_no_edid"),
-      observed_at: z.string().datetime(),
-      data: z.null(),
-    })
-    .strict(),
-  z
-    .object({
-      status: z.literal("available"),
-      read_completed: z.literal(true),
-      reason: z.null(),
-      observed_at: z.string().datetime(),
-      data: z
-        .object({
-          sha256: z.string().regex(/^[a-f0-9]{64}$/),
-          manufacturer_id: z.string().nullable(),
-          product_code: nonNegativeSafeIntegerSchema.nullable(),
-          serial_number: z.string().nullable(),
-          display_name: z.string().nullable(),
-          preferred_resolution: z
-            .object({
-              width: positiveSafeIntegerSchema,
-              height: positiveSafeIntegerSchema,
-              refresh_hz: z.number().positive().nullable(),
-            })
-            .strict()
-            .nullable(),
-        })
-        .strict(),
-    })
-    .strict(),
-]);
+const rawEdidResultSchema = z.string().nullable();
 
-const atxLedObservationResultSchema = z.discriminatedUnion("freshness", [
-  z
-    .object({
-      power: z.boolean().nullable(),
-      hdd: z.boolean().nullable(),
-      observed_at: z.string().datetime(),
-      freshness: z.enum(["fresh", "stale"]),
-    })
-    .strict(),
-  z
-    .object({
-      power: z.null(),
-      hdd: z.null(),
-      observed_at: z.null(),
-      freshness: z.literal("unknown"),
-    })
-    .strict(),
-]);
-
-const atxResultSchema = z
+const eventEnvelopeSchema = z
   .object({
-    request_id: opaqueIdSchema,
-    action: z.enum(["press_power", "hold_power", "press_reset"]),
-    wire_action: z.enum(["power-short", "power-long", "reset"]),
-    fixed_press_ms: z.union([z.literal(200), z.literal(5000)]),
-    serial_sequence_completed: z.literal(true),
-    acknowledged_at: z.string().datetime(),
-    atx_led_observation: atxLedObservationResultSchema,
-    post_read_error: z
-      .object({ code: z.string().min(1).max(128) })
-      .strict()
-      .optional(),
+    jsonrpc: z.literal("2.0"),
+    method: z.string().min(1),
+    params: z.unknown(),
   })
   .strict();
 
@@ -377,14 +270,7 @@ const responseEnvelopeSchema = z.union([
     .strict(),
 ]);
 
-const ATX_WIRE_BY_ACTION: Record<
-  AtxAction,
-  { wireAction: AtxWireAction; fixedPressMs: 200 | 5000 }
-> = {
-  press_power: { wireAction: "power-short", fixedPressMs: 200 },
-  hold_power: { wireAction: "power-long", fixedPressMs: 5000 },
-  press_reset: { wireAction: "reset", fixedPressMs: 200 },
-};
+const atxActionSchema = z.enum(["press_power", "hold_power", "press_reset"]);
 
 const CORRELATION_ID_PREFIX = "device-rpc";
 
@@ -436,7 +322,7 @@ function freezeBinding(binding: DeviceRpcBinding): DeviceRpcBinding {
   });
 }
 
-type RpcMethod = "getVideoState" | "getEDID" | "setATXPowerAction";
+type RpcMethod = "getVideoState" | "getEDID";
 type CancelKind = "cancelled" | "deadline" | "replaced";
 
 interface CallCancellation {
@@ -450,6 +336,21 @@ interface ExchangeResult {
   readonly writeBegan: true;
 }
 
+interface PendingExchange {
+  readonly ref: DeviceRpcBinding;
+  readonly expectedRevision: number;
+  readonly expectedChannel: BrowserOwnedRpcChannel;
+  readonly correlationId: string;
+  readonly correlationPrefix: string;
+  readonly correlationSequence: number;
+  readonly resolve: (result: ExchangeResult) => void;
+  readonly reject: (error: DeviceRpcError) => void;
+  settled: boolean;
+  responseSeen: boolean;
+  writeBegan: boolean;
+  receivedResult: unknown;
+}
+
 export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
   private currentBinding: DeviceRpcBinding;
   private channel: BrowserOwnedRpcChannel;
@@ -460,6 +361,8 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
   private sequence = 0;
   private cachedDisplayAtMs: number | undefined;
   private readonly correlationNamespace: string;
+  private stopChannelListening: () => void = () => {};
+  private pendingExchange: PendingExchange | undefined;
 
   public constructor(
     binding: DeviceRpcBinding,
@@ -467,12 +370,14 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     private readonly options: {
       readonly idNamespace?: string;
       readonly now?: () => number;
+      readonly observedAt?: () => string;
     } = {},
   ) {
     assertValidBinding(binding);
     this.currentBinding = freezeBinding(binding);
     this.channel = channel;
     this.correlationNamespace = options.idNamespace ?? crypto.randomUUID();
+    this.attachChannel(channel, this.revision);
   }
 
   public get binding(): DeviceRpcBinding {
@@ -485,19 +390,30 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     publish?: () => void,
   ): void {
     assertValidBinding(next);
+    if (nextChannel.readyState !== "open") {
+      throw new Error("Replacement channel is closed.");
+    }
     this.revision += 1;
     this.revisionAbort.abort();
+    this.stopChannelListening();
+    this.stopChannelListening = () => {};
     this.channel.close();
+    if (nextChannel.readyState !== "open") {
+      throw new Error("Replacement channel closed during takeover.");
+    }
     this.currentBinding = freezeBinding(next);
     this.channel = nextChannel;
     this.cachedDisplay = undefined;
     this.cachedDisplayAtMs = undefined;
     this.revisionAbort = new AbortController();
+    this.attachChannel(nextChannel, this.revision);
     publish?.();
   }
 
   public close(): void {
     this.revisionAbort.abort();
+    this.stopChannelListening();
+    this.stopChannelListening = () => {};
     this.channel.close();
   }
 
@@ -530,25 +446,10 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       {},
       30_000,
     );
-    const parsed = displayStateResultSchema.safeParse(result);
+    const parsed = nativeVideoStateSchema.safeParse(result);
     if (!parsed.success) throw this.protocolError("MALFORMED_RESPONSE", true);
     this.validateReadContinuation(ref, expectedRevision, expectedChannel);
-    const mapped: CachedDisplayState = {
-      signal: this.mapFact(parsed.data.signal),
-      resolution: {
-        ...this.mapFact(parsed.data.resolution),
-        value:
-          parsed.data.resolution.value === null
-            ? null
-            : {
-                width: parsed.data.resolution.value.width,
-                height: parsed.data.resolution.value.height,
-                refreshHz: parsed.data.resolution.value.refresh_hz,
-              },
-      },
-      fps: this.mapFact(parsed.data.fps),
-      qualification: "current_binding",
-    };
+    const mapped = this.mapVideoState(parsed.data, "cached_snapshot");
     this.cachedDisplay = mapped;
     this.cachedDisplayAtMs = this.now();
     return mapped;
@@ -562,39 +463,10 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     const expectedRevision = this.revision;
     const expectedChannel = this.channel;
     const result = await this.enqueue(ref, deadline, "getEDID", {}, 30_000);
-    const parsed = edidResultSchema.safeParse(result);
+    const parsed = rawEdidResultSchema.safeParse(result);
     if (!parsed.success) throw this.protocolError("MALFORMED_RESPONSE", true);
     this.validateReadContinuation(ref, expectedRevision, expectedChannel);
-    if (parsed.data.status !== "available") {
-      return {
-        status: parsed.data.status,
-        readCompleted: parsed.data.read_completed,
-        reason: parsed.data.reason,
-        observedAt: parsed.data.observed_at,
-        data: null,
-      } as QualifiedEdidRead;
-    }
-    return {
-      status: "available",
-      readCompleted: true,
-      reason: null,
-      observedAt: parsed.data.observed_at,
-      data: {
-        sha256: parsed.data.data.sha256,
-        manufacturerId: parsed.data.data.manufacturer_id,
-        productCode: parsed.data.data.product_code,
-        serialNumber: parsed.data.data.serial_number,
-        displayName: parsed.data.data.display_name,
-        preferredResolution:
-          parsed.data.data.preferred_resolution === null
-            ? null
-            : {
-                width: parsed.data.data.preferred_resolution.width,
-                height: parsed.data.data.preferred_resolution.height,
-                refreshHz: parsed.data.data.preferred_resolution.refresh_hz,
-              },
-      },
-    };
+    return this.mapEdidResult(parsed.data);
   }
 
   public async performAtx(
@@ -605,7 +477,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     this.validateAdmission(ref, deadline, 60_000);
     if (
       !isCanonicalOpaqueId(request.requestId) ||
-      !Object.hasOwn(ATX_WIRE_BY_ACTION, request.action)
+      !atxActionSchema.safeParse(request.action).success
     ) {
       throw new DeviceRpcError(
         "INVALID_REQUEST",
@@ -615,58 +487,13 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         false,
       );
     }
-    const semantic = ATX_WIRE_BY_ACTION[request.action];
-    const result = await this.enqueue(
-      ref,
-      deadline,
-      "setATXPowerAction",
-      {
-        request_id: request.requestId,
-        action: request.action,
-        wire_action: semantic.wireAction,
-        fixed_press_ms: semantic.fixedPressMs,
-      },
-      60_000,
+    throw new DeviceRpcError(
+      "INCOMPATIBLE_DOWNSTREAM",
+      "admission",
+      "not_sent",
+      false,
+      false,
     );
-    const parsed = atxResultSchema.safeParse(result);
-    if (!parsed.success) throw this.protocolError("MALFORMED_RESPONSE", true);
-    if (
-      parsed.data.request_id !== request.requestId ||
-      parsed.data.action !== request.action ||
-      parsed.data.wire_action !== semantic.wireAction ||
-      parsed.data.fixed_press_ms !== semantic.fixedPressMs
-    ) {
-      throw this.protocolError("MALFORMED_RESPONSE", true);
-    }
-    return {
-      requestId: parsed.data.request_id,
-      action: parsed.data.action,
-      wireAction: parsed.data.wire_action,
-      fixedPressMs: parsed.data.fixed_press_ms,
-      serialSequenceCompleted: true,
-      acknowledgedAt: parsed.data.acknowledged_at,
-      atxLedObservation:
-        parsed.data.atx_led_observation.freshness === "unknown"
-          ? {
-              power: null,
-              hdd: null,
-              observedAt: null,
-              freshness: "unknown",
-            }
-          : {
-              power: parsed.data.atx_led_observation.power,
-              hdd: parsed.data.atx_led_observation.hdd,
-              observedAt: parsed.data.atx_led_observation.observed_at,
-              freshness: parsed.data.atx_led_observation.freshness,
-            },
-      verification: "device_ack_only",
-      postRead: {
-        status:
-          parsed.data.post_read_error === undefined
-            ? "available"
-            : "unavailable",
-      },
-    };
   }
 
   private validateAdmission(
@@ -806,113 +633,35 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       params: { binding: mapDeviceRpcBindingToWire(ref), ...params },
     });
     return new Promise<ExchangeResult>((resolve, reject) => {
-      let settled = false;
-      let receivedResult: unknown;
-      let responseSeen = false;
-      let writeBegan = false;
-      let stopListening = () => {};
-
-      const finishError = (error: DeviceRpcError) => {
-        if (settled) return;
-        settled = true;
-        stopListening();
-        reject(error);
+      if (this.pendingExchange !== undefined) {
+        reject(this.protocolError("MALFORMED_RESPONSE", false));
+        return;
+      }
+      const exchange: PendingExchange = {
+        ref,
+        expectedRevision,
+        expectedChannel,
+        correlationId,
+        correlationPrefix,
+        correlationSequence,
+        resolve,
+        reject,
+        settled: false,
+        responseSeen: false,
+        writeBegan: false,
+        receivedResult: undefined,
       };
-      const finishSuccess = () => {
-        if (settled || !responseSeen) return;
-        settled = true;
-        stopListening();
-        resolve({ result: receivedResult, writeBegan: true });
-      };
-      stopListening = expectedChannel.listen(
-        (rawPayload) => {
-          if (settled) return;
-          if (
-            this.revision !== expectedRevision ||
-            this.channel !== expectedChannel ||
-            !bindingsEqual(ref, this.currentBinding)
-          ) {
-            finishError(
-              new DeviceRpcError(
-                "BINDING_REPLACED",
-                "ack",
-                "unknown",
-                true,
-                false,
-              ),
-            );
-            return;
-          }
-          let decoded: unknown;
-          try {
-            decoded = JSON.parse(rawPayload) as unknown;
-          } catch {
-            finishError(this.protocolError("MALFORMED_RESPONSE", writeBegan));
-            return;
-          }
-          const envelope = responseEnvelopeSchema.safeParse(decoded);
-          if (!envelope.success) {
-            finishError(this.protocolError("MALFORMED_RESPONSE", writeBegan));
-            return;
-          }
-          if (envelope.data.id !== correlationId) {
-            if (
-              this.isIssuedNoncurrentCorrelationId(
-                envelope.data.id,
-                correlationPrefix,
-                correlationSequence,
-              )
-            ) {
-              return;
-            }
-            finishError(this.protocolError("MALFORMED_RESPONSE", writeBegan));
-            return;
-          }
-          if (responseSeen) {
-            finishError(this.protocolError("DUPLICATE_RESPONSE", writeBegan));
-            return;
-          }
-          responseSeen = true;
-          if ("error" in envelope.data) {
-            finishError(
-              new DeviceRpcError(
-                "DOWNSTREAM_ERROR",
-                "ack",
-                "unknown",
-                true,
-                false,
-              ),
-            );
-            return;
-          }
-          receivedResult = envelope.data.result;
-          queueMicrotask(finishSuccess);
-        },
-        () => {
-          const replaced =
-            this.revision !== expectedRevision ||
-            this.channel !== expectedChannel ||
-            !bindingsEqual(ref, this.currentBinding);
-          finishError(
-            new DeviceRpcError(
-              replaced ? "BINDING_REPLACED" : "CONNECTION_LOST",
-              writeBegan ? "ack" : "send",
-              writeBegan ? "unknown" : "not_sent",
-              writeBegan,
-              false,
-            ),
-          );
-        },
-      );
+      this.pendingExchange = exchange;
 
       const writeResult = expectedChannel.write(payload);
-      writeBegan = writeResult.written;
+      exchange.writeBegan = writeResult.written;
       if (!writeResult.written) {
         const replaced =
           this.revision !== expectedRevision ||
           this.channel !== expectedChannel ||
           !bindingsEqual(ref, this.currentBinding);
-        finishError(
+        this.finishExchangeError(
+          exchange,
           new DeviceRpcError(
             replaced ? "BINDING_REPLACED" : "WRITE_REJECTED",
             "send",
@@ -928,15 +677,158 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         this.channel !== expectedChannel ||
         !bindingsEqual(ref, this.currentBinding)
       ) {
-        finishError(
+        this.finishExchangeError(
+          exchange,
           new DeviceRpcError("BINDING_REPLACED", "ack", "unknown", true, false),
         );
         return;
       }
       void cancellation.promise.then((kind) => {
-        finishError(this.cancellationError(kind, "ack", true));
+        this.finishExchangeError(
+          exchange,
+          this.cancellationError(kind, "ack", true),
+        );
       });
     });
+  }
+
+  private attachChannel(
+    channel: BrowserOwnedRpcChannel,
+    revision: number,
+  ): void {
+    this.stopChannelListening = channel.listen(
+      (rawPayload) => this.handleChannelMessage(channel, revision, rawPayload),
+      () => this.handleChannelClose(channel, revision),
+    );
+  }
+
+  private handleChannelMessage(
+    source: BrowserOwnedRpcChannel,
+    sourceRevision: number,
+    rawPayload: string,
+  ): void {
+    if (source !== this.channel || sourceRevision !== this.revision) return;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(rawPayload) as unknown;
+    } catch {
+      const pending = this.pendingExchange;
+      if (pending !== undefined) {
+        this.finishExchangeError(
+          pending,
+          this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+        );
+      }
+      return;
+    }
+
+    const event = eventEnvelopeSchema.safeParse(decoded);
+    if (event.success) {
+      if (event.data.method === "videoInputState") {
+        const state = nativeVideoStateSchema.safeParse(event.data.params);
+        if (state.success) {
+          this.cachedDisplay = this.mapVideoState(state.data, "cached_event");
+          this.cachedDisplayAtMs = this.now();
+        }
+      }
+      return;
+    }
+
+    const pending = this.pendingExchange;
+    if (pending === undefined || pending.settled) return;
+    if (
+      pending.expectedRevision !== this.revision ||
+      pending.expectedChannel !== this.channel ||
+      !bindingsEqual(pending.ref, this.currentBinding)
+    ) {
+      this.finishExchangeError(
+        pending,
+        new DeviceRpcError("BINDING_REPLACED", "ack", "unknown", true, false),
+      );
+      return;
+    }
+
+    const envelope = responseEnvelopeSchema.safeParse(decoded);
+    if (!envelope.success) {
+      this.finishExchangeError(
+        pending,
+        this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+      );
+      return;
+    }
+    if (envelope.data.id !== pending.correlationId) {
+      if (
+        this.isIssuedNoncurrentCorrelationId(
+          envelope.data.id,
+          pending.correlationPrefix,
+          pending.correlationSequence,
+        )
+      ) {
+        return;
+      }
+      this.finishExchangeError(
+        pending,
+        this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+      );
+      return;
+    }
+    if (pending.responseSeen) {
+      this.finishExchangeError(
+        pending,
+        this.protocolError("DUPLICATE_RESPONSE", pending.writeBegan),
+      );
+      return;
+    }
+    pending.responseSeen = true;
+    if ("error" in envelope.data) {
+      this.finishExchangeError(
+        pending,
+        new DeviceRpcError("DOWNSTREAM_ERROR", "ack", "unknown", true, false),
+      );
+      return;
+    }
+    pending.receivedResult = envelope.data.result;
+    queueMicrotask(() => this.finishExchangeSuccess(pending));
+  }
+
+  private handleChannelClose(
+    source: BrowserOwnedRpcChannel,
+    sourceRevision: number,
+  ): void {
+    if (source !== this.channel || sourceRevision !== this.revision) return;
+    const pending = this.pendingExchange;
+    if (pending === undefined) return;
+    const replaced =
+      pending.expectedRevision !== this.revision ||
+      pending.expectedChannel !== this.channel ||
+      !bindingsEqual(pending.ref, this.currentBinding);
+    this.finishExchangeError(
+      pending,
+      new DeviceRpcError(
+        replaced ? "BINDING_REPLACED" : "CONNECTION_LOST",
+        pending.writeBegan ? "ack" : "send",
+        pending.writeBegan ? "unknown" : "not_sent",
+        pending.writeBegan,
+        false,
+      ),
+    );
+  }
+
+  private finishExchangeError(
+    exchange: PendingExchange,
+    error: DeviceRpcError,
+  ): void {
+    if (exchange.settled) return;
+    exchange.settled = true;
+    if (this.pendingExchange === exchange) this.pendingExchange = undefined;
+    exchange.reject(error);
+  }
+
+  private finishExchangeSuccess(exchange: PendingExchange): void {
+    if (exchange.settled || !exchange.responseSeen) return;
+    exchange.settled = true;
+    if (this.pendingExchange === exchange) this.pendingExchange = undefined;
+    exchange.resolve({ result: exchange.receivedResult, writeBegan: true });
   }
 
   private validateReadContinuation(
@@ -1090,19 +982,158 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     return this.options.now?.() ?? performance.now();
   }
 
-  private mapFact<T>(fact: {
-    readonly value: T;
-    readonly observed_at: string | null;
-    readonly age_ms: number | null;
-    readonly freshness: FactFreshness;
-    readonly source: FactSource;
-  }): QualifiedFact<T> {
+  private observationTimestamp(): string {
+    return this.options.observedAt?.() ?? new Date().toISOString();
+  }
+
+  private mapVideoState(
+    state: z.infer<typeof nativeVideoStateSchema>,
+    source: Exclude<FactSource, "none">,
+  ): CachedDisplayState {
+    const observedAt = this.observationTimestamp();
+    const fact = <T>(value: T): QualifiedFact<T> => ({
+      value,
+      observedAt,
+      ageMs: 0,
+      freshness: "fresh",
+      source,
+    });
+    const signal: NativeSignal = state.ready
+      ? "present"
+      : state.error === "no_signal" ||
+          state.error === "no_lock" ||
+          state.error === "out_of_range"
+        ? state.error
+        : "unknown";
+    const resolution =
+      state.width > 0 && state.height > 0
+        ? {
+            width: state.width,
+            height: state.height,
+            refreshHz: null,
+          }
+        : null;
     return {
-      value: fact.value,
-      observedAt: fact.observed_at,
-      ageMs: fact.age_ms,
-      freshness: fact.freshness,
-      source: fact.source,
+      signal: fact(signal),
+      resolution: fact(resolution),
+      fps: fact(state.fps > 0 ? state.fps : null),
+      qualification: "current_binding",
+    };
+  }
+
+  private mapEdidResult(raw: string | null): QualifiedEdidRead {
+    const observedAt = this.observationTimestamp();
+    if (raw === null || raw.length === 0) {
+      return {
+        status: "unavailable",
+        readCompleted: true,
+        reason: "successful_read_reported_no_edid",
+        observedAt,
+        data: null,
+      };
+    }
+    const normalized = raw.trim().toLowerCase();
+    if (
+      normalized.length < 256 ||
+      normalized.length % 256 !== 0 ||
+      !/^[a-f0-9]+$/.test(normalized)
+    ) {
+      throw this.protocolError("MALFORMED_RESPONSE", true);
+    }
+    const bytes = Uint8Array.from(normalized.match(/.{2}/g) ?? [], (value) =>
+      Number.parseInt(value, 16),
+    );
+    const header = [0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00];
+    if (header.some((value, index) => bytes[index] !== value)) {
+      throw this.protocolError("MALFORMED_RESPONSE", true);
+    }
+    for (let offset = 0; offset < bytes.length; offset += 128) {
+      let checksum = 0;
+      for (let index = offset; index < offset + 128; index += 1) {
+        checksum = (checksum + bytes[index]!) & 0xff;
+      }
+      if (checksum !== 0) {
+        throw this.protocolError("MALFORMED_RESPONSE", true);
+      }
+    }
+
+    const manufacturerCode = bytes[8]! * 256 + bytes[9]!;
+    const manufacturerCharacters = [
+      (manufacturerCode >> 10) & 0x1f,
+      (manufacturerCode >> 5) & 0x1f,
+      manufacturerCode & 0x1f,
+    ];
+    const manufacturerId = manufacturerCharacters.every(
+      (value) => value >= 1 && value <= 26,
+    )
+      ? String.fromCharCode(
+          ...manufacturerCharacters.map((value) => value + 64),
+        )
+      : null;
+    const productCode = bytes[10]! + bytes[11]! * 256;
+    const serial =
+      bytes[12]! +
+      bytes[13]! * 256 +
+      bytes[14]! * 65_536 +
+      bytes[15]! * 16_777_216;
+
+    let displayName: string | null = null;
+    for (const offset of [54, 72, 90, 108]) {
+      if (
+        bytes[offset] === 0 &&
+        bytes[offset + 1] === 0 &&
+        bytes[offset + 2] === 0 &&
+        bytes[offset + 3] === 0xfc
+      ) {
+        const value = String.fromCharCode(
+          ...bytes.slice(offset + 5, offset + 18),
+        )
+          .replace(/[\0\r\n]/g, "")
+          .trim();
+        displayName = value.length === 0 ? null : value;
+        break;
+      }
+    }
+
+    let preferredResolution: NativeResolution | null = null;
+    const pixelClock10Khz = bytes[54]! + bytes[55]! * 256;
+    if (pixelClock10Khz > 0) {
+      const width = bytes[56]! + ((bytes[58]! & 0xf0) << 4);
+      const horizontalBlanking = bytes[57]! + ((bytes[58]! & 0x0f) << 8);
+      const height = bytes[59]! + ((bytes[61]! & 0xf0) << 4);
+      const verticalBlanking = bytes[60]! + ((bytes[61]! & 0x0f) << 8);
+      const horizontalTotal = width + horizontalBlanking;
+      const verticalTotal = height + verticalBlanking;
+      const refreshHz =
+        horizontalTotal > 0 && verticalTotal > 0
+          ? Math.round(
+              (pixelClock10Khz * 10_000 * 100) /
+                horizontalTotal /
+                verticalTotal,
+            ) / 100
+          : null;
+      if (width > 0 && height > 0) {
+        preferredResolution = {
+          width,
+          height,
+          refreshHz: refreshHz !== null && refreshHz > 0 ? refreshHz : null,
+        };
+      }
+    }
+
+    return {
+      status: "available",
+      readCompleted: true,
+      reason: null,
+      observedAt,
+      data: {
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        manufacturerId,
+        productCode,
+        serialNumber: serial === 0 ? null : String(serial),
+        displayName,
+        preferredResolution,
+      },
     };
   }
 }

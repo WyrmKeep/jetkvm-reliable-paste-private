@@ -36,10 +36,15 @@ class FakeChild extends EventEmitter {
       end() {},
     };
     this.killSignals = [];
+    this.autoCloseOnKill = true;
   }
 
   kill(signal) {
     this.killSignals.push(signal);
+    this.onKill?.(signal);
+    if (this.autoCloseOnKill) {
+      queueMicrotask(() => this.emit("close", null, signal));
+    }
     return true;
   }
 }
@@ -126,7 +131,7 @@ for (const [modulePath, exportName] of [
   });
 }
 
-test("stdio runner rejects deterministic early exit and force-kills the child", async () => {
+test("stdio runner rejects deterministic early exit after awaiting child close", async () => {
   const { runInstalledStdioProtocolSmoke } =
     await import("./installed-stdio-protocol-smoke.mjs");
   const child = new FakeChild();
@@ -139,11 +144,15 @@ test("stdio runner rejects deterministic early exit and force-kills the child", 
           cleanupCount += 1;
         }),
       spawnImpl: () => {
-        queueMicrotask(() => child.emit("exit", 1, null));
+        queueMicrotask(() => {
+          child.emit("exit", 1, null);
+          queueMicrotask(() => child.emit("close", 1, null));
+        });
         return child;
       },
       writeFileImpl: async () => {},
       responseDeadlineMs: 20,
+      childCleanupDeadlineMs: 20,
     }),
     (error) => {
       assert.equal(error?.code, "INSTALLED_STDIO_EARLY_TERMINATION");
@@ -155,7 +164,7 @@ test("stdio runner rejects deterministic early exit and force-kills the child", 
     },
   );
 
-  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+  assert.deepEqual(child.killSignals, []);
   assert.equal(cleanupCount, 1);
 });
 
@@ -356,6 +365,80 @@ test("stdio runner bounds stderr without exposing or retaining its flood", async
   });
 });
 
+test("stdio protocol failure waits for delayed child close before temp cleanup", async () => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  child.autoCloseOnKill = false;
+  const events = [];
+  child.onKill = () => {
+    events.push("kill");
+    setTimeout(() => {
+      events.push("close");
+      child.emit("close", null, "SIGKILL");
+    }, 5);
+  };
+
+  await assert.rejects(
+    runInstalledStdioProtocolSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          events.push("cleanup");
+        }),
+      spawnImpl: () => {
+        queueMicrotask(() =>
+          child.stdout.emit("data", "sensitive-malformed-json\n"),
+        );
+        return child;
+      },
+      writeFileImpl: async () => {},
+      responseDeadlineMs: 20,
+      childCleanupDeadlineMs: 20,
+    }),
+    (error) => error?.code === "INSTALLED_STDIO_MALFORMED_JSON",
+  );
+
+  assert.deepEqual(events, ["kill", "close", "cleanup"]);
+});
+
+test("stdio protocol failure bounds a child that ignores SIGKILL and fails closed", async () => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  child.autoCloseOnKill = false;
+  let cleanupCount = 0;
+
+  await assert.rejects(
+    runInstalledStdioProtocolSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          cleanupCount += 1;
+        }),
+      spawnImpl: () => {
+        queueMicrotask(() =>
+          child.stdout.emit("data", "sensitive-malformed-json\n"),
+        );
+        return child;
+      },
+      writeFileImpl: async () => {},
+      responseDeadlineMs: 20,
+      childCleanupDeadlineMs: 5,
+    }),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors[0]?.code, "INSTALLED_STDIO_MALFORMED_JSON");
+      assert.equal(
+        error.errors[1]?.code,
+        "INSTALLED_STDIO_CHILD_CLEANUP_TIMEOUT",
+      );
+      return true;
+    },
+  );
+
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+  assert.equal(cleanupCount, 1);
+});
+
 test("no-reader stdio runner exits from bounded output failure without consuming stdout", async () => {
   const { runInstalledStdioNoReaderSmoke } =
     await import("./installed-stdio-protocol-smoke.mjs");
@@ -380,8 +463,15 @@ test("no-reader stdio runner exits from bounded output failure without consuming
     assert.equal(child.stdout.pauseCount, 1);
     if (child.stdinWriteCount === 14) {
       queueMicrotask(() => {
-        child.stderr.emit("data", "jetkvm-mcp: stdio output queue overflow\n");
         child.emit("exit", 1, null);
+        queueMicrotask(() => {
+          child.stderr.emit(
+            "data",
+            "jetkvm-mcp: stdio output queue overflow\n",
+          );
+          child.stderr.emit("end");
+          child.emit("close", 1, null);
+        });
       });
     }
   };
@@ -407,6 +497,62 @@ test("no-reader stdio runner exits from bounded output failure without consuming
     assert.equal(stream.listenerCount("data"), 0);
     assert.equal(stream.listenerCount("error"), 0);
     assert.equal(stream.destroyCount, 1);
+  }
+});
+
+test("no-reader stdio runner fails closed on absent or mismatched diagnostics", async (t) => {
+  const { runInstalledStdioNoReaderSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  for (const [name, diagnostic] of [
+    ["absent", null],
+    ["mismatched", "jetkvm-mcp: stdio output write timeout\n"],
+  ]) {
+    await t.test(name, async () => {
+      const child = new FakeChild();
+      let cleanupCount = 0;
+      child.onStdinWrite = () => {
+        if (child.stdinWriteCount === 1) {
+          queueMicrotask(() =>
+            child.stdout.emit(
+              "data",
+              `${JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                result: { protocolVersion: "2025-11-25" },
+              })}\n`,
+            ),
+          );
+          return;
+        }
+        if (child.stdinWriteCount === 14) {
+          queueMicrotask(() => {
+            child.emit("exit", 1, null);
+            queueMicrotask(() => {
+              if (diagnostic !== null) child.stderr.emit("data", diagnostic);
+              child.stderr.emit("end");
+              child.emit("close", 1, null);
+            });
+          });
+        }
+      };
+
+      await assert.rejects(
+        runInstalledStdioNoReaderSmoke({
+          prepareInstalledPackageImpl: async () =>
+            installedFixture(async () => {
+              cleanupCount += 1;
+            }),
+          spawnImpl: () => child,
+          writeFileImpl: async () => {},
+          exitDeadlineMs: 20,
+          largeIdSuffixBytes: 32,
+        }),
+        (error) => error?.code === "INSTALLED_STDIO_DIAGNOSTIC_MISMATCH",
+      );
+
+      assert.deepEqual(child.killSignals, []);
+      assert.equal(cleanupCount, 1);
+    });
   }
 });
 

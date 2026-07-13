@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  ErrorCode,
   LATEST_PROTOCOL_VERSION,
   type CallToolResult,
   type JSONRPCMessage,
@@ -1964,5 +1965,152 @@ describe("createMcpServer", () => {
     lifetimeB.abort();
     replacementLifetime.abort();
     await Promise.allSettled([activeB, replacementActive]);
+  });
+
+  it("keeps close pending until aborted handlers finish cleanup and release admission", async () => {
+    const admissionKey = {};
+    const cleanup = Promise.withResolvers<void>();
+    const observedSignals: AbortSignal[] = [];
+    const handler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        observedSignals.push(context.signal);
+        if (!context.signal.aborted) {
+          await new Promise<void>((resolve) =>
+            context.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+        }
+        await cleanup.promise;
+        return businessError("jetkvm_session_status");
+      },
+    );
+    const server = createMcpServer(
+      completeRegistry({ jetkvm_session_status: handler }),
+      { admissionKey },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({
+      name: "close-drain-test",
+      version: "1.0.0",
+    });
+    openClients.push(client);
+    await client.connect(clientTransport);
+    const statusArguments = {
+      session_id: "close-drain-session",
+      session_generation: 1,
+      timeout_ms: 100,
+    };
+    const active = Array.from(
+      { length: TOOL_HANDLER_PER_SESSION_CAPACITY },
+      () =>
+        client.callTool({
+          name: "jetkvm_session_status",
+          arguments: statusArguments,
+        }),
+    );
+    const activeSettled = Promise.allSettled(active);
+    await vi.waitFor(() =>
+      expect(observedSignals).toHaveLength(TOOL_HANDLER_PER_SESSION_CAPACITY),
+    );
+
+    let closeSettled = false;
+    const firstClose = server.close();
+    const secondClose = server.close();
+    expect(secondClose).toBe(firstClose);
+    void firstClose.then(() => {
+      closeSettled = true;
+    });
+    await vi.waitFor(() =>
+      expect(observedSignals.every((signal) => signal.aborted)).toBe(true),
+    );
+    expect(closeSettled).toBe(false);
+
+    const replacement = await connectedClient(completeRegistry(), undefined, {
+      admissionKey,
+    });
+    await expect(
+      replacement.callTool({
+        name: "jetkvm_session_status",
+        arguments: statusArguments,
+      }),
+    ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+
+    cleanup.resolve();
+    await Promise.all([firstClose, secondClose, activeSettled]);
+    expect(closeSettled).toBe(true);
+    await expect(
+      replacement.callTool({
+        name: "jetkvm_session_status",
+        arguments: statusArguments,
+      }),
+    ).resolves.toMatchObject({ isError: true });
+  });
+
+  it("never admits pre-aborted lifetime or request signals", async () => {
+    const admissionKey = {};
+    const handler = vi.fn(async () => businessError("jetkvm_session_connect"));
+    const lifetime = new AbortController();
+    lifetime.abort();
+    const lifetimeClient = await connectedClient(
+      completeRegistry({ jetkvm_session_connect: handler }),
+      undefined,
+      { admissionKey, lifetimeSignal: lifetime.signal },
+    );
+    await expect(
+      lifetimeClient.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "pre-aborted-lifetime", timeout_ms: 100 },
+      }),
+    ).rejects.toMatchObject({ code: ErrorCode.ConnectionClosed });
+    expect(handler).not.toHaveBeenCalled();
+
+    const liveClient = await connectedClient(
+      completeRegistry({ jetkvm_session_connect: handler }),
+      undefined,
+      { admissionKey },
+    );
+    const requestCancellation = new AbortController();
+    requestCancellation.abort();
+    await expect(
+      liveClient.callTool(
+        {
+          name: "jetkvm_session_connect",
+          arguments: { request_id: "pre-aborted-request", timeout_ms: 100 },
+        },
+        undefined,
+        { signal: requestCancellation.signal },
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(handler).not.toHaveBeenCalled();
+
+    const duringParse = new AbortController();
+    const pending = liveClient.callTool(
+      {
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "cancel-during-parse", timeout_ms: 100 },
+      },
+      undefined,
+      { signal: duringParse.signal },
+    );
+    duringParse.abort();
+    await expect(pending).rejects.toMatchObject({
+      code: ErrorCode.RequestTimeout,
+    });
+    await Promise.resolve();
+    expect(handler).not.toHaveBeenCalled();
+
+    await expect(
+      liveClient.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "post-cancel-reuse", timeout_ms: 100 },
+      }),
+    ).resolves.toMatchObject({ isError: true });
+    expect(handler).toHaveBeenCalledOnce();
   });
 });

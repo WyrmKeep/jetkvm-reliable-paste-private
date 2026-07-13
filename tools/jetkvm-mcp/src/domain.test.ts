@@ -7,9 +7,11 @@ import {
   type CapabilitySnapshot,
   type AtxLedObservation,
   type DisplayCaptureResult,
+  type DefinitiveMutationState,
   type KeyboardAction,
   type MutationState,
   type InputPasteResult,
+  type InputReleaseResult,
   type PhysicalKey,
   type SessionConnectInput,
   type SessionConnectResult,
@@ -176,6 +178,79 @@ describe("canonical domain contracts", () => {
     expectTypeOf<
       InputPasteResult["terminal_state"]
     >().toEqualTypeOf<"succeeded">();
+  });
+
+  it("models emergency release success as fully verified literals", () => {
+    const result: InputReleaseResult = {
+      request_id: "request-release",
+      outcome: "applied",
+      verification: "device_state_verified",
+      safe_to_retry: false,
+      required_next_step: "none",
+      mutation_gate_closed: true,
+      deferred_producers_joined: true,
+      paste_terminal: "cancelled",
+      ordinary_leases_zero: true,
+      keyboard_zero: true,
+      pointer_zero: true,
+      generation_drained: true,
+    };
+    expect(result).toEqual({
+      request_id: "request-release",
+      outcome: "applied",
+      verification: "device_state_verified",
+      safe_to_retry: false,
+      required_next_step: "none",
+      mutation_gate_closed: true,
+      deferred_producers_joined: true,
+      paste_terminal: "cancelled",
+      ordinary_leases_zero: true,
+      keyboard_zero: true,
+      pointer_zero: true,
+      generation_drained: true,
+    });
+    expectTypeOf<InputReleaseResult["outcome"]>().toEqualTypeOf<
+      "applied" | "already_applied"
+    >();
+    expectTypeOf<
+      InputReleaseResult["verification"]
+    >().toEqualTypeOf<"device_state_verified">();
+    expectTypeOf<
+      InputReleaseResult["mutation_gate_closed"]
+    >().toEqualTypeOf<true>();
+    expectTypeOf<InputReleaseResult["paste_terminal"]>().toEqualTypeOf<
+      "cancelled" | "inactive"
+    >();
+    expectTypeOf<false>().not.toMatchTypeOf<
+      InputReleaseResult["mutation_gate_closed"]
+    >();
+    expectTypeOf<"unknown">().not.toMatchTypeOf<
+      InputReleaseResult["paste_terminal"]
+    >();
+    expectTypeOf<"not_sent">().not.toMatchTypeOf<
+      InputReleaseResult["outcome"]
+    >();
+  });
+
+  it("keeps sibling mutation successes definitive and power mappings correlated", () => {
+    expectTypeOf<DefinitiveMutationState["outcome"]>().toEqualTypeOf<
+      "applied" | "already_applied"
+    >();
+    expectTypeOf<InputPasteResult["outcome"]>().toEqualTypeOf<
+      DefinitiveMutationState["outcome"]
+    >();
+    expectTypeOf<
+      PowerControlResult["verification"]
+    >().toEqualTypeOf<"device_ack_only">();
+    expectTypeOf<
+      Extract<PowerControlResult, { action: "hold_power" }>["wire_action"]
+    >().toEqualTypeOf<"power-long">();
+    expectTypeOf<
+      Extract<PowerControlResult, { action: "press_reset" }>["fixed_press_ms"]
+    >().toEqualTypeOf<200>();
+    expectTypeOf<
+      PowerControlResult["serial_sequence_completed"]
+    >().toEqualTypeOf<true>();
   });
 
   it("discriminates observed and unknown ATX LED facts", () => {

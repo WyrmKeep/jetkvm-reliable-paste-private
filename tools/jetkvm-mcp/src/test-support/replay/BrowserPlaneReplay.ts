@@ -10,21 +10,23 @@ import {
   type DeviceRpcBinding,
   type SessionRef,
 } from "../../device/DeviceRpcAdapter.js";
-import type {
-  BrowserConnection,
-  BrowserPlane,
-  CaptureRequest,
-  KeyboardRequest,
-  MouseRequest,
-  MutationReceipt,
-  Observation,
-  PasteReceipt,
-  PasteRequest,
-  ReleaseReceipt,
-  ReleaseRequest,
+import {
+  MAX_OBSERVATION_AGE_MS,
+  type BrowserConnection,
+  type BrowserPlane,
+  type CaptureRequest,
+  type KeyboardRequest,
+  type MouseRequest,
+  type MutationReceipt,
+  type Observation,
+  type PasteReceipt,
+  type PasteRequest,
+  type ReleaseReceipt,
+  type ReleaseRequest,
 } from "../../planes/BrowserPlane.js";
 import {
   SanitizedReplayCursor,
+  ReplayRecordedError,
   type JsonValue,
   type SanitizedReplayTape,
 } from "./SanitizedReplayTape.js";
@@ -100,11 +102,13 @@ const connectionSchema = z
 const observationSchema = z
   .object({
     observationId: requestIdSchema,
+    sessionId: requestIdSchema,
     sessionGeneration: positiveIntegerSchema,
     connectionEpoch: positiveIntegerSchema,
     displayGeneration: nonNegativeIntegerSchema,
     frameId: requestIdSchema,
     capturedAt: z.string().datetime(),
+    monotonicAgeMs: nonNegativeIntegerSchema,
     sourceWidth: positiveIntegerSchema,
     sourceHeight: positiveIntegerSchema,
     imageWidth: positiveIntegerSchema,
@@ -117,42 +121,28 @@ const observationSchema = z
     ]),
     geometry: z
       .object({
-        contentX: z.number().nonnegative(),
-        contentY: z.number().nonnegative(),
-        contentWidth: z.number().positive(),
-        contentHeight: z.number().positive(),
+        contentX: z.number().nonnegative().finite(),
+        contentY: z.number().nonnegative().finite(),
+        contentWidth: z.number().positive().finite(),
+        contentHeight: z.number().positive().finite(),
       })
       .strict(),
-    artifact: z.discriminatedUnion("mimeType", [
-      z
-        .object({
-          mimeType: z.literal("image/jpeg"),
-          sha256: sha256Schema,
-          byteLength: z
-            .number()
-            .int()
-            .positive()
-            .max(2 * 1024 * 1024),
-        })
-        .strict(),
-      z
-        .object({
-          mimeType: z.literal("image/png"),
-          sha256: sha256Schema,
-          byteLength: z
-            .number()
-            .int()
-            .positive()
-            .max(8 * 1024 * 1024),
-        })
-        .strict(),
-    ]),
+    format: z.enum(["jpeg", "png"]),
+    sha256: sha256Schema,
+    byteLength: positiveIntegerSchema,
   })
-  .strict();
-
-export interface ReplayFrameArtifactProvider {
-  resolve(sha256: string): Promise<Uint8Array>;
-}
+  .strict()
+  .superRefine((observation, context) => {
+    const maximumBytes =
+      observation.format === "jpeg" ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
+    if (observation.byteLength > maximumBytes) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["byteLength"],
+        message: "Observation artifact exceeds its format limit.",
+      });
+    }
+  });
 
 export interface ReplayDeviceRpcAdapterReplacement {
   invalidate(previous: DeviceRpcAdapter): Promise<void>;
@@ -161,6 +151,11 @@ export interface ReplayDeviceRpcAdapterReplacement {
   ): DeviceRpcAdapter | Promise<DeviceRpcAdapter>;
 }
 
+type ObservationLedgerEntry = {
+  readonly observation: Observation;
+  state: "available" | "reserved" | "consumed";
+};
+
 export class BrowserPlaneReplay implements BrowserPlane {
   private readonly replay: SanitizedReplayCursor;
   private currentDeviceRpc: DeviceRpcAdapter;
@@ -168,11 +163,13 @@ export class BrowserPlaneReplay implements BrowserPlane {
     readonly binding: DeviceRpcBinding;
     readonly displayGeneration: number;
   };
+  private readonly observations = new Map<string, ObservationLedgerEntry>();
+  private lastPublishedBinding?: DeviceRpcBinding;
+  private closed = true;
 
   public constructor(
     deviceRpc: DeviceRpcAdapter,
     tape: SanitizedReplayTape,
-    private readonly frameArtifacts?: ReplayFrameArtifactProvider,
     private readonly replaceDeviceRpc?: ReplayDeviceRpcAdapterReplacement,
   ) {
     this.currentDeviceRpc = deviceRpc;
@@ -204,6 +201,9 @@ export class BrowserPlaneReplay implements BrowserPlane {
         "Replay connect adapter does not match the recorded binding.",
       );
     }
+    this.observations.clear();
+    this.closed = false;
+    this.lastPublishedBinding = parsed.data.binding;
     this.publishedConnection = {
       binding: parsed.data.binding,
       displayGeneration: parsed.data.displayGeneration,
@@ -216,9 +216,11 @@ export class BrowserPlaneReplay implements BrowserPlane {
     deadline: Deadline,
   ): Promise<BrowserConnection> {
     this.validateDeadline(deadline);
-    const previousPublication = this.publishedConnection;
-    if (previousPublication === undefined) {
-      throw new Error("Replay reconnect requires a published connection.");
+    const previousBinding = this.lastPublishedBinding;
+    if (previousBinding === undefined) {
+      throw new Error(
+        "Replay reconnect requires a prior published connection.",
+      );
     }
     const response = this.replay.consume("reconnect", { ref: { ...ref } });
     const parsed = connectionSchema.safeParse(response);
@@ -228,10 +230,9 @@ export class BrowserPlaneReplay implements BrowserPlane {
       throw new Error("Replay reconnect response identity is invalid.");
     }
     if (
-      parsed.data.connectionEpoch <=
-        previousPublication.binding.connectionEpoch ||
+      parsed.data.connectionEpoch <= previousBinding.connectionEpoch ||
       parsed.data.browserChannelGeneration <=
-        previousPublication.binding.browserChannelGeneration
+        previousBinding.browserChannelGeneration
     ) {
       throw new Error("Replay reconnect generations must strictly increase.");
     }
@@ -252,6 +253,9 @@ export class BrowserPlaneReplay implements BrowserPlane {
       );
     }
     this.currentDeviceRpc = replacement;
+    this.observations.clear();
+    this.closed = false;
+    this.lastPublishedBinding = parsed.data.binding;
     this.publishedConnection = {
       binding: parsed.data.binding,
       displayGeneration: parsed.data.displayGeneration,
@@ -265,7 +269,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
     deadline: Deadline,
   ): Promise<Observation> {
     this.validateDeadline(deadline);
-    this.assertCurrentRef(ref);
+    this.assertPublishedRef(ref);
     if (
       !Number.isSafeInteger(request.maxWidth) ||
       request.maxWidth <= 0 ||
@@ -281,8 +285,6 @@ export class BrowserPlaneReplay implements BrowserPlane {
     const parsed = observationSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay capture response shape is invalid.");
-    const expectedMimeType =
-      request.format === "jpeg" ? "image/jpeg" : "image/png";
     const publication = this.publishedConnection;
     const rotated = parsed.data.rotation === 90 || parsed.data.rotation === 270;
     const sourceWidth = rotated
@@ -293,10 +295,11 @@ export class BrowserPlaneReplay implements BrowserPlane {
       : parsed.data.sourceHeight;
     if (
       publication === undefined ||
+      parsed.data.sessionId !== publication.binding.sessionId ||
       parsed.data.sessionGeneration !== publication.binding.sessionGeneration ||
       parsed.data.connectionEpoch !== publication.binding.connectionEpoch ||
       parsed.data.displayGeneration !== publication.displayGeneration ||
-      parsed.data.artifact.mimeType !== expectedMimeType ||
+      parsed.data.format !== request.format ||
       parsed.data.imageWidth > request.maxWidth ||
       parsed.data.imageHeight > request.maxHeight ||
       parsed.data.imageWidth > sourceWidth ||
@@ -306,32 +309,18 @@ export class BrowserPlaneReplay implements BrowserPlane {
       parsed.data.geometry.contentX + parsed.data.geometry.contentWidth >
         parsed.data.imageWidth ||
       parsed.data.geometry.contentY + parsed.data.geometry.contentHeight >
-        parsed.data.imageHeight
+        parsed.data.imageHeight ||
+      this.observations.has(parsed.data.observationId)
     ) {
       throw new Error(
         "Replay capture response does not match the published connection, geometry, or format.",
       );
     }
-    if (this.frameArtifacts === undefined) {
-      throw new Error(
-        "Replay capture requires an external sanitized frame artifact provider.",
-      );
-    }
-    const bytes = await this.frameArtifacts.resolve(
-      parsed.data.artifact.sha256,
-    );
-    if (
-      bytes.byteLength !== parsed.data.artifact.byteLength ||
-      createHash("sha256").update(bytes).digest("hex") !==
-        parsed.data.artifact.sha256
-    ) {
-      throw new Error("Replay frame artifact failed its length or hash proof.");
-    }
-    const { artifact, ...metadata } = parsed.data;
-    return {
-      ...metadata,
-      image: { mimeType: artifact.mimeType, sha256: artifact.sha256, bytes },
-    };
+    this.observations.set(parsed.data.observationId, {
+      observation: parsed.data,
+      state: "available",
+    });
+    return parsed.data;
   }
 
   public async mouse(
@@ -339,13 +328,15 @@ export class BrowserPlaneReplay implements BrowserPlane {
     request: MouseRequest,
     deadline: Deadline,
   ): Promise<MutationReceipt> {
-    return this.consumeReceipt(
-      "mouse",
-      ref,
-      request,
-      deadline,
-      mutationReceiptSchema,
-      request.actions.length,
+    return this.withObservation(ref, request.observationId, () =>
+      this.consumeReceipt(
+        "mouse",
+        ref,
+        request,
+        deadline,
+        mutationReceiptSchema,
+        request.actions.length,
+      ),
     );
   }
 
@@ -354,13 +345,15 @@ export class BrowserPlaneReplay implements BrowserPlane {
     request: KeyboardRequest,
     deadline: Deadline,
   ): Promise<MutationReceipt> {
-    return this.consumeReceipt(
-      "keyboard",
-      ref,
-      request,
-      deadline,
-      mutationReceiptSchema,
-      request.actions.length,
+    return this.withObservation(ref, request.observationId, () =>
+      this.consumeReceipt(
+        "keyboard",
+        ref,
+        request,
+        deadline,
+        mutationReceiptSchema,
+        request.actions.length,
+      ),
     );
   }
 
@@ -369,46 +362,47 @@ export class BrowserPlaneReplay implements BrowserPlane {
     request: PasteRequest,
     deadline: Deadline,
   ): Promise<PasteReceipt> {
-    this.validateDeadline(deadline);
-    this.assertCurrentRef(ref);
-    const normalizedText = (
-      request.text.startsWith("\uFEFF") ? request.text.slice(1) : request.text
-    )
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n")
-      .normalize("NFC");
-    const originalBytes = Buffer.from(request.text, "utf8");
-    const normalizedBytes = Buffer.from(normalizedText, "utf8");
-    const originalSha256 = createHash("sha256")
-      .update(originalBytes)
-      .digest("hex");
-    const normalizedSha256 = createHash("sha256")
-      .update(normalizedBytes)
-      .digest("hex");
-    const response = this.replay.consume("paste", {
-      ref: { ...ref },
-      request: {
-        observationId: request.observationId,
-        requestId: request.requestId,
-        originalByteCount: originalBytes.byteLength,
-        originalSha256,
-        normalizedByteCount: normalizedBytes.byteLength,
-        normalizedSha256,
-      },
+    return this.withObservation(ref, request.observationId, async () => {
+      this.validateDeadline(deadline);
+      const normalizedText = (
+        request.text.startsWith("\uFEFF") ? request.text.slice(1) : request.text
+      )
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .normalize("NFC");
+      const originalBytes = Buffer.from(request.text, "utf8");
+      const normalizedBytes = Buffer.from(normalizedText, "utf8");
+      const originalSha256 = createHash("sha256")
+        .update(originalBytes)
+        .digest("hex");
+      const normalizedSha256 = createHash("sha256")
+        .update(normalizedBytes)
+        .digest("hex");
+      const response = this.replay.consume("paste", {
+        ref: { ...ref },
+        request: {
+          observationId: request.observationId,
+          requestId: request.requestId,
+          originalByteCount: originalBytes.byteLength,
+          originalSha256,
+          normalizedByteCount: normalizedBytes.byteLength,
+          normalizedSha256,
+        },
+      });
+      const parsed = pasteReceiptSchema.safeParse(response);
+      if (
+        !parsed.success ||
+        parsed.data.requestId !== request.requestId ||
+        parsed.data.dispatchedCount !== normalizedBytes.byteLength ||
+        parsed.data.completedCount !== normalizedBytes.byteLength ||
+        parsed.data.originalByteCount !== originalBytes.byteLength ||
+        parsed.data.normalizedByteCount !== normalizedBytes.byteLength ||
+        parsed.data.normalizedSha256 !== normalizedSha256
+      ) {
+        throw new Error("Replay paste receipt correlation is invalid.");
+      }
+      return parsed.data;
     });
-    const parsed = pasteReceiptSchema.safeParse(response);
-    if (
-      !parsed.success ||
-      parsed.data.requestId !== request.requestId ||
-      parsed.data.dispatchedCount !== normalizedBytes.byteLength ||
-      parsed.data.completedCount !== normalizedBytes.byteLength ||
-      parsed.data.originalByteCount !== originalBytes.byteLength ||
-      parsed.data.normalizedByteCount !== normalizedBytes.byteLength ||
-      parsed.data.normalizedSha256 !== normalizedSha256
-    ) {
-      throw new Error("Replay paste receipt correlation is invalid.");
-    }
-    return parsed.data;
   }
 
   public async release(
@@ -428,7 +422,10 @@ export class BrowserPlaneReplay implements BrowserPlane {
 
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
     this.validateDeadline(deadline);
-    this.assertCurrentRef(ref);
+    this.assertPublishedRef(ref);
+    this.closed = true;
+    delete this.publishedConnection;
+    this.observations.clear();
     const response = this.replay.consume("close", { ref: { ...ref } });
     if (response !== null)
       throw new Error("Replay close response must be null.");
@@ -449,7 +446,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
     expectedCount: number,
   ): Promise<T> {
     this.validateDeadline(deadline);
-    this.assertCurrentRef(ref);
+    this.assertPublishedRef(ref);
     const response = this.replay.consume(operation, {
       ref: { ...ref },
       request: JSON.parse(JSON.stringify(request)) as JsonValue,
@@ -464,6 +461,80 @@ export class BrowserPlaneReplay implements BrowserPlane {
       throw new Error(`Replay ${operation} receipt correlation is invalid.`);
     }
     return parsed.data;
+  }
+
+  private async withObservation<T>(
+    ref: SessionRef,
+    observationId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const entry = this.reserveObservation(ref, observationId);
+    const position = this.replay.position;
+    try {
+      this.assertObservationMatches(ref, entry, "reserved");
+      const result = await operation();
+      entry.state = "consumed";
+      return result;
+    } catch (error) {
+      const stepConsumed = this.replay.position !== position;
+      entry.state =
+        !stepConsumed ||
+        (error instanceof ReplayRecordedError &&
+          error.outcome === "not_sent" &&
+          !error.writeBegan)
+          ? "available"
+          : "consumed";
+      throw error;
+    }
+  }
+
+  private reserveObservation(
+    ref: SessionRef,
+    observationId: string,
+  ): ObservationLedgerEntry {
+    this.assertPublishedRef(ref);
+    const entry = this.observations.get(observationId);
+    if (entry === undefined) {
+      throw new Error("Replay BrowserPlane observation is unseen.");
+    }
+    this.assertObservationMatches(ref, entry, "available");
+    entry.state = "reserved";
+    return entry;
+  }
+
+  private assertObservationMatches(
+    ref: SessionRef,
+    entry: ObservationLedgerEntry,
+    expectedState: ObservationLedgerEntry["state"],
+  ): void {
+    const publication = this.publishedConnection;
+    const observation = entry.observation;
+    if (
+      publication === undefined ||
+      entry.state !== expectedState ||
+      observation.sessionId !== ref.sessionId ||
+      observation.sessionGeneration !== ref.sessionGeneration ||
+      observation.connectionEpoch !== publication.binding.connectionEpoch ||
+      observation.displayGeneration !== publication.displayGeneration ||
+      observation.monotonicAgeMs > MAX_OBSERVATION_AGE_MS
+    ) {
+      throw new Error(
+        "Replay BrowserPlane observation is stale, foreign, or consumed.",
+      );
+    }
+  }
+
+  private assertPublishedRef(ref: SessionRef): void {
+    this.assertCurrentRef(ref);
+    const publication = this.publishedConnection;
+    if (
+      this.closed ||
+      publication === undefined ||
+      publication.binding.sessionId !== ref.sessionId ||
+      publication.binding.sessionGeneration !== ref.sessionGeneration
+    ) {
+      throw new Error("Replay BrowserPlane has no published connection.");
+    }
   }
 
   private connectionMatchesRef(

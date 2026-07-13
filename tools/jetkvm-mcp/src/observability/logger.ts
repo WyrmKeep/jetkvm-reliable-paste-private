@@ -19,9 +19,17 @@ const EXACT_SENSITIVE_FIELDS: Readonly<Record<string, true>> = {
   edid: true,
   key: true,
   keys: true,
+  heldkey: true,
+  heldkeys: true,
+  keysequence: true,
+  keysequences: true,
   manufacturerid: true,
   productcode: true,
+  pressedkey: true,
+  pressedkeys: true,
   serialnumber: true,
+  typedkey: true,
+  typedkeys: true,
 };
 const SENSITIVE_FIELD =
   /(?:address|authorization|authority|base64|bearer|bytes|clipboard|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
@@ -89,7 +97,11 @@ export function createStructuredLogger(
       event: SAFE_EVENT_NAME.test(event) ? event : REDACTED,
       fields: redactedFields,
     };
-    sink.write(`${JSON.stringify(record)}\n`);
+    const serializedRecord = JSON.stringify(record).replace(
+      /[\u2028\u2029]/gu,
+      (separator) => (separator === "\u2028" ? "\\u2028" : "\\u2029"),
+    );
+    sink.write(`${serializedRecord}\n`);
   };
 
   return Object.freeze({
@@ -145,6 +157,41 @@ function redactValue(
       message: REDACTED,
     };
   }
+  if (value instanceof String) {
+    try {
+      return redactString(
+        String.prototype.valueOf.call(value),
+        ancestors,
+        errorContext,
+      );
+    } catch {
+      return REDACTED;
+    }
+  }
+  if (value instanceof Number) {
+    try {
+      return Number.prototype.valueOf.call(value);
+    } catch {
+      return REDACTED;
+    }
+  }
+  if (value instanceof Boolean) {
+    try {
+      return Boolean.prototype.valueOf.call(value);
+    } catch {
+      return REDACTED;
+    }
+  }
+  if (value instanceof BigInt) {
+    try {
+      return BigInt.prototype.valueOf.call(value).toString(10);
+    } catch {
+      return REDACTED;
+    }
+  }
+  if (!Array.isArray(value) && !isPlainObject(value)) {
+    return REDACTED;
+  }
   if (ancestors.has(value)) {
     return REDACTED;
   }
@@ -152,7 +199,18 @@ function redactValue(
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      return value.map((item) => redactValue(item, ancestors, errorContext));
+      const redactedArray = new Array<unknown>(value.length);
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, index);
+        if (descriptor === undefined) {
+          continue;
+        }
+        redactedArray[index] =
+          "value" in descriptor
+            ? redactValue(descriptor.value, ancestors, errorContext)
+            : REDACTED;
+      }
+      return redactedArray;
     }
 
     const redactData = isEncodedBinaryDataContainer(value);
@@ -317,6 +375,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const prototype: object | null = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  try {
+    const prototype: object | null = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
 }

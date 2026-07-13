@@ -53,6 +53,7 @@ interface LegacySseServerConstructionProof {
   readonly owner: object;
   readonly scheme: "http" | "https";
   readonly connectionsCheckingIntervalMs: number;
+  readonly absoluteHeaderTimeoutMs: number;
   readonly tlsHandshakeTimeoutMs: number | null;
   readonly absoluteTlsHandshakeTimeoutMs: number | null;
 }
@@ -99,7 +100,7 @@ interface StreamAdmission {
 
 interface PostAdmission {
   readonly principalId: string;
-  readonly sessionId: string;
+  readonly sessionBucketKey: string;
   released: boolean;
 }
 
@@ -210,6 +211,11 @@ export class LegacySseAdapter {
         void this.handleRequest(request, response);
       },
     );
+    installAbsoluteHeaderDeadline(
+      server,
+      this.#securityPolicy.requestHeaderTimeoutMs,
+      "http",
+    );
     return this.#proveAndAttachServer(server, "http", null, null);
   }
 
@@ -229,6 +235,7 @@ export class LegacySseAdapter {
       },
     );
     installAbsoluteTlsHandshakeDeadline(server, handshakeTimeout);
+    installAbsoluteHeaderDeadline(server, handshakeTimeout, "https");
     return this.#proveAndAttachServer(
       server,
       "https",
@@ -257,6 +264,9 @@ export class LegacySseAdapter {
       proof.scheme !== this.#securityPolicy.scheme ||
       proof.connectionsCheckingIntervalMs <= 0 ||
       proof.connectionsCheckingIntervalMs >
+        this.#securityPolicy.requestHeaderTimeoutMs ||
+      proof.absoluteHeaderTimeoutMs <= 0 ||
+      proof.absoluteHeaderTimeoutMs >
         this.#securityPolicy.requestHeaderTimeoutMs ||
       (proof.scheme === "https" &&
         (proof.tlsHandshakeTimeoutMs === null ||
@@ -338,7 +348,9 @@ export class LegacySseAdapter {
       keepAliveTimeoutBuffer: 0,
       maxHeaderSize: LEGACY_SSE_MAX_HEADER_BYTES,
       insecureHTTPParser: false,
-      requireHostHeader: true,
+      // Middleware owns missing-Host classification so auth remains the first
+      // externally observable decision on both routes.
+      requireHostHeader: false,
     };
   }
 
@@ -353,6 +365,7 @@ export class LegacySseAdapter {
       scheme,
       connectionsCheckingIntervalMs:
         this.#securityPolicy.requestHeaderTimeoutMs,
+      absoluteHeaderTimeoutMs: this.#securityPolicy.requestHeaderTimeoutMs,
       tlsHandshakeTimeoutMs,
       absoluteTlsHandshakeTimeoutMs,
     });
@@ -774,9 +787,10 @@ export class LegacySseAdapter {
     principalId: string,
     sessionId: string,
   ): PostAdmission | undefined {
-    if (!this.#admitPostRate(principalId, sessionId)) return undefined;
+    const sessionBucketKey = postSessionBucketKey(principalId, sessionId);
+    if (!this.#admitPostRate(principalId, sessionBucketKey)) return undefined;
     const principalActive = this.#activePostsByPrincipal.get(principalId) ?? 0;
-    const sessionActive = this.#activePostsBySession.get(sessionId) ?? 0;
+    const sessionActive = this.#activePostsBySession.get(sessionBucketKey) ?? 0;
     if (
       this.#activePosts >= this.#securityPolicy.maxConcurrentPosts ||
       principalActive >= this.#securityPolicy.maxConcurrentPostsPerPrincipal ||
@@ -787,11 +801,11 @@ export class LegacySseAdapter {
 
     this.#activePosts += 1;
     this.#activePostsByPrincipal.set(principalId, principalActive + 1);
-    this.#activePostsBySession.set(sessionId, sessionActive + 1);
-    return { principalId, sessionId, released: false };
+    this.#activePostsBySession.set(sessionBucketKey, sessionActive + 1);
+    return { principalId, sessionBucketKey, released: false };
   }
 
-  #admitPostRate(principalId: string, sessionId: string): boolean {
+  #admitPostRate(principalId: string, sessionBucketKey: string): boolean {
     const now = this.#now();
     const windowStartedAt = this.#postRateWindowStartedAt;
     if (
@@ -805,7 +819,7 @@ export class LegacySseAdapter {
       this.#postRateBySession.clear();
     }
     const principalCount = this.#postRateByPrincipal.get(principalId) ?? 0;
-    const sessionCount = this.#postRateBySession.get(sessionId) ?? 0;
+    const sessionCount = this.#postRateBySession.get(sessionBucketKey) ?? 0;
     if (
       this.#postRateCount >= this.#securityPolicy.postRateLimit ||
       principalCount >= this.#securityPolicy.postRateLimitPerPrincipal ||
@@ -816,7 +830,7 @@ export class LegacySseAdapter {
 
     this.#postRateCount += 1;
     this.#postRateByPrincipal.set(principalId, principalCount + 1);
-    this.#postRateBySession.set(sessionId, sessionCount + 1);
+    this.#postRateBySession.set(sessionBucketKey, sessionCount + 1);
     return true;
   }
 
@@ -825,7 +839,7 @@ export class LegacySseAdapter {
     admission.released = true;
     this.#activePosts -= 1;
     decrementCount(this.#activePostsByPrincipal, admission.principalId);
-    decrementCount(this.#activePostsBySession, admission.sessionId);
+    decrementCount(this.#activePostsBySession, admission.sessionBucketKey);
   }
 
   #reserveRequestBodyBytes(
@@ -1002,6 +1016,79 @@ export class LegacySseAdapter {
   }
 }
 
+interface HeaderDeadlineState {
+  activeRequests: number;
+  timer: NodeJS.Timeout | undefined;
+}
+
+function installAbsoluteHeaderDeadline(
+  server: LegacySseNodeServer,
+  timeoutMs: number,
+  scheme: "http" | "https",
+): void {
+  const states = new WeakMap<Socket, HeaderDeadlineState>();
+  const clearDeadline = (state: HeaderDeadlineState): void => {
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  };
+  const armDeadline = (socket: Socket, state: HeaderDeadlineState): void => {
+    clearDeadline(state);
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      socket.destroy();
+    }, timeoutMs);
+    state.timer.unref();
+  };
+  const registerSocket = (socket: Socket): void => {
+    if (states.has(socket)) {
+      socket.destroy();
+      return;
+    }
+    const state: HeaderDeadlineState = {
+      activeRequests: 0,
+      timer: undefined,
+    };
+    states.set(socket, state);
+    armDeadline(socket, state);
+    socket.once("close", () => clearDeadline(state));
+  };
+
+  if (scheme === "http") {
+    server.on("connection", registerSocket);
+  } else {
+    (server as HttpsServer).on("secureConnection", registerSocket);
+  }
+
+  server.prependListener("request", (request, response) => {
+    const socket = request.socket;
+    const state = states.get(socket);
+    if (state === undefined) {
+      socket.destroy();
+      return;
+    }
+    clearDeadline(state);
+    state.activeRequests += 1;
+    let settled = false;
+    const settleRequest = (): void => {
+      if (settled) return;
+      settled = true;
+      response.off("finish", settleRequest);
+      response.off("close", settleRequest);
+      state.activeRequests -= 1;
+      if (
+        state.activeRequests === 0 &&
+        response.writableFinished &&
+        response.shouldKeepAlive &&
+        !socket.destroyed
+      ) {
+        armDeadline(socket, state);
+      }
+    };
+    response.once("finish", settleRequest);
+    response.once("close", settleRequest);
+  });
+}
+
 function installAbsoluteTlsHandshakeDeadline(
   server: HttpsServer,
   timeoutMs: number,
@@ -1075,6 +1162,8 @@ function requestMatchesListenerPolicy(
     proof.scheme !== policy.scheme ||
     proof.connectionsCheckingIntervalMs <= 0 ||
     proof.connectionsCheckingIntervalMs > policy.requestHeaderTimeoutMs ||
+    proof.absoluteHeaderTimeoutMs <= 0 ||
+    proof.absoluteHeaderTimeoutMs > policy.requestHeaderTimeoutMs ||
     (proof.scheme === "https" &&
       (proof.tlsHandshakeTimeoutMs === null ||
         proof.tlsHandshakeTimeoutMs <= 0 ||
@@ -1396,6 +1485,10 @@ function parseContentLength(value: string | undefined): number | undefined {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+function postSessionBucketKey(principalId: string, sessionId: string): string {
+  return `${principalId.length}:${principalId}${sessionId}`;
+}
+
 async function readBody(
   request: IncomingMessage,
   declaredLength: number | undefined,
@@ -1473,16 +1566,20 @@ async function readBody(
   function onData(chunk: Buffer | string): void {
     armIdleTimer();
     const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if (incoming.byteLength > maximumBodyBytes - byteLength) {
-      settle({ kind: "too_large" });
-      return;
+    try {
+      if (incoming.byteLength > maximumBodyBytes - byteLength) {
+        settle({ kind: "too_large" });
+        return;
+      }
+      if (!ensureCapacity(byteLength + incoming.byteLength)) {
+        settle({ kind: "capacity_exceeded" });
+        return;
+      }
+      incoming.copy(bytes!, byteLength);
+      byteLength += incoming.byteLength;
+    } finally {
+      incoming.fill(0);
     }
-    if (!ensureCapacity(byteLength + incoming.byteLength)) {
-      settle({ kind: "capacity_exceeded" });
-      return;
-    }
-    incoming.copy(bytes!, byteLength);
-    byteLength += incoming.byteLength;
   }
   function onEnd(): void {
     settle({

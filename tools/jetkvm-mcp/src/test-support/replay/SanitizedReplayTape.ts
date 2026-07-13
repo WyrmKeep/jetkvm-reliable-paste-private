@@ -246,38 +246,16 @@ const connectionSchema = z
     displayGeneration: nonNegativeIntegerSchema,
   })
   .strict();
-const observationArtifactSchema = z.discriminatedUnion("mimeType", [
-  z
-    .object({
-      mimeType: z.literal("image/jpeg"),
-      sha256: sha256Schema,
-      byteLength: z
-        .number()
-        .int()
-        .positive()
-        .max(2 * 1024 * 1024),
-    })
-    .strict(),
-  z
-    .object({
-      mimeType: z.literal("image/png"),
-      sha256: sha256Schema,
-      byteLength: z
-        .number()
-        .int()
-        .positive()
-        .max(8 * 1024 * 1024),
-    })
-    .strict(),
-]);
 const observationSchema = z
   .object({
     observationId: opaqueIdSchema,
+    sessionId: opaqueIdSchema,
     sessionGeneration: positiveIntegerSchema,
     connectionEpoch: positiveIntegerSchema,
     displayGeneration: nonNegativeIntegerSchema,
     frameId: opaqueIdSchema,
     capturedAt: timestampSchema,
+    monotonicAgeMs: nonNegativeIntegerSchema,
     sourceWidth: positiveIntegerSchema,
     sourceHeight: positiveIntegerSchema,
     imageWidth: positiveIntegerSchema,
@@ -290,15 +268,28 @@ const observationSchema = z
     ]),
     geometry: z
       .object({
-        contentX: z.number().nonnegative(),
-        contentY: z.number().nonnegative(),
-        contentWidth: z.number().positive(),
-        contentHeight: z.number().positive(),
+        contentX: z.number().nonnegative().finite(),
+        contentY: z.number().nonnegative().finite(),
+        contentWidth: z.number().positive().finite(),
+        contentHeight: z.number().positive().finite(),
       })
       .strict(),
-    artifact: observationArtifactSchema,
+    format: z.enum(["jpeg", "png"]),
+    sha256: sha256Schema,
+    byteLength: positiveIntegerSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((observation, context) => {
+    const maximumBytes =
+      observation.format === "jpeg" ? 2 * 1024 * 1024 : 8 * 1024 * 1024;
+    if (observation.byteLength > maximumBytes) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["byteLength"],
+        message: "Observation artifact exceeds its format limit.",
+      });
+    }
+  });
 const mutationReceiptSchema = z
   .object({
     requestId: requestIdSchema,
@@ -1261,8 +1252,7 @@ const browserCaptureResponseMatchesRequest: ReplayResponseCorrelation = (
 ) => {
   const typedRequest = request as z.infer<typeof captureRequestSchema>;
   const typedResponse = response as z.infer<typeof observationSchema>;
-  const expectedMimeType =
-    typedRequest.request.format === "jpeg" ? "image/jpeg" : "image/png";
+  const expectedFormat = typedRequest.request.format;
   const rotated =
     typedResponse.rotation === 90 || typedResponse.rotation === 270;
   const sourceWidth = rotated
@@ -1272,8 +1262,9 @@ const browserCaptureResponseMatchesRequest: ReplayResponseCorrelation = (
     ? typedResponse.sourceWidth
     : typedResponse.sourceHeight;
   return (
+    typedResponse.sessionId === typedRequest.ref.sessionId &&
     typedResponse.sessionGeneration === typedRequest.ref.sessionGeneration &&
-    typedResponse.artifact.mimeType === expectedMimeType &&
+    typedResponse.format === expectedFormat &&
     typedResponse.imageWidth <= typedRequest.request.maxWidth &&
     typedResponse.imageHeight <= typedRequest.request.maxHeight &&
     typedResponse.imageWidth <= sourceWidth &&

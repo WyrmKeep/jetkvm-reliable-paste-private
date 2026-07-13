@@ -185,6 +185,11 @@ export function parseOperatorConfig(
   input: OperatorConfigInput,
   environment: OperatorConfigEnvironment = {},
 ): Readonly<OperatorConfig> {
+  assertOptionalBoolean(input.allowInsecureHttp, "allowInsecureHttp");
+  assertOptionalBoolean(
+    input.allowDangerousTargetHttp,
+    "allowDangerousTargetHttp",
+  );
   const targetUrl = input.targetUrl ?? environment.JETKVM_TARGET_URL;
   if (targetUrl === undefined || targetUrl.length === 0) {
     throw new OperatorConfigError("A JetKVM target URL is required");
@@ -239,6 +244,13 @@ export function parseOperatorConfig(
 export function parseLegacySsePolicy(
   input: LegacySseConfigInput = {},
 ): Readonly<LegacySseSecurityPolicy> {
+  assertOptionalBoolean(input.enabled, "enabled");
+  assertOptionalBoolean(input.allowNetworkExposure, "allowNetworkExposure");
+  assertOptionalBoolean(input.allowPlaintextHttp, "allowPlaintextHttp");
+  assertOptionalBoolean(
+    input.allowDangerousNetworkPlaintext,
+    "allowDangerousNetworkPlaintext",
+  );
   const enabled = input.enabled ?? false;
   const scheme = input.scheme ?? "https";
   if (scheme !== "https" && scheme !== "http") {
@@ -718,6 +730,12 @@ function credentialSourcesShareIdentity(
     bearer.filePath !== undefined &&
     resolve(target.filePath) === resolve(bearer.filePath)
   );
+}
+
+function assertOptionalBoolean(value: unknown, name: string): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new OperatorConfigError(`${name} must be a boolean`);
+  }
 }
 
 function parseOptionalBoolean(

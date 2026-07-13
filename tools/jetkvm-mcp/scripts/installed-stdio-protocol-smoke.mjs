@@ -255,9 +255,62 @@ async function waitForNoReaderInitialization(
   }
 }
 
-async function waitForNoReaderOverflow(
-  observed,
+async function waitForChildClose(closeOutcome, deadlineMs) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new InstalledStdioProtocolError(
+            "INSTALLED_STDIO_CHILD_CLEANUP_TIMEOUT",
+            "Installed stdio child cleanup deadline exceeded",
+          ),
+        ),
+      deadlineMs,
+    );
+  });
+  try {
+    await Promise.race([closeOutcome, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function closeChildAfterOperation(
+  child,
+  childExited,
+  closeOutcome,
+  deadlineMs,
+) {
+  let killError;
+  if (!childExited) {
+    try {
+      child.kill("SIGKILL");
+    } catch (error) {
+      killError = error;
+    }
+  }
+
+  let closeError;
+  try {
+    await waitForChildClose(closeOutcome, deadlineMs);
+  } catch (error) {
+    closeError = error;
+  }
+  if (killError !== undefined && closeError !== undefined) {
+    throw new AggregateError(
+      [killError, closeError],
+      "Installed stdio child kill and close wait both failed",
+      { cause: killError },
+    );
+  }
+  if (killError !== undefined) throw killError;
+  if (closeError !== undefined) throw closeError;
+}
+
+async function waitForNoReaderShutdown(
   exitOutcome,
+  streamCompletion,
   protocolFailure,
   deadlineMs,
 ) {
@@ -267,8 +320,8 @@ async function waitForNoReaderOverflow(
       () =>
         reject(
           new InstalledStdioProtocolError(
-            "INSTALLED_STDIO_OUTPUT_OVERFLOW_TIMEOUT",
-            "Installed stdio output overflow diagnostic deadline exceeded",
+            "INSTALLED_STDIO_EXIT_TIMEOUT",
+            "Installed stdio child shutdown deadline exceeded",
           ),
         ),
       deadlineMs,
@@ -277,14 +330,14 @@ async function waitForNoReaderOverflow(
   const failed = protocolFailure.then((error) => {
     throw error;
   });
-  const exited = exitOutcome.then(() => {
-    throw new InstalledStdioProtocolError(
-      "INSTALLED_STDIO_EARLY_TERMINATION",
-      "Installed stdio child exited before reporting output overflow",
-    );
-  });
   try {
-    await Promise.race([observed, failed, exited, deadline]);
+    const [outcome] = await Promise.race([
+      Promise.all([exitOutcome, streamCompletion]),
+      failed,
+      deadline,
+    ]);
+    if (outcome.error !== undefined) throw outcome.error;
+    return outcome;
   } finally {
     clearTimeout(timer);
   }
@@ -297,6 +350,7 @@ export async function runInstalledStdioProtocolSmoke({
   responseDeadlineMs = INSTALLED_STDIO_RESPONSE_DEADLINE_MS,
   collectorLimits = DEFAULT_COLLECTOR_LIMITS,
   stderrByteLimit = INSTALLED_STDIO_STDERR_BYTES,
+  childCleanupDeadlineMs = 5_000,
 } = {}) {
   return withInstalledPackage(
     "stdio",
@@ -304,7 +358,9 @@ export async function runInstalledStdioProtocolSmoke({
       let child;
       let protocolFailed = false;
       let protocolError;
-      let killError;
+      let childCleanupError;
+      let childExited = false;
+      let childCloseOutcome;
       let detachChildListeners = () => {};
       try {
         const runner = join(installed.consumer, "stdio-runner.mjs");
@@ -339,6 +395,8 @@ await handle.closed;
         });
         const terminated = Promise.withResolvers();
         const exited = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        childCloseOutcome = closed.promise;
         const collector = new JsonLineCollector({
           termination: terminated.promise,
           deadlineMs: responseDeadlineMs,
@@ -381,6 +439,7 @@ await handle.closed;
           terminated.resolve();
         };
         const onChildExit = (code, signal) => {
+          childExited = true;
           exited.resolve({ code, signal });
           terminated.resolve();
         };
@@ -392,6 +451,9 @@ await handle.closed;
           exited.resolve({ error });
           terminated.resolve();
         };
+        const onChildClose = () => {
+          closed.resolve();
+        };
         const onStdinError = () => {};
         child.stdout.on("data", onStdoutData);
         child.stderr.on("data", onStderrData);
@@ -399,6 +461,7 @@ await handle.closed;
         child.stdout.once("error", onStdoutError);
         child.once("exit", onChildExit);
         child.once("error", onChildError);
+        child.once("close", onChildClose);
         child.stdin.once?.("error", onStdinError);
         detachChildListeners = () => {
           child.stdout.off("data", onStdoutData);
@@ -407,6 +470,7 @@ await handle.closed;
           child.stdout.off("error", onStdoutError);
           child.off("exit", onChildExit);
           child.off("error", onChildError);
+          child.off("close", onChildClose);
           child.stdin.off?.("error", onStdinError);
         };
 
@@ -518,32 +582,37 @@ await handle.closed;
         protocolFailed = true;
         protocolError = error;
       } finally {
-        if (child !== undefined) {
+        if (child !== undefined && childCloseOutcome !== undefined) {
           try {
-            child.kill("SIGKILL");
+            await closeChildAfterOperation(
+              child,
+              childExited,
+              childCloseOutcome,
+              childCleanupDeadlineMs,
+            );
           } catch (error) {
-            killError = error;
+            childCleanupError = error;
           }
           for (const stream of [child.stdin, child.stdout, child.stderr]) {
             try {
               stream.destroy?.();
             } catch (error) {
-              killError ??= error;
+              childCleanupError ??= error;
             }
           }
           detachChildListeners();
         }
       }
 
-      if (protocolFailed && killError !== undefined) {
+      if (protocolFailed && childCleanupError !== undefined) {
         throw new AggregateError(
-          [protocolError, killError],
-          "Installed stdio protocol and forced child termination both failed",
+          [protocolError, childCleanupError],
+          "Installed stdio protocol and child cleanup both failed",
           { cause: protocolError },
         );
       }
       if (protocolFailed) throw protocolError;
-      if (killError !== undefined) throw killError;
+      if (childCleanupError !== undefined) throw childCleanupError;
     },
     { prepareInstalledPackageImpl },
   );
@@ -556,6 +625,7 @@ export async function runInstalledStdioNoReaderSmoke({
   exitDeadlineMs = 15_000,
   stderrByteLimit = INSTALLED_STDIO_STDERR_BYTES,
   largeIdSuffixBytes = INSTALLED_STDIO_LARGE_ID_SUFFIX_BYTES,
+  childCleanupDeadlineMs = 5_000,
 } = {}) {
   return withInstalledPackage(
     "stdio-no-reader",
@@ -565,6 +635,7 @@ export async function runInstalledStdioNoReaderSmoke({
       let operationFailed = false;
       let operationError;
       let childCleanupError;
+      let childCloseOutcome;
       let detachChildListeners = () => {};
       try {
         const runner = join(installed.consumer, "stdio-no-reader-runner.mjs");
@@ -587,7 +658,9 @@ await handle.closed;
         const exited = Promise.withResolvers();
         const initialized = Promise.withResolvers();
         const protocolFailure = Promise.withResolvers();
-        const overflowObserved = Promise.withResolvers();
+        const stderrEnded = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        childCloseOutcome = closed.promise;
         const expectedDiagnostic = "jetkvm-mcp: stdio output queue overflow\n";
         let stderr = "";
         let stderrBytes = 0;
@@ -648,7 +721,9 @@ await handle.closed;
           }
           stderrBytes = nextBytes;
           stderr += chunk;
-          if (stderr === expectedDiagnostic) overflowObserved.resolve();
+        };
+        const onStderrEnd = () => {
+          stderrEnded.resolve();
         };
         const onChildExit = (code, signal) => {
           childExited = true;
@@ -662,19 +737,26 @@ await handle.closed;
             ),
           });
         };
+        const onChildClose = () => {
+          closed.resolve();
+        };
         const onStdinError = () => {};
         child.stdout.on("data", onStdoutData);
         child.stdout.once("error", onStdoutError);
         child.stderr.on("data", onStderrData);
+        child.stderr.once("end", onStderrEnd);
         child.once("exit", onChildExit);
         child.once("error", onChildError);
+        child.once("close", onChildClose);
         child.stdin.once?.("error", onStdinError);
         detachChildListeners = () => {
           child.stdout.off("data", onStdoutData);
           child.stdout.off("error", onStdoutError);
           child.stderr.off("data", onStderrData);
+          child.stderr.off("end", onStderrEnd);
           child.off("exit", onChildExit);
           child.off("error", onChildError);
+          child.off("close", onChildClose);
           child.stdin.off?.("error", onStdinError);
         };
 
@@ -724,32 +806,34 @@ await handle.closed;
           child.stdin.write(`${frame}\n`);
         }
 
-        const shutdownDeadline = Date.now() + exitDeadlineMs;
-        await waitForNoReaderOverflow(
-          overflowObserved.promise,
+        const exit = await waitForNoReaderShutdown(
           exited.promise,
+          Promise.race([stderrEnded.promise, closed.promise]),
           protocolFailure.promise,
           exitDeadlineMs,
         );
-        assert.equal(stderr, expectedDiagnostic);
-        const exit = await waitForChildExit(
-          exited.promise,
-          protocolFailure.promise,
-          Math.max(1, shutdownDeadline - Date.now()),
-        );
+        if (stderr !== expectedDiagnostic) {
+          throw new InstalledStdioProtocolError(
+            "INSTALLED_STDIO_DIAGNOSTIC_MISMATCH",
+            "Installed stdio output overflow diagnostic did not match",
+          );
+        }
         assert.deepEqual(exit, { code: 1, signal: null });
         console.log("installed stdio no-reader smoke ok");
       } catch (error) {
         operationFailed = true;
         operationError = error;
       } finally {
-        if (child !== undefined) {
-          if (!childExited) {
-            try {
-              child.kill("SIGKILL");
-            } catch (error) {
-              childCleanupError = error;
-            }
+        if (child !== undefined && childCloseOutcome !== undefined) {
+          try {
+            await closeChildAfterOperation(
+              child,
+              childExited,
+              childCloseOutcome,
+              childCleanupDeadlineMs,
+            );
+          } catch (error) {
+            childCleanupError = error;
           }
           for (const stream of [child.stdin, child.stdout, child.stderr]) {
             try {

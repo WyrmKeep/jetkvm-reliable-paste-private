@@ -85,6 +85,8 @@ type Entry = InFlightEntry | TerminalEntry;
 export type RequestLedgerSnapshot = Readonly<{
   cacheKnownComplete: boolean;
   size: number;
+  tombstoneCount: number;
+  lostScopeCount: number;
   entries: readonly Readonly<{
     key: RequestLedgerKey;
     digest: string;
@@ -198,6 +200,16 @@ function serializedKey(key: RequestLedgerKey): string {
   ]);
 }
 
+function serializedScope(key: RequestLedgerKey): string {
+  return isConnectKey(key)
+    ? JSON.stringify(["connect-scope", key.principal, key.configuredDevice])
+    : JSON.stringify(["session-scope", key.sessionId, key.sessionGeneration]);
+}
+
+function ledgerFingerprint(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 function cloneKey(key: RequestLedgerKey): RequestLedgerKey {
   return isConnectKey(key)
     ? {
@@ -234,6 +246,8 @@ export class RequestLedger {
   readonly #maxEntries: number;
   readonly #now: () => number;
   readonly #entries = new Map<string, Entry>();
+  readonly #tombstones = new Map<string, string>();
+  readonly #lostScopes = new Set<string>();
   #cacheKnownComplete: boolean;
   #lastNowMs = Number.NEGATIVE_INFINITY;
   #nextToken = 1;
@@ -263,6 +277,8 @@ export class RequestLedger {
     const nowMs = this.#readNow();
     this.#removeExpired(nowMs);
     const mapKey = serializedKey(key);
+    const keyFingerprint = ledgerFingerprint(mapKey);
+    const scopeFingerprint = ledgerFingerprint(serializedScope(key));
     const digest = canonicalInputDigest(normalizedInput);
     const existing = this.#entries.get(mapKey);
 
@@ -284,6 +300,12 @@ export class RequestLedger {
     }
 
     if (!this.#cacheKnownComplete) {
+      return { kind: "cache_lost" };
+    }
+    if (
+      this.#tombstones.has(keyFingerprint) ||
+      this.#lostScopes.has(scopeFingerprint)
+    ) {
       return { kind: "cache_lost" };
     }
     if (this.#entries.size >= this.#maxEntries) {
@@ -371,6 +393,8 @@ export class RequestLedger {
     return {
       cacheKnownComplete: this.#cacheKnownComplete,
       size: this.#entries.size,
+      tombstoneCount: this.#tombstones.size,
+      lostScopeCount: this.#lostScopes.size,
       entries: [...this.#entries.values()].map((entry) => ({
         key: cloneKey(entry.key),
         digest: entry.digest,
@@ -393,15 +417,37 @@ export class RequestLedger {
   }
 
   #removeExpired(nowMs: number): void {
-    let removed = false;
     for (const [mapKey, entry] of this.#entries) {
       if (entry.expiresAtMs <= nowMs) {
         this.#entries.delete(mapKey);
-        removed = true;
+        this.#recordTombstone(mapKey, entry.key);
       }
     }
-    if (removed) {
-      this.#cacheKnownComplete = false;
+  }
+
+  #recordTombstone(mapKey: string, key: RequestLedgerKey): void {
+    const keyFingerprint = ledgerFingerprint(mapKey);
+    const scopeFingerprint = ledgerFingerprint(serializedScope(key));
+    if (this.#tombstones.has(keyFingerprint)) {
+      this.#tombstones.delete(keyFingerprint);
+    }
+    this.#tombstones.set(keyFingerprint, scopeFingerprint);
+    while (this.#tombstones.size > this.#maxEntries) {
+      const oldest = this.#tombstones.entries().next().value as
+        | [string, string]
+        | undefined;
+      if (oldest === undefined) {
+        break;
+      }
+      this.#tombstones.delete(oldest[0]);
+      if (
+        !this.#lostScopes.has(oldest[1]) &&
+        this.#lostScopes.size >= this.#maxEntries
+      ) {
+        this.#cacheKnownComplete = false;
+        continue;
+      }
+      this.#lostScopes.add(oldest[1]);
     }
   }
 }

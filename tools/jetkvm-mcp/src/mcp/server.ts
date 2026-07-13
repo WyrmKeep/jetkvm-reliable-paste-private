@@ -153,32 +153,52 @@ export function createMcpServer(
   );
   const lifetimeController = new AbortController();
   const activeInvocationControllers = new Set<AbortController>();
+  const activeInvocationSettlements = new Set<Promise<void>>();
   const invocationControllersByRequestId = new Map<
     string,
     Set<AbortController>
   >();
+  let closing = false;
+  let drainPromise: Promise<void> | undefined;
+  const detachExternalLifetime = () =>
+    options.lifetimeSignal?.removeEventListener(
+      "abort",
+      onExternalLifetimeAbort,
+    );
   const abortActiveInvocations = () => {
     if (!lifetimeController.signal.aborted) lifetimeController.abort();
     for (const controller of activeInvocationControllers) controller.abort();
     activeInvocationControllers.clear();
     invocationControllersByRequestId.clear();
   };
-  const onExternalLifetimeAbort = () => abortActiveInvocations();
-  if (options.lifetimeSignal?.aborted) {
+  const beginClosing = (): Promise<void> => {
+    if (drainPromise !== undefined) return drainPromise;
+    closing = true;
+    detachExternalLifetime();
     abortActiveInvocations();
+    drainPromise = Promise.all([...activeInvocationSettlements]).then(
+      () => undefined,
+    );
+    return drainPromise;
+  };
+  const onExternalLifetimeAbort = () => {
+    void beginClosing();
+  };
+  if (options.lifetimeSignal?.aborted) {
+    void beginClosing();
   } else {
     options.lifetimeSignal?.addEventListener("abort", onExternalLifetimeAbort, {
       once: true,
     });
   }
   let downstreamCloseHandler: (() => void) | undefined;
+  let downstreamCloseDispatched = false;
   const lifetimeCloseHandler = () => {
-    options.lifetimeSignal?.removeEventListener(
-      "abort",
-      onExternalLifetimeAbort,
-    );
-    abortActiveInvocations();
-    downstreamCloseHandler?.();
+    void beginClosing().then(() => {
+      if (downstreamCloseDispatched) return;
+      downstreamCloseDispatched = true;
+      downstreamCloseHandler?.();
+    });
   };
   Object.defineProperty(server, "onclose", {
     configurable: true,
@@ -188,13 +208,15 @@ export function createMcpServer(
     },
   });
   const sdkClose = server.close.bind(server);
-  server.close = async () => {
-    options.lifetimeSignal?.removeEventListener(
-      "abort",
-      onExternalLifetimeAbort,
-    );
-    abortActiveInvocations();
-    await sdkClose();
+  let serverClosePromise: Promise<void> | undefined;
+  server.close = () => {
+    if (serverClosePromise !== undefined) return serverClosePromise;
+    const drain = beginClosing();
+    serverClosePromise = (async () => {
+      await sdkClose();
+      await drain;
+    })();
+    return serverClosePromise;
   };
 
   const sdkOnCancel = Reflect.get(server, "_oncancel");
@@ -234,6 +256,9 @@ export function createMcpServer(
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    if (closing || lifetimeController.signal.aborted || extra.signal.aborted) {
+      throw new RequestCancelledError();
+    }
     const name = request.params.name;
     if (!Object.hasOwn(TOOL_CATALOGUE_BY_NAME, name)) {
       throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
@@ -250,6 +275,9 @@ export function createMcpServer(
     const input = await entry.inputSchema.safeParseAsync(
       request.params.arguments ?? {},
     );
+    if (closing || lifetimeController.signal.aborted || extra.signal.aborted) {
+      throw new RequestCancelledError();
+    }
     if (!input.success) {
       throw new McpError(
         ErrorCode.InvalidParams,
@@ -262,6 +290,9 @@ export function createMcpServer(
         ErrorCode.InternalError,
         `Handler is not active: ${name}`,
       );
+    }
+    if (closing || lifetimeController.signal.aborted || extra.signal.aborted) {
+      throw new RequestCancelledError();
     }
 
     const principalId = sanitizedPrincipalId(extra.authInfo?.clientId);
@@ -285,6 +316,8 @@ export function createMcpServer(
       requestKey,
       new Set([invocationController]),
     );
+    const invocationSettlement = Promise.withResolvers<void>();
+    activeInvocationSettlements.add(invocationSettlement.promise);
     try {
       const correlationSnapshot = createCallCorrelationSnapshot(
         toolName,
@@ -299,6 +332,7 @@ export function createMcpServer(
         principalId,
         correlationId: correlationIdFor(extra.requestId),
       });
+      if (context.signal.aborted) throw new RequestCancelledError();
       let result: CallToolResult;
       try {
         result = await handler(input.data, context);
@@ -330,6 +364,8 @@ export function createMcpServer(
       activeInvocationControllers.delete(invocationController);
       if (!invocationController.signal.aborted) invocationController.abort();
       admission.release(token);
+      activeInvocationSettlements.delete(invocationSettlement.promise);
+      invocationSettlement.resolve();
     }
   });
 

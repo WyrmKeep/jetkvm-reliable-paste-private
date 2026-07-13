@@ -85,15 +85,13 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
     deadline: Deadline,
   ): Promise<NativeSessionStatus> {
     this.validateDeadline(deadline);
+    const binding = this.bindingFor(ref);
     const expected = this.replay.consume("sessionStatus", { ref: { ...ref } });
     const recorded = recordedSessionStatusSchema.safeParse(expected);
     if (!recorded.success) {
       throw new Error("Native replay session status shape is invalid.");
     }
-    const display = await this.deviceRpc.readDisplayState(
-      this.bindingFor(ref),
-      deadline,
-    );
+    const display = await this.deviceRpc.readDisplayState(binding, deadline);
     const actual: NativeSessionStatus = {
       rpcReachability: recorded.data.rpcReachability,
       nativeProcess: recorded.data.nativeProcess,
@@ -108,8 +106,8 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
     deadline: Deadline,
   ): Promise<NativeDisplayStatus> {
     this.validateDeadline(deadline);
-    const expected = this.replay.consume("displayStatus", { ref: { ...ref } });
     const binding = this.bindingFor(ref);
+    const expected = this.replay.consume("displayStatus", { ref: { ...ref } });
     const display = await this.deviceRpc.readDisplayState(binding, deadline);
     const edid = await this.deviceRpc.readEdid(binding, deadline);
     const actual: NativeDisplayStatus = { ...display, edid };
@@ -123,15 +121,12 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
     deadline: Deadline,
   ): Promise<PowerReceipt> {
     this.validateDeadline(deadline);
+    const binding = this.bindingFor(ref);
     const expected = this.replay.consume("powerControl", {
       ref: { ...ref },
       request: { requestId: request.requestId, action: request.action },
     });
-    const actual = await this.deviceRpc.performAtx(
-      this.bindingFor(ref),
-      request,
-      deadline,
-    );
+    const actual = await this.deviceRpc.performAtx(binding, request, deadline);
     const parsed = powerReceiptSchema.safeParse(actual);
     if (!parsed.success) {
       throw new Error("Native replay ATX receipt shape is invalid.");

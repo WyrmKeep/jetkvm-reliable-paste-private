@@ -977,6 +977,61 @@ describe("reviewed story branch execution", () => {
     );
   });
 
+  it("rejects applied connect and reconnect calls with impossible session lifecycle state", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const [storyIndex, retireId, reconnectId] of [
+      [
+        9,
+        "retire-definitive-session-before-connect",
+        "definitive-acknowledgement-jetkvm-session-reconnect",
+      ],
+      [
+        16,
+        "retire-partial-session-before-connect",
+        "partial-verification-jetkvm-session-reconnect",
+      ],
+    ] as const) {
+      const activeIncumbent = structuredClone(stories);
+      activeIncumbent[storyIndex]!.steps = activeIncumbent[
+        storyIndex
+      ]!.steps.filter(({ id }) => id !== retireId);
+      expect(
+        () => validateAcceptanceStories(activeIncumbent),
+        `${activeIncumbent[storyIndex]!.id}:connect`,
+      ).toThrow(/session lifecycle.*connect.*incumbent/i);
+
+      const staleReconnect = structuredClone(stories);
+      const reconnect = staleReconnect[storyIndex]!.steps.find(
+        ({ id }) => id === reconnectId,
+      )!;
+      reconnect.input.session_id = "opaque-stale-incumbent";
+      reconnect.input.session_generation = 7;
+      expect(
+        () => validateAcceptanceStories(staleReconnect),
+        `${staleReconnect[storyIndex]!.id}:reconnect`,
+      ).toThrow(/session lifecycle.*reconnect.*(?:current|returned)/i);
+    }
+  });
+
+  it("rejects later input calls that use a stale reconnect predecessor instead of the returned successor", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const [storyIndex, inputId] of [
+      [9, "definitive-acknowledgement-jetkvm-input-keyboard"],
+      [16, "partial-verification-jetkvm-input-keyboard"],
+    ] as const) {
+      const staleSuccessor = structuredClone(stories);
+      const input = staleSuccessor[storyIndex]!.steps.find(
+        ({ id }) => id === inputId,
+      )!;
+      input.input.session_id = "opaque-stale-reconnect-predecessor";
+      input.input.session_generation = 8;
+      expect(
+        () => validateAcceptanceStories(staleSuccessor),
+        staleSuccessor[storyIndex]!.id,
+      ).toThrow(/session lifecycle.*(?:stale|successor|current)/i);
+    }
+  });
+
   it("rejects ATX cases without inter-case baseline restoration and reproof", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     for (const [storyIndex, proofId] of [

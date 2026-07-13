@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
 
 import {
@@ -120,9 +121,10 @@ class ControlledWritable extends Writable {
   readonly chunks: Buffer[] = [];
   readonly #callbacks: Array<(error?: Error | null) => void> = [];
   readonly #waiters: Array<{ count: number; resolve: () => void }> = [];
+  unrefCalls = 0;
 
-  constructor() {
-    super({ highWaterMark: 1 });
+  constructor(highWaterMark = 1) {
+    super({ highWaterMark });
   }
 
   override _write(
@@ -149,6 +151,11 @@ class ControlledWritable extends Writable {
         code: "EPIPE",
       }),
     );
+  }
+
+  unref(): this {
+    this.unrefCalls += 1;
+    return this;
   }
 
   async waitForCount(count: number): Promise<void> {
@@ -180,6 +187,14 @@ class DestroyReleasesWritable extends Writable {
   ): void {
     this.#activeWrite = callback;
     this.writeStarted.resolve();
+  }
+
+  releaseActive(): void {
+    const activeWrite = this.#activeWrite;
+    if (activeWrite === undefined)
+      throw new Error("No active write to release");
+    this.#activeWrite = undefined;
+    activeWrite();
   }
 
   override _destroy(
@@ -710,7 +725,7 @@ describe("stdio adapter", () => {
     expect(errors).toEqual([]);
   });
 
-  it("reports malformed frames, emits no garbage, and continues with the next valid frame", async () => {
+  it("redacts raw SDK parse errors and continues with the next valid frame", async () => {
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const collector = new JsonLineCollector(stdout);
@@ -721,18 +736,22 @@ describe("stdio adapter", () => {
       onError: (error) => errors.push(error),
     });
     handles.push(handle);
+    const attackerSentinel = "PRIVATE_ATTACKER_SENTINEL";
 
-    stdin.write('{"jsonrpc":"2.0","id":1,broken}\n');
+    stdin.write(`{"jsonrpc":"2.0","id":1,"method":${attackerSentinel}}\n`);
     send(stdin, initialize(2));
     await collector.waitForCount(1);
 
-    expect(errors).toHaveLength(1);
+    expect(errors.map((error) => error.message)).toEqual([
+      "Malformed stdio protocol frame",
+    ]);
+    expect(errors[0]?.stack).not.toContain(attackerSentinel);
     expect(collector.messages).toHaveLength(1);
     expect(collector.messages[0]).toMatchObject({
       id: 2,
       result: expect.any(Object),
     });
-    expect(collector.rawChunks.join("")).not.toContain("broken");
+    expect(collector.rawChunks.join("")).not.toContain(attackerSentinel);
   });
 
   it("accepts a canonical maximum-byte paste with worst-case JSON escaping", async () => {
@@ -881,31 +900,140 @@ describe("stdio adapter", () => {
     expect(stdin.readableFlowing).toBe(false);
   });
 
-  it("accepts one maximum legal 8 MiB PNG response within the output cap", async () => {
+  it("accepts a schema-valid maximum 8 MiB PNG through tools/call and result mapping", async () => {
     const stdin = new PassThrough();
     const stdout = new ControlledWritable();
     const errors: Error[] = [];
-    const handle = await startStdioServer(completeRegistry(), {
-      stdin,
-      stdout,
-      onError: (error) => errors.push(error),
-    });
-    handles.push(handle);
-    const maximumPngBase64Length = 4 * Math.ceil((8 * 1024 * 1024) / 3);
-
-    void handle.transport.send({
-      jsonrpc: "2.0",
-      id: 1,
-      result: { image: "A".repeat(maximumPngBase64Length) },
-    });
-    await stdout.waitForCount(1);
-
-    expect(stdout.chunks[0]?.byteLength).toBeGreaterThan(
-      maximumPngBase64Length,
+    const bytes = Buffer.alloc(8 * 1024 * 1024);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+    const data = bytes.toString("base64");
+    const envelope = {
+      ok: true as const,
+      tool: "jetkvm_display_capture" as const,
+      operation_id: "operation-max-png",
+      session_id: "session-max-png",
+      session_generation: 1,
+      duration_ms: 1,
+      result: {
+        observation_id: "observation-max-png",
+        connection_epoch: 1,
+        display_generation: 1,
+        frame_id: "frame-max-png",
+        captured_at: "2026-07-13T00:00:00.000Z",
+        source_width: 1920,
+        source_height: 1080,
+        image_width: 1920,
+        image_height: 1080,
+        rotation: 0 as const,
+        geometry: {
+          content_x: 0,
+          content_y: 0,
+          content_width: 1920,
+          content_height: 1080,
+        },
+        image: {
+          content_index: 1,
+          mime_type: "image/png" as const,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          byte_length: bytes.byteLength,
+        },
+      },
+    };
+    const handler = vi.fn(async () => ({
+      structuredContent: envelope,
+      content: [
+        { type: "text" as const, text: JSON.stringify(envelope) },
+        { type: "image" as const, data, mimeType: "image/png" },
+      ],
+    }));
+    const handle = await startStdioServer(
+      completeRegistry({ jetkvm_display_capture: handler }),
+      {
+        stdin,
+        stdout,
+        onError: (error) => errors.push(error),
+      },
     );
-    expect(stdout.chunks[0]?.byteLength).toBeLessThan(16 * 1024 * 1024);
+    handles.push(handle);
+
+    send(stdin, initialize(1));
+    await stdout.waitForCount(1);
+    stdout.releaseNext();
+    send(stdin, { jsonrpc: "2.0", method: "notifications/initialized" });
+    send(stdin, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "jetkvm_display_capture",
+        arguments: {
+          session_id: "session-max-png",
+          session_generation: 1,
+          format: "png",
+          max_width: 1920,
+          max_height: 1080,
+          timeout_ms: 100,
+        },
+      },
+    });
+    await stdout.waitForCount(2);
+
+    const responseBytes = stdout.chunks[1]?.byteLength ?? 0;
+    expect(handler).toHaveBeenCalledOnce();
+    expect(responseBytes).toBeGreaterThan(data.length);
+    expect(responseBytes).toBeLessThan(16 * 1024 * 1024);
+    expect(stdout.chunks[1]?.subarray(-80).toString("utf8")).toContain(
+      '"id":2',
+    );
     expect(errors).toEqual([]);
     stdout.releaseNext();
+  });
+
+  it("accepts an exact-cap write without leaving the SDK waiting for drain", async () => {
+    vi.useFakeTimers();
+    try {
+      const stdin = new PassThrough();
+      const stdout = new ControlledWritable();
+      const errors: Error[] = [];
+      const handle = await startStdioServer(completeRegistry(), {
+        stdin,
+        stdout,
+        onError: (error) => errors.push(error),
+      });
+      handles.push(handle);
+      const emptyMessage = {
+        jsonrpc: "2.0" as const,
+        id: 1,
+        result: { payload: "" },
+      };
+      const fixedBytes = Buffer.byteLength(`${JSON.stringify(emptyMessage)}\n`);
+      const exactMessage = {
+        ...emptyMessage,
+        result: {
+          payload: "x".repeat(16 * 1024 * 1024 - fixedBytes),
+        },
+      };
+      const sendSettled = vi.fn();
+
+      void handle.transport.send(exactMessage).then(sendSettled);
+      await stdout.waitForCount(1);
+      await Promise.resolve();
+
+      expect(stdout.chunks[0]?.byteLength).toBe(16 * 1024 * 1024);
+      expect(sendSettled).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await handle.closed;
+      vi.useRealTimers();
+      expect(errors.map((error) => error.message)).toEqual([
+        "Outbound stdio write timed out after 10000 ms",
+      ]);
+      expect(stdout.listenerCount("error")).toBe(1);
+      stdout.failNext();
+      await waitForImmediateSettlement();
+      expect(stdout.listenerCount("error")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bounds stalled stdout across concurrent large responses and closes on overflow", async () => {
@@ -932,8 +1060,9 @@ describe("stdio adapter", () => {
       });
     }
     await handle.closed;
-    expect(stdout.destroyed).toBe(true);
-    expect(stdin.destroyed).toBe(true);
+    expect(stdout.destroyed).toBe(false);
+    expect(stdout.unrefCalls).toBe(0);
+    expect(stdin.destroyed).toBe(false);
     expect(stdout.listenerCount("error")).toBe(1);
     stdout.failNext();
     await waitForImmediateSettlement();
@@ -990,8 +1119,9 @@ describe("stdio adapter", () => {
       await stdout.waitForCount(1);
       await vi.advanceTimersByTimeAsync(10_000);
       await handle.closed;
-      expect(stdout.destroyed).toBe(true);
-      expect(stdin.destroyed).toBe(true);
+      expect(stdout.destroyed).toBe(false);
+      expect(stdout.unrefCalls).toBe(0);
+      expect(stdin.destroyed).toBe(false);
       vi.useRealTimers();
       expect(stdout.listenerCount("error")).toBe(1);
       stdout.failNext();
@@ -1007,7 +1137,7 @@ describe("stdio adapter", () => {
     }
   });
 
-  it("destroys fatal stdout and settles a callback that never drains on its own", async () => {
+  it("leaves injected fatal streams caller-owned until their late callback settles", async () => {
     vi.useFakeTimers();
     try {
       const stdin = new PassThrough();
@@ -1032,10 +1162,13 @@ describe("stdio adapter", () => {
       expect(errors.map((error) => error.message)).toEqual([
         "Outbound stdio write timed out after 10000 ms",
       ]);
-      expect(stdout.destroyCalls).toBe(1);
-      expect(stdout.unrefCalls).toBe(1);
-      expect(stdout.destroyed).toBe(true);
-      expect(stdin.destroyed).toBe(true);
+      expect(stdout.destroyCalls).toBe(0);
+      expect(stdout.unrefCalls).toBe(0);
+      expect(stdout.destroyed).toBe(false);
+      expect(stdin.destroyed).toBe(false);
+      expect(stdout.listenerCount("error")).toBe(1);
+      stdout.releaseActive();
+      await waitForImmediateSettlement();
       expect(stdout.listenerCount("error")).toBe(0);
       expect(stdin.readableFlowing).toBe(false);
       expect(exitProcess).not.toHaveBeenCalled();
@@ -1117,6 +1250,85 @@ describe("stdio adapter", () => {
     }
   });
 
+  it("waits for every accepted high-water diagnostic before fatal exit", async () => {
+    vi.useFakeTimers();
+    const stdinDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+    const stdoutDescriptor = Object.getOwnPropertyDescriptor(process, "stdout");
+    const stderrDescriptor = Object.getOwnPropertyDescriptor(process, "stderr");
+    if (
+      stdinDescriptor === undefined ||
+      stdoutDescriptor === undefined ||
+      stderrDescriptor === undefined
+    ) {
+      throw new Error("Process stdio descriptors are unavailable");
+    }
+    const stdin = new PassThrough();
+    const stdout = new DestroyReleasesWritable();
+    const stderr = new ControlledWritable(1024 * 1024);
+    const exitProcess = vi.fn();
+    try {
+      Object.defineProperties(process, {
+        stdin: {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: stdin,
+        },
+        stdout: {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: stdout,
+        },
+        stderr: {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: stderr,
+        },
+      });
+      const handle = await startStdioServer(completeRegistry(), {
+        exitProcess,
+      });
+      handles.push(handle);
+
+      stdin.write('{"jsonrpc":"2.0",first_broken}\n');
+      stdin.write('{"jsonrpc":"2.0",second_broken}\n');
+      stdin.write('{"jsonrpc":"2.0",third_broken}\n');
+      await stderr.waitForCount(1);
+      send(stdin, initialize(1));
+      await stdout.writeStarted.promise;
+      await vi.advanceTimersByTimeAsync(10_000);
+      await handle.closed;
+
+      for (let completed = 1; completed < 4; completed += 1) {
+        stderr.releaseNext();
+        await stderr.waitForCount(completed + 1);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(exitProcess).not.toHaveBeenCalled();
+      }
+      stderr.releaseNext();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(stderr.chunks.map((chunk) => chunk.toString())).toEqual([
+        "jetkvm-mcp: malformed stdio protocol frame\n",
+        "jetkvm-mcp: malformed stdio protocol frame\n",
+        "jetkvm-mcp: malformed stdio protocol frame\n",
+        "jetkvm-mcp: stdio output write timeout\n",
+      ]);
+      expect(exitProcess).toHaveBeenCalledOnce();
+      expect(exitProcess).toHaveBeenCalledWith(1);
+      expect(stderr.listenerCount("error")).toBe(0);
+    } finally {
+      Object.defineProperties(process, {
+        stdin: stdinDescriptor,
+        stdout: stdoutDescriptor,
+        stderr: stderrDescriptor,
+      });
+      vi.useRealTimers();
+    }
+  });
+
   it("does not destroy a shared stdin consumer on fatal stdout timeout", async () => {
     vi.useFakeTimers();
     try {
@@ -1141,7 +1353,11 @@ describe("stdio adapter", () => {
       expect(stdin.destroyed).toBe(false);
       expect(stdin.listenerCount("data")).toBe(1);
       expect(stdin.readableFlowing).toBe(true);
-      expect(stdout.destroyed).toBe(true);
+      expect(stdout.destroyed).toBe(false);
+      expect(stdout.unrefCalls).toBe(0);
+      stdout.releaseActive();
+      await waitForImmediateSettlement();
+      expect(stdout.listenerCount("error")).toBe(0);
       stdin.off("data", sharedConsumer);
       stdin.pause();
     } finally {
@@ -1280,13 +1496,17 @@ describe("stdio adapter", () => {
     });
     handles.push(handle);
 
-    stdin.write('{"jsonrpc":"2.0",broken}\n'.repeat(1_000));
+    const attackerSentinel = "PRIVATE_STDERR_SENTINEL";
+    stdin.write(
+      `{"jsonrpc":"2.0","method":${attackerSentinel}}\n`.repeat(1_000),
+    );
     await handle.closed;
 
     expect(stderr.chunks).toHaveLength(1);
     expect(stderr.chunks[0]?.toString()).toBe(
       "jetkvm-mcp: malformed stdio protocol frame\n",
     );
+    expect(stderr.chunks[0]?.toString()).not.toContain(attackerSentinel);
     expect(stderr.listenerCount("drain")).toBe(0);
     expect(stderr.listenerCount("error")).toBe(1);
     expect(stdin.readableFlowing).toBe(false);

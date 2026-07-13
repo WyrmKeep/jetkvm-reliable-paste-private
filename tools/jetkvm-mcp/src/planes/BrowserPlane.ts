@@ -6,6 +6,8 @@ import type {
   SessionRef,
 } from "../device/DeviceRpcAdapter.js";
 
+export const MAX_OBSERVATION_AGE_MS = 30_000;
+
 export interface BrowserConnection {
   readonly state: "ready";
   readonly ref: SessionRef;
@@ -32,22 +34,22 @@ export interface ObservationGeometry {
 
 export interface Observation {
   readonly observationId: string;
+  readonly sessionId: string;
   readonly sessionGeneration: number;
   readonly connectionEpoch: number;
   readonly displayGeneration: number;
   readonly frameId: string;
   readonly capturedAt: string;
+  readonly monotonicAgeMs: number;
   readonly sourceWidth: number;
   readonly sourceHeight: number;
   readonly imageWidth: number;
   readonly imageHeight: number;
   readonly rotation: 0 | 90 | 180 | 270;
   readonly geometry: ObservationGeometry;
-  readonly image: {
-    readonly mimeType: "image/jpeg" | "image/png";
-    readonly sha256: string;
-    readonly bytes: Uint8Array;
-  };
+  readonly format: "jpeg" | "png";
+  readonly sha256: string;
+  readonly byteLength: number;
 }
 
 export interface MouseRequest {

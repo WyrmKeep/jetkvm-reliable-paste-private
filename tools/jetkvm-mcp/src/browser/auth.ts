@@ -12,6 +12,8 @@ import type { LegacySseSecurityPolicy } from "../config.js";
 
 const REDACTED = "[REDACTED]";
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/;
+const UTF8_ENCODER = new TextEncoder();
+const UTF8_DECODER = new TextDecoder();
 
 export interface CredentialSourceSelection {
   readonly environmentVariable: string;
@@ -35,6 +37,11 @@ export interface CredentialAccess {
   readEnvironment(name: string): string | undefined;
   deleteEnvironment(name: string): void;
   readProtectedFile?(path: string): Uint8Array;
+}
+
+export interface SecretByteAllocator {
+  allocateUtf8(value: string): Uint8Array;
+  copyBytes(value: Uint8Array): Uint8Array;
 }
 
 export interface LegacySseRequestHeaders {
@@ -91,15 +98,24 @@ export class DisposableSecret implements Disposable {
     this.#bytes = bytes;
   }
 
-  static fromUtf8(value: string): DisposableSecret {
-    return DisposableSecret.fromBytes(Buffer.from(value, "utf8"));
+  static fromUtf8(
+    value: string,
+    allocator: SecretByteAllocator = defaultSecretByteAllocator,
+  ): DisposableSecret {
+    if (value.length === 0) {
+      throw new CredentialConfigurationError("Credential is empty");
+    }
+    return new DisposableSecret(allocator.allocateUtf8(value));
   }
 
-  static fromBytes(value: Uint8Array): DisposableSecret {
+  static fromBytes(
+    value: Uint8Array,
+    allocator: SecretByteAllocator = defaultSecretByteAllocator,
+  ): DisposableSecret {
     if (value.byteLength === 0) {
       throw new CredentialConfigurationError("Credential is empty");
     }
-    return new DisposableSecret(Uint8Array.from(value));
+    return new DisposableSecret(allocator.copyBytes(value));
   }
 
   get disposed(): boolean {
@@ -115,9 +131,7 @@ export class DisposableSecret implements Disposable {
   }
 
   useUtf8<T>(consumer: (value: string) => T): T {
-    return this.useBytes((bytes) =>
-      consumer(Buffer.from(bytes).toString("utf8")),
-    );
+    return this.useBytes((bytes) => consumer(UTF8_DECODER.decode(bytes)));
   }
 
   dispose(): void {
@@ -141,6 +155,15 @@ export class DisposableSecret implements Disposable {
     return REDACTED;
   }
 }
+
+const defaultSecretByteAllocator: SecretByteAllocator = Object.freeze({
+  allocateUtf8(value: string): Uint8Array {
+    return UTF8_ENCODER.encode(value);
+  },
+  copyBytes(value: Uint8Array): Uint8Array {
+    return Uint8Array.from(value);
+  },
+});
 
 export function selectCredentialSource(
   options: CredentialSourceOptions,

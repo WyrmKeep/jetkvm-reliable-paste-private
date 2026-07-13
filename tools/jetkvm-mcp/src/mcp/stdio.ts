@@ -57,9 +57,9 @@ class BoundedStdioFrameGate {
     this.output.end();
   }
 
-  abortInput(): void {
+  abortInput(destroyInput: boolean): void {
     this.close();
-    if (this.input.listenerCount("data") !== 0) return;
+    if (!destroyInput || this.input.listenerCount("data") !== 0) return;
     try {
       this.input.destroy();
     } catch {
@@ -218,8 +218,9 @@ class BoundedStdioOutputGate extends Writable {
   constructor(
     readonly output: Writable,
     readonly onFailure: (error: Error) => void,
+    readonly destroyOutputOnFailure: boolean,
   ) {
-    super({ highWaterMark: MAXIMUM_OUTPUT_QUEUE_BYTES });
+    super({ highWaterMark: MAXIMUM_OUTPUT_QUEUE_BYTES + 1 });
     this.output.on("error", this.#onOutputError);
   }
 
@@ -380,16 +381,18 @@ class BoundedStdioOutputGate extends Writable {
   #fail(error: Error): void {
     if (this.#closed) return;
     this.close();
-    try {
-      this.output.destroy();
-    } catch {
-      // The boundary failure below remains the only public diagnostic.
-    }
-    const unref = (this.output as Writable & { unref?: () => void }).unref;
-    try {
-      unref?.call(this.output);
-    } catch {
-      // The output boundary remains the only public failure.
+    if (this.destroyOutputOnFailure) {
+      try {
+        this.output.destroy();
+      } catch {
+        // The boundary failure below remains the only public diagnostic.
+      }
+      const unref = (this.output as Writable & { unref?: () => void }).unref;
+      try {
+        unref?.call(this.output);
+      } catch {
+        // The output boundary remains the only public failure.
+      }
     }
     this.onFailure(error);
   }
@@ -398,12 +401,12 @@ class BoundedStdioOutputGate extends Writable {
 class BoundedDiagnosticSink {
   #backpressured = false;
   #drainListening = false;
-  #writeActive = false;
   #awaitingError = false;
   #listenerCleanupImmediate: NodeJS.Immediate | undefined;
-  #activeWriteSettled:
-    | { readonly promise: Promise<void>; readonly resolve: () => void }
-    | undefined;
+  readonly #activeWrites = new Set<{
+    readonly promise: Promise<void>;
+    readonly resolve: () => void;
+  }>();
   #closed = false;
 
   constructor(readonly output: Writable) {
@@ -412,21 +415,27 @@ class BoundedDiagnosticSink {
 
   write(message: string): void {
     if (this.#closed || this.#backpressured) return;
-    this.#writeActive = true;
-    this.#activeWriteSettled = Promise.withResolvers<void>();
+    const activeWrite = Promise.withResolvers<void>();
+    this.#activeWrites.add(activeWrite);
     let accepted: boolean;
     try {
       accepted = this.output.write(message, (error) => {
-        this.#settleActiveWrite();
+        this.#settleActiveWrite(activeWrite);
         if (error) {
           this.#expectErrorEvent();
           this.#disable();
           return;
         }
-        if (this.#closed) this.#removeErrorListener();
+        if (
+          this.#closed &&
+          this.#activeWrites.size === 0 &&
+          !this.#awaitingError
+        ) {
+          this.#removeErrorListener();
+        }
       });
     } catch {
-      this.#settleActiveWrite();
+      this.#settleActiveWrite(activeWrite);
       this.#disable();
       return;
     }
@@ -440,8 +449,10 @@ class BoundedDiagnosticSink {
   }
 
   async flush(timeoutMs: number): Promise<void> {
-    const pending = this.#activeWriteSettled?.promise;
-    if (pending === undefined) return;
+    if (this.#activeWrites.size === 0) return;
+    const pending = Promise.all(
+      [...this.#activeWrites].map((activeWrite) => activeWrite.promise),
+    );
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
@@ -459,7 +470,7 @@ class BoundedDiagnosticSink {
     if (this.#closed) return;
     this.#closed = true;
     this.#detachDrain();
-    if (!this.#writeActive && !this.#awaitingError) {
+    if (this.#activeWrites.size === 0 && !this.#awaitingError) {
       this.#removeErrorListener();
     }
   }
@@ -470,10 +481,9 @@ class BoundedDiagnosticSink {
   };
 
   readonly #onError = (): void => {
-    this.#settleActiveWrite();
     if (this.#awaitingError) {
       this.#awaitingError = false;
-      this.#removeErrorListener();
+      if (this.#activeWrites.size === 0) this.#removeErrorListener();
       return;
     }
     this.#disable();
@@ -482,7 +492,7 @@ class BoundedDiagnosticSink {
   #disable(): void {
     this.#closed = true;
     this.#detachDrain();
-    if (!this.#writeActive && !this.#awaitingError) {
+    if (this.#activeWrites.size === 0 && !this.#awaitingError) {
       this.#removeErrorListener();
     }
   }
@@ -501,15 +511,17 @@ class BoundedDiagnosticSink {
     clearImmediate(this.#listenerCleanupImmediate);
     this.#listenerCleanupImmediate = setImmediate(() => {
       this.#awaitingError = false;
-      this.#removeErrorListener();
+      if (this.#activeWrites.size === 0) this.#removeErrorListener();
     });
     this.#listenerCleanupImmediate.unref();
   }
 
-  #settleActiveWrite(): void {
-    this.#writeActive = false;
-    this.#activeWriteSettled?.resolve();
-    this.#activeWriteSettled = undefined;
+  #settleActiveWrite(activeWrite: {
+    readonly promise: Promise<void>;
+    readonly resolve: () => void;
+  }): void {
+    if (!this.#activeWrites.delete(activeWrite)) return;
+    activeWrite.resolve();
   }
 
   #removeErrorListener(): void {
@@ -613,7 +625,7 @@ export async function startStdioServer(
 
   const closeForFatalOutput = (error: Error): Promise<void> => {
     if (fatalClosePromise !== undefined) return fatalClosePromise;
-    gate.abortInput();
+    gate.abortInput(ownsDefaultProcessStdio);
     reportError(error);
     fatalClosePromise = (async () => {
       await close();
@@ -623,9 +635,13 @@ export async function startStdioServer(
     return fatalClosePromise;
   };
 
-  outputGate = new BoundedStdioOutputGate(stdout, (error) => {
-    void closeForFatalOutput(error);
-  });
+  outputGate = new BoundedStdioOutputGate(
+    stdout,
+    (error) => {
+      void closeForFatalOutput(error);
+    },
+    ownsDefaultProcessStdio,
+  );
   gate = new BoundedStdioFrameGate(
     stdin,
     (error) => {
@@ -639,7 +655,9 @@ export async function startStdioServer(
     options.allocatePendingBuffer ?? ((size) => Buffer.allocUnsafe(size)),
   );
   const transport = new StdioServerTransport(gate.output, outputGate);
-  transport.onerror = reportMalformedFrame;
+  transport.onerror = () => {
+    reportMalformedFrame(new Error("Malformed stdio protocol frame"));
+  };
 
   try {
     await server.connect(transport);

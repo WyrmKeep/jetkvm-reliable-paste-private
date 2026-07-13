@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { LegacySseConfigInput, OperatorConfigInput } from "./config.js";
 import { TOOL_INPUT_SCHEMAS, TOOL_RESULT_SCHEMAS } from "./mcp/schemas.js";
 import {
   assertPublicContractContainsNoOperatorSecrets,
@@ -166,6 +167,55 @@ describe("OperatorConfig", () => {
       { JETKVM_ALLOW_DANGEROUS_TARGET_HTTP: "true" },
     );
     expect(config.allowDangerousTargetHttp).toBe(true);
+  });
+
+  it.each([
+    ["allowInsecureHttp", "false"],
+    ["allowInsecureHttp", "true"],
+    ["allowInsecureHttp", 1],
+    ["allowInsecureHttp", {}],
+    ["allowDangerousTargetHttp", "false"],
+    ["allowDangerousTargetHttp", "true"],
+    ["allowDangerousTargetHttp", 1],
+    ["allowDangerousTargetHttp", {}],
+  ] as const)("rejects non-boolean operator flag %s=%o", (flag, value) => {
+    const input = {
+      targetUrl: "http://jetkvm.lan",
+      allowInsecureHttp: true,
+      allowDangerousTargetHttp: true,
+      [flag]: value,
+    } as unknown as OperatorConfigInput;
+
+    expect(() => parseOperatorConfig(input)).toThrowError(
+      `${flag} must be a boolean`,
+    );
+  });
+
+  it.each([
+    ["enabled", "false"],
+    ["enabled", "true"],
+    ["enabled", 1],
+    ["enabled", {}],
+    ["allowNetworkExposure", "false"],
+    ["allowNetworkExposure", "true"],
+    ["allowNetworkExposure", 1],
+    ["allowNetworkExposure", {}],
+    ["allowPlaintextHttp", "false"],
+    ["allowPlaintextHttp", "true"],
+    ["allowPlaintextHttp", 1],
+    ["allowPlaintextHttp", {}],
+    ["allowDangerousNetworkPlaintext", "false"],
+    ["allowDangerousNetworkPlaintext", "true"],
+    ["allowDangerousNetworkPlaintext", 1],
+    ["allowDangerousNetworkPlaintext", {}],
+  ] as const)("rejects non-boolean legacy SSE flag %s=%o", (flag, value) => {
+    const legacySse = { [flag]: value } as unknown as LegacySseConfigInput;
+    expect(() =>
+      parseOperatorConfig({
+        targetUrl: "https://jetkvm.lan",
+        legacySse,
+      }),
+    ).toThrowError(`${flag} must be a boolean`);
   });
 
   it("parses and validates every option before any credential or transport effect", () => {

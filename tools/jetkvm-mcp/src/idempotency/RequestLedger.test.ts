@@ -315,7 +315,7 @@ describe("RequestLedger", () => {
     const clock = new FakeClock();
     const ledger = new RequestLedger({
       ttlMs: 1_000,
-      maxEntries: 2,
+      maxEntries: 4,
       now: clock.now,
     });
     const reservation = acquire(ledger);
@@ -328,6 +328,52 @@ describe("RequestLedger", () => {
       kind: "cache_lost",
     });
     expect(ledger.size).toBe(0);
+    expect(
+      ledger.acquire(sessionKey({ requestId: "request-b" }), { x: 10, y: 20 })
+        .kind,
+    ).toBe("acquired");
+    expect(
+      ledger.acquire(
+        sessionKey({ sessionGeneration: 4, requestId: "request-c" }),
+        { x: 10, y: 20 },
+      ).kind,
+    ).toBe("acquired");
+  });
+
+  it("bounds tombstones without resurrecting evicted request evidence", () => {
+    const clock = new FakeClock();
+    const ledger = new RequestLedger({
+      ttlMs: 100,
+      maxEntries: 1,
+      now: clock.now,
+    });
+    const firstKey = sessionKey({ requestId: "request-1" });
+    const first = acquire(ledger, firstKey);
+    ledger.complete(first, applied({ receipt: "first" }));
+    clock.advance(100);
+    expect(ledger.acquire(firstKey, { x: 10, y: 20 }).kind).toBe("cache_lost");
+
+    const secondKey = sessionKey({ requestId: "request-2" });
+    const second = acquire(ledger, secondKey);
+    ledger.complete(second, applied({ receipt: "second" }));
+    clock.advance(100);
+    expect(ledger.acquire(secondKey, { x: 10, y: 20 }).kind).toBe("cache_lost");
+
+    expect(ledger.acquire(firstKey, { x: 10, y: 20 }).kind).toBe("cache_lost");
+    expect(
+      ledger.acquire(sessionKey({ requestId: "request-3" }), { x: 10, y: 20 })
+        .kind,
+    ).toBe("cache_lost");
+    expect(
+      ledger.acquire(
+        sessionKey({ sessionGeneration: 4, requestId: "request-4" }),
+        { x: 10, y: 20 },
+      ).kind,
+    ).toBe("acquired");
+    expect(ledger.snapshot()).toMatchObject({
+      tombstoneCount: 1,
+      lostScopeCount: 1,
+    });
   });
 
   it("fails closed when initialized after cache loss rather than inferring not_sent", () => {

@@ -88,6 +88,17 @@ describe("structured redacting logger", () => {
             code: "SAFE_CODE",
           },
         },
+        {
+          composites: {
+            typed_keys: ["typed-key-secret"],
+            PressedKeys: ["pressed-key-secret"],
+            "held.keys": ["held-key-secret"],
+            KEY_SEQUENCE: ["sequence-key-secret"],
+            keyCount: 4,
+            monkey: "macaque",
+            keyboardLayout: "ansi",
+          },
+        },
       ],
       error: {
         code: "E_KEYBOARD",
@@ -118,13 +129,26 @@ describe("structured redacting logger", () => {
             code: "SAFE_CODE",
           },
         },
+        {
+          composites: {
+            typed_keys: "[REDACTED]",
+            PressedKeys: "[REDACTED]",
+            "held.keys": "[REDACTED]",
+            KEY_SEQUENCE: "[REDACTED]",
+            keyCount: 4,
+            monkey: "macaque",
+            keyboardLayout: "ansi",
+          },
+        },
       ],
       error: {
         code: "E_KEYBOARD",
         status: "failed",
       },
     });
-    expect(JSON.stringify(redacted)).not.toMatch(/ControlLeft|ShiftLeft|Enter/);
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /ControlLeft|ShiftLeft|Enter|typed-key-secret|pressed-key-secret|held-key-secret|sequence-key-secret/,
+    );
   });
 
   it("redacts EDID fingerprints without matching unrelated field substrings", () => {
@@ -183,6 +207,111 @@ describe("structured redacting logger", () => {
     expect(JSON.stringify(redacted)).not.toMatch(
       /edid-(?:manufacturer|product|serial|name)-secret|standalone-(?:manufacturer|product|serial|name)-secret/,
     );
+  });
+
+  it("uses intrinsic indexed traversal for attacker-controlled arrays", () => {
+    const actions: Array<Record<string, unknown>> = [
+      { key: "array-key-secret", code: "KEY_DOWN" },
+      { keys: ["array-shortcut-secret"], count: 1 },
+    ];
+    Object.setPrototypeOf(actions, {
+      inheritedSecret: "array-prototype-secret",
+      map(): never {
+        throw new Error("attacker map called");
+      },
+    });
+    let redacted: unknown;
+
+    expect(() => {
+      redacted = redactStructuredData({
+        actions,
+        code: "ARRAY_READY",
+      });
+    }).not.toThrow();
+    expect(redacted).toEqual({
+      actions: [
+        { key: "[REDACTED]", code: "KEY_DOWN" },
+        { keys: "[REDACTED]", count: 1 },
+      ],
+      code: "ARRAY_READY",
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /array-key-secret|array-shortcut-secret|array-prototype-secret/,
+    );
+  });
+
+  it("unboxes primitives intrinsically and rejects unsupported objects", () => {
+    let getterCalls = 0;
+    const unsupportedValue = Object.create({
+      inheritedSecret: "hostile-prototype-secret",
+      toJSON(): string {
+        return "hostile-to-json-secret";
+      },
+    }) as Record<string, unknown>;
+    Object.defineProperty(unsupportedValue, "memo", {
+      enumerable: true,
+      get(): string {
+        getterCalls += 1;
+        return "hostile-getter-secret";
+      },
+    });
+    const boxedValue = new String("Bearer boxed-string-secret");
+    Object.defineProperty(boxedValue, "valueOf", {
+      value: () => "boxed-value-of-bypass",
+    });
+    Object.defineProperty(boxedValue, "toJSON", {
+      value: () => "boxed-to-json-secret",
+    });
+
+    const redacted = redactStructuredData({
+      boxedValue,
+      boxedSafe: new String("boxed-safe-sibling"),
+      boxedNumber: new Number(7),
+      boxedBoolean: new Boolean(true),
+      boxedBigInt: Object(9n),
+      unsupportedValue,
+      code: "OBJECT_READY",
+    });
+
+    expect(getterCalls).toBe(0);
+    expect(redacted).toEqual({
+      boxedValue: "[REDACTED]",
+      boxedSafe: "boxed-safe-sibling",
+      boxedNumber: 7,
+      boxedBoolean: true,
+      boxedBigInt: "9",
+      unsupportedValue: "[REDACTED]",
+      code: "OBJECT_READY",
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /boxed-string-secret|boxed-value-of-bypass|boxed-to-json-secret|hostile-prototype-secret|hostile-to-json-secret|hostile-getter-secret/,
+    );
+  });
+
+  it("escapes every physical and Unicode line separator before sink output", () => {
+    const lines: string[] = [];
+    const note = "safe\u2028logical\u2029record\ncarriage\rreturn";
+    createStructuredLogger({ write: (line) => lines.push(line) }).info(
+      "record.safe",
+      { note },
+    );
+
+    expect(lines).toHaveLength(1);
+    const line = lines[0] ?? "";
+    expect(line.split("\n")).toHaveLength(2);
+    expect(line.endsWith("\n")).toBe(true);
+    expect(line).not.toContain("\r");
+    expect(line).not.toContain("\u2028");
+    expect(line).not.toContain("\u2029");
+    expect(line).toContain("\\n");
+    expect(line).toContain("\\r");
+    expect(line).toContain("\\u2028");
+    expect(line).toContain("\\u2029");
+
+    const parsed: unknown = JSON.parse(line);
+    requireRecord(parsed);
+    requireRecord(parsed.fields);
+    expect(parsed.fields.note).toBe(note);
   });
 
   it("redacts sensitive strings even under innocent field names and inside errors", () => {

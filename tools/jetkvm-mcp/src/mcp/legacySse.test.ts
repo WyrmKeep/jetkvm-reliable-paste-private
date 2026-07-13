@@ -500,6 +500,44 @@ describe("legacy SSE adapter", () => {
   );
 
   it.each([
+    ["GET", false, 401, "Unauthorized"],
+    ["POST", false, 401, "Unauthorized"],
+    ["GET", true, 403, "Forbidden"],
+    ["POST", true, 403, "Forbidden"],
+  ] as const)(
+    "classifies a missing Host in authenticated middleware for %s auth=%s",
+    async (method, authenticated, status, body) => {
+      const { baseUrl } = await startAdapter();
+      const port = Number(new URL(baseUrl).port);
+      const path =
+        method === "GET"
+          ? "/sse"
+          : "/messages?sessionId=00000000-0000-4000-8000-000000000000";
+      const socket = await connectRaw(port);
+      socket.write(
+        [
+          `${method} ${path} HTTP/1.1`,
+          `Origin: ${ORIGIN}`,
+          "X-JetKVM-CSRF: 1",
+          ...(authenticated ? [`Authorization: Bearer ${TOKEN}`] : []),
+          ...(method === "POST"
+            ? ["Content-Type: application/json", "Content-Length: 0"]
+            : []),
+          "Connection: close",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+
+      const response = await waitForSocketClose(socket, 500);
+      expect(response).toMatch(
+        new RegExp(`^HTTP/1\\.1 ${status} ${body}\\r\\n`),
+      );
+      expect(response.endsWith(body)).toBe(true);
+    },
+  );
+
+  it.each([
     ["Host", "hOsT", "attacker.example.test"],
     ["Origin", "oRiGiN", "https://attacker.example.test"],
     ["Authorization", "aUtHoRiZaTiOn", "Bearer attacker"],
@@ -1370,13 +1408,62 @@ describe("legacy SSE adapter", () => {
     const port = await listenOnLoopback(server);
 
     try {
+      // Connect just after Node's periodic sweep to expose its near-2x gap.
+      await new Promise((resolve) => setTimeout(resolve, 45));
       const socket = await connectRaw(port);
+      const startedAt = Date.now();
       socket.write("GET /sse HTTP/1.1\r\nHost: 127.0.0.1\r\n");
       await waitForSocketClose(socket, 500);
+      const elapsedMs = Date.now() - startedAt;
+      expect(elapsedMs).toBeGreaterThanOrEqual(25);
+      expect(elapsedMs).toBeLessThan(65);
     } finally {
       await adapter.close();
       await closeServer(server);
     }
+  });
+
+  it("starts a fresh absolute header deadline for keep-alive requests", async () => {
+    const value = await startAdapter({
+      policy: { requestHeaderTimeoutMs: 40 },
+    });
+    const stream = await openSse(value.baseUrl);
+    const port = Number(new URL(value.baseUrl).port);
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 45));
+    const socket = await connectRaw(port);
+    const firstResponse = Promise.withResolvers<void>();
+    socket.on("data", (chunk: Buffer) => {
+      if (chunk.toString("utf8").includes("Accepted")) {
+        firstResponse.resolve();
+      }
+    });
+    socket.write(
+      [
+        `POST ${stream.endpoint} HTTP/1.1`,
+        ...Object.entries(authorizedHeaders()).map(
+          ([name, value]) => `${name}: ${value}`,
+        ),
+        "Content-Type: application/json",
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        "Connection: keep-alive",
+        "",
+        body,
+      ].join("\r\n"),
+    );
+    await firstResponse.promise;
+
+    const startedAt = Date.now();
+    socket.write(`POST ${stream.endpoint} HTTP/1.1\r\nHost: ${AUTHORITY}\r\n`);
+    await waitForSocketClose(socket, 500);
+    const elapsedMs = Date.now() - startedAt;
+    expect(elapsedMs).toBeGreaterThanOrEqual(25);
+    expect(elapsedMs).toBeLessThan(65);
+    stream.response.destroy();
   });
 
   it("accepts exactly 16 KiB of headers and rejects one byte more", async () => {
@@ -1488,6 +1575,45 @@ describe("legacy SSE adapter", () => {
         clearInterval(activity);
       }
     } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
+  });
+
+  it("starts the absolute header deadline after a TLS handshake", async () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: true,
+        requestHeaderTimeoutMs: 40,
+      }),
+    });
+    const server = adapter.createHttpsServer({
+      key: TEST_TLS_KEY,
+      cert: TEST_TLS_CERT,
+    });
+    const port = await listenOnLoopback(server);
+    let client: TLSSocket | undefined;
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 45));
+      client = connectTls({
+        host: "127.0.0.1",
+        port,
+        rejectUnauthorized: false,
+      });
+      const secured = Promise.withResolvers<void>();
+      client.once("secureConnect", secured.resolve);
+      client.once("error", secured.reject);
+      await secured.promise;
+
+      const startedAt = Date.now();
+      client.write("GET /sse HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+      await waitForSocketClose(client, 500);
+      const elapsedMs = Date.now() - startedAt;
+      expect(elapsedMs).toBeGreaterThanOrEqual(25);
+      expect(elapsedMs).toBeLessThan(65);
+    } finally {
+      client?.destroy();
       await adapter.close();
       await closeServer(server);
     }
@@ -1963,6 +2089,86 @@ describe("legacy SSE adapter", () => {
     sessionPending.request.destroy();
     await sessionPending.response.catch(() => undefined);
     sessionStream.response.destroy();
+  });
+
+  it("keeps routed POST rate quota principal-bound before lookup", async () => {
+    const value = await startAdapter({
+      policy: {
+        postRateLimit: 10,
+        postRateLimitPerPrincipal: 10,
+        postRateLimitPerSession: 1,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId:
+          authorization === "Bearer attacker-token" ? "attacker" : PRINCIPAL,
+      }),
+    });
+    const ownerStream = await openSse(value.baseUrl);
+
+    expect(
+      (
+        await post(
+          value.baseUrl,
+          ownerStream.endpoint,
+          "{}",
+          authorizedHeaders("attacker-token"),
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await post(
+          value.baseUrl,
+          ownerStream.endpoint,
+          "{}",
+          authorizedHeaders("attacker-token"),
+        )
+      ).status,
+    ).toBe(429);
+    expect((await post(value.baseUrl, ownerStream.endpoint, "{}")).status).toBe(
+      400,
+    );
+    expect((await post(value.baseUrl, ownerStream.endpoint, "{}")).status).toBe(
+      429,
+    );
+    ownerStream.response.destroy();
+  });
+
+  it("keeps routed POST concurrency principal-bound before lookup", async () => {
+    const routed = Promise.withResolvers<void>();
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentPosts: 4,
+        maxConcurrentPostsPerPrincipal: 2,
+        maxConcurrentPostsPerSession: 1,
+        postRateLimit: 10,
+        postRateLimitPerPrincipal: 10,
+        postRateLimitPerSession: 10,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId:
+          authorization === "Bearer attacker-token" ? "attacker" : PRINCIPAL,
+      }),
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") routed.resolve();
+      },
+    });
+    const ownerStream = await openSse(value.baseUrl);
+    const ownerPending = beginPendingPost(value.baseUrl, ownerStream.endpoint);
+    await routed.promise;
+
+    const attacker = await post(
+      value.baseUrl,
+      ownerStream.endpoint,
+      "{}",
+      authorizedHeaders("attacker-token"),
+    );
+    expect(attacker.status).toBe(404);
+    const ownerLimited = await post(value.baseUrl, ownerStream.endpoint, "{}");
+    expect(ownerLimited.status).toBe(429);
+    ownerPending.request.destroy();
+    await ownerPending.response.catch(() => undefined);
+    ownerStream.response.destroy();
   });
 
   it("admits POST rate attempts after auth and before routing in fixed windows", async () => {
@@ -2861,6 +3067,195 @@ describe("legacy SSE adapter", () => {
       expect(captured!.every((byte) => byte === 0)).toBe(true);
     } finally {
       allocateUnsafe.mockRestore();
+      stream.response.destroy();
+    }
+  });
+
+  it("zeroes each original IncomingMessage chunk before successful intake ends", async () => {
+    const { baseUrl } = await startAdapter();
+    const stream = await openSse(baseUrl);
+    const socket = await connectRaw(Number(new URL(baseUrl).port));
+    const marker = "retained-success-body-chunk";
+    const markerBytes = Buffer.from(marker);
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: { marker },
+    });
+    const originalIsBuffer = Buffer.isBuffer;
+    const retained: Buffer[] = [];
+    const isBuffer = vi
+      .spyOn(Buffer, "isBuffer")
+      .mockImplementation((value: unknown): value is Buffer => {
+        const result = originalIsBuffer(value);
+        if (result && value.includes(markerBytes)) retained.push(value);
+        return result;
+      });
+
+    try {
+      socket.write(
+        [
+          `POST ${stream.endpoint} HTTP/1.1`,
+          ...Object.entries(authorizedHeaders()).map(
+            ([name, value]) => `${name}: ${value}`,
+          ),
+          "Content-Type: application/json",
+          "Transfer-Encoding: chunked",
+          "Connection: close",
+          "",
+          `${Buffer.byteLength(body).toString(16)}`,
+          body,
+          "",
+        ].join("\r\n"),
+      );
+      await vi.waitFor(
+        () => {
+          expect(retained.length).toBeGreaterThan(0);
+        },
+        { interval: 5, timeout: 500 },
+      );
+      expect(retained.every((chunk) => chunk.every((byte) => byte === 0))).toBe(
+        true,
+      );
+
+      socket.write("0\r\n\r\n");
+      const response = await waitForSocketClose(socket, 500);
+      expect(response).toMatch(/^HTTP\/1\.1 202 Accepted\r\n/);
+    } finally {
+      isBuffer.mockRestore();
+      socket.destroy();
+      stream.response.destroy();
+    }
+  });
+
+  it("zeroes each original IncomingMessage chunk on the streamed cap path", async () => {
+    const { baseUrl } = await startAdapter();
+    const stream = await openSse(baseUrl);
+    const socket = await connectRaw(Number(new URL(baseUrl).port));
+    const originalIsBuffer = Buffer.isBuffer;
+    const retained: Buffer[] = [];
+    const isBuffer = vi
+      .spyOn(Buffer, "isBuffer")
+      .mockImplementation((value: unknown): value is Buffer => {
+        const result = originalIsBuffer(value);
+        if (
+          result &&
+          value.byteLength > 0 &&
+          value.every((byte) => byte === 0x7a)
+        ) {
+          retained.push(value);
+        }
+        return result;
+      });
+
+    try {
+      socket.write(
+        [
+          `POST ${stream.endpoint} HTTP/1.1`,
+          ...Object.entries(authorizedHeaders()).map(
+            ([name, value]) => `${name}: ${value}`,
+          ),
+          "Content-Type: application/json",
+          "Transfer-Encoding: chunked",
+          "Connection: keep-alive",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      const bodyLength = MCP_TRANSPORT_MAX_REQUEST_BYTES + 1;
+      socket.write(`${bodyLength.toString(16)}\r\n`);
+      socket.write("z".repeat(bodyLength));
+      socket.write("\r\n");
+
+      const response = await waitForSocketClose(socket, 2_000);
+      expect(response).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+      expect(response.endsWith("Request body too large")).toBe(true);
+      expect(retained.length).toBeGreaterThan(0);
+      expect(retained.every((chunk) => chunk.every((byte) => byte === 0))).toBe(
+        true,
+      );
+    } finally {
+      isBuffer.mockRestore();
+      socket.destroy();
+      stream.response.destroy();
+    }
+  });
+
+  it("zeroes each original IncomingMessage chunk on body budget rejection", async () => {
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentPosts: 4,
+        maxConcurrentPostsPerPrincipal: 4,
+        maxConcurrentPostsPerSession: 4,
+        postRateLimit: 10,
+        postRateLimitPerPrincipal: 10,
+        postRateLimitPerSession: 10,
+      },
+    });
+    const stream = await openSse(value.baseUrl);
+    const port = Number(new URL(value.baseUrl).port);
+    const requestHead = [
+      `POST ${stream.endpoint} HTTP/1.1`,
+      ...Object.entries(authorizedHeaders()).map(
+        ([name, headerValue]) => `${name}: ${headerValue}`,
+      ),
+      "Content-Type: application/json",
+      "Transfer-Encoding: chunked",
+      "Connection: keep-alive",
+      "",
+      "",
+    ].join("\r\n");
+    const chunkLength = MCP_TRANSPORT_MAX_REQUEST_BYTES / 2 + 1;
+    const allocateUnsafe = vi.spyOn(Buffer, "allocUnsafe");
+    const held = await connectRaw(port);
+    held.write(requestHead);
+    held.write(`${chunkLength.toString(16)}\r\n`);
+    held.write(" ".repeat(chunkLength));
+    held.write("\r\n");
+    await vi.waitFor(
+      () => {
+        expect(
+          allocateUnsafe.mock.calls.filter(
+            ([size]) => size === MCP_TRANSPORT_MAX_REQUEST_BYTES,
+          ),
+        ).toHaveLength(1);
+      },
+      { interval: 5, timeout: 2_000 },
+    );
+
+    const originalIsBuffer = Buffer.isBuffer;
+    const retained: Buffer[] = [];
+    const isBuffer = vi
+      .spyOn(Buffer, "isBuffer")
+      .mockImplementation((candidate: unknown): candidate is Buffer => {
+        const result = originalIsBuffer(candidate);
+        if (
+          result &&
+          candidate.byteLength > 0 &&
+          candidate.every((byte) => byte === 0x79)
+        ) {
+          retained.push(candidate);
+        }
+        return result;
+      });
+    const denied = await connectRaw(port);
+    try {
+      denied.write(requestHead);
+      denied.write(`${chunkLength.toString(16)}\r\n`);
+      denied.write("y".repeat(chunkLength));
+      denied.write("\r\n");
+
+      const response = await waitForSocketClose(denied, 2_000);
+      expect(response).toMatch(/^HTTP\/1\.1 429 Too Many Requests\r\n/);
+      expect(retained.length).toBeGreaterThan(0);
+      expect(retained.every((chunk) => chunk.every((byte) => byte === 0))).toBe(
+        true,
+      );
+    } finally {
+      isBuffer.mockRestore();
+      allocateUnsafe.mockRestore();
+      denied.destroy();
+      held.destroy();
       stream.response.destroy();
     }
   });

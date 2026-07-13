@@ -1871,11 +1871,220 @@ function assertFixtureRecoveryTransitions(
   }
 }
 
+interface StoryLifecycleSession {
+  readonly sessionId: string;
+  readonly sessionGeneration: number;
+}
+
+interface PendingStoryLifecycleTransition {
+  readonly kind: "connect" | "reconnect";
+  readonly stepId: string;
+  readonly predecessor: StoryLifecycleSession | null;
+}
+
+const LIFECYCLE_REVIEWED_STORY_IDS: Readonly<Record<string, true>> =
+  Object.freeze({
+    "power-three-semantic-actions": true,
+    "partial-verification-does-not-replay": true,
+  });
+
+function assertStorySessionLifecycle(
+  stories: readonly AcceptanceStory[],
+): void {
+  const establishCall = "acceptance-fixture/session/establish-ready";
+  const retireCall = "acceptance-fixture/session/retire-and-prove-no-incumbent";
+  const bindCall = "acceptance-fixture/session/bind-success-result";
+
+  for (const story of stories) {
+    if (LIFECYCLE_REVIEWED_STORY_IDS[story.id] !== true) {
+      continue;
+    }
+
+    let current: StoryLifecycleSession | null = null;
+    let pending: PendingStoryLifecycleTransition | null = null;
+    let established = false;
+
+    for (const [stepIndex, step] of story.steps.entries()) {
+      const next = story.steps[stepIndex + 1];
+      const isPendingBind =
+        step.tool === null &&
+        step.call === bindCall &&
+        pending !== null &&
+        step.input.source_step === pending.stepId;
+      if (pending !== null && !isPendingBind) {
+        throw new Error(
+          `Story ${story.id} session lifecycle ${pending.kind} ${pending.stepId} must bind its structured successful result before a later step`,
+        );
+      }
+
+      if (step.tool === null && step.call === establishCall) {
+        const sessionId = step.input.session_id;
+        const sessionGeneration = step.input.session_generation;
+        if (
+          established ||
+          current !== null ||
+          typeof sessionId !== "string" ||
+          sessionId.length === 0 ||
+          typeof sessionGeneration !== "number" ||
+          !Number.isInteger(sessionGeneration) ||
+          sessionGeneration <= 0 ||
+          step.input.session_state !== "ready"
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle establish step ${step.id} must create one structured ready session`,
+          );
+        }
+        current = { sessionId, sessionGeneration };
+        established = true;
+        continue;
+      }
+
+      if (step.tool === null && step.call === retireCall) {
+        if (
+          current === null ||
+          step.input.session_id !== current.sessionId ||
+          step.input.session_generation !== current.sessionGeneration ||
+          step.input.retire_session !== true ||
+          step.input.require_no_incumbent !== true
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle retire step ${step.id} must close the exact current session and prove no incumbent`,
+          );
+        }
+        if (
+          typeof step.input.next_case === "string" &&
+          next?.id !== step.input.next_case
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle retire step ${step.id} does not reach its declared next connect case`,
+          );
+        }
+        current = null;
+        continue;
+      }
+
+      if (step.tool === null && step.call === bindCall) {
+        if (
+          pending === null ||
+          step.input.source_step !== pending.stepId ||
+          step.input.source_outcome !== "applied" ||
+          step.input.returned_session_state !== "ready"
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle bind step ${step.id} must identify one successful connect or reconnect source`,
+          );
+        }
+        const returnedSessionId = step.input.returned_session_id;
+        const returnedSessionGeneration =
+          step.input.returned_session_generation;
+        if (
+          typeof returnedSessionId !== "string" ||
+          returnedSessionId.length === 0 ||
+          typeof returnedSessionGeneration !== "number" ||
+          !Number.isInteger(returnedSessionGeneration) ||
+          returnedSessionGeneration <= 0
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle bind step ${step.id} requires an exact returned session identity and generation`,
+          );
+        }
+        if (pending.kind === "reconnect") {
+          const predecessor: StoryLifecycleSession | null = pending.predecessor;
+          if (
+            predecessor === null ||
+            step.input.predecessor_session_id !== predecessor.sessionId ||
+            step.input.predecessor_session_generation !==
+              predecessor.sessionGeneration ||
+            returnedSessionId !== predecessor.sessionId ||
+            returnedSessionGeneration !== predecessor.sessionGeneration + 1 ||
+            step.input.fresh_capture_required !== true
+          ) {
+            throw new Error(
+              `Story ${story.id} session lifecycle reconnect ${pending.stepId} must bind the exact returned successor identity and generation`,
+            );
+          }
+        }
+        if (
+          typeof step.input.next_case === "string" &&
+          next?.id !== step.input.next_case
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle bind step ${step.id} does not reach its declared next case`,
+          );
+        }
+        current = {
+          sessionId: returnedSessionId,
+          sessionGeneration: returnedSessionGeneration,
+        };
+        pending = null;
+        continue;
+      }
+
+      if (step.tool === T.connect) {
+        if (current !== null && step.input.takeover !== true) {
+          throw new Error(
+            `Story ${story.id} session lifecycle connect ${step.id} cannot apply with takeover false while an incumbent session remains active`,
+          );
+        }
+        pending = {
+          kind: "connect",
+          stepId: step.id,
+          predecessor: current,
+        };
+        continue;
+      }
+
+      if (step.tool === T.reconnect) {
+        if (
+          current === null ||
+          step.input.session_id !== current.sessionId ||
+          step.input.session_generation !== current.sessionGeneration
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle reconnect ${step.id} must use the current returned session identity and generation`,
+          );
+        }
+        pending = {
+          kind: "reconnect",
+          stepId: step.id,
+          predecessor: current,
+        };
+        continue;
+      }
+
+      const sessionId = step.input.session_id;
+      const sessionGeneration = step.input.session_generation;
+      if (
+        typeof sessionId === "string" ||
+        typeof sessionGeneration === "number"
+      ) {
+        if (
+          current === null ||
+          sessionId !== current.sessionId ||
+          sessionGeneration !== current.sessionGeneration
+        ) {
+          throw new Error(
+            `Story ${story.id} session lifecycle call ${step.id} uses a stale session instead of the current reconnect successor`,
+          );
+        }
+      }
+    }
+
+    if (!established || pending !== null) {
+      throw new Error(
+        `Story ${story.id} session lifecycle must establish state and bind every successful connect or reconnect result`,
+      );
+    }
+  }
+}
+
 function assertObservationReachability(
   stories: readonly AcceptanceStory[],
 ): void {
   const reviewedStoryIds: Readonly<Record<string, true>> = Object.freeze({
+    "power-three-semantic-actions": true,
     "duplicate-request-id-definitive-replay": true,
+    "partial-verification-does-not-replay": true,
     "reconnect-requires-new-channel-observations": true,
   });
   for (const story of stories) {
@@ -2593,6 +2802,7 @@ export function validateAcceptanceStories(
   assertAtxBindingLossCases(stories);
   assertClosedGenerationRecovery(stories);
   assertFixtureRecoveryTransitions(stories);
+  assertStorySessionLifecycle(stories);
   assertObservationReachability(stories);
   assertReviewedPowerOutcomes(stories);
   assertAtxInterCaseRestoration(stories);

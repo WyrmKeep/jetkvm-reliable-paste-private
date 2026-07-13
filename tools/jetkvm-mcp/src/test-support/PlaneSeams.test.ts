@@ -43,13 +43,16 @@ const receipt = {
 };
 
 const imageBytes = new Uint8Array([1, 2, 3]);
+const imageSha256 = createHash("sha256").update(imageBytes).digest("hex");
 const observation = {
   observationId: "observation-a",
+  sessionId: ref.sessionId,
   sessionGeneration: ref.sessionGeneration,
   connectionEpoch: binding.connectionEpoch,
   displayGeneration: 0,
   frameId: "frame-a",
   capturedAt: "2026-07-13T00:00:00.000Z",
+  monotonicAgeMs: 0,
   sourceWidth: 1920,
   sourceHeight: 1080,
   imageWidth: 1280,
@@ -61,11 +64,9 @@ const observation = {
     contentWidth: 1280,
     contentHeight: 720,
   },
-  image: {
-    mimeType: "image/png" as const,
-    sha256: createHash("sha256").update(imageBytes).digest("hex"),
-    bytes: imageBytes,
-  },
+  format: "png" as const,
+  sha256: imageSha256,
+  byteLength: imageBytes.byteLength,
 };
 const pasteText = "private paste";
 const normalizedPasteText = pasteText.normalize("NFC");
@@ -145,7 +146,7 @@ const atx: AtxWireReceipt = {
 
 class RecordingAdapter implements DeviceRpcAdapter {
   public readonly calls: string[] = [];
-  public readonly binding = binding;
+  public binding: DeviceRpcBinding = binding;
 
   public async readDisplayState(
     actual: DeviceRpcBinding,
@@ -178,6 +179,38 @@ class RecordingAdapter implements DeviceRpcAdapter {
     this.calls.push("performAtx");
     return atx;
   }
+}
+
+async function publishFakeObservation(
+  plane: FakeBrowserPlane,
+  monotonicAgeMs = 0,
+): Promise<void> {
+  plane.loadScenario({
+    version: 1,
+    steps: [
+      {
+        operation: "connect",
+        result: {
+          state: "ready",
+          ref,
+          binding,
+          connectionEpoch: binding.connectionEpoch,
+          browserChannelGeneration: binding.browserChannelGeneration,
+          displayGeneration: observation.displayGeneration,
+        },
+      },
+      {
+        operation: "capture",
+        result: { ...observation, monotonicAgeMs },
+      },
+    ],
+  });
+  await plane.connect(ref, deadline);
+  await plane.capture(
+    ref,
+    { format: "png", maxWidth: 1280, maxHeight: 720 },
+    deadline,
+  );
 }
 
 type ThrowingPlaneFault = Exclude<
@@ -481,6 +514,9 @@ describe("FakeBrowserPlane", () => {
 
     for (const [operation, result, invoke] of cases) {
       const plane = new FakeBrowserPlane(new RecordingAdapter());
+      if (operation !== "connect") {
+        await publishFakeObservation(plane);
+      }
       plane.loadScenario({ version: 1, steps: [{ operation, result }] });
       await expect(invoke(plane), operation).rejects.toThrow(
         /result|response|receipt|published connection/i,
@@ -554,6 +590,7 @@ describe("FakeBrowserPlane", () => {
     "forces the %s boundary and consumes it once",
     async (fault) => {
       const plane = new FakeBrowserPlane(new RecordingAdapter());
+      await publishFakeObservation(plane);
       const outcome = FAULT_FAILURES[fault].outcome;
       const counts =
         outcome === "not_sent"
@@ -608,12 +645,13 @@ describe("FakeBrowserPlane", () => {
           },
           deadline,
         ),
-      ).rejects.toThrow(/unexpected fake plane call/i);
+      ).rejects.toThrow(/unexpected fake plane call|observation/i);
     },
   );
 
   it("returns a persisted terminal result despite a later disconnect", async () => {
     const plane = new FakeBrowserPlane(new RecordingAdapter());
+    await publishFakeObservation(plane);
     plane.loadScenario({
       version: 1,
       steps: [
@@ -646,6 +684,7 @@ describe("FakeBrowserPlane", () => {
 
   it("does not retain paste text or frame bytes in events", async () => {
     const plane = new FakeBrowserPlane(new RecordingAdapter());
+    await publishFakeObservation(plane);
     plane.loadScenario({
       version: 1,
       steps: [{ operation: "paste", result: pasteReceipt }],
@@ -668,6 +707,7 @@ describe("FakeBrowserPlane", () => {
 
   it("enforces actual deadline cancellation before consuming a scenario step", async () => {
     const plane = new FakeBrowserPlane(new RecordingAdapter());
+    await publishFakeObservation(plane);
     plane.loadScenario({
       version: 1,
       steps: [{ operation: "mouse", result: receipt }],
@@ -694,6 +734,7 @@ describe("FakeBrowserPlane", () => {
 
   it("accepts any positive safe internal deadline", async () => {
     const plane = new FakeBrowserPlane(new RecordingAdapter());
+    await publishFakeObservation(plane);
     plane.loadScenario({
       version: 1,
       steps: [{ operation: "mouse", result: receipt }],
@@ -710,6 +751,263 @@ describe("FakeBrowserPlane", () => {
         { timeoutMs: 1, signal: new AbortController().signal },
       ),
     ).resolves.toEqual(receipt);
+  });
+
+  it("binds one-shot observations to session identity and monotonic age", async () => {
+    const adapter = new RecordingAdapter();
+    const plane = new FakeBrowserPlane(adapter);
+    const canonicalObservation = {
+      ...observation,
+      sessionId: ref.sessionId,
+      monotonicAgeMs: 30_000,
+      format: "png" as const,
+      sha256: imageSha256,
+      byteLength: imageBytes.byteLength,
+    };
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref,
+            binding,
+            connectionEpoch: binding.connectionEpoch,
+            browserChannelGeneration: binding.browserChannelGeneration,
+            displayGeneration: 0,
+          },
+        },
+        { operation: "capture", result: canonicalObservation },
+        { operation: "mouse", result: receipt },
+      ],
+    });
+    await plane.connect(ref, deadline);
+    const captured = await plane.capture(
+      ref,
+      { format: "png", maxWidth: 1280, maxHeight: 720 },
+      deadline,
+    );
+    expect(captured).toMatchObject({
+      sessionId: ref.sessionId,
+      monotonicAgeMs: 30_000,
+      format: "png",
+      sha256: imageSha256,
+      byteLength: 3,
+    });
+    await expect(
+      plane.mouse(
+        ref,
+        {
+          observationId: captured.observationId,
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).resolves.toEqual(receipt);
+
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "mouse", result: receipt }],
+    });
+    await expect(
+      plane.mouse(
+        ref,
+        {
+          observationId: captured.observationId,
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).rejects.toThrow(/observation/i);
+    expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
+  });
+
+  it("rejects observations older than the operator maximum before consuming a step", async () => {
+    const plane = new FakeBrowserPlane(new RecordingAdapter());
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref,
+            binding,
+            connectionEpoch: binding.connectionEpoch,
+            browserChannelGeneration: binding.browserChannelGeneration,
+            displayGeneration: 0,
+          },
+        },
+        {
+          operation: "capture",
+          result: {
+            ...observation,
+            sessionId: ref.sessionId,
+            monotonicAgeMs: 30_001,
+            format: "png",
+            sha256: imageSha256,
+            byteLength: imageBytes.byteLength,
+          },
+        },
+      ],
+    });
+    await plane.connect(ref, deadline);
+    const captured = await plane.capture(
+      ref,
+      { format: "png", maxWidth: 1280, maxHeight: 720 },
+      deadline,
+    );
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "mouse", result: receipt }],
+    });
+    await expect(
+      plane.mouse(
+        ref,
+        {
+          observationId: captured.observationId,
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).rejects.toThrow(/observation/i);
+    expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
+  });
+
+  it("rejects a foreign observation even when session generations and epochs collide", async () => {
+    const adapter = new RecordingAdapter();
+    const plane = new FakeBrowserPlane(adapter);
+    await publishFakeObservation(plane);
+    const foreignBinding = { ...binding, sessionId: "session-b" };
+    const foreignRef = {
+      sessionId: foreignBinding.sessionId,
+      sessionGeneration: foreignBinding.sessionGeneration,
+    };
+    adapter.binding = foreignBinding;
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref: foreignRef,
+            binding: foreignBinding,
+            connectionEpoch: foreignBinding.connectionEpoch,
+            browserChannelGeneration: foreignBinding.browserChannelGeneration,
+            displayGeneration: 0,
+          },
+        },
+      ],
+    });
+    await plane.connect(foreignRef, deadline);
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "mouse", result: receipt }],
+    });
+    await expect(
+      plane.mouse(
+        foreignRef,
+        {
+          observationId: observation.observationId,
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).rejects.toThrow(/observation/i);
+    expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
+  });
+
+  it("invalidates observations across reconnect and close before consuming later steps", async () => {
+    const adapter = new RecordingAdapter();
+    const plane = new FakeBrowserPlane(adapter);
+    await publishFakeObservation(plane);
+    const nextBinding = {
+      ...binding,
+      connectionEpoch: binding.connectionEpoch + 1,
+      browserChannelGeneration: binding.browserChannelGeneration + 1,
+    };
+    adapter.binding = nextBinding;
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "reconnect",
+          result: {
+            state: "ready",
+            ref,
+            binding: nextBinding,
+            connectionEpoch: nextBinding.connectionEpoch,
+            browserChannelGeneration: nextBinding.browserChannelGeneration,
+            displayGeneration: 0,
+          },
+        },
+      ],
+    });
+    await plane.reconnect(ref, deadline);
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "mouse", result: receipt }],
+    });
+    await expect(
+      plane.mouse(
+        ref,
+        {
+          observationId: observation.observationId,
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        deadline,
+      ),
+    ).rejects.toThrow(/observation/i);
+    expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
+
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "close" }],
+    });
+    await plane.close(ref, deadline);
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "capture", result: observation }],
+    });
+    await expect(
+      plane.capture(
+        ref,
+        { format: "png", maxWidth: 1280, maxHeight: 720 },
+        deadline,
+      ),
+    ).rejects.toThrow(/published connection/i);
+    await expect(plane.close(ref, deadline)).rejects.toThrow(
+      /published connection/i,
+    );
+    expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
+
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref,
+            binding: nextBinding,
+            connectionEpoch: nextBinding.connectionEpoch,
+            browserChannelGeneration: nextBinding.browserChannelGeneration,
+            displayGeneration: 0,
+          },
+        },
+      ],
+    });
+    await expect(plane.connect(ref, deadline)).resolves.toMatchObject({
+      ref,
+      binding: nextBinding,
+    });
   });
 });
 
@@ -840,4 +1138,39 @@ describe("FakeNativeControlPlane", () => {
     });
     expect(adapter.calls).toEqual([]);
   });
+
+  it.each([
+    [
+      "sessionStatus",
+      {
+        rpcReachability: "reachable",
+        nativeProcess: "available",
+        display,
+      },
+    ],
+    ["displayStatus", { ...display, edid }],
+    ["powerControl", atx],
+  ] as const)(
+    "fences stale %s refs before consuming an explicit scenario step",
+    async (operation, result) => {
+      const native = new FakeNativeControlPlane(new RecordingAdapter());
+      native.loadScenario({
+        version: 1,
+        steps: [{ operation, result }],
+      });
+      const staleRef = { ...ref, sessionId: "session-b" };
+      const call =
+        operation === "sessionStatus"
+          ? native.sessionStatus(staleRef, deadline)
+          : operation === "displayStatus"
+            ? native.displayStatus(staleRef, deadline)
+            : native.powerControl(
+                staleRef,
+                { requestId: "power-a", action: "press_power" },
+                deadline,
+              );
+      await expect(call).rejects.toThrow(/stale|session reference/i);
+      expect(() => native.assertExhausted()).toThrow(/1 unconsumed/i);
+    },
+  );
 });
