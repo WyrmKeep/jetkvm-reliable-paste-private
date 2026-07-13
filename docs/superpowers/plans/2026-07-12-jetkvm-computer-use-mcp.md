@@ -1,467 +1,899 @@
-# JetKVM Computer-Use MCP Implementation Plan
+# JetKVM MCP v0.1 Six-Phase Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan phase-by-phase. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship a release-grade MCP server that owns one browser/WebRTC JetKVM session, returns maximum-age single-use views, executes Codex-style action batches, and exposes deterministic Reliable Paste.
+**Goal:** Ship a public-first JetKVM MCP v0.1 with explicit device sessions, ten strict typed tools, browser/WebRTC input and frame control, native read-only display status and semantic ATX control, stdio plus legacy HTTP/SSE, complete fake/replay branch coverage, story-driven E2E evidence, stranger-ready documentation, and a reproducible semver release.
 
-**Architecture:** A managed, sandboxed, ephemeral Chromium context is the sole WebRTC/video decoder. A serialized Go session manager atomically revokes the previous HID generation on takeover. Playwright uses ordinary video/pointer/keyboard paths; a stable route-lifetime `window.__jetkvmAutomationV1` facade supplies ownership, effective layout, physical text plans, deterministic paste lifecycle, and zero-state release. SDK adapters remain outside the controller.
+**Architecture:** The MCP facade owns public schemas, operator-supplied target/auth configuration, explicit device-session ownership, bounded timeouts, idempotency, result/error envelopes, and MCP transports. `BrowserPlane` owns live frame capture, mouse, physical keyboard, reliable paste, and input release through the product browser/WebRTC path. `NativeControlPlane` supplies individually qualified native observations and serialized fixed semantic ATX actions; `SessionService` composes public health/status and reconnect from explicit browser, channel, native-operation, and freshness signals. Device sessions are application state and never inherit ownership semantics from stdio or SSE transport sessions.
 
-**Tech Stack:** Go 1.25/Pion WebRTC, Node `>=22.23.1 <23` with exact 22.23.1 release gates, TypeScript 5.9 ESM/NodeNext, React 19/Zustand, `@modelcontextprotocol/sdk` 1.29.0, Zod 3, Playwright/Playwright Core 1.57, Vitest 4, jsdom/Testing Library, existing paste harness/Windows SSH rig, GitHub Actions.
+**Tech Stack:** Go 1.25 and the existing generation-scoped `internal/controlsession` manager; Node `>=22.23.1 <23` with exact Node 22.23.1 release evidence; TypeScript 5.9 ESM/NodeNext; `@modelcontextprotocol/sdk` 1.29.0; Zod 3; Playwright/Playwright Core 1.57; Vitest 4; the existing React 19/Zustand UI and paste harness; GitHub Actions.
 
-**Canonical spec:** `docs/superpowers/specs/2026-07-12-jetkvm-computer-use-mcp-design.md`
-
----
-
-## Locked file map
-
-### Firmware/session safety
-
-- Create `internal/controlsession/manager.go`, `manager_test.go`: ordinary leases plus manager-only maintenance `quiesceAndZero`.
-- Modify `cloud.go`, `web.go`, `webrtc.go`, `hw.go`, `main.go`, `native.go`, `network.go`, `ota.go`, `serial.go`, `usb.go`, `video.go`: snapshots, takeover quiesce, maintenance-leased zero.
-- Modify `hidrpc.go`, `jsonrpc.go`: every write leased; correlated quiesce command; cancel/join queued/in-flight work.
-- Create root tests for both offers, callbacks, command receipts, blocked/queued/stale barriers and scoped close/candidates.
-
-### Production UI automation boundary
-
-- Create `ui/src/automation/bridge.ts`, `bridge.test.ts`: event/lifecycle/paste plus correlated firmware quiesce receipts.
-- Create `ui/src/automation/inputGuard.ts`, `inputGuard.test.ts`: reusable exact capture guard.
-- Create `ui/src/automation/controller.ts`, `controller.test.tsx`: capabilities, mandatory paste cancellation, firmware release, ownership.
-- Create `ui/src/utils/pasteText.ts`, `pasteText.test.ts`: BOM/newline/NFC normalization.
-- Modify `ui/src/hooks/useKeyboard.ts`, `useMouse.ts`, `useHidRpc.ts`, `useJsonRpc.ts`; add focused tests: propagate transport queue booleans/channel generation and quiesce emitters.
-- Modify `ui/src/utils/hidRpcTransport.ts` and tests: finalize armed event receipt at actual send point.
-- Modify `ui/src/components/WebRTCVideo.tsx`: cancel/join deferred emitters and capture-phase guard.
-- Modify `ui/src/routes/devices.$id.tsx`: install facade once and set takeover before navigation.
-- Modify `ui/vitest.config.ts`, `ui/package.json`/lock: include `.test.tsx` and exact jsdom/Testing Library dependencies.
-
-### MCP package
-
-- Create `tools/jetkvm-mcp/`: package/build/test configs, README, SECURITY, GPL licence, schemas, and scripts.
-- Create `src/domain.ts`, `errors.ts`, `config.ts`, `deviceLease.ts`, `observability/logger.ts`.
-- Create browser modules `auth.ts`, `geometry.ts`, `frames.ts`, `keys.ts`, `input.ts`, `paste.ts`, `browserPolicy.ts`.
-- Create `OperationCoordinator.ts`, `BrowserController.ts`.
-- Create MCP modules `mcp/schemas.ts`, `results.ts`, `server.ts`, `stdio.ts`, `streamableHttp.ts`; create `cli.ts`, `cli/doctor.ts`.
-- Create focused tests beside modules and external real-controller fixture under `test-support/` outside production `src`.
-- Create scripts `clean.mjs`, `with-device-lease.mjs`, `run-device-go-tests.mjs`, schema/package checks, and installed stdio/HTTP smokes.
-
-### Harness/CI/release
-
-- Create paste-harness `mcpUserStories.ts`, `mcpReleaseManifest.ts`, `mcpLease.ts` plus tests and CLI shims.
-- Add exact MCP SDK dependency and explicit live/manifest scripts to paste-harness package/lock.
-- Create `.github/workflows/jetkvm-mcp.yml` with hardware-free required jobs, pinned browser provisioning, self-hosted live concurrency.
-- External ignored evidence directory: `tools/paste-harness/artifacts/mcp-v0.1.0-rc1/`; nothing inside is committed into the candidate tree.
+**Canonical design:** `docs/superpowers/specs/2026-07-12-jetkvm-computer-use-mcp-design.md`
 
 ---
 
-# Phase A — Ownership and public contracts
+## 0. Locked decisions and execution protocol
 
-## Task 1: Scaffold production-only package output and domain contracts
+### 0.1 Advice and divergence log
 
-**Files:**
-- Create `tools/jetkvm-mcp/package.json`, `package-lock.json`, `.nvmrc`, `tsconfig.json`, `tsconfig.build.json`, `vitest.config.ts`
-- Create `tools/jetkvm-mcp/.prettierignore`, `README.md`, `SECURITY.md`, `LICENSE`
-- Create `tools/jetkvm-mcp/src/domain.ts`, `domain.test.ts`, `errors.ts`, `errors.test.ts`, `runtimePolicy.ts`, `runtimePolicy.test.ts`
-- Create `tools/jetkvm-mcp/scripts/clean.mjs`
-- Create `tools/jetkvm-mcp/src/deviceLease.ts`, `deviceLease.test.ts`
-- Create `tools/jetkvm-mcp/scripts/with-device-lease.mjs`
-- Modify `ui/.nvmrc`, `ui/package.json`, `ui/package-lock.json`, `tools/paste-harness/package.json`, `tools/paste-harness/package-lock.json`, `.devcontainer/{docker,podman}/devcontainer.json`, `DEVELOPMENT.md`
+The canonical design and this plan are the durable advice log. Before any architecture or public-API decision in any phase, the orchestrator must read the current design, this section, and the completed Oracle consultations `jetkvm-expanded-api-advisor` and `jetkvm-expanded-security-test-advisor`. Record the adopted decision, rejected alternatives, reason, test consequence, and release consequence in the phase PR body before implementation. If a new issue is not covered, obtain advisor review before choosing an architecture or API; implementation does not begin while an architecture/API decision is unresolved.
 
-- [ ] **Write RED tests** for the exact five tool/domain result contracts, action union, `MutationOutcome`, stable codes, the invariant that `retryable:true` is impossible for `sent|unknown`, and runtime-policy boundaries around `>=22.23.1 <23`.
-- [ ] **Write RED lease tests** for device-keyed atomic `open(...,"wx")`, owner/run/host/PID/time/token proof, second contender, matching inherited proof, signal/exception `finally`, and stale fail-closed administrative cleanup.
+The final authority is the superseding product brief and these locked decisions:
+
+1. Preserve completed or in-flight foundation safety: Node/package/runtime policy, domain/error/lease/supervisor work, and the Go generation-scoped quiesce manager.
+2. Replace the prior public `computer_*` design. No Phase 1 work may add handlers for that obsolete catalogue.
+3. v0.1 ships exactly stdio and legacy HTTP/SSE. Streamable HTTP is deliberately deferred rather than becoming a third transport. Keep transport adapters replaceable.
+4. Device sessions are independent of MCP transport sessions. `jetkvm_session_connect` never steals ownership unless the caller explicitly sets `takeover: true`.
+5. A device URL and credentials are operator configuration, never tool arguments. LAN URLs, Tailscale names/URLs, and HTTPS reverse-proxy URLs are valid. Plain HTTP requires an explicit insecure opt-in. No lab IP, URL shape, credential, or auth method is hard-coded or required, and the model never chooses or receives them.
+6. `BrowserPlane` owns frame, mouse, physical keyboard, nominally ~91 source-char/s reliable paste, and release.
+7. `NativeControlPlane` owns qualified read-only resolution/EDID observations and serialized ATX. `SessionService`, not either plane alone, owns the composed health/status/reconnect contract. EDID mutation is not part of v0.1.
+8. `jetkvm_power_control` accepts only `press_power`, `hold_power`, and `press_reset`, mapped to the existing fixed 200 ms, 5 s, and 200 ms native press/release actions. It accepts no arbitrary duration or GPIO timing.
+9. Virtual media is absent from the product, API, tests, stories, documentation, capability inventory, and release claims.
+10. Every public input root is strict and typed; every tool has an explicit bounded `timeout_ms`; every business failure is actionable and structured; no handler reports a silent no-op or partial success.
+
+### 0.2 Exact public catalogue
+
+The production tool inventory is exactly the following ten names. Inventory tests compare the complete sorted set, generated schemas, packed schemas, `tools/list`, README tables, examples, and story references byte-for-byte where applicable.
+
+| Tool | Plane | Class | Implementation phase |
+|---|---|---|---|
+| `jetkvm_session_connect` | Session service + both planes | ownership mutation | Phase 4 |
+| `jetkvm_session_status` | Session service + both planes | read | Phase 4 |
+| `jetkvm_session_reconnect` | Session service + both planes | lifecycle mutation | Phase 4 |
+| `jetkvm_display_capture` | BrowserPlane | read, returns fresh observation | Phase 3 |
+| `jetkvm_display_status` | NativeControlPlane | read-only resolution/EDID | Phase 3 |
+| `jetkvm_input_mouse` | BrowserPlane | mutation | Phase 3 |
+| `jetkvm_input_keyboard` | BrowserPlane | mutation | Phase 3 |
+| `jetkvm_input_paste` | BrowserPlane | mutation | Phase 3 |
+| `jetkvm_input_release` | BrowserPlane + Go quiesce | idempotent safety mutation | Phase 3 |
+| `jetkvm_power_control` | NativeControlPlane | mutation | Phase 4 |
+
+No alias, compatibility name, hidden production tool, experimental tool, or catch-all action tool is registered.
+
+### 0.3 Shared public contracts
+
+Phase 2 copies and freezes the canonical design §8/§9 contracts before handler implementation. Every root is strict; every listed field is required unless marked optional; every `timeout_ms` is required and bounded exactly as §9 specifies.
 
 ```ts
-expect(makeFailure({ code: "ACTION_OUTCOME_UNKNOWN", outcome: "unknown" })).toMatchObject({
-  ok: false,
-  error: { retryable: false, effectsUnknown: true },
-});
-expect(isCoordinateAction({ type: "wait", ms: 1 })).toBe(false);
+type Success<T> = {
+  ok: true;
+  tool: JetKvmToolName;
+  operation_id: string;
+  session_id: string | null;
+  session_generation: number | null;
+  duration_ms: number;
+  result: T;
+};
+
+type MutationState = {
+  request_id: string;
+  outcome: "applied" | "already_applied" | "not_sent" | "unknown";
+  verification: "device_state_verified" | "device_ack_only" | "none";
+  safe_to_retry: boolean;
+  required_next_step:
+    | "none"
+    | "capture_then_retry"
+    | "reconnect_then_capture"
+    | "release_then_reconnect_then_capture"
+    | "inspect_device_state_before_retry"
+    | "wait_or_request_takeover"
+    | "grant_permission"
+    | "enable_capability";
+};
+
+type ToolError = {
+  ok: false;
+  tool: JetKvmToolName;
+  operation_id: string;
+  session_id: string | null;
+  session_generation: number | null;
+  duration_ms: number;
+  error: {
+    code: ErrorCode;
+    message: string;
+    phase: "validate" | "authorize" | "queue" | "connect" | "execute" | "verify" | "cleanup";
+    outcome: "applied" | "already_applied" | "not_sent" | "unknown" | null;
+    verification: "device_state_verified" | "device_ack_only" | "none";
+    safe_to_retry: boolean;
+    required_next_step: MutationState["required_next_step"];
+    details: {
+      permission: PermissionName | null;
+      capability: keyof CapabilitySnapshot | null;
+      failed_action_index: number | null;
+      dispatched_action_count: number | null;
+      completed_action_count: number | null;
+      downstream_stage: "none" | "admission" | "write" | "acknowledgement" | "verification";
+      expected_generation: number | null;
+      actual_generation: number | null;
+      observation_id: string | null;
+    };
+  };
+};
 ```
 
-- [ ] **Create package/build configs and secure the repo runtime baseline.** Pin `.nvmrc`, devcontainers, docs and release CI to Node 22.23.1; set every affected package engine to `>=22.23.1 <23` and update locks. The MCP package and doctor reject runtimes outside that supported range, but do not reject later patched Node 22 releases. Pin SDK 1.29.0, Playwright Core 1.57.0, Zod 3.25.76; pin dev Playwright 1.57.0, TypeScript 5.9.3, Vitest 4.1.5, Prettier 3.7.4, and `@types/node` 22.20.1. `build` runs `node scripts/clean.mjs && tsc -p tsconfig.build.json`. Build config explicitly excludes `**/*.test.ts`, `src/test/**`, and `test-support/**`; package files allowlist only `dist`, schemas, README, SECURITY, LICENSE.
+- Every mutation has one caller key, `request_id`. The lookup scope is `{session_id, session_generation, tool, request_id}` and the stored entry contains the normalized-input digest; connect uses `{authenticated principal, configured device, tool, request_id}` before a session exists. There is no second idempotency key.
+- Same request ID/digest returns `already_applied` only when the stored result proves the original applied; original `not_sent` returns the original result; unknown remains unknown. Same request ID with different input returns `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`. No branch performs a second write.
+- A definitive correlated acknowledgement followed by failed/unavailable post-read remains `applied` with `device_ack_only`; persist it and never replay. Only a write without definitive acknowledgement is `unknown`.
+- Actionable business errors use `isError:true` and put the same mapped object in structured content and compact JSON text. Malformed MCP messages, unknown tools, schema-invalid calls, and broken server dispatch remain protocol errors.
+- Target URL, credentials, cookies, TLS policy, browser path, and server bearer credentials are process configuration only and never appear in tool input, output, logs, evidence, or model-visible errors.
+- Input mutations require current `session_id` and `session_generation`; mouse, keyboard, and paste also require a fresh observation from capture. Release does not require an observation.
+- Connect is exactly:
 
-- [ ] **Run RED:** install, then focused domain/error/runtime-policy/device-lease tests must fail on missing exports/behavior.
+```ts
+type SessionConnectInput = {
+  request_id: string;
+  takeover?: boolean; // default false
+  timeout_ms: number; // required, 100..60000
+};
 
-- [ ] **Implement minimal contracts, pure runtime assertion, and shared lease wrapper.** The runtime assertion accepts an injected version for tests and has no side effects. `npm run device-lease:run -- --device-key <key> -- <command...>` holds the lease across the child process and releases on every exit; it never logs proof token.
+type SessionConnectResult = MutationState & {
+  state: "ready";
+  connection_epoch: number;
+  display_generation: number;
+  takeover_performed: boolean;
+  fresh_capture_required: true;
+  permissions: PermissionName[];
+  capabilities: CapabilitySnapshot;
+};
+```
 
-- [ ] **Run GREEN:** focused domain/error/runtime-policy/device-lease tests, `npm run typecheck`, `npm run build`, then unpack `npm pack` and confirm no test/fixture file in `dist`.
+The common success envelope supplies the newly issued `session_id` and `session_generation`. Connect accepts no mode, lease shape, target, URL, or credentials. A transport disconnect does not transfer the session. A conflicting connect returns `CONTROL_BUSY`; only explicit authorized takeover revokes the incumbent. Reconnect preserves logical ownership, publishes a new generation, invalidates old observations, and requires fresh capture.
+### 0.4 Sole behavioral branch matrix inventory
 
-- [ ] **Commit:** `feat(mcp): define production computer-use contracts`.
+Canonical design §11.2 is the only behavior-ID inventory. The plan, manifest, focused tests, generated matrix, docs, and evidence use these exact rows and do not define a second branch taxonomy.
 
-## Task 2: Make takeover an atomic server-side revocation
+| Branch | Required assertion |
+|---|---|
+| strict schema rejection | no controller/plane call |
+| permission denied | actionable `PERMISSION_DENIED`, no capability disclosure, no write |
+| capability missing | actionable `CAPABILITY_MISSING`, no mutation |
+| deadline before admission | `not_sent`, queue/reservation released |
+| cancellation before write | `not_sent`, zero downstream writes |
+| disconnect before write | `not_sent`, safe retry classification |
+| disconnect after write | `unknown`, gate closes, zero replay |
+| malformed downstream response | fail closed; `not_sent` or `unknown` according to write boundary |
+| stale session generation | `STALE_SESSION_GENERATION`, zero downstream writes |
+| busy without takeover | `CONTROL_BUSY`, incumbent unchanged |
+| authorized takeover | old generation quiesced before new publish |
+| unauthorized takeover | permission error, incumbent unchanged |
+| definitive acknowledgement | `applied` with exact verification strength |
+| duplicate same request/digest | cached definitive result, zero second write |
+| duplicate changed digest | `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`, zero second write |
+| partial verification | applied acknowledgement preserved as `device_ack_only`; no replay |
+| partial multi-event dispatch | `unknown` with exact dispatched/completed counts; suffix suppressed |
+| post-reconnect input without capture | fresh-capture error, zero input |
+| cleanup failure | cleanup-phase error evidence retained, no fabricated restoration |
+| cached display observation | observed time/age/provenance returned; stale policy enforced; proxy streaming omitted |
+| EDID lower-layer failure | `EDID_READ_FAILED`; no empty or qualified success |
+| reconnect evidence | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected |
+| ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-ID reservation, exact fixed timing |
+| ATX acknowledgement semantics | serial completion only; cached LED fact separate; no host-state proof |
+| SSE route security | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup |
+| SSE routing/close | session ID never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers |
+| shared DeviceRpcAdapter binding | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel |
+| DeviceRpcAdapter replacement | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes |
+| DeviceRpcAdapter mid-flight loss | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay |
 
-**Files:**
-- Create `internal/controlsession/manager.go`, `manager_test.go`
-- Modify `cloud.go`, `web.go`, `webrtc.go`, `hw.go`, `main.go`, `native.go`, `network.go`, `ota.go`, `serial.go`, `usb.go`, `video.go`, `hidrpc.go`, `jsonrpc.go`
-- Create `session_manager_test.go`; modify `jsonrpc_test.go`
-- Create `tools/jetkvm-mcp/scripts/run-device-go-tests.mjs`, `run-device-go-tests.test.mjs`
+Every applicable handler/row cell cites both a focused unit/adapter assertion and a manifest story assertion. A non-applicable cell requires reviewed rationale. Input cells additionally cover stale/consumed/foreign observations, display change before/after first dispatch, invalid coordinates/keys, held-state cleanup, and post-operation capture failure. Paste covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release races every deferred producer and writer. Power covers exactly three actions.
+### 0.5 Story manifest is acceptance authority
 
-- [ ] **Write RED pure race tests** for `quiesceAndZero`: maintenance handler is outside ordinary wait-group (no self-join), draining rejects work, blocked/queued workers join, ordinary count zero, only maintenance lease writes final zero, correlated acks, stale generation no write, zero post-zero.
+Phase 2 creates the one strict, versioned machine-readable manifest under `tools/jetkvm-mcp/stories/`. It uses exactly the canonical `AcceptanceStory` shape; no plan-local story schema or prose-only steps are allowed:
 
-- [ ] **Run host-runnable RED:** `go test -race ./internal/controlsession`; no native/cgo dependency.
+```ts
+type AcceptanceStory = {
+  id: string;
+  title: string;
+  requirements: string[];
+  tools: JetKvmToolName[];
+  environments: Array<"fake" | "replay" | "live">;
+  preconditions: StoryCondition[];
+  fault_script: FaultStep[];
+  steps: StoryStep[];
+  pass: StoryAssertion[];
+  evidence: EvidenceField[];
+  restore: RestoreStep[];
+  privacy: PrivacyRule[];
+};
+```
 
-- [ ] **Write root integration RED tests** for wire `quiesceAndZero(operationId)`: handler injects originating Session manager generation; receipt returns operation+generation; old channel after replacement gets stale/no-write. Also cover offers/callbacks, macro/paste, blocked writer, zero steps, takeover, candidates/close.
+The reviewed Phase 2 manifest contains all 24 complete canonical stories—never placeholders or uppercase aliases:
 
-- [ ] **Implement manager/integrations.** Command handler holds no ordinary lease and is excluded from the workers it joins. Every gadget write holds current ordinary or manager-only maintenance lease; takeover/emergency share quiesce; snapshots/ICE/close stay scoped.
+1. `session-connect-without-takeover-busy`
+2. `session-explicit-authorized-takeover`
+3. `session-reconnect-invalidates-observations`
+4. `display-capture-fresh-frame-and-geometry`
+5. `display-status-resolution-and-read-only-edid`
+6. `mouse-observation-fence-and-single-use`
+7. `keyboard-physical-keys-only`
+8. `reliable-paste-91cps-correlated-terminal`
+9. `emergency-release-races-every-writer`
+10. `power-three-semantic-actions`
+11. `disconnect-before-write-not-sent`
+12. `disconnect-after-write-unknown-no-replay`
+13. `duplicate-request-id-definitive-replay`
+14. `malformed-response-fails-closed`
+15. `permission-and-capability-errors-actionable`
+16. `stale-generation-zero-downstream-write`
+17. `partial-verification-does-not-replay`
+18. `transport-reconnect-does-not-own-device`
+19. `display-status-cached-freshness-and-streaming-omission`
+20. `edid-low-level-failure-propagates`
+21. `reconnect-requires-new-channel-observations`
+22. `atx-extension-serialization-idempotency-and-nonproof`
+23. `sse-get-and-post-share-http-security-boundary`
+24. `sse-session-id-is-routing-not-authentication`
 
-- [ ] **Audit direct pointer use:** repository search for `currentSession` must leave only manager-backed read helpers; no direct assignment outside manager.
+Each story has complete setup/preconditions, exact calls, timing/fault boundaries, observable pass assertions, allowed evidence, unconditional restore, and privacy rules in Phase 2. Later phases implement and execute only through this reviewed manifest. Any story/schema/step change is an API/acceptance change that reruns advisor, manifest review, generated docs/matrix, affected tests, and downstream gates. The same manifest drives focused links, fake/replay E2E, docs, and serialized live hardware.
+### 0.6 Branch, maker, review, and merge rules
 
-- [ ] **Run GREEN under one lease:** `device-lease:run` launches `run-device-go-tests.mjs`; that single child reads pre-revision/app identity, runs `dev_deploy.sh ... --run-go-tests-only`, reads post-identity, compares and flushes its artifact before exit. Lease releases only after child completes. RED-test sequencing/failure with injected fetch/spawn.
+These rules apply independently to all six phases and are repeated in each phase gate:
 
-- [ ] **Commit:** `fix(webrtc): revoke stale HID sessions atomically`.
-
-## Task 3: Implement fail-closed config, auth, browser policy, and redaction
-
-**Files:**
-- Create `tools/jetkvm-mcp/src/config.ts`, `config.test.ts`
-- Create `tools/jetkvm-mcp/src/browser/auth.ts`, `auth.test.ts`, `browserPolicy.ts`, `browserPolicy.test.ts`
-- Create `tools/jetkvm-mcp/src/observability/logger.ts`, `logger.test.ts`
-
-- [ ] **Write RED tests** for fixed URL, password-file precedence/conflict, setup-only status, noPassword/401, 429 retry-after, cookie extraction, layout, 30-second view age, browser allowlist/sandbox/scrubbed env, encoded secret/SDP/ICE/paste data, and screenshot bytes absent from config/auth/logger/error serialization. Image-block authorization starts in Task 10.
-
-- [ ] **Run RED** with the four focused test files.
-
-- [ ] **Implement config/auth/policy.** Credentials are opaque/disposable and cannot serialize. Browser resolution accepts explicit configured approved path or matching pinned Playwright-managed installation only. Launch policy uses ephemeral context, `chromiumSandbox:true` where supported, no persistent profile/download/record/trace/extension, and an environment allowlist excluding all device/MCP secrets.
-
-- [ ] **Run GREEN:** focused tests and typecheck.
-
-- [ ] **Commit:** `feat(mcp): add secure device and browser policy`.
-
-## Task 4: Build bridge registry, normalization, and keyboard lifecycle seams
-
-**Files:**
-- Create `ui/src/automation/bridge.ts`, `bridge.test.ts`
-- Create `ui/src/utils/pasteText.ts`, `pasteText.test.ts`
-- Modify `ui/src/hooks/useKeyboard.ts`
-- Create `ui/src/hooks/useKeyboard.test.ts`
-
-- [ ] **Write RED tests** for contract version, monotonic lifecycle/paste sequences, bounded progress coalescing, terminal retention, typed `EVENT_GAP`, per-method unmounted errors, channel-generation reset, and operation mismatch.
-
-- [ ] **Write normalization RED tests**: one BOM stripped; CRLF/lone CR -> LF; NFC; original/normalized UTF-8 byte counts/hashes; exact progress prefix bytes.
-
-- [ ] **Write keyboard RED tests** for `completedSourceChars/totalSourceChars`, capability reset on data-channel replacement, paste failure sequence, zero-state reset, and no change to current batch/flow-control behavior.
-
-- [ ] **Run RED:** focused UI Vitest files.
-
-- [ ] **Implement pure bridge registry/normalizer and minimal hook seams.** Registry never stores paste text. Terminal event cannot be evicted before acknowledgement; old sequence returns `EVENT_GAP`.
-
-- [ ] **Run GREEN:** focused tests, UI typecheck, touched-file ESLint.
-
-- [ ] **Commit:** `feat(ui): define deterministic automation lifecycle`.
-
-## Task 5: Install one stable route facade with layout, paste, release, and takeover
-
-**Files:**
-- Create `ui/src/automation/controller.ts`, `controller.test.tsx`
-- Create `ui/src/automation/inputGuard.ts`, `inputGuard.test.ts`
-- Modify `ui/src/components/WebRTCVideo.tsx`
-- Modify `ui/src/hooks/useKeyboard.ts`, `useMouse.ts`, `useHidRpc.ts`, `useJsonRpc.ts`
-- Modify `ui/src/utils/hidRpcTransport.ts`
-- Modify `ui/src/routes/devices.$id.tsx`
-- Modify `ui/vitest.config.ts`, `ui/package.json`, `package-lock.json`
-
-- [ ] Add exact `jsdom@29.1.1` and `@testing-library/react@16.3.2`; update Vitest include to `src/**/*.{test,spec}.{ts,tsx}` while retaining per-file jsdom directive. CI must assert `controller.test.tsx` appears in the executed file list.
-
-- [ ] **Write RED lifecycle tests**: not-ready->ready, rerenders, StrictMode, callback replacement, layout change, active paste rerender, true unmount, no successful no-op.
-
-- [ ] **Write RED capability/input tests:** probe layout/capability, physical plans, absolute/zero-throttle, and one-shot arm. Capture-blocked, handler-not-queued, and transport-send receipts are distinct; only transport `queued:true` includes current channel generation and crosses first dispatch.
-
-- [ ] **Write RED transport barrier tests:** admit capture, then close/replace HID or JSON-RPC channel before product handler send for pointer/wheel/key. Queue boolean propagates through transport/hooks; no dispatch is reported and the old arm cannot send on the replacement channel.
-
-- [ ] **Write RED product-event tests:** replace the `mousemove` consumer with the same `pointermove` event guarded by automation and run real Playwright stale move/drag barriers proving zero HID. For admitted automation keys, suppress human-browser-loss timers (Meta associated-key 10 ms, Meta release 100 ms, Windows Ctrl/AltGr 3 ms); successful Meta+R and AltGr sequences emit only armed transport-receipted events and nothing after completion.
-
-- [ ] **Write RED quiescence tests:** join UI emitters, always cancel paste, send only `quiesceAndZero(operationId)`. Receipt must return matching operation and server generation plus all step acks. Assert browser `channelGeneration` is never supplied/compared as firmware generation; old channel receipt is stale/no-write.
-
-- [ ] **Write RED takeover test:** ownership precedes navigation; stale firmware receipt is rejected.
-
-- [ ] Implement one route-lifetime facade with live refs. Bridge release always delegates final zero to the correlated firmware command; keep E2E hooks separate.
-
-- [ ] **Run GREEN:** explicitly observe `controller.test.tsx` plus all automation/hook tests, typecheck, touched ESLint.
-
-- [ ] **Commit:** `feat(ui): expose stable JetKVM automation facade`.
-
-## Checker Gate A — Contracts, ownership, and UI lifecycle
-
-- [ ] Dispatch independent architecture and evidence reviewers distinct from makers.
-- [ ] Review exact five tools/non-goals, atomic server revocation/candidate scoping, bridge boundedness/stability, layout/capability bootstrap, pointer mode, normalization, release command, auth side effects, and Go/UI tests.
-- [ ] Maker agents fix every blocker/major; rerun focused and phase-wide Go/UI/package gates.
-- [ ] An independent checker verifies the corrected diff. Phase B cannot start before `APPROVE`.
-- [ ] Commit any remediation as `fix(mcp): resolve contract checker findings`.
+1. Phase 1 uses exact branch `feat/jetkvm-mcp-foundation`; current foundation work must be normalized onto that PR head without carrying unrelated work. Every later branch is created from updated, clean `main` only after the prior phase PR is merged: `git switch main`, `git pull --ff-only`, verify the worktree is clean, then `git switch -c <phase-branch>`. Never stack a phase branch on an unmerged predecessor.
+2. Maker agents may edit and run only their focused RED/GREEN tests. They skip phase-wide gates, formatters, full suites, PR operations, and reviewer work. The orchestrator integrates makers, then runs each required gate once.
+3. Before coding, the orchestrator completes the phase advisor gate in §0.1. Before opening the PR, it checks the phase against the canonical design and this exact catalogue.
+4. Every PR body states: base/head; advice reviewed; decisions and rejected alternatives; intentional divergences; exact files/tools/stories changed; tests and clean-checkout evidence; security/privacy effects; known risks; rollback/restore plan; and hardware impact.
+5. Fresh reviewers who did not make the reviewed change inspect the current full diff after maker integration. Findings use `P0 blocker`, `P1 major`, `P2 minor`, or `P3 note`, plus `confidence: high|medium|low` and the evidence or gap behind that confidence.
+6. Maker agents fix findings. The orchestrator reruns affected focused tests and the phase-wide local gate once. A fresh reviewer checks the corrected current diff; do not reuse an approval of an earlier diff.
+7. Merge requires zero unresolved P0/P1, all required CI green, the phase's full local gate green from a clean checkout, required approval, and no undocumented divergence. P2/P3 may remain only when disposition and owner are recorded and they do not contradict acceptance.
 
 ---
 
-# Phase B — Views, actions, paste, controller, transports
+## Locked file map by phase
 
-## Task 6: Implement fresh frames and maximum-age single-use views
+Existing names are retained where they already exist. New names below establish responsibility boundaries; implementation may not create a second competing abstraction.
 
-**Files:**
-- Create `tools/jetkvm-mcp/src/browser/geometry.ts`, `geometry.test.ts`
-- Create `tools/jetkvm-mcp/src/browser/frames.ts`, `frames.test.ts`
+### Phase 1 — Foundation
 
-- [ ] **Write RED geometry tests** for image/native/render mapping, letter/pillarboxing, bounds, immutable geometry fingerprint, absolute-mode requirement, and display-generation changes.
+- Existing package/runtime/lease: `tools/jetkvm-mcp/package.json`, lock/config files, `src/domain.ts`, `errors.ts`, `runtimePolicy.ts`, `deviceLease.ts`, `deviceLeaseGroup.ts`, `deviceLeaseRunner.ts`, `deviceLeaseSupervisor.ts`, their focused tests, and lease scripts.
+- Existing Go safety: `internal/controlsession/manager.go`, `manager_test.go`; `internal/usbgadget/hid_keyboard.go`, `hid_keyboard_test.go`, and the minimal test seam in `usbgadget.go`; root `session_manager_test.go`, `jsonrpc_test.go`; and existing integration points in `cloud.go`, `web.go`, `webrtc.go`, `hw.go`, `main.go`, `native.go`, `network.go`, `ota.go`, `serial.go`, `usb.go`, `video.go`, `hidrpc.go`, and `jsonrpc.go`.
+- Foundation CI/package gate: `.github/workflows/jetkvm-mcp-foundation.yml`, every existing workflow Node job including `.github/workflows/build.yml` and `ui-lint.yml`, `tools/jetkvm-mcp/scripts/check-package.mjs`, its tests, and package scripts.
 
-- [ ] **Write RED view tests** for post-request `requestVideoFrameCallback` advance, frozen `VIDEO_STALLED`, JPEG/PNG/no crop/no upscale/2 MiB, monotonic 30-second age, atomic reservation, release when `not_sent`, consumption at first dispatch, reuse rejection after sent/unknown, and display changes before/between events.
+### Phase 2 — Transport/API contracts and seams
 
-- [ ] **Run RED**, implement bounded server-side view registry plus browser observers (`loadedmetadata`, resize/source/route/navigation/content rectangle) that monotonically update display generation.
+- Config/contracts: `tools/jetkvm-mcp/src/config.ts`, `config.test.ts`, replacement `domain.ts`, `domain.test.ts`, `errors.ts`, `errors.test.ts`.
+- MCP: `src/mcp/toolCatalogue.ts`, `toolCatalogue.test.ts`, `schemas.ts`, `schemas.test.ts`, `results.ts`, `results.test.ts`, `server.ts`, `server.test.ts`, `stdio.ts`, `stdio.test.ts`, `legacySse.ts`, `legacySse.test.ts`.
+- Sessions/request ledger: `src/session/deviceSessionClient.ts`, `deviceSessionClient.test.ts`, `src/idempotency/RequestLedger.ts`, `RequestLedger.test.ts`.
+- Shared device RPC: `src/device/DeviceRpcAdapter.ts`, `DeviceRpcAdapter.test.ts`; bind exactly `{session_id, session_generation, connection_epoch, browser_channel_generation}` to the existing BrowserPlane RPC-channel handle; NativeControlPlane uses this one injected adapter rather than opening another WebRTC connection.
+- Planes: `src/planes/BrowserPlane.ts`, `NativeControlPlane.ts`; `test-support/fakes/FakeBrowserPlane.ts`, `FakeNativeControlPlane.ts`; `test-support/replay/BrowserPlaneReplay.ts`, `NativeControlPlaneReplay.ts`; seam tests under `test-support/`.
+- Stories: `src/stories/manifest.ts`, `manifest.test.ts`, tracked `schemas/story-manifest.schema.json`, and `stories/*.json`.
+- Protocol/package scripts: `scripts/generate-schemas.mjs`, `check-schemas.mjs`, contract/protocol installed smoke scripts, and package scripts that run them.
 
-- [ ] **Run GREEN:** focused tests/typecheck.
+### Phase 3 — Input and display
 
-- [ ] **Commit:** `feat(mcp): bind actions to fresh single-use views`.
+- UI boundary: `ui/src/automation/bridge.ts`, `bridge.test.ts`, `inputGuard.ts`, `inputGuard.test.ts`, `controller.ts`, `controller.test.tsx`; `ui/src/utils/pasteText.ts`, `pasteText.test.ts`; focused changes/tests in `useKeyboard.ts`, `useMouse.ts`, `useHidRpc.ts`, `useJsonRpc.ts`, `hidRpcTransport.ts`, `WebRTCVideo.tsx`, and `devices.$id.tsx`.
+- Browser implementation: `tools/jetkvm-mcp/src/browser/auth.ts`, `geometry.ts`, `frames.ts`, `keys.ts`, `input.ts`, `paste.ts`, `BrowserController.ts`, and focused tests beside each module.
+- Plane/handlers: `src/planes/JetKvmBrowserPlane.ts`, `JetKvmBrowserPlane.test.ts`, `src/native/JetKvmNativeControlPlane.ts`, `JetKvmNativeControlPlane.test.ts`, `src/handlers/display.ts`, `display.test.ts`, `input.ts`, `input.test.ts`.
+- Native read correctness: modify `internal/native/cgo_linux.go` at `videoGetEDID`, propagate its error through existing `VideoGetEDID` gRPC/JSON-RPC layers, and add focused native/JSON-RPC tests; adapter tests cover cached `getVideoState`/`videoInputState` provenance and sanitized native display replays.
+- Adapter fixture: `test-support/uiFixture.ts`, `BrowserPlane.adapter.test.ts`, sanitized native display replay tapes, and the Phase 3 story files.
 
-## Task 7: Implement physical key plans, action dispatch generation, and release quiescence
+### Phase 4 — Power and session
 
-**Files:**
-- Create `tools/jetkvm-mcp/src/browser/keys.ts`, `keys.test.ts`
-- Create `tools/jetkvm-mcp/src/browser/input.ts`, `input.test.ts`
-- Create `tools/jetkvm-mcp/src/OperationCoordinator.ts`, `OperationCoordinator.test.ts`
+- Session service/handlers: `src/session/SessionService.ts`, `SessionService.test.ts`, `src/handlers/session.ts`, `session.test.ts`.
+- ATX serialization/readiness: create `internal/atx/controller.go`, `controller_test.go`; integrate it through `serial.go`, `serial_test.go`, `jsonrpc.go`, and `jsonrpc_test.go`; extend `src/native/JetKvmNativeControlPlane.ts`; create `src/handlers/power.ts`, `power.test.ts`; add sanitized ATX replay tapes.
+- Composition: `src/ToolHandlers.ts`, `ToolHandlers.test.ts`, and production registration in `src/mcp/server.ts`.
+- Phase 4 session/power stories.
 
-- [ ] **Write RED key tests** for Codex aliases, bridge-resolved physical plans, modifier-first/reverse-release, uppercase/punctuation/dead/non-US sequences, duplicates/unsupported keys, and whole-batch prevalidation.
+### Phase 5 — System E2E, docs, package
 
-- [ ] **Write RED action tests** for click/double/move/drag every point, vertical chunks, horizontal zero-only, waits, modifiers, and pre/post dispatch outcomes.
+- E2E: `tools/jetkvm-mcp/test-support/system/branchMatrix.ts`, `branchMatrix.test.ts`, `storyRunner.ts`, `storyRunner.test.ts`, `protocolE2E.test.ts`.
+- Harness: `tools/paste-harness/src/mcpUserStories.ts`, `mcpUserStories.test.ts`, `mcpReleaseManifest.ts`, `mcpReleaseManifest.test.ts`, CLI shims, package/lock updates.
+- Package checks: tracked generated schemas; extend the Foundation `scripts/check-package.mjs`; add `installed-smoke.mjs`, `installed-sse-smoke.mjs`, and tests.
+- Documentation: package `README.md`, `SECURITY.md`, root `README.md`, and executable examples under `tools/jetkvm-mcp/examples/`; troubleshooting remains in the package README unless an existing docs convention requires another existing file.
+- CI: `.github/workflows/jetkvm-mcp.yml` and only the minimum existing workflow changes needed to make it required.
 
-- [ ] **Write RED event-guard races:** for each pointer/wheel/key class, test display/dispatch mismatch before capture, handler no-op after admission, and channel close/replacement between admission and transport send. Only `queued:true` consumes the view/counts dispatch; no event can migrate to a replacement channel.
+### Phase 6 — Hardware evidence and release
 
-- [ ] **Write RED coordinator/release tests** for mandatory paste cancel and session-bound wire quiesce. Node sends only operation ID; validates returned operation/server generation and steps. Cover queues, blocked writers, timeout/stale unknown, zero post-zero; gate remains closed.
-
-- [ ] **Run RED**, then implement arm/event/receipt dispatch and the bounded bridge-to-firmware release path. Never use browser text insertion.
-
-- [ ] **Run GREEN:** focused tests/typecheck.
-
-- [ ] **Commit:** `feat(mcp): execute race-safe physical input actions`.
-
-## Task 8: Implement deterministic paste client and progress
-
-**Files:**
-- Create `tools/jetkvm-mcp/src/browser/paste.ts`, `paste.test.ts`
-
-- [ ] **Write RED tests** for exact contract/version, current channel/layout/capability ready, normalized size/hash, monotonic <=4 Hz byte progress, active required, event gap, missing/duplicate/out-of-order terminal, terminal retention, capability downgrade, cancellation inactive acknowledgement, and timeout/disconnect/unmount after acceptance.
-
-- [ ] **Run RED**, implement server operation ID, view reservation/consumption at acceptance, one bridge start call, sequence polling, per-method result handling, and mutation-gate lock for every uncertain accepted operation.
-
-- [ ] **Run GREEN:** focused tests/typecheck.
-
-- [ ] **Commit:** `feat(mcp): correlate reliable paste lifecycle`.
-
-## Task 9: Compose BrowserController lifecycle and takeover
-
-**Files:**
-- Create `tools/jetkvm-mcp/src/BrowserController.ts`, `BrowserController.test.ts`
-
-- [ ] **Write RED tests** for lazy explicit claim, unclaimed status, auth/browser/context/page readiness, exact facade version, epoch/generation increments, current browser/layout/pointer checks, synchronous takeover abort/no reclaim, view/paste/action/release composition, shutdown quiescence, and secret disposal.
-
-- [ ] **Run RED**, implement one approved Chromium process/context/page. Use LAN ICE flags already proven by product path without disabling sandbox. Observe explicit lifecycle event rather than delayed URL polling.
-
-- [ ] **Run GREEN:** controller tests/typecheck.
-
-- [ ] **Commit:** `feat(mcp): compose single-session browser controller`.
-
-## Task 10: Register exact five tools and stdio
-
-**Files:**
-- Create `tools/jetkvm-mcp/src/mcp/schemas.ts`, `results.ts`, `server.ts`, `server.test.ts`, `stdio.ts`
-- Create `tools/jetkvm-mcp/src/cli.ts`
-
-- [ ] **Write RED schema inventory tests:** exact five names, strict roots/bounds, `scroll_x:0`, no screenshot-none, and strict-empty `computer_release_input`.
-
-- [ ] **Write RED MCP result tests:** screenshot bytes decode/hash exactly in the sole `content[type="image"].data` field; structuredContent, JSON text, errors, logs and other content contain no identical payload. Cover all success/error/progress/abort paths.
-
-- [ ] **Write RED CLI startup tests:** a test seam supplies below-floor, supported-later-22, and next-major versions; every mode (`stdio`, `serve`, `doctor`) invokes the same runtime assertion before argument dispatch, transport construction, output, or device signaling.
-
-- [ ] **Run RED**, implement the first-instruction CLI runtime assertion, SDK registration and field-aware result mapping; stdout remains transport-only.
-
-- [ ] **Run GREEN:** MCP tests/typecheck/build.
-
-- [ ] **Commit:** `feat(mcp): expose five computer-use tools`.
-
-## Task 11: Add secured Streamable HTTP and doctor
-
-**Files:**
-- Modify `tools/jetkvm-mcp/src/deviceLease.ts`, `deviceLease.test.ts`
-- Create `tools/jetkvm-mcp/src/mcp/streamableHttp.ts`, `streamableHttp.test.ts`
-- Create `tools/jetkvm-mcp/src/cli/doctor.ts`, `doctor.test.ts`
-- Modify `tools/jetkvm-mcp/src/cli.ts`
-- Modify `tools/jetkvm-mcp/src/BrowserController.ts`, `BrowserController.test.ts`
-
-- [ ] **Write RED HTTP transfer tests:** fake-clock expiry/disconnect/release during long operations; contender stays busy through abort/quiesce/close. Then B receives a new BrowserController/WebRTC/firmware generation, every A view fails, B must screenshot, and B can mutate. Include owner-only release, cross-view, bind/path/Origin/auth limits and bearer/lease-token redaction.
-
-- [ ] **Write RED doctor/lease tests:** offline zero signaling; destructive claim requires lease proof and never echoes token; doctor reuses the shared runtime assertion and reports the accepted version.
-
-- [ ] Implement HTTP leases so ownership never transfers a drained controller: close A after quiescence, instantiate B fresh, require fresh view. Implement shared device proof and doctor modes; no mode owns a separate runtime guard.
-
-- [ ] **Run GREEN:** focused tests, full typecheck/build.
-
-- [ ] **Commit:** `feat(mcp): secure HTTP transport and diagnostics`.
-
-## Checker Gate B — Races, views, release, transport, browser
-
-- [ ] Independent reviewers inspect controller races/outcomes, per-event generations, view age/reservation/consumption, paste gaps, release quiescence/acknowledgement, five schemas, HTTP security, browser sandbox/env/compatibility, and doctor.
-- [ ] Fix all blocker/major findings with maker agents; rerun phase-wide package/Go/UI gates.
-- [ ] Independent recheck must return `APPROVE` before packaging/evidence.
-- [ ] Commit remediation as `fix(mcp): resolve controller checker findings`.
+- Hardware runner and validator: extend paste-harness story/manifest modules and CLI shims; no production source is changed for test-only behavior.
+- Ignored external evidence directory for the chosen release candidate; immutable manifest/report/checksums are attached to the PR and release, not committed into the candidate tree.
+- Release metadata, tag, tarball, checksum, generated schemas, and evidence manifest are all bound to the exact candidate.
 
 ---
 
-# Phase C — Real adapter, production artifact, docs, harness, CI
+# Phase 1 — Foundation safety PR
 
-## Task 12: Exercise real BrowserController with pinned Chromium fixture
+**Branch:** Put all current Foundation work on exact PR branch `feat/jetkvm-mcp-foundation`, based on `main`, without unrelated changes. Do not add any public tool handlers in this branch.
 
-**Files:**
-- Create `tools/jetkvm-mcp/test-support/uiFixture.ts`, `uiFixture.test.ts`, `BrowserController.adapter.test.ts`
+**Outcome:** Merge the reusable package/runtime/device-lease/supervisor foundation, Go generation-scoped quiesce manager, and keyboard auto-release/clear serialization that guarantees no post-zero HID, without preserving the obsolete public API as an implementation commitment.
 
-- [ ] **Provision exact browser locally/CI:** `npx playwright install chromium`; on Linux CI use `npx playwright install --with-deps chromium`. Pass resolved executable to tests and record `browser.version()`.
+## Task 1.1: Rebaseline the canonical advice log before code continues
 
-- [ ] **Build fixture RED-first** and import the exact `ui/src/automation/inputGuard.ts`. Real Playwright stale move/drag must emit zero pointer ledger events; normal pointermove emits once. Also cover video/geometry/channel close, handler-noop, layout, paste/release, unmount and takeover.
+- [ ] Read both completed advisor consultations and reconcile the canonical design and this plan with the locked decisions in §0.
+- [ ] In the Phase 1 PR body, state that the reusable safety foundation remains, while the prior public catalogue and transport plan are superseded.
+- [ ] Inventory current foundation changes as `complete`, `in progress`, or `not started`; do not rewrite passing foundation work merely to match the new plan's file names.
+- [ ] Explicitly reject any Phase 1 diff that introduces old public handlers, a Streamable HTTP module, EDID mutation, or unrelated capability code.
 
+## Task 1.2: Finish and preserve Task 1 package/runtime/device-lease/supervisor work
 
-- [ ] **Run real BrowserController/MCP through fixture** and map every reachable stable error code. Fixture is external test support, never compiled into `dist`.
+**Targets:** existing Task 1 files in the Phase 1 file map, especially `assertSupportedNodeRuntime`, domain/error redaction, `DeviceLease`, `DeviceLeaseGroup`, `DeviceLeaseRunner`, and `DeviceLeaseSupervisor`.
 
-- [ ] **Run GREEN:** adapter tests plus production build. Inspect `dist` for zero test/fixture imports.
+- [ ] Keep Node support `>=22.23.1 <23`, exact 22.23.1 release gates, production-only package output, and SDK/Playwright/Zod pins already established.
+- [ ] Complete focused tests for atomic device-keyed lease acquisition, proof-file permissions and redaction, second contender, inherited proof, process-group supervision, signal/exception cleanup, stale fail-closed administration, and installed lease smoke.
+- [ ] Keep the existing commit subject where the work is represented by that commit: `feat(mcp): define production computer-use contracts`. The subject is historical; the Phase 2 clean cutover replaces obsolete public domain types rather than treating the wording as a public API guarantee.
+- [ ] If remediation is separate, use a narrow foundation subject such as `fix(mcp): complete device lease supervision`; do not squash away the useful history until PR policy decides.
 
-- [ ] **Commit:** `test(mcp): exercise pinned real browser adapter`.
+## Task 1.3: Finish and preserve Task 2 Go session manager work
 
-## Task 13: Harden pack, schemas, installed smoke, and secret scan
+**Targets:** `internal/controlsession.Manager`, `Acquire`, `StartProducer`, `QuiesceAndZero`, `Takeover`, `Close`; session integration in `hidrpc.go`, `jsonrpc.go`, and root session tests; `internal/usbgadget.UsbGadget.performAutoRelease`, `ClearKeyboardState`, `hid_keyboard.go`, `hid_keyboard_test.go`, and the deterministic callback seam in `usbgadget.go`.
 
-**Files:**
-- Create `tools/jetkvm-mcp/scripts/generate-schemas.mjs`, `check-schemas.mjs`, `check-package.mjs`, `installed-smoke.mjs`, `installed-http-smoke.mjs`
-- Create tracked `tools/jetkvm-mcp/schemas/*.json`
-- Modify `tools/jetkvm-mcp/package.json`
+- [ ] Finish host-runnable race tests for manager-only maintenance leases, draining rejection, blocked/queued producer join, ordinary lease count zero before final zero, correlated receipts, stale generation no-write, and zero post-zero.
+- [ ] Finish root integration tests for current-session snapshots, session-scoped candidates/close, session-bound `quiesceAndZero(operationId)`, matching operation/generation receipts, and stale-channel no-write after replacement.
+- [ ] Fix the fired auto-release callback race by serializing callback validation/write with keyboard clear. Prove both lock orders deterministically: callback-first writes release then clear; clear-first removes the timer and the resumed callback writes zero HID reports. Preserve lock order and no timer-to-keyboard-lock cycle.
+- [ ] Audit direct current-session mutation so ownership changes are manager-backed.
+- [ ] Preserve the exact commit subject: `fix(webrtc): revoke stale HID sessions atomically`; keep the auto-release race fix as its own narrow Foundation commit when history already separates it.
+- [ ] Retain `scripts/run-device-go-tests.mjs` and its unit tests. Root/device hardware tests remain deferred to the serialized Phase 6 operator target; Phase 1 runs only hardware-free package races and host-runnable integrations.
 
-- [ ] **Write RED script tests** for complete schema file-set/byte comparison using a temporary output directory, production tar allowlist beneath `dist`, absence of tests/fixtures/Vitest/test server/fixture switch/secret source maps, and deterministic pack.
+## Task 1.4: Add the required hardware-free Foundation CI
 
-- [ ] **Write RED installed smokes:** stdio and HTTP entry points refuse below-floor/next-major runtime seams before transport/device setup, accept a later patched Node 22 seam, and run release success under exact Node 22.23.1; also cover security/lease behavior and screenshot success whose exact bytes/hash appear only in the authorised image block.
+**Files:** `.github/workflows/jetkvm-mcp-foundation.yml`, existing Node-job workflows including `build.yml` and `ui-lint.yml`, package scripts, `scripts/check-package.mjs`, and focused script tests.
 
-- [ ] **Use field-aware scanners:** exclude only `content[type="image"].data` after decode/hash validation; require the same screenshot payload absent from structured/JSON/errors/logs/stderr/doctor/reports/proofs/schemas/tar. Continue encoded secret and SDP/ICE/paste scans everywhere.
+- [ ] Pin every new and existing workflow Node job to exact Node 22.23.1 with `actions/setup-node`, then immediately assert `node --version` is exactly `v22.23.1`.
+- [ ] Foundation CI runs `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, `npm run test:installed-lease`, and `npm run package:check` in `tools/jetkvm-mcp`, plus hardware-free `go test -race ./internal/controlsession ./internal/usbgadget`.
+- [ ] `package:check` validates the production allowlist and rejects test, fixture, debug, trace, secret, lease-proof, and unallowlisted files.
+- [ ] CI receives no hardware URL, target identity, lease proof, credential, secret, self-hosted label, or live-test discovery path. It cannot read or mutate a device; root/device hardware tests remain Phase 6-only.
+- [ ] Add required path triggers for every Foundation source, test, lock, runtime, script, and workflow file, explicitly including `internal/controlsession/**` and `internal/usbgadget/**`.
 
-- [ ] **Run RED**, then implement scripts/schemas and package commands: `schemas:check`, `package:check`, `smoke:installed`, `smoke:http`. Schema check fails on missing/untracked/changed files.
+## Task 1.5: Focused and clean-checkout gates
 
-- [ ] **Run GREEN:** format/type/unit/adapter/build, then exact `npm run package:check`, `npm run smoke:installed`, `npm run smoke:http`, `npm run schemas:check`.
+Maker agents run only the focused tests for their touched Task 1 or Task 2 files. After all makers finish, the orchestrator runs once:
 
-- [ ] **Commit:** `test(mcp): validate exact production artifact`.
+```bash
+cd tools/jetkvm-mcp
+npm ci
+npm test
+npm run typecheck
+npm run build
+npm run test:installed-lease
+npm run package:check
 
-## Task 14: Finalize packed documentation and compatibility
+go test -race ./internal/controlsession ./internal/usbgadget
+```
 
-**Files:**
-- Finalize `tools/jetkvm-mcp/README.md`, `SECURITY.md`, `LICENSE`
-- Modify root `README.md` with concise MCP pointer
+Then validate from a separate clean checkout of the Phase 1 head:
 
-- [ ] Document five-minute stdio setup, password file, explicit claim, Codex/Claude configs, Node `>=22.23.1 <23` support with exact 22.23.1 release baseline, pinned browser install, doctor, exact tools.
-- [ ] Document coordinates/single-use age, physical layout typing, vertical-only scroll, focus precondition, dispatch-vs-acceptance, normalization, paste completion-vs-byte verification, takeover/revocation, unknown effects, release.
-- [ ] Document HTTP security, browser/sandbox/H.264 matrix, firmware/UI contract, target layout/app profiles, privacy, troubleshooting, rollback.
-- [ ] Execute every command against installed tarball/fixture; rerun pack allowlist and format.
-- [ ] **Commit:** `docs(mcp): finalize setup safety and compatibility`.
+```bash
+cd tools/jetkvm-mcp
+npm ci
+npm test
+npm run typecheck
+npm run build
+npm run test:installed-lease
+npm run package:check
+go test -race ./internal/controlsession ./internal/usbgadget
+```
 
-## Task 15: Extend harness with atomic lease, stories, and external manifest validator
+Acceptance: no test/fixture/debug file in production output; no secret or lease proof in stdout/stderr/artifacts; no old public handler exists; hardware-free controlsession/usbgadget race gates pass; deterministic auto-release tests prove no post-zero HID; root/device hardware tests remain deferred to Phase 6.
 
-**Files:**
-- Create `tools/paste-harness/src/mcpLease.ts`, `mcpLease.test.ts`
-- Create `tools/paste-harness/src/mcpReleaseManifest.ts`, `mcpReleaseManifest.test.ts`
-- Create `tools/paste-harness/src/mcpUserStories.ts`, `mcpUserStories.test.ts`
-- Create CLI/shims `src/cli/mcp-user-stories.ts`, `src/cli/mcp-manifest-lint.ts`, `mcp-user-stories.js`, `mcp-manifest-lint.js`
-- Modify `tools/paste-harness/package.json`, lockfile
-- [ ] Use the MCP package's documented device-lease path/owner-token format so `doctor --claim-session` validates the inherited proof without reacquiring; reject mismatched token/path.
+## Phase 1 PR/review/merge gate
 
-- [ ] Add exact runtime dependency `@modelcontextprotocol/sdk:1.29.0` and scripts `mcp:stories`, `mcp:manifest:lint`; manifest schema and runner require exact Node 22.23.1 identity.
-
-- [ ] **Write RED lease tests:** atomic acquire/hold/finally/contender/stale behavior; proof token is accepted only from matching path+owner and never reaches logs/evidence.
-
-- [ ] **Write RED manifest tests:** exact candidate identities, zero skips and artifact hashes; no payload, MCP bearer, or lease token in any encoded form.
-- [ ] Assert the harness never persists image bytes; it stores only frame hashes/dimensions and verifies the MCP image in memory.
-
-- [ ] **Write RED orchestration tests** for all spec stories/guards and enforce that SSH prepares/reads only, never performs tested input.
-
-- [ ] Implement runner using SDK `StdioClientTransport` against exact installed tarball; evidence path fixed under ignored `artifacts/mcp-v0.1.0-rc1/`.
-
-- [ ] **Run GREEN:** harness tests/typecheck and standalone manifest-lint fixture.
-
-- [ ] **Commit:** `test(mcp): add atomic live evidence harness`.
-
-## Task 16: Add required CI after all hardware-free commands exist
-
-**Files:**
-- Create `.github/workflows/jetkvm-mcp.yml`
-- Modify `.github/workflows/build.yml`, `.github/workflows/ui-lint.yml`
-
-- [ ] Required PR/push jobs:
-  - every Node job in all three workflows uses `actions/setup-node` with exact `22.23.1` and immediately fails unless `node --version` is `v22.23.1`;
-  - pure host-runnable `go test -race ./internal/controlsession`, then repository native build/root compile gate (never execute cross-built ARM archives on amd64);
-  - UI `npm ci`, automation/hook tests including an asserted executed `controller.test.tsx`, typecheck, touched ESLint;
-  - MCP `npm ci`, pinned browser+deps, format/type/unit/adapter/build, then exact `package:check`, `smoke:installed`, `smoke:http`, `schemas:check`;
-  - paste harness `npm ci`, MCP lease/manifest/story tests, typecheck, standalone manifest linter fixture.
-
-- [ ] Trigger on every depended source/lock/config/spec/plan/workflow path. Public jobs get no hardware secrets and do not discover live tests.
-
-- [ ] Manual approved self-hosted live job uses device-keyed `concurrency` and `cancel-in-progress:false`, calls only explicit `mcp:stories`, and verifies allowlisted hosts/atomic lease.
-
-- [ ] Validate workflow YAML and run all equivalent local hardware-free commands.
-
-- [ ] **Commit:** `ci(mcp): require complete package and harness gates`.
-
-## Checker Gate C — Artifact, CI, and evidence readiness
-
-- [ ] Independent artifact/security/evidence reviewers inspect clean build exclusions, unpacked tar allowlist, installed smoke, browser provisioning, sentinel scan, schema full-set comparison, docs, harness dependency/atomic lease/manifest linter, CI triggers/concurrency, and complete live matrix.
-- [ ] Fix all blocker/major findings; rerun every hardware-free gate; independent recheck returns `APPROVE`.
-- [ ] Commit remediation as `fix(mcp): resolve release-readiness findings`.
+- [ ] PR base is `main`, head is `feat/jetkvm-mcp-foundation`; body contains the §0.6 advice/divergence/test/risk content and calls out preserved Task 1/Task 2 commit subjects and the hardware-free CI boundary.
+- [ ] Fresh architecture reviewer checks that only foundation safety survives; fresh concurrency/security reviewer checks the current Go manager, usbgadget callback/clear lock ordering, lease, supervisor, and CI diff.
+- [ ] Findings are P0-P3 with confidence and evidence. Makers fix; orchestrator reruns focused failures and the full Phase 1 local gate once; fresh reviewers recheck the corrected diff.
+- [ ] Merge only with zero P0/P1, green required CI, green full local and clean-checkout gates, and required approval.
 
 ---
 
-# Phase D — Frozen candidate, live evidence, PR, release
+# Phase 2 — Transport/API contracts PR
 
-## Task 17: Freeze candidate, run live matrix, and release
+**Branch:** After Phase 1 is merged, update clean `main` and create `feat/jetkvm-mcp-transport-api`. It must contain the Phase 1 merge and no unmerged Phase 1 branch commits.
 
-**External artifacts:** `tools/paste-harness/artifacts/mcp-v0.1.0-rc1/` (ignored, uploaded to PR/release; never committed)
+**Outcome:** Freeze the exact ten-tool catalogue, canonical result/error/request-ledger/session contracts, operator URL/auth configuration, complete reviewed story manifest, browser/native Fake/Replay seams, one session-owned `DeviceRpcAdapter`, connect/reconnect client foundation, and replaceable stdio plus legacy SSE adapters. Do not wire fake or placeholder planes into production.
 
-- [ ] **Freeze candidate `C/G/T`:** ensure all code, schemas, docs, licence, metadata, workflow, harness are committed. Record PR-head commit C, git tree G, package-tree hash, lock hash; clean-build tarball T once and SHA-256 it. No branch changes after this point.
+## Task 2.1: Advisor gate and public-first operator configuration
 
-- [ ] **Run all hardware-free gates** and manifest schema preflight against C/T.
+**Files:** `src/config.ts`, `config.test.ts`, `src/browser/auth.ts`, `auth.test.ts`, `src/observability/logger.ts`, `logger.test.ts` if logging is not already centralized.
 
-- [ ] Push unchanged C and open a draft PR containing architecture, five schemas, safety/security, checker gates, C/G/T, planned live matrix, non-goals and rollback. Run and require all hardware-free Actions for C before touching the device.
+- [ ] Record the transport decision and public-first URL/auth decision in the PR advice log before code.
+- [ ] RED-test operator configuration accepting an explicit HTTPS URL, LAN hostname/IP URL, and Tailscale DNS/HTTPS URL without preferring any of them.
+- [ ] RED-test that plain HTTP is rejected unless the operator explicitly enables insecure HTTP; malformed URL, embedded credentials, fragments, and unsafe schemes fail closed.
+- [ ] RED-test credential source precedence/conflict, current-user file permissions, disposal/redaction, and proof that tool schemas and results have no URL/credential fields.
+- [ ] RED-test SSE bind/Host/Origin/bearer policy independently from the configured JetKVM URL. Default local bind is safe; non-loopback exposure requires explicit operator settings.
+- [ ] Implement one immutable `OperatorConfig` parsed before transport/device effects. The model never selects a target or authenticates.
 
-- [ ] **Before any device read or mutation, acquire the device lease** and enter one outer `try/finally`; pass the same inherited proof to every child process below.
+## Task 2.2: Replace obsolete domain types with the exact catalogue and envelopes
 
-- [ ] Inside the lease, persistently deploy full candidate: `./dev_deploy.sh -r 192.168.1.110 -i`; after reboot verify revision `C`, local `C^{tree}=G`, running binary SHA, auto-update off, UI contract 1.
+**Files:** `domain.ts`, `domain.test.ts`, `errors.ts`, `errors.test.ts`, `mcp/toolCatalogue.ts`, `toolCatalogue.test.ts`, `mcp/schemas.ts`, `schemas.test.ts`, `mcp/results.ts`, `results.test.ts`.
 
-- [ ] From exact T, run session-destructive `doctor --claim-session` with the inherited lease proof. Record exact Node 22.23.1 identity, executable path/hash/version, sandbox, frame callback/H.264 advance, LAN ICE, facade/layout/pointer, WebRTC/HID/video and proof acceptance in the manifest.
+- [ ] Delete obsolete public action/result types and tests instead of aliasing them. Keep generic primitives only when the new catalogue actually uses them.
+- [ ] RED-test the complete sorted inventory of ten names and absence of every other production registration.
+- [ ] Copy all ten strict inputs/results and bounds from canonical design §9 and test them structurally and as generated JSON Schema; do not introduce optional defaults or fields absent from §9.
+- [ ] `jetkvm_session_connect` accepts exactly required `request_id`, optional `takeover` defaulting false, and required `timeout_ms` in 100..60000. It accepts no mode, lease, target, URL, or credential. Its result is exactly §0.3/§9.1, with `session_id` and `session_generation` in the common envelope.
+- [ ] `jetkvm_power_control` accepts exactly session ID/generation, request ID, one of three semantic actions, and required bounded timeout—no precondition or timing field. Keyboard accepts only canonical physical actions.
+- [ ] Copy the exact §0.3 success, mutation, and error envelopes; assert every legal/illegal outcome-verification-retry-next-step combination, including definitive ack plus failed post-read staying `applied/device_ack_only`.
+- [ ] RED-test screenshot-byte isolation: image bytes occur only in the authorized MCP image content block, never structured content, text, errors, logs, schemas, or evidence.
+- [ ] Generate tracked JSON Schemas and fail on missing, extra, or stale schema files.
 
-- [ ] Run exact-T live HTTP transfer: A claims and screenshots; B is `CONTROL_BUSY`; A disconnect/release quiesces and closes its controller; B claims a fresh browser/WebRTC generation, A view is rejected, B takes a fresh screenshot and successfully performs a harmless mutation.
+## Task 2.3: Implement the bounded request ledger and session client foundation
 
-- [ ] Run live view/input matrix: host nonces, frozen frame, max-age/reuse, display changes before/between events, click/double/move/drag/vertical, horizontal zero, physical layout characters, release races, no stuck state/replay. Live channel close is only before event or after queued; admission-to-send remains Task12 fixture evidence.
+**Files:** `idempotency/RequestLedger.ts`, tests; `session/deviceSessionClient.ts`, tests.
 
-- [ ] Run paste matrix: 1 B, 1/8/32 KiB, configured maximum; reliable/fast; prose/JSON/TS/PowerShell/Markdown/punctuation/supported Unicode; BOM/CRLF/lone-CR/NFC; cold/warm. Record original/normalized bytes/hashes, actual hash, first mismatch, lifecycle/queue state.
+- [ ] RED-test canonical input digesting; request-ledger key exactly `{session_id, session_generation, tool, request_id}`, or `{principal, configured_device, tool, request_id}` for connect; digest stored and compared inside the entry, never in the key; same-request/digest definitive replay; `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`; in-flight duplicate; TTL/size bounds; terminal persistence before response; cache loss; and no secret/payload persistence.
+- [ ] RED-test that a definitive ack followed by failed post-read is persisted as `applied/device_ack_only` and never replayed; unknown is persisted and never replayed; not-sent retry releases only valid reservations.
+- [ ] RED-test application `session_id` and `session_generation` independent of MCP transport IDs; closing/reopening SSE cannot steal, transfer, or mint ownership.
+- [ ] RED-test exact connect input/result, busy without takeover, authorized takeover plumbing, reconnect generation rotation, stale-generation rejection, abort propagation, and required bounded timeouts.
+- [ ] Implement only the client/coordinator foundation needed to call injected planes. Ownership-changing production handlers remain Phase 4.
 
-- [ ] Emergency release always cancels paste and leaves generation drained; explicitly restart/reclaim and take a fresh screenshot before later mutation.
+## Task 2.4: Define BrowserPlane and NativeControlPlane Fake/Replay seams
 
-- [ ] Run cancel/disconnect/takeover and host ground-truth rows; record hashes/counts/mismatch and zero replay/post-zero HID.
+**Files:** `planes/BrowserPlane.ts`, `NativeControlPlane.ts`, `test-support/fakes/*`, `test-support/replay/*`.
 
-- [ ] Still inside the lease, lint/flush the immutable manifest/report/artifacts and perform final device reads. Require zero skips, exact C/G/T/browser/device identities, resolvable hashes, and no persisted screenshot/secret/payload.
+- [ ] Keep interfaces capability-shaped: BrowserPlane owns frame/input/release and exposes its current session/generation-owned device-RPC channel handle; NativeControlPlane owns qualified display reads and semantic power through `DeviceRpcAdapter`. NativeControlPlane does not invent unified health or open transport.
+- [ ] Fakes deterministically force deadline/cancellation before admission; disconnect before write, after write before ack, after definitive ack before post-read, and after persisted terminal result; malformed response; permission/capability denial; busy/takeover; stale generation; partial multi-event counts/suffix suppression; partial verification; cleanup failure; and post-reconnect input without capture.
+- [ ] Post-ack read failure is `applied/device_ack_only`, not unknown. Unknown requires begun write without definitive correlated acknowledgement.
+- [ ] Replays consume sanitized, versioned request/response tapes and reject unexpected order/shape. They never contain URL, credential, cookie, SDP/ICE, frame bytes, or paste text.
+- [ ] RED-test every fault injector and replay mismatch so later handlers cannot pass through an inert fake.
 
-- [ ] In the single outer `finally`, shut down children, perform safe cleanup, then release the lease. Never deploy/read/flush outside it.
+## Task 2.5: Implement the session-owned generation-fenced DeviceRpcAdapter
 
-- [ ] Upload immutable manifest/report/artifacts to that draft PR check/CI store, then update PR metadata with actual device/browser identities and evidence link. Do not commit or modify C.
+**Files:** `device/DeviceRpcAdapter.ts`, `DeviceRpcAdapter.test.ts`; BrowserPlane channel-handle contract and fakes/replays.
+
+- [ ] Bind one adapter instance to exactly `{session_id, session_generation, connection_epoch, browser_channel_generation}`. Every call validates all four before admission, queue, and send; any stale component produces zero downstream write.
+- [ ] Reuse the sole product Browser/WebRTC `rpc` data channel already owned by BrowserPlane. Native display/EDID/semantic-ATX calls share this adapter; no second browser, peer connection, RPC channel, WebRTC signaling flow, or direct HID transport is created.
+- [ ] Provide typed, bounded operations only for proven downstream calls needed by status/display/power. Correlate request/response IDs, qualify malformed/downstream errors, redact payloads, expose ack/write boundaries, and cancel on caller deadline.
+- [ ] RED-test all four binding components, including connection-epoch-only replacement with unchanged session/generation/channel value; old-binding invalidation before publish; channel replacement at admission/queue/send/ack; session takeover; timeout/cancel before write; response on old binding; malformed/duplicate response; post-ack read failure; mid-flight loss; adapter close; stale cached qualification; and no migration.
+- [ ] Fake/Replay NativeControlPlane implementations consume the same typed adapter contract, so unit, replay, and production code agree on one channel and one fencing model.
+
+## Task 2.6: Create the complete reviewed machine-readable story manifest
+
+**Files:** `stories/manifest.ts`, tests; the one generated `schemas/story-manifest.schema.json`; `stories/*.json`.
+
+- [ ] Implement exactly the strict `AcceptanceStory` fields in §0.5 and reject unknown fields; generate the one JSON Schema from that type instead of maintaining a second hand-authored story schema.
+- [ ] Commit all 24 lowercase canonical IDs from §0.5 with complete requirements, tools, environments, preconditions, fault scripts, steps, pass assertions, evidence, restore, and privacy. No placeholder, uppercase alias, phase-local rename, or deferred fields are permitted.
+- [ ] Test unique exact IDs, complete tool/requirement references, unconditional restoration for mutations/faults, privacy fields, no URL/credential/topology, and no unmapped tool/matrix row. Link the three DeviceRpcAdapter rows into existing stories only: replacement/single-channel proof in story 21, cached/stale binding behavior in story 19, and ATX pre/post-write fencing in story 22; never create story 25.
+
+## Task 2.7: Implement stdio and legacy HTTP/SSE protocol adapters only
 
 
-### Final checker and release
+**Files:** `mcp/server.ts`, tests; `mcp/stdio.ts`, tests; `mcp/legacySse.ts`, tests; package scripts and installed contract smokes.
 
-- [ ] Independent final whole-diff/evidence/security review of exact C/G/T and PR artifact; any fix creates a new candidate and reruns affected gates.
+- [ ] Build `createMcpServer(handlerRegistry)` so production composition can inject only complete real handlers in Phase 4. Phase 2 tests inject deterministic test handlers from `test-support`; no fake is imported by production `src`.
+- [ ] Prove stdio framing from the installed SDK 1.29.0 implementation/read-buffer behavior and black-box client/server interoperability, including partial and multiple messages. Do not cite declarations as framing proof. Test initialize, `tools/list`, calls, cancellation, malformed input, subprocess exit, and stdout purity.
+- [ ] RED-test `GET /sse` separately from `POST /messages`. Project MCP authentication and Host/Origin/anti-CSRF/DNS-rebinding middleware run on both routes before GET transport creation or POST lookup. Do not conflate this middleware with the SDK's deprecated POST-only request-header validator.
+- [ ] Both routes independently return adapter `401` for missing/invalid authentication and `403` for authenticated but forbidden Host/Origin/policy. Tests prove no session allocation/lookup occurs first.
+- [ ] GET success is 200 `text/event-stream` with the exact endpoint event to `/messages?sessionId=...`; stream/response close is idempotent, tolerates duplicate callbacks, deletes the registry entry, and server shutdown closes all entries.
+- [ ] POST treats `sessionId` only as routing. Missing or malformed ID returns 400. Unknown, closed, expired, and cross-principal IDs are indistinguishable 404 with the same safe body/timing class. Accepted valid JSON-RPC returns 202.
+- [ ] Test exact JSON media type, parsed-body coordination/limit, invalid JSON/message 400 bodies, auth-info forwarding after middleware, SSE message framing, cancellation, and in-flight disconnect. Directly force the SDK inactive-stream path once: exactly one 500 `SSE connection not established`, no second write after headers.
+- [ ] Keep SSE transport registries inside the adapter; bind routing entries to authenticated principal but never treat session ID as authentication, authorization, ownership, or a device-session ID.
+- [ ] Ban project-owned Streamable HTTP imports, registrations, routes, CLI modes, schemas, examples, and direct dependencies. Do not fail merely because the installed MCP SDK package contains unused Streamable symbols.
+- [ ] Installed smokes unpack the tarball, initialize test handlers, list exactly ten tools, exercise success/business/protocol errors, and prove SDK-grounded stdio plus SSE framing. No placeholder plane is wired into production.
+- [ ] Document contract inspection, operator config, and transport status accurately: handler activation follows in Phase 4 and the release is not claimed usable until Phase 5.
 
-- [ ] Confirm required Actions remain green, no blocker/major remains, finalize PR body, mark ready, and obtain required approval.
+## Task 2.8: Phase-wide and clean-checkout gates
 
-- [ ] Merge with a method that preserves C as an ancestor and produces a main tree equal to G. If conflicts or any source/tree/package/lock change occur, stop, create new C/G/T, and rerun affected live evidence. Never silently build another tarball.
+Add deterministic scripts `test:phase2`, `schemas:check`, and installed contract/protocol smokes. Maker agents skip them. The orchestrator runs once after integration:
 
-- [ ] Tag C itself `jetkvm-mcp-v0.1.0`.
+```bash
+cd tools/jetkvm-mcp
+npm ci
+npm run test:phase2
+npm run typecheck
+npm run build
+npm run schemas:check
+npm run smoke:installed-contracts
+npm run smoke:installed-stdio-protocol
+npm run smoke:installed-sse-protocol
+```
 
-- [ ] Create GitHub release attaching exact T, checksum, generated schemas, compatibility/setup/rollback, SBOM if produced, and external immutable manifest. Notes distinguish dispatch/queue completion from host-byte verification.
+Repeat the same gate from a clean checkout using only committed files and a freshly packed tarball. Assert production output has no test-support import, target URL, credential, replay tape, frame, or paste payload.
 
-- [ ] Clean-room release verification: under exact Node 22.23.1, download T/checksum, install empty directory, initialize/list over stdio and loopback `serve`, run default offline doctor (zero device signaling), and confirm tag/package/manifest C/G/T/runtime identities.
+## Phase 2 PR/review/merge gate
+
+- [ ] PR base is updated `main`, head is `feat/jetkvm-mcp-transport-api`; body contains advice, the deliberate two-transport divergence, exact ten schemas, security posture, test evidence, risks, and rollback.
+- [ ] Fresh API reviewer checks catalogue/schema/envelopes; transport/security reviewer checks stdio/SSE and Host/Origin/auth; test reviewer checks seam fault power and story manifest completeness.
+- [ ] Findings use P0-P3/confidence/evidence. Makers fix; orchestrator reruns affected focused tests and one full Phase 2/clean-checkout gate; fresh reviewers inspect the corrected diff.
+- [ ] Merge only with zero P0/P1, green CI, green full local/clean install, and required approval.
 
 ---
 
-## Plan self-review
+# Phase 3 — Input and display PR
 
-- Every spec tool/option/invariant has a task and evidence row.
-- Atomic takeover, session-scoped ICE, revoked queued HID, and release quiescence are implemented before controller claims.
-- The bridge is stable across rerenders, resets capability/layout per channel, resolves physical text, retains terminal events, and exposes zero-state release.
-- Views are maximum-age, reserved, consumed on dispatch, and generation-checked before every event.
-- Production build excludes tests/fixture; browser is pinned/provisioned/sandboxed; schemas compare full sets.
-- Harness has exact SDK dependency, atomic lease, executable manifest linter, and required CI.
-- All packed docs precede candidate freeze.
-- Manifest is external; candidate C/G/T is never modified after live testing.
-- Checker Gates A/B/C and final review precede dependent evidence.
-- No production clear/focus/OCR/SSH action option, horizontal scroll, best-effort paste completion, hidden retry, placeholder, skipped acceptance row, or unowned file remains.
+**Branch:** After Phase 2 is merged, update clean `main` and create `feat/jetkvm-mcp-input-display`. Do not branch from the Phase 2 feature branch.
+
+**Outcome:** Implement the browser frame/mouse/physical-keyboard/reliable-paste/release plane and native read-only display status, with every handler branch forced through fakes/replays and executable named stories.
+
+## Task 3.1: Advisor gate and proven protocol mapping
+
+- [ ] Before implementation, record which existing product surfaces each method uses. Browser operations must use the real browser/WebRTC path. Native display status may use existing `getVideoState`, `videoInputState`, and `getEDID` only with their actual semantics: video state is process-cached/event-derived rather than a synchronous hardware query; EDID is a driver read whose current cgo wrapper loses low-level failure.
+- [ ] Record the read-only EDID decision, cached/event freshness contract, untrusted proxy-`streaming` decision, reliable-paste pacing decision, image payload policy, and unsupported capability behavior in the PR body.
+- [ ] If a required read field is unavailable on supported firmware, represent it as typed unavailable/unknown with provenance and freshness. Do not fabricate it, infer live state from a zero value, or add a mutation.
+
+## Task 3.2: Build the stable product automation boundary
+
+**Files:** the Phase 3 UI boundary files.
+
+- [ ] RED-test one route-lifetime automation facade across rerenders/StrictMode, ready/not-ready/unmount, current layout/capabilities, monotonic lifecycle sequences, event gaps, and no successful no-op.
+- [ ] RED-test exact input admission receipts: capture admitted, product handler queued, transport write, and generation are distinct states.
+- [ ] RED-test channel close/replacement between admission and write for mouse, keyboard, paste, and release; an event admitted on one channel cannot migrate to another.
+- [ ] RED-test paste normalization and lifecycle without storing paste text; progress is bounded and terminal state retained until acknowledged.
+- [ ] Implement the minimum stable bridge/controller/hook seams. Reuse current product input behavior; no separate hidden HID path.
+- [ ] Release cancels active paste, joins emitters, and delegates final zero to correlated `quiesceAndZero(operationId)`.
+
+## Task 3.3: Implement fresh display capture and observation fencing
+
+**Files:** `browser/geometry.ts`, `frames.ts`, `BrowserController.ts`, `planes/JetKvmBrowserPlane.ts`, `handlers/display.ts`, focused tests and adapter fixture.
+
+- [ ] RED-test fresh decoded-frame advance, no-signal/stall, format and byte/dimension bounds, geometry/rotation, display-generation changes, maximum observation age, single-use mutation reservation, and stale observation rejection.
+- [ ] RED-test image bytes and hashes through the real MCP result mapping; payload exists only in the authorized image block.
+- [ ] Implement `jetkvm_display_capture` and its BrowserPlane adapter against the managed product page. Capture returns observation ID, session generation, display generation, dimensions, frame age/hash, and image.
+- [ ] A reconnect or display-generation change invalidates all old observations and requires a fresh capture.
+
+## Task 3.4: Implement read-only native display status
+
+**Files:** `native/JetKvmNativeControlPlane.ts`, `handlers/display.ts`, focused tests and sanitized display replay tapes; `internal/native/cgo_linux.go`, existing gRPC/JSON-RPC EDID propagation paths, and focused native/JSON-RPC tests.
+
+- [ ] RED-test signal/video state, capture/native resolution, observation source, event sequence, MCP-receipt timestamp/age, permission/capability errors, malformed response, timeout/disconnect, stale session generation, and unknown fields. `getVideoState` is marked cached snapshot; `videoInputState` is marked cached event. Receipt age is not mislabeled as hardware-acquisition age.
+- [ ] RED-test normal proxy behavior that omits `Streaming`: the public status never reports the proxy's reconstructed zero-value `streaming` field as live/false capture truth.
+- [ ] Fix `videoGetEDID` in `internal/native/cgo_linux.go` to detect the C `NULL` returned after open/`VIDIOC_G_EDID` failure before `C.GoString`, return a non-nil Go error, and preserve that error through native gRPC and JSON-RPC. Tests prove low-level failure becomes `EDID_READ_FAILED`/typed unavailable rather than an empty successful EDID.
+- [ ] Implement `jetkvm_display_status` using only qualified read operations. Return EDID summary/hash only after a successful hardware-read result. Never call or register `setEDID`; add a source/plane contract test proving no EDID mutation method is exposed.
+- [ ] Correlate browser capture metadata and native display generation without pretending render resolution, cached native resolution, and source resolution are identical or equally fresh.
+
+## Task 3.5: Implement mouse and physical keyboard handlers
+
+**Files:** `browser/keys.ts`, `input.ts`, `handlers/input.ts`, focused tests.
+
+- [ ] For `jetkvm_input_mouse`, implement bounded move/click/double-click/drag/vertical-scroll steps with whole-request validation and fresh-observation fencing.
+- [ ] For `jetkvm_input_keyboard`, implement physical press/down/up/chord operations, modifier-first/reverse-release behavior, layout/capability validation, and whole-request prevalidation. Reject text fields and unsupported keys before admission.
+- [ ] Test every applicable canonical §11.2 cell with FakeBrowserPlane, BrowserPlaneReplay, and the real Playwright fixture, including partial multi-event counts/suffix suppression, cleanup failure, post-capture failure, and admission-to-write generation barriers.
+- [ ] Persist request-ledger terminal state before returning. A definitive acknowledgement with failed post-capture remains `applied/device_ack_only`; no uncertain dispatch is auto-replayed.
+
+## Task 3.6: Implement reliable paste at nominal ~91 source chars/s
+
+**Files:** `browser/paste.ts`, `handlers/input.ts`, UI bridge/normalizer, focused tests.
+
+- [ ] Implement only the reliable profile, paced deterministically at the established nominal ~91 source characters per second through the existing product paste path.
+- [ ] RED-test normalization, byte/hash counts, empty/maximum input, pacing with fake clock, bounded progress, active/cancelled/completed/failed lifecycle, gap/duplicate/out-of-order terminal events, capability/layout change, timeout/disconnect at each lifecycle boundary, and no text persistence.
+- [ ] `jetkvm_input_paste` reports acceptance separately from verified terminal completion and uses the common mutation envelope.
+- [ ] No browser text insertion, clipboard API shortcut, SSH injection, or optimistic completion is allowed.
+
+## Task 3.7: Implement correlated input release
+
+**Files:** UI controller/bridge; `BrowserController.ts`; `handlers/input.ts`; Go receipt integration tests as needed.
+
+- [ ] RED-test first-use already-zero release, active mouse/key state, active paste, queued/blocked work, correlated operation/generation receipt, stale receipt, timeout, disconnect, and zero post-zero.
+- [ ] `jetkvm_input_release` always executes correlated zero/release on first use. A first-use already-zero device returns `applied/device_state_verified`; `already_applied` is legal only for cached replay of the same `request_id` and digest. Uncertain quiesce closes the gate and requires canonical recovery.
+
+## Task 3.8: Complete Phase 3 stories and docs
+
+- [ ] Implement and execute the reviewed manifest stories `display-capture-fresh-frame-and-geometry`, `display-status-resolution-and-read-only-edid`, `mouse-observation-fence-and-single-use`, `keyboard-physical-keys-only`, `reliable-paste-91cps-correlated-terminal`, `emergency-release-races-every-writer`, `display-status-cached-freshness-and-streaming-omission`, and `edid-low-level-failure-propagates`; do not rename or redefine them.
+- [ ] Execute applicable fault scripts and canonical §11.2 cells through the same reviewed manifest, then generate human usage excerpts from it.
+- [ ] Document coordinate/observation rules, physical keyboard versus paste, nominal pacing, progress/terminal meaning, release recovery, display status field semantics, and read-only EDID.
+
+## Task 3.9: Phase-wide and clean-checkout gates
+
+Add `test:phase3` scripts in MCP/UI packages. Maker agents run only focused files; the orchestrator runs once:
+
+```bash
+cd ui
+npm ci
+npm run test:phase3
+npm run typecheck
+
+cd ../tools/jetkvm-mcp
+npm ci
+npx playwright install chromium
+npm run test:phase3
+npm run typecheck
+npm run build
+npm run stories:validate
+```
+
+Run the equivalent committed-file gate in a clean checkout, including the real Playwright adapter fixture and package artifact scan. No physical hardware is used in this phase.
+
+## Phase 3 PR/review/merge gate
+
+- [ ] PR base is updated `main`, head is `feat/jetkvm-mcp-input-display`; body contains advisor decisions, plane boundaries, every applicable canonical story/cell, tests, image/text privacy, risks, and rollback/release impact.
+- [ ] Fresh browser/input reviewer checks product-path authenticity and generation barriers; native reviewer checks display calls/read-only EDID; test/security reviewer checks full handler branch matrices and payload redaction.
+- [ ] Findings use P0-P3/confidence/evidence. Makers fix; orchestrator runs affected tests and the one full Phase 3/clean-checkout gate; fresh reviewers inspect corrected diff.
+- [ ] Merge only with zero P0/P1, green CI, green full local/adapter/clean-checkout gates, and required approval.
+
+---
+
+# Phase 4 — Power and session PR
+
+**Branch:** After Phase 3 is merged, update clean `main` and create `feat/jetkvm-mcp-power-session`. Do not branch from the Phase 3 feature branch.
+
+**Outcome:** Complete explicit connect/status/reconnect ownership and capability behavior plus fixed semantic ATX power control, then compose all ten production handlers.
+
+## Task 4.1: Advisor gate and native action proof
+
+- [ ] Record explicit ownership, no-steal default, transport independence, composed health/reconnect semantics, fixed ATX timing, serial readiness/serialization, and partial-release recovery decisions before code.
+- [ ] Confirm mappings against existing JetKVM behavior: public `press_power` is `power-short` with 200 ms between ON/OFF, `hold_power` is `power-long` with 5 s, and `press_reset` is `reset` with 200 ms. Do not expose native duration parameters.
+- [ ] Record that `getATXState` returns cached LED globals, not a synchronous serial read or host-power confirmation. Record extension state, serial-controller readiness, ON/OFF write receipts, cached LED/video observations, and their provenance separately; missing indicators remain typed unavailable.
+
+## Task 4.2: Implement explicit SessionService ownership
+
+**Files:** `session/SessionService.ts`, tests; `handlers/session.ts`, tests.
+
+- [ ] Implement `jetkvm_session_connect` with exactly required `request_id`, optional `takeover`, and required bounded `timeout_ms`. On success the common envelope issues `session_id` and `session_generation`; the result is exactly `state`, connection/display generations, takeover flag, `fresh_capture_required`, permissions, capabilities, and `MutationState`. No mode, lease, target, URL, credential, or additional result shape is accepted.
+- [ ] A normal connect never steals. Busy ownership returns `CONTROL_BUSY`, `not_sent/none`, `safe_to_retry:true`, and `required_next_step:"wait_or_request_takeover"`; the incumbent is unchanged.
+- [ ] Explicit takeover invokes Go generation-scoped quiesce, waits for its input-release receipt, revokes old plane work, rotates generation, and invalidates old observations. The quiesce receipt proves only input drain/zero; it does not prove browser/native health or reconnect. Failure never grants ambiguous ownership.
+- [ ] Implement `jetkvm_session_status` with exact canonical §9.2 input/result. It composes separate ownership, browser, WebRTC, RPC/HID, native-process, cached capture, capabilities, mutation, blocker, and version observations without adding mode, lease, or unified-health fields.
+- [ ] `ping` proves only that one RPC handler ran on the current channel. Private/hard-coded `IsReady`, opaque `getVideoLogStatus`, cached `getVideoState`/`getATXState`, and native proxy auto-restart are not unified health proof and must never be promoted as such.
+- [ ] Implement `jetkvm_session_reconnect` with exact §9.3 input/result: preserve logical session, close/observe old generation, rebuild browser/WebRTC RPC/HID channels, boundedly re-probe actual native reads through the same `DeviceRpcAdapter`, publish new generation, and require fresh capture. Native auto-restart, reboot launch, ping, and quiesce cannot satisfy reconnect.
+- [ ] Test every applicable canonical §11.2 cell and stories `session-connect-without-takeover-busy`, `session-explicit-authorized-takeover`, `session-reconnect-invalidates-observations`, `transport-reconnect-does-not-own-device`, and `reconnect-requires-new-channel-observations`, including partially rebuilt planes and two-client/cross-transport cases.
+
+## Task 4.3: Implement semantic ATX power control
+
+**Files:** create `internal/atx/controller.go`, `controller_test.go`; modify `serial.go`, `serial_test.go`, `jsonrpc.go`, `jsonrpc_test.go`; extend `native/JetKvmNativeControlPlane.ts`; create `handlers/power.ts`, `power.test.ts`; add sanitized replay tapes.
+
+- [ ] Implement one Go ATX controller/adaptor that checks `atx-power` is active and the serial controller is actually ready before admission, then holds a mutex across the complete newline/ON/sleep/OFF sequence. Mount/`SetMode` failure cannot result in ready state; unmount clears readiness.
+- [ ] Preserve exactly the existing semantic wire actions and timing: power ON then OFF after 200 ms, power-long ON then OFF after 5 s, reset ON then OFF after 200 ms. The public and Node layers cannot choose or alter these durations.
+- [ ] Return a structured internal receipt that distinguishes not admitted, ON write attempted/completed, fixed hold completed, OFF write attempted/completed, and serial error phase. Do not expose the existing unscoped/best-effort `setATXPowerAction` directly as the MCP completion contract.
+- [ ] Treat ON-write failure as `not_sent` only when the writer proves no ON command was accepted. Treat OFF-write failure after ON as `unknown`, close the ATX gate, perform bounded best-effort OFF/release cleanup without repeating ON/the action, and require `inspect_device_state_before_retry`.
+- [ ] Implement `jetkvm_power_control` with exactly session ID/generation, request ID, one of three actions, and required bounded timeout. There is no second idempotency key, precondition, duration, delay, or sequence field.
+- [ ] A complete correlated serial ON/OFF receipt is `applied/device_ack_only` even when the subsequent cached LED read is unavailable or unchanged; persist it and never replay. Report cached LED observation separately with provenance/age and never upgrade it to host-state proof.
+- [ ] Test extension/readiness failure, two concurrent requests serialized across ON/OFF, exact fake-clock durations, ON failure, OFF-after-ON failure and cleanup evidence, cancel-before-write, partial verification preserved as applied, malformed reply, terminal persistence, and every applicable canonical §11.2 cell with Fake/Replay seams.
+- [ ] Never label an action or observation as host shutdown/start/reboot, never claim host-state change, and never infer action success from cached LEDs/video alone.
+
+## Task 4.4: Compose and register exactly ten real handlers
+
+**Files:** `ToolHandlers.ts`, tests; `mcp/server.ts`, catalogue/results integration tests; CLI entry points.
+
+- [ ] Build a production handler registry from `SessionService`, `JetKvmBrowserPlane`, and `JetKvmNativeControlPlane`; production imports no fake/replay/test fixture.
+- [ ] Register all and only the ten catalogue tools. Every registered handler implements timeout cancellation, common envelopes, redaction, and stable errors.
+- [ ] Activate production stdio and legacy SSE CLI modes now that every tool has a real handler. Startup asserts runtime/config before transport or device effects; stdout remains protocol-only.
+- [ ] Run inventory and packed-schema checks against production `tools/list` for both transports.
+
+## Task 4.5: Complete Phase 4 stories and docs
+
+- [ ] Execute reviewed stories `session-connect-without-takeover-busy`, `session-explicit-authorized-takeover`, `session-reconnect-invalidates-observations`, `reconnect-requires-new-channel-observations`, `power-three-semantic-actions`, and `atx-extension-serialization-idempotency-and-nonproof`; do not add phase-local story IDs.
+- [ ] Assert canonical mutation outcomes/verification, evidence, and unconditional restoration through the reviewed manifest.
+- [ ] Document ownership and takeover risk, reconnect/fresh-capture recovery, capability blockers, semantic ATX meaning, and unknown-effect handling. No host-OS claim is made.
+
+## Task 4.6: Phase-wide and clean-checkout gates
+
+Maker agents run focused handler tests only. The orchestrator runs once:
+
+```bash
+cd tools/jetkvm-mcp
+npm ci
+npx playwright install chromium
+npm run test:phase4
+npm run test:phase2
+npm run test:phase3
+npm run typecheck
+npm run build
+npm run schemas:check
+npm run stories:validate
+npm run smoke:installed-stdio
+npm run smoke:installed-sse
+```
+
+Repeat from a clean checkout and freshly packed tarball. Smokes initialize/list exactly ten tools and execute fake-device-independent status/protocol/error paths without contacting a real device.
+
+## Phase 4 PR/review/merge gate
+
+- [ ] PR base is updated `main`, head is `feat/jetkvm-mcp-power-session`; body contains advisor decisions, native RPC proof, ownership/transport separation, ATX semantics, tests/stories, risks, restore/rollback, and hardware implications.
+- [ ] Fresh concurrency reviewer checks takeover/quiesce/reconnect; native/security reviewer checks ATX, permissions, and unknown effects; API/test reviewer checks exact registration and branch matrices.
+- [ ] Findings use P0-P3/confidence/evidence. Makers fix; orchestrator reruns affected tests and one full Phase 4/clean-checkout gate; fresh reviewers inspect corrected diff.
+- [ ] Merge only with zero P0/P1, green CI, green full local/installed-smoke/clean-checkout gates, and required approval.
+
+---
+
+# Phase 5 — System E2E, docs, and packaging PR
+
+**Branch:** After Phase 4 is merged, update clean `main` and create `feat/jetkvm-mcp-system-e2e-docs`. Do not branch from the Phase 4 feature branch.
+
+**Outcome:** Generate fake/replay system E2E from named stories, prove the complete behavioral branch matrix and protocol contracts, finish stranger-ready README/examples/troubleshooting, freeze semver/package behavior, and make clean-checkout verification required in CI.
+
+## Task 5.1: Advisor gate and acceptance crosswalk
+
+- [ ] Before E2E/docs/package decisions, crosswalk every locked decision, tool, branch row, and story to an executable test and evidence field.
+- [ ] Record any deliberate protocol divergence, unsupported capability behavior, security choice, and release risk in the PR body. No feature is added to simplify documentation or release.
+- [ ] Fail the crosswalk on an unowned tool, branch, story, schema, or document claim.
+
+## Task 5.2: Generate story-driven fake/replay E2E
+
+**Files:** `test-support/system/storyRunner.ts`, tests; manifest generator; paste-harness story modules.
+
+- [ ] Generate one success E2E and every applicable fault case from each machine-readable story; tests may add assertions but not redefine story steps in a second source.
+- [ ] Run stories through real MCP server/result mapping over in-memory protocol, installed stdio, and installed legacy SSE, using only Fake/Replay planes.
+- [ ] Assert preconditions before steps, pass criteria after steps, required evidence fields, and restore after every mutation—even on test failure.
+- [ ] Drive every canonical §11.2 fault boundary from the reviewed manifest, including request-ID digest mismatch/replay, cancel-before-write, partial multi-event counts/suffix suppression, post-reconnect input without capture, cleanup failure, cached display/EDID, reconnect proof, ATX acknowledgement, SSE security/routing/close, and all three DeviceRpcAdapter rows—linked only to existing stories 21, 19, and 22.
+
+## Task 5.3: Prove the complete behavioral branch matrix
+
+**Files:** `test-support/system/branchMatrix.ts`, tests and generated report.
+
+- [ ] Materialize canonical design §11.2 exactly as a machine-checkable matrix keyed by all ten tools; this file contains no additional behavior IDs.
+- [ ] Require every applicable cell to cite both a focused unit/adapter test and a reviewed-manifest story assertion; non-applicable cells require reviewed rationale, never blank/skip.
+- [ ] Require explicit cells for cancellation before write, partial multi-event dispatched/completed counts and suffix suppression, post-reconnect input without capture, cleanup failure evidence, cached display/EDID, reconnect proof, ATX, SSE route-security/routing/close, and the exact three DeviceRpcAdapter binding/replacement/mid-flight-loss rows.
+- [ ] Fail on skipped tests, `.only`, duplicate/extra behavior IDs, missing evidence assertions, or any handler branch absent from canonical §11.2. Source coverage is diagnostic only.
+
+## Task 5.4: Prove end-to-end protocol contracts
+
+**Files:** `protocolE2E.test.ts`, installed smoke scripts, package-check scripts.
+
+- [ ] For stdio and legacy SSE, test initialize, exact `tools/list`, all ten strict schemas, each result outcome, business versus protocol error, cancellation, disconnect, reconnect, logs, and payload redaction.
+- [ ] Through the installed tarball, repeat both-route SSE contracts: independent adapter 401/403 on GET and POST before allocation/lookup; GET 200; missing/malformed `sessionId` 400; unknown/closed/expired/cross-principal 404 indistinguishable; accepted POST 202; SDK inactive-stream single 500; exact safe bodies; parsed-body limit; routing-only ID; duplicate-safe close; and device-session independence.
+- [ ] Test runtime floor/later-supported-22/next-major behavior before any transport or device effect.
+- [ ] Scan project source/dist/tarball/schemas/examples/docs for Streamable HTTP imports, registration, routes, CLI, schema, example, or direct dependency; ignore unused symbols nested in the SDK dependency.
+
+## Task 5.5: Finish stranger-ready README, examples, troubleshooting, and security guidance
+
+**Files:** package/root README, SECURITY, executable examples.
+
+- [ ] Document a five-minute clean install from the packed artifact under supported Node, with exact stdio host configuration and legacy SSE server/client examples.
+- [ ] Document operator-only device URL/auth configuration for HTTPS, LAN, and Tailscale; insecure HTTP opt-in; SSE bind/Origin/Host/bearer security; secret handling; and why tools never accept credentials.
+- [ ] List exactly ten tools with strict input/result summaries and realistic examples for connect/status/reconnect, capture/status, mouse/keyboard/paste/release, and all three power actions.
+- [ ] Explain ownership/no-steal/takeover, transport-session independence, generation/observation fencing, idempotency outcomes, safe retry, next steps, and no-silent-partial-success behavior.
+- [ ] Explain reliable paste nominal pacing and completion evidence, physical keyboard versus paste, read-only EDID/resolution semantics, image/paste privacy, and semantic ATX limitations.
+- [ ] Add troubleshooting for auth/permission, insecure HTTP rejection, CONTROL_BUSY, capability missing, stale generation/observation, no video/stalled frame, paste interruption, unknown input/power effect, release/reconnect/manual recovery, SSE reconnect, and runtime/browser setup.
+- [ ] Execute every example against the installed fake/replay E2E environment. Examples must fail if they drift from schemas.
+
+## Task 5.6: Finalize semver/package metadata and CI
+
+**Files:** package metadata/lock, schemas, check scripts, `.github/workflows/jetkvm-mcp.yml`.
+
+- [ ] Keep package version at release candidate `0.1.0` metadata without publishing. Verify package name, licence, repository, engines, bin/exports, files allowlist, and generated schema set.
+- [ ] Make pack deterministic and production-only; exclude tests, fixtures, replays, traces, source maps containing secrets, and debug artifacts.
+- [ ] Add required hardware-free CI jobs for foundation Go race tests, UI focused tests, MCP phase suites, pinned browser adapter, schema/package scans, installed stdio/SSE smokes, story E2E, branch matrix, examples, and docs/schema consistency.
+- [ ] Public CI has no device secrets and never discovers or runs live hardware stories.
+
+## Task 5.7: Full local and clean-checkout gates
+
+Maker agents run only focused E2E/docs-script tests. The orchestrator runs the repository's complete hardware-free gate once, including:
+
+```bash
+go test -race ./internal/controlsession ./internal/usbgadget
+
+cd ui
+npm ci
+npm run test:unit
+npm run typecheck
+
+cd ../tools/jetkvm-mcp
+npm ci
+npx playwright install chromium
+npm test
+npm run typecheck
+npm run build
+npm run schemas:check
+npm run stories:validate
+npm run branch-matrix:check
+npm run package:check
+npm run smoke:installed-stdio
+npm run smoke:installed-sse
+npm run examples:check
+
+cd ../paste-harness
+npm ci
+npm test
+npm run typecheck
+```
+
+Repeat from a separate clean checkout using a freshly created tarball and empty install directory. Run every README/example command in that environment. Required result: zero skips, exact ten tools, only stdio/SSE, deterministic package/checksum, no secrets/payloads, complete matrix.
+
+## Phase 5 PR/review/merge gate
+
+- [ ] PR base is updated `main`, head is `feat/jetkvm-mcp-system-e2e-docs`; body contains advisor/crosswalk decisions, protocol divergence, complete test and matrix evidence, stranger-install proof, package risks, rollback, and the planned hardware matrix.
+- [ ] Fresh system-test reviewer checks story generation/matrix; artifact/security reviewer checks tarball/smokes/redaction; stranger reviewer follows README/examples from no context and records confidence/gaps.
+- [ ] Findings use P0-P3/confidence/evidence. Makers fix; orchestrator reruns affected tests and the one full Phase 5/clean-checkout gate; fresh reviewers inspect corrected diff.
+- [ ] Merge only with zero P0/P1, green required CI, green full local and clean-checkout install, complete matrix, and required approval.
+
+---
+
+# Phase 6 — Hardware evidence and release PR
+
+**Branch:** After Phase 5 is merged, update clean `main` and create exact branch `feat/jetkvm-mcp-hardware-release`. It must not contain unmerged feature-branch work. `jetkvm-mcp-v0.1.0` is reserved for the release tag only.
+
+**Hardware target:** The runner receives a protected operator target at runtime and derives the device lease key from its normalized identity without logging it. No fixed IP, hostname, URL, lease key, network path, or topology appears in package defaults, schemas, public examples, manifest, or evidence.
+
+**Outcome:** Freeze one candidate, run every release-gating story serially under one device lease with evidence and restoration, bind an immutable manifest to exact source/package/runtime/firmware identities, obtain fresh review, merge, tag, publish, and verify the downloadable release from a clean checkout and empty install.
+
+## Task 6.1: Advisor gate, release branch preflight, and candidate freeze
+
+- [ ] Re-read both advisors, canonical design, plan, merged PRs, and story/branch matrix before any release decision. Record final advice/divergence/risk disposition in the release PR body.
+- [ ] Require merged `main`, green Phase 5 CI, clean worktree, complete six-phase history, zero known P0/P1, complete behavioral matrix, and no skipped release-gating story.
+- [ ] Record candidate commit `C`, tree `G`, package-lock hash, story-manifest hash, generated-schema hash, and exact Node 22.23.1 identity.
+- [ ] Clean-build the package tarball `T` once and record filename, size, SHA-256, package-tree hash, and unpacked-file manifest. No code/schema/doc change is allowed after freezing `C/G/T`.
+- [ ] Any required fix invalidates the candidate: make the fix on the release branch, rerun affected plus full hardware-free gates, freeze a new `C/G/T`, and rerun every hardware story whose code, schema, package, docs, or evidence interpretation changed.
+
+## Task 6.2: Acquire one serialized device lease and establish baseline
+
+- [ ] Before any device read, browser login, deploy, status request, or mutation, accept the protected operator target, derive its lease key at runtime, acquire that single device-keyed lease, and enter one outer `try/finally`. Every child inherits matching proof; no child reacquires or logs target/key/proof.
+- [ ] Under the lease, record pre-run firmware/app version, running revision/binary identity, ATX extension/capability state, video/display status, EDID hash, input-zero state, no active paste, ownership state, and agreed host power baseline.
+- [ ] Deploy or select the exact candidate using the repository's approved release procedure, then prove running identity. If exact candidate identity cannot be proven, stop before stories.
+- [ ] Run installed `T` under exact Node 22.23.1. Record browser executable/version and a sanitized connection-configuration class without persisting target, route, URL, credential, or topology.
+
+## Task 6.3: Run stories serially with per-story restore
+
+For every reviewed manifest story whose `environments` includes `live`, the runner uses the canonical ID/steps without redefinition and writes a record before moving to the next story:
+
+1. story ID/name and exact manifest hash;
+2. capability check and explicit preconditions;
+3. ordered tool calls and timing;
+4. pass criteria and actual observed values;
+5. privacy-safe evidence hashes/metadata;
+6. restoration commands and observed restored baseline;
+7. terminal result `pass` or `fail`—never skip.
+
+Run at minimum, in manifest order:
+
+- [ ] Session available connect/status, busy without takeover, explicit takeover with old-generation rejection, and disconnect/reconnect with fresh generation. Evidence records each composed browser/channel/native observation and its freshness; neither ping, native auto-restart, nor quiesce alone passes. MCP transport reconnect never transfers ownership.
+- [ ] Fresh display capture and read-only display status: frame hash/dimensions/age, cached/event video-state provenance/age, qualified resolution, successful EDID summary/hash or explicit low-level read failure, no proxy-`streaming` claim, and no mutation.
+- [ ] Mouse move/click/double-click/drag/vertical scroll with fresh observations, stale-observation negative case, and post-action capture evidence.
+- [ ] Physical keyboard press/chord/layout cases, stale-generation negative case, and post-action evidence.
+- [ ] Reliable paste corpus at nominal ~91 source chars/s, including normalization and representative sizes; record original/normalized counts/hashes, elapsed time, terminal lifecycle, and target-visible verification without persisting text or frame bytes.
+- [ ] Input release during inactive and active/uncertain state; prove paste cancelled, emitters joined, correlated generation receipt, and zero post-release HID.
+- [ ] Inside the single canonical `power-three-semantic-actions` story, run three ordered/restored cases for `press_power`, `hold_power`, and `press_reset`; each case has active-extension/serial-ready preconditions, exact 200 ms/5 s/200 ms ON/OFF timing, serialized receipt, separately cached LED/video evidence, OFF-write unknown recovery, and baseline restoration. Do not create three story IDs or claim host-state change.
+- [ ] Required live error rows that are safe to induce: permission/policy denial, capability missing where a controlled fake/config can prove the public behavior, busy/takeover, stale generation/observation, and reconnect recovery. Destructive transport fault races already proven by fake/replay remain linked evidence unless the manifest explicitly marks a safe live method.
+
+After every story—including failure—the runner must release input, reconcile session state, restore the agreed host power/display baseline, and verify restoration. If outcome is unknown and baseline cannot be automatically proven, stop the suite, retain evidence, perform documented manual recovery while still holding the lease, and mark the run incomplete.
+
+## Task 6.4: Finalize immutable evidence before releasing the lease
+
+- [ ] Still inside the one lease, flush and validate every story record, timing series, sanitized replay capture, frame hash/dimensions, ATX indicator transition, restore result, and final device status.
+- [ ] Manifest binds exact `C`, `G`, `T` SHA-256/package tree/lock/schema/story hashes, Node executable/version, browser executable/version, JetKVM firmware/app/running binary identity, device capability snapshot, evidence hashes, and PR/run IDs.
+- [ ] Require zero skipped gating stories, zero failed restores, zero unresolved unknown outcomes, and no target identity, network topology, secret, URL, cookie, token, lease proof, SDP/ICE, screenshot bytes, or paste text in the manifest/artifacts.
+- [ ] In the outer `finally`, stop child processes, run correlated input release, reconcile session/power baseline, flush final evidence, and only then release the lease. No device action occurs outside the lease.
+
+## Task 6.5: Release PR, fresh review, remediation rule, and merge
+
+- [ ] Open the release PR from `feat/jetkvm-mcp-hardware-release` to updated `main`. Body includes all §0.6 content plus `C/G/T`, Node/browser/firmware identities, story table and restore status, evidence links/hashes, complete matrix, six-deliverable audit, known risks, and rollback.
+- [ ] Fresh reviewers who did not make the candidate perform: architecture/API divergence review; security/privacy/artifact review; full diff and branch-matrix review; and hardware evidence/restore review.
+- [ ] Every reviewer reports P0-P3 findings and confidence with evidence/gaps. Zero P0/P1 is mandatory. A code/schema/doc/package fix invalidates `C/G/T` and triggers the new-candidate rule; evidence-only correction requires a new signed manifest and rerun of affected story validation.
+- [ ] Required CI and the full Phase 5 hardware-free local gate remain green on the exact release head. The immutable hardware manifest validates against the exact tarball.
+- [ ] Merge only when the resulting `main` tree contains exact candidate tree `G` without conflict edits. If the merge changes the candidate tree, stop and create/retest a new candidate.
+
+## Task 6.6: Tag, publish, and clean-download verification
+
+- [ ] Tag the exact released candidate commit `jetkvm-mcp-v0.1.0`.
+- [ ] Create the semver GitHub release with exact tarball `T`, checksum, generated schemas, SBOM if produced, compatibility/setup/security/rollback notes, and immutable hardware manifest/evidence links.
+- [ ] From a separate clean checkout and empty install directory, download the release tarball and checksum; verify hash; install under exact Node 22.23.1; run full package/schema/story/branch-matrix tests; run installed stdio and legacy SSE smokes; run README/examples; and confirm exactly ten tools.
+- [ ] Confirm tag, source tree, tarball, lock, schemas, story manifest, Node, firmware evidence, and release manifest identities all match. Do not rebuild or substitute another tarball.
+
+## Task 6.7: Six-deliverable audit
+
+The release is incomplete unless all six deliverables are present and mutually consistent:
+
+1. **Canonical architecture/advice record:** superseding design and this executable six-phase plan, with advisor decisions/divergences resolved.
+2. **Installable public package:** deterministic semver tarball with stdio and legacy SSE only, public-first operator config, and no test fixtures/secrets.
+3. **Exact typed API:** ten generated/packed/listed schemas and common result/error/idempotency contracts, with no aliases or removed capability.
+4. **Complete verification system:** focused tests, Fake/Replay seams, protocol E2E, machine-readable behavioral branch matrix, and green CI/full local clean-checkout gates.
+5. **Stranger-ready operator experience:** README, executable examples, security guidance, troubleshooting, clean-install proof, and recovery/rollback instructions.
+6. **Immutable real-hardware evidence:** one-lease serialized story run, per-story restore, exact artifact/runtime/firmware binding, privacy-safe manifest, tag, release, and clean-download verification.
+
+## Phase 6 final merge/release gate
+
+- [ ] Advisor gate complete and release PR body complete.
+- [ ] Zero unresolved P0/P1; every fresh reviewer records confidence and evidence.
+- [ ] Required CI green; exact full local hardware-free gate green; immutable hardware story suite green with zero skips and verified restores.
+- [ ] Clean-checkout download/install/full suite green against exact `T`.
+- [ ] Six-deliverable audit passes with no mismatch.
+- [ ] Merge, tag, and release identities match exactly.
+
+---
+
+## Plan self-review and acceptance crosswalk
+
+| Acceptance requirement | Planned phase/gate |
+|---|---|
+| Preserve package/runtime/device lease/supervisor, Go quiesce, no-post-zero keyboard auto-release, and hardware-free Foundation CI | Phase 1 Tasks 1.2–1.5 |
+| No old public handlers in Foundation | Phase 1 advisor/focused/PR gates |
+| Public URL/auth; LAN/Tailscale/HTTPS; insecure HTTP opt-in; model never chooses credentials | Phase 2 Task 2.1, Phase 5 docs/security, protocol tests |
+| Exact ten strict schemas and bounded timeouts | Phase 2 Task 2.2; Phase 4 production inventory; Phase 5/6 pack audits |
+| Exact common envelopes, request-ID ledger, verification, retry, and next-step contract | §0.3, Phase 2 Tasks 2.2–2.3, canonical §11.2 matrix |
+| One session-owned generation-fenced RPC channel, no second WebRTC | Phase 2 Task 2.5, Phase 3 display and Phase 4 session/power adapters |
+| Explicit sessions independent of transports; no steal without takeover | Phase 2 foundation tests, Phase 4 session implementation/stories, Phase 6 live stories |
+| stdio and legacy SSE only | Phase 2 Task 2.7, Phase 5 protocol/package scan, Phase 6 release audit |
+| Browser frame/mouse/keyboard/~91 char/s paste/release | Phase 3 Tasks 3.2–3.7 and Phase 6 stories |
+| Native read-only resolution/EDID | Phase 3 Task 3.4 and reviewed hardware display stories |
+| Semantic ATX only | Phase 4 Task 4.3 and the three cases inside canonical story `power-three-semantic-actions` |
+| Sole complete behavior inventory with focused+story evidence | §0.4/canonical design §11.2 and Phase 5 branch matrix/E2E |
+| Exact 24-story `AcceptanceStory` manifest with preconditions/steps/pass/evidence/restore | Phase 2 Task 2.6; Phases 3–6 execute the reviewed manifest |
+| README/examples/troubleshooting and clean install | Phase 5 Tasks 5.5–5.7, Phase 6 clean-download verification |
+| Six independent branches/PRs with fresh reviews and merge gates | §0.6 and every phase PR gate |
+| One serialized runtime-derived device lease on the protected operator target, per-story restore, no public topology | Phase 6 Tasks 6.2–6.4 |
+| Immutable manifest bound to tarball/Node/firmware | Phase 6 Tasks 6.1, 6.4, 6.6 |
+| Semver tag/release and six-deliverable audit | Phase 6 Tasks 6.6–6.7 |
+
+### Resolved ambiguities
+
+- “SSE” means the SDK 1.29.0 legacy HTTP/SSE pair (`GET /sse` plus per-session `POST /messages`), not a third or modern HTTP transport.
+- “Public-first” means operator-selectable URL/auth/configuration with secure defaults; it does not mean anonymous public Internet exposure or a hard-coded cloud path.
+- “Session” means an application-level JetKVM device session. stdio process lifetime and SSE transport session IDs are transport details only.
+- “~91 char/s” is the nominal deterministic reliable-paste pacing target measured and reported by stories; correctness and exact normalized content remain the pass authority, not optimistic throughput.
+- “Native display” means cached/event-derived video state with explicit provenance/age plus a qualified read-only EDID operation. Proxy `streaming` is never trusted, and low-level EDID failures are surfaced instead of becoming empty success. No write, persistence, preset selection, or EDID rollback surface is planned.
+- “Power control” means serialized fixed 200 ms/5 s/200 ms serial press/release semantics plus separately qualified cached indicators. Serial acknowledgement and LED/video observations never claim the host OS or host power state changed.
+- “Full local” in Phases 1–5 means all hardware-free repository, package, UI, adapter, fake/replay, protocol, story, docs, and clean-install gates. Phase 6 adds the serialized real-device story suite.
+- The hardware target and lease key are protected runtime inputs. The runner derives the key from normalized target identity, and public evidence omits network topology.

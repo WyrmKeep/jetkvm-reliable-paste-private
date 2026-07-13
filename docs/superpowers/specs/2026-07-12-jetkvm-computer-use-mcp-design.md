@@ -1,573 +1,1068 @@
-# JetKVM Computer-Use MCP — Design
+# JetKVM Expanded Public MCP — Authoritative Design
 
-- **Date:** 2026-07-12
-- **Status:** Approved for implementation; Oracle Run 3 and independent checker convergence complete
+- **Original design date:** 2026-07-12
+- **Superseding contract date:** 2026-07-13
+- **Status:** Approved superseding architecture and public contract; implementation must be re-planned from this document
 - **Repository:** `WyrmKeep/jetkvm-reliable-paste-private`
 - **Public package:** `@wyrmkeep/jetkvm-mcp`
 - **Executable:** `jetkvm-mcp`
 
-## 1. Objective
+## 1. Authority and objective
 
-Build a production-grade Model Context Protocol server that gives a vision-capable agent a Codex-style computer-use loop over a physical JetKVM:
+This document supersedes the earlier narrow computer-use contract and its transport, test, documentation, and release plan. It is the authoritative v0.1 source until replaced by a later approved specification. Existing implementation work may continue only where it satisfies this contract.
 
-1. capture a fresh image of the controlled computer;
-2. execute an ordered batch of pointer/keyboard actions grounded in that image;
-3. return a new image;
-4. use JetKVM Reliable Paste for long commands, prose, and file contents.
+Build a production-grade MCP server for one operator-configured JetKVM per process. A vision-capable MCP host can establish an explicit device session, observe the display, drive mouse and physical keyboard input, use Reliable Paste, release all input in an emergency, inspect read-only display facts, and invoke fixed ATX actions.
 
-The first release controls one configured JetKVM per process. The first live target is `192.168.1.110`, which was observed on 2026-07-12 running firmware revision `58eac4f7216a6bd7963783c015a8a7a1de952d29`. The attached Windows rig at `192.168.1.155` is an independent test oracle only. Production behavior never assumes SSH access to the controlled host.
+The v0.1 public tool catalogue is exactly:
 
-“Any MCP client” means an MCP host/model combination that forwards tool-result images to a vision-capable model and supports the published schemas. MCP compliance alone does not imply image forwarding or vision.
+1. `jetkvm_session_connect`
+2. `jetkvm_session_status`
+3. `jetkvm_session_reconnect`
+4. `jetkvm_display_capture`
+5. `jetkvm_display_status`
+6. `jetkvm_input_mouse`
+7. `jetkvm_input_keyboard`
+8. `jetkvm_input_paste`
+9. `jetkvm_input_release`
+10. `jetkvm_power_control`
 
-## 2. Required result
+No aliases or additional public tools ship in v0.1. All ten tools have strict input and output schemas, required bounded `timeout_ms`, explicit permission and capability checks, and actionable structured errors.
 
-The deliverable is complete only when all of these statements have direct evidence:
+“Any MCP client” means a host/model combination that supports the published schemas and, for capture, forwards MCP image content to a vision-capable model. MCP compliance by itself does not imply image forwarding or vision.
 
-- `@wyrmkeep/jetkvm-mcp` installs from its allowlisted release tarball and starts over stdio.
-- Opt-in Streamable HTTP works on loopback and fails closed for unsafe bind/origin/auth combinations.
-- The public tools are exactly `computer_screenshot`, `computer_actions`, `computer_paste_text`, `computer_status`, and `computer_release_input`.
-- `computer_actions` implements Codex-compatible `click`, `double_click`, `move`, `drag`, vertical `scroll`, physical-key `keypress`, layout-correct `type`, and `wait`. Horizontal scrolling is explicitly unsupported in v0.1 and never silently ignored.
-- `computer_paste_text` accepts only a current-channel deterministic lifecycle capability and uses existing JetKVM batching, pacing, flow control, and correlated paste-state events; it never substitutes a fixed sleep or best-effort drain.
-- Every screenshot/action is bound to a maximum-age, single-use view, connection epoch, display generation, decoded-frame identity, and immutable geometry. Display generation is checked before every HID-affecting event.
-- JetKVM session takeover revokes the old generation server-side before the new owner can send input; queued/revoked HID and mis-scoped ICE cannot cross ownership.
-- The controller never replays a mutation with uncertain effects and never automatically reclaims a taken-over session.
-- Emergency release closes the mutation gate, establishes dispatch quiescence, sends device zero-state input, cancels the correlated paste, and never reports acknowledgement it did not observe.
-- Unit, Go race, UI lifecycle, adapter, protocol, installed-package, live-device, and user-story tests cover every advertised tool, retained option, outcome class, and security boundary.
-- Independent checker gates approve contracts, controller/transports, package/CI, and the final whole diff before downstream evidence is accepted.
-- One frozen candidate commit/tree and tarball receive live evidence; the external immutable manifest and GitHub release identify that exact candidate without self-reference.
+Production behavior never assumes SSH access to the controlled host. Target-host access is a test oracle only.
 
-## 3. Decisions and non-goals
+## 2. Advisor decision log
 
-### 3.1 Selected architecture
+Two independent Oracle consultations informed this superseding contract:
 
-The user selected a **browser-owned JetKVM session** for v0.1.
+- `jetkvm-expanded-api-advisor`
+- `jetkvm-expanded-security-test-advisor`
 
-A managed Chromium page loads the normal authenticated JetKVM UI and owns the device’s single WebRTC session. Chromium performs H.264/WebRTC decoding. The MCP captures the actual `<video>` element and drives normal pointer/keyboard event paths. A small, versioned production UI bridge exposes readiness and correlated paste lifecycle state that DOM events alone cannot prove.
+### 2.1 Adopted agreement
 
-This is intentionally different from two rejected v0.1 designs:
+Both consultations and the user requirements converge on:
 
-- **Pure Node WebRTC/H.264:** duplicates auth, signaling, HID-RPC, layout, paste, and decode behavior already proven in the product UI.
-- **Firmware snapshot API:** requires a fresh-frame/GOP or native-capture feasibility spike and a second protocol surface before basic computer use works.
+- a typed, capability-oriented `jetkvm_*` public API rather than a generic action façade;
+- a browser/native control-plane split;
+- explicit device sessions whose identity and generation appear in every session-bound call;
+- story-first acceptance tests reused by fake E2E, documentation, replay, and live hardware runs;
+- read-only EDID reporting;
+- fixed semantic ATX actions rather than caller-selected pulse timing;
+- browser ownership of frame capture, mouse, physical keyboard, Reliable Paste, and emergency input release;
+- native ownership of health/status, resolution/EDID reads, and ATX;
+- preservation of the completed Node package/domain/device-lease work and the Go generation-scoped lease/quiesce manager.
 
-Both remain possible behind internal `FrameSource`/`InputSink` boundaries after v0.1. Neither is a hidden fallback in this release.
+### 2.2 Deliberate divergences and user overrides
+
+- Advisor 1 recommended a hybrid that included a newer HTTP transport. V0.1 deliberately ships only **stdio plus legacy HTTP/SSE**. Streamable HTTP is deferred to a separately reviewed post-v0.1 change so v0.1 does not carry three transports and remains faithful to the literal release scope.
+- Advisor 1 also included virtual media. The user explicitly removed that capability from the product, public API, internal interfaces, tests, documentation, and release scope.
+- Tailscale is allowed only as operator-provided network configuration. The server does not discover it, require it, advertise it as a trust boundary, derive authorization from it, or substitute it for Host, Origin, or authentication checks.
+- LAN, Tailscale-routed, and HTTPS JetKVM URLs are valid operator configuration. None is hard-coded or required. The model can never select or modify the URL or credentials.
+
+## 3. Scope and non-goals
+
+### 3.1 V0.1 scope
+
+- One configured JetKVM device per server process.
+- Multiple authenticated MCP transport connections may address explicit device sessions.
+- Device sessions are independent of MCP transport sessions.
+- Stdio is the default transport; legacy HTTP/SSE is explicit opt-in.
+- Managed Chromium loads the authenticated JetKVM UI and owns the WebRTC session.
+- The normal product UI paths perform video decode, pointer/keyboard dispatch, and Reliable Paste.
+- Native control reads status, health, current resolution, and EDID metadata and performs fixed ATX actions.
+- All mutation uncertainty is surfaced rather than hidden or replayed.
 
 ### 3.2 Non-goals
 
-- JetKVM Cloud/TURN or arbitrary Internet targets.
-- Power, virtual media, serial, appliance shell, file transfer, OCR, or semantic UI understanding.
-- Target-host SSH in the production MCP.
-- Horizontal scroll emulation.
-- Universal byte-perfect claims across untested keyboard layouts, applications, or operating systems.
-- Automatic focus detection. Focus is a caller-visible precondition, verified independently only in live tests.
-- Automatic mutation replay after timeout, disconnect, takeover, or uncertain acknowledgement.
-- SDK v2 or experimental MCP Tasks before their protocol is final.
-- OCI images, standalone native binaries, or npm registry publication as v0.1 release gates. The GitHub release contains the npm tarball.
+- Arbitrary Internet discovery, JetKVM Cloud/TURN setup, or automatic network selection.
+- Serial, appliance shell, file transfer, OCR, semantic UI understanding, or target-host SSH in production.
+- EDID mutation.
+- Caller-defined ATX pulse widths, delays, sequences, or GPIO operations.
+- Automatic focus detection or claims that device acknowledgement proves target-application acceptance.
+- Automatic mutation replay after timeout, cancellation, disconnect, takeover, stale generation, malformed response, or uncertain acknowledgement.
+- Experimental MCP Tasks, SDK v2 migration, OCI images, standalone native binaries, or npm registry publication as v0.1 release gates.
 
 ## 4. Architecture
 
 ```mermaid
 flowchart LR
-  Agent[Vision-capable MCP host] <-->|stdio or secured /mcp| MCP[MCP adapter]
-  MCP --> Coordinator[Operation coordinator]
-  Coordinator --> Controller[ComputerController]
-  Controller --> Browser[Managed Chromium + Playwright]
-  Browser -->|auth cookie + one WebRTC session| KVM[JetKVM]
-  KVM -->|H.264| Video[HTML video element]
-  Video -->|fresh decoded frame + canvas encode| Frame[FrameSource]
-  Browser -->|normal pointer and keyboard events| UI[JetKVM UI input path]
-  UI -->|HID-RPC / JSON-RPC| HID[USB HID]
-  Controller --> Bridge[window.__jetkvmAutomationV1]
-  Bridge -->|paste operation lifecycle| Paste[Existing Reliable Paste engine]
-  HID --> Host[Controlled computer]
-  Paste --> HID
-  Host -. release tests only .-> Rig[SSH ground-truth harness]
+  Host[Vision-capable MCP host] <-->|stdio or legacy SSE| Adapter[MCP adapter]
+  Adapter --> Registry[Explicit device-session registry]
+  Registry --> Coordinator[Generation-fenced operation coordinator]
+  Coordinator --> Browser[BrowserPlane]
+  Coordinator --> Native[NativeControlPlane]
+  Browser --> Chromium[Managed Chromium + normal JetKVM UI]
+  Chromium -->|WebRTC H.264| Frame[Fresh decoded frame]
+  Chromium -->|HID input and paste| Device[JetKVM]
+  Chromium -->|one session RPC channel| RPC[Generation-fenced DeviceRpcAdapter]
+  RPC --> Browser
+  RPC --> Native
+  RPC -->|allowlisted display EDID semantic ATX| Device
+  Device --> Computer[Controlled computer]
+  Coordinator -. test dependency injection .-> Fake[Fake planes]
+  Coordinator -. deterministic trace .-> Replay[Replay planes]
 ```
 
-### 4.1 Package layout
+### 4.1 Plane ownership
 
-One publishable package lives at `tools/jetkvm-mcp/` and follows the repository’s Node 22, ESM, strict-TypeScript conventions:
+`BrowserPlane` exclusively owns authenticated browser lifecycle and the single WebRTC connection. It sources the only session RPC channel, creates its generation-bound `DeviceRpcAdapter`, and invalidates that adapter before replacing or closing the channel. It also owns:
 
-Version `0.1.0` supports Node `>=22.23.1 <23`; package engines are metadata, while a shared runtime-policy assertion runs synchronously at the CLI entry before argument dispatch or any stdio/HTTP/doctor/device setup and rejects older or next-major runtimes. The repository baseline, `.nvmrc`, CI, installed stdio/HTTP smokes, and release evidence pin exact Node 22.23.1 for reproducibility, while later security-patched Node 22 releases remain usable.
+- fresh decoded-frame capture and immutable observation geometry;
+- mouse events through the normal UI path;
+- physical keyboard events through the normal UI path;
+- Reliable Paste with correlated lifecycle events and approximately 91 characters/second sustained pacing under the validated profile;
+- emergency input release, including deferred-producer joins, correlated paste cancellation, dispatch quiescence, and zero-state input.
 
-```text
-tools/jetkvm-mcp/
-  package.json
-  tsconfig.json
-  tsconfig.build.json
-  vitest.config.ts
-  README.md
-  SECURITY.md
-  LICENSE
-  src/
-    cli.ts
-    cli/doctor.ts
-    mcp/{server,schemas,results,stdio,streamableHttp}.ts
-    browser/{auth,browserPolicy,geometry,frames,keys,input,paste}.ts
-    {BrowserController,OperationCoordinator,config,deviceLease,domain,errors}.ts
-    observability/logger.ts
-  schemas/
-  scripts/{clean,with-device-lease,generate-schemas,check-schemas,check-package,installed-smoke,installed-http-smoke}.mjs
-  test-support/
-```
+`NativeControlPlane` owns adapter-qualified display/EDID semantics and ATX dispatch policy, but it does not own or create WebRTC/RPC channel lifecycle:
 
-`tsconfig.build.json` cleans/compiles a production-only allowlist. Tests and `test-support` never enter `dist` or the tarball.
+- separate RPC reachability, native-process availability, setup/auth mode, and compatibility facts; there is no aggregate native health fact in the current product;
+- cached/event-derived native capture state, resolution, FPS, observation time, and freshness;
+- read-only EDID availability and parsed metadata only after a lower-layer read result is proven;
+- fixed semantic ATX actions through an extension/readiness gate, serialized dispatcher, and idempotency boundary.
 
-Firmware ownership primitives live in pure `internal/controlsession/`. Root integration owns `cloud.go`, `web.go`, `webrtc.go`, `hw.go`, `main.go`, `native.go`, `network.go`, `ota.go`, `serial.go`, `usb.go`, `video.go`, `hidrpc.go`, `jsonrpc.go`, and every audited `currentSession` access.
+For each published device-session generation, the registry injects the exact same `DeviceRpcAdapter` instance into BrowserPlane and NativeControlPlane. That adapter is sourced from the one Browser-owned WebRTC session; no plane may create a second WebRTC connection, data channel, or direct native bypass. It exposes no raw method-name/string dispatch and no general JSON-RPC escape hatch—only typed allowlisted read-only display/EDID calls and semantic ATX calls. NativeControlPlane remains owner of meaning, authorization, freshness, serialization, idempotency, and result qualification; the shared adapter owns only channel binding, generation fencing, typed wire translation, and correlated send/response boundaries.
 
-The UI bridge and exact reusable capture guard live under `ui/src/automation/`; `WebRTCVideo` imports the guard and uses `pointermove` for the product movement path.
+Every adapter call carries session ID, session generation, connection epoch, and browser channel generation. The adapter checks all four at admission and immediately before send, rejects a stale/replaced binding with zero downstream calls, and rejects or classifies an in-flight replacement at the actual pre/post-write boundary. A cached display observation may still be returned explicitly as stale after channel loss; a fresh EDID read or ATX mutation requires the current live binding.
 
-### 4.2 Stable domain boundary
+Emergency release is a BrowserPlane responsibility at the public boundary, but it invokes the session-bound firmware `quiesceAndZero` primitive. The server injects the authoritative Go manager generation; browser channel generation is never treated as firmware generation.
 
-MCP SDK types do not leak into the controller:
+### 4.2 Stable internal interfaces
 
 ```ts
-interface ComputerController {
-  status(signal?: AbortSignal): Promise<ControllerStatus>;
-  screenshot(request: ScreenshotRequest, signal?: AbortSignal): Promise<View>;
-  actions(request: ActionBatch, signal?: AbortSignal): Promise<ActionBatchResult>;
-  pasteText(request: PasteRequest, signal?: AbortSignal): Promise<PasteResult>;
-  releaseInput(request: ReleaseRequest, signal?: AbortSignal): Promise<ReleaseResult>;
-  close(): Promise<void>;
-}
-```
-
-The MCP adapter validates schemas, forwards the request signal/progress token, and translates domain results to `structuredContent`, JSON text, image blocks, and `isError`. The same controller is callable from the live harness without MCP types.
-
-### 4.3 Production UI bridge
-
-Production code never calls `window.__kvmTestHooks`. Those hooks remain E2E-only and can silently no-op after handler cleanup.
-
-The authenticated route installs one route-lifetime facade. Its object identity is stable across normal React rerenders, readiness changes, keyboard-layout changes, and StrictMode effect cycling; methods dereference current callbacks/state through refs and store getters. It is disposed only when the owning route truly unmounts.
-
-```ts
-interface JetKvmAutomationV1 {
-  readonly contractVersion: 1;
-  capabilities(): Promise<{
-    channelGeneration: number;
-    effectiveKeyboardLayout: string | null;
-    pasteLifecycle: "ready" | "unsupported" | "unknown";
-    pointerMode: "absolute" | "relative";
-    scrollThrottlingMs: number;
-  }>;
-  state(): Promise<{
-    lifecycleSequence: number;
-    ownership: "owned" | "taken_over";
-    routeMounted: boolean;
-    webRtc: "connecting" | "connected" | "disconnected" | "failed";
-    hidRpc: "ready" | "not_ready";
-    video: "ready" | "stalled" | "unavailable";
-    width: number | null;
-    height: number | null;
-    presentedFrames: number | null;
-    channelGeneration: number;
-    paste: { operationId: string; state: PasteState; eventSequence: number } | null;
-  }>;
-  nextLifecycleEvent(request: {
-    afterSequence: number;
-    timeoutMs: number;
-  }): Promise<LifecycleEventResult>;
-  resolveText(request: {
-    text: string;
-    expectedLayout: string;
-  }): Promise<TextResolutionResult>;
-  armInputEvent(request: {
-    operationId: string;
-    eventId: string;
-    eventType: "pointermove" | "pointerdown" | "pointerup" | "wheel" | "keydown" | "keyup";
-    displayGeneration: number;
-    dispatchGeneration: number;
-    channelGeneration: number;
-  }): Promise<{ armed: true } | { armed: false; reason: string }>;
-  nextInputReceipt(request: {
-    eventId: string;
-    timeoutMs: number;
-  }): Promise<InputEventReceipt>;
-  startPaste(request: {
-    operationId: string;
-    text: string;
-    profile: "reliable" | "fast";
-    expectedLayout: string;
-    channelGeneration: number;
-  }): Promise<StartPasteResult>;
-  nextPasteEvent(request: {
-    operationId: string;
-    afterSequence: number;
-    timeoutMs: number;
-  }): Promise<PasteEventResult>;
-  cancelPaste(operationId: string): Promise<CancelPasteResult>;
-  releaseInput(request: {
-    operationId: string;
-  }): Promise<ReleaseInputReceipt>;
-}
-```
-
-`InputEventReceipt` is transport-level, not merely DOM admission:
-
-```ts
-type InputEventReceipt = {
-  eventId: string;
-  eventType: string;
-  admitted: boolean;
-  queued: boolean;
-  channelGeneration: number | null;
-  stage: "capture_guard" | "product_handler" | "transport_send";
-  reason?: "generation_mismatch" | "handler_not_queued" | "channel_unavailable" | "channel_replaced";
+type SessionRef = {
+  sessionId: string;
+  sessionGeneration: number;
 };
+
+type Deadline = {
+  timeoutMs: number;
+  signal: AbortSignal;
+};
+
+type DeviceRpcBinding = SessionRef & {
+  connectionEpoch: number;
+  browserChannelGeneration: number;
+};
+
+interface DeviceRpcAdapter {
+  readonly binding: DeviceRpcBinding;
+  readDisplayState(ref: DeviceRpcBinding, deadline: Deadline): Promise<CachedDisplayState>;
+  readEdid(ref: DeviceRpcBinding, deadline: Deadline): Promise<QualifiedEdidRead>;
+  performAtx(
+    ref: DeviceRpcBinding,
+    request: { requestId: string; action: "press_power" | "hold_power" | "press_reset" },
+    deadline: Deadline,
+  ): Promise<AtxWireReceipt>;
+}
+
+interface FakeDeviceRpcAdapter extends DeviceRpcAdapter {
+  loadScenario(scenario: PlaneScenario): void;
+  replaceBinding(next: DeviceRpcBinding): void;
+  events(): readonly PlaneEvent[];
+}
+
+interface ReplayDeviceRpcAdapter extends DeviceRpcAdapter {
+  loadTrace(trace: SanitizedPlaneTrace): void;
+  assertExhausted(): void;
+}
+
+interface BrowserPlane {
+  connect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
+  reconnect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
+  capture(ref: SessionRef, request: CaptureRequest, deadline: Deadline): Promise<Observation>;
+  mouse(ref: SessionRef, request: MouseRequest, deadline: Deadline): Promise<MutationReceipt>;
+  keyboard(ref: SessionRef, request: KeyboardRequest, deadline: Deadline): Promise<MutationReceipt>;
+  paste(ref: SessionRef, request: PasteRequest, deadline: Deadline): Promise<PasteReceipt>;
+  release(ref: SessionRef, request: ReleaseRequest, deadline: Deadline): Promise<ReleaseReceipt>;
+  close(ref: SessionRef, deadline: Deadline): Promise<void>;
+}
+
+interface NativeControlPlane {
+  sessionStatus(ref: SessionRef, deadline: Deadline): Promise<NativeSessionStatus>;
+  displayStatus(ref: SessionRef, deadline: Deadline): Promise<NativeDisplayStatus>;
+  powerControl(ref: SessionRef, request: PowerRequest, deadline: Deadline): Promise<PowerReceipt>;
+}
+
+type SessionPlaneBundle = {
+  browser: BrowserPlane;
+  native: NativeControlPlane;
+  deviceRpc: DeviceRpcAdapter; // the same injected instance in both planes
+};
+
+interface FakeBrowserPlane extends BrowserPlane {
+  loadScenario(scenario: PlaneScenario): void;
+  events(): readonly PlaneEvent[];
+}
+
+interface FakeNativeControlPlane extends NativeControlPlane {
+  loadScenario(scenario: PlaneScenario): void;
+  events(): readonly PlaneEvent[];
+}
+
+interface ReplayBrowserPlane extends BrowserPlane {
+  loadTrace(trace: SanitizedPlaneTrace): void;
+  assertExhausted(): void;
+}
+
+interface ReplayNativeControlPlane extends NativeControlPlane {
+  loadTrace(trace: SanitizedPlaneTrace): void;
+  assertExhausted(): void;
+}
 ```
 
-Fixed invariants:
+Fakes and replays implement the same interfaces as production. They can deterministically force timeout, cancellation, disconnect before write, disconnect after write, malformed response, permission denied, capability missing, busy/takeover, stale generation, partial verification, event gap, and duplicate request-id branches. Replays reject any unrecorded call or ordering mismatch; they never silently synthesize success.
 
-- The bridge probes `getKeyboardLayout` and `getPasteCapabilities` whenever the RPC/HID channel generation changes; it resets both facts on reconnect, route remount, firmware-version change, or session reset.
-- The isolated controller context is set to absolute pointer mode with scroll throttling disabled. State exposes both values; a mismatch blocks view issuance and all coordinate actions.
-- `resolveText` uses the effective JetKVM keyboard layout and returns a complete physical key/modifier plan without dispatch. Unsupported text rejects before the first input event.
-- Each Playwright event is armed with expected operation/display/dispatch/channel generation. The capture guard can finalize only a blocked `capture_guard` receipt. If admitted, the actual HID/JSON-RPC transport send point finalizes `{eventId, channelGeneration, queued}`; a post-handler microtask records distinct `handler_not_queued` when no send occurs. The send point compares the armed/current channel generation before queueing. BrowserController crosses the first-dispatch boundary, consumes the view, and continues only on `queued:true`; close/replacement before queueing is `not_sent`, while loss after queueing is `sent/unknown`.
-- The product movement consumer is migrated from `mousemove` to the same guarded `pointermove` event; stale compatibility mouse events cannot reach HID. Admitted automation key events suppress human browser-loss timers (Meta associated-key/Meta release/Windows Ctrl-AltGr); the agent supplies explicit armed downs/ups, and no unarmed timer may emit after a receipt.
-- `startPaste` can return `accepted:true` only when deterministic paste lifecycle is `ready` for the supplied current channel generation and configured/effective layouts match.
-- Paste/lifecycle event sequences are monotonic. Progress may coalesce, but terminal events remain retained until consumed. Requests older than history return `EVENT_GAP`; any gap after acceptance makes outcome unknown.
-- Paste states are `submitted -> active -> succeeded | failed | cancelled`; cancellation is terminal only after device inactive.
-- Each method has its own discriminated result/rejected-promise contract. Unmount cannot return a successful no-op.
-- `releaseInput` always cancels and joins deferred UI emitters and paste, then calls the correlated firmware `quiesceAndZero`; there is no retain-paste option.
-- BrowserController allowlists contract version `1` and fails before mutation if absent/incompatible.
+The native adapter is a new semantic boundary, not a direct export of existing JSON-RPC handlers. Current firmware has no unified health or reconnect operation. Automatic native-process supervision, WebRTC close/takeover cleanup, and `quiesceAndZero` are useful inputs but none proves reconnection. A reconnect succeeds only after the adapter establishes a new browser/WebRTC/RPC/HID channel generation and observes the required capabilities.
 
-The bridge sets takeover state synchronously when `otherSessionConnected` is received, before navigation. Video capture and ordinary pointer/keyboard input still use the normal `<video>`/Playwright event paths; the bridge is not a second general RPC API.
-## 5. Session ownership, revocation, and lifecycle
+Native display state is currently callback-fed cache. The adapter returns its `observedAt`, age, provenance, and freshness and ignores the proxy `streaming` field because the normal gRPC proxy omits it and reconstructs an untrustworthy zero value. EDID retrieval uses the read-only `VIDIOC_G_EDID` path, but the current cgo wrapper loses open/ioctl failures; implementation must propagate that lower-layer result or conservatively return `EDID_READ_FAILED`, never a successful empty/read value.
 
-### 5.1 Atomic server-side ownership
+ATX adapts the existing actions exactly: `press_power` maps to `power-short` with a 200 ms press, `hold_power` maps to `power-long` with a 5 s press, and `press_reset` maps to `reset` with a 200 ms press. Before dispatch it verifies the `atx-power` extension and serial readiness, authorizes, serializes against every other ATX action, and claims the request-id slot. Its receipt distinguishes completed local serial ON/OFF writes from a separately timestamped ATX LED observation. Neither is proof that the host changed state.
 
-JetKVM supports one controlling session. Browser ownership does not prevent a human/cloud offer from taking over, so firmware must enforce the boundary atomically.
+The registry publishes a `SessionPlaneBundle` only after the Browser-owned RPC channel is open and its adapter binding matches the authoritative session, connection, and channel generations. Replacement first invalidates the old adapter, aborts its pending calls, and only then publishes a new bundle. NativeControlPlane never retains or calls an adapter from an older bundle.
 
-A serialized manager owns monotonic generations and ordinary HID dispatch leases. `quiesceAndZero(expectedGeneration, operationId)` runs in a manager maintenance handler outside the ordinary worker wait-group: enter draining, reject new ordinary work/leases, cancel and join ordinary macro/RPC workers, wait ordinary leases zero, acquire an unforgeable maintenance lease, write keyboard/pointer zero, and return correlated step acknowledgements. Every gadget write holds current ordinary or maintenance lease. Takeover runs this on the old generation before publishing new; stale generations fail without writing.
+### 4.3 Preserved foundation safety
 
-The wire command carries only `operationId`. Its JSON-RPC handler is bound to the originating `Session` and injects that session's authoritative manager generation into the internal primitive. Browser `channelGeneration` is never firmware generation. Receipts return `operationId` plus authoritative generation; an old channel after replacement receives correlated stale/no-write.
+The existing Node foundation remains required:
 
-Local signalling scopes ICE candidates to the session/signalling connection that created the offer; it never routes them through a mutable global session pointer. Simultaneous offers are serialized and race-tested.
+- Node 22, ESM, strict TypeScript, production-only package allowlist, and runtime-policy assertion before transport or device setup;
+- SDK isolation under `src/mcp/`;
+- typed domain results and field-by-field mapping to exact snake_case wire objects;
+- device-keyed process lease acquired before session claim and inherited by live tooling;
+- one bounded mutation coordinator plus a separate emergency-release lane;
+- credential, image, and evidence redaction rules;
+- hardware-free package and installed-artifact verification.
 
-The UI receives an explicit monotonic takeover lifecycle event. BrowserController closes its mutation gate and aborts active/queued operations on that event, never reloads automatically, and remains `TAKEN_OVER` until explicit process restart/operator reclaim.
+The existing Go safety foundation remains required:
 
-### 5.2 Claims and auth probes
+- a serialized manager owns monotonic session generations and ordinary HID dispatch leases;
+- every gadget write requires a current ordinary lease or unforgeable maintenance lease;
+- `quiesceAndZero(expectedGeneration, operationId)` enters draining, rejects new work, cancels and joins macro/RPC workers, waits for ordinary leases to reach zero, acquires the maintenance lease, writes keyboard and pointer zero state, and returns correlated step acknowledgements;
+- stale generations fail without writing;
+- takeover quiesces the old generation before publishing the new generation;
+- the session-bound wire handler carries `operationId` and injects its authoritative manager generation;
+- ICE candidates remain scoped to the signaling connection and session that created the offer;
+- simultaneous offers are serialized and race-tested.
 
-- `computer_status` probes setup/auth/device reachability without creating WebRTC.
-- `GET /device/status` determines setup only.
-- Unauthenticated `GET /device` `200/authMode:noPassword` skips login; `401` requires password; all other responses fail closed.
-- Starting observe/control requires explicit process configuration permitting the single session claim. The model cannot select URL/credential.
-- Stdio has one implicit owner. HTTP lease identity is authenticated principal plus server-issued control instance, never raw MCP session ID alone. Owner requests renew TTL; accepted operations pin only through deadlines; progress does not renew; no stealing; release is owner-only; views include lease generation.
-- On expiry/disconnect/release, abort/quiesce A, close A BrowserController/WebRTC, invalidate views, then permit B. B gets a fresh BrowserController and connection/firmware generation, must screenshot before mutation, and cannot use old views. Contenders stay `CONTROL_BUSY` through close.
+These invariants apply to browser input, Reliable Paste, emergency release, reconnect, takeover, and process cleanup.
 
-### 5.3 State, generations, and dispatch
+### 4.4 Browser bridge invariants
+
+The versioned production bridge has stable route-lifetime identity and exposes capabilities, lifecycle events, physical-key resolution, one-shot input arming, transport-level receipts, Reliable Paste lifecycle, cancellation, and correlated release. Production never uses test hooks.
+
+For every HID-affecting event:
+
+1. Node validates permission, capability, session generation, observation, deadline, and complete batch.
+2. The bridge arms the event with operation, display, dispatch, and channel generations.
+3. A synchronous capture guard admits or blocks it.
+4. The normal product handler executes.
+5. The actual HID/JSON-RPC queue point records the transport-level receipt.
+
+Capture admission is not dispatch proof. Channel replacement before queueing is `not_sent`; loss after queueing and before a definitive correlated receipt is `unknown`. Unmount cannot return a successful no-op.
+
+The bridge reprobes keyboard layout and paste capability whenever channel generation changes and resets both on reconnect, route remount, firmware change, or session reset. The browser is forced to absolute pointer mode with scroll throttling disabled; mismatch blocks observation and input.
+
+## 5. Explicit device sessions, ownership, and generations
+
+### 5.1 Independence from transport
+
+An MCP stdio connection or HTTP/SSE connection is only a protocol carrier. It never owns hardware and its transport session identifier is never accepted as a device session identifier.
+
+`jetkvm_session_connect` creates a server-issued opaque `session_id` and generation. Every subsequent session-bound call supplies both. Device-session authorization binds the session to the authenticated principal and configured device, not to one SSE connection. Reconnecting an SSE stream neither reconnects nor takes over the device. Losing an SSE stream does not transfer ownership.
+
+Device sessions end only through process shutdown, configured inactivity expiry, authoritative takeover, or an unrecoverable closed state. Cleanup always closes the mutation gate, aborts queued work, quiesces the owned generation, closes Browser/WebRTC, and invalidates observations before another generation can publish.
+
+### 5.2 Connect and takeover
+
+`takeover` defaults to `false`. Connect or reconnect never steals an active session unless the caller explicitly sets `takeover:true` and has `session.takeover` permission.
+
+Without takeover, an occupied device returns `CONTROL_BUSY` with the owning session identity redacted, `safe_to_retry:true`, and `required_next_step:"wait_or_request_takeover"`. With authorized takeover, the old generation is synchronously marked taken over, its mutation gate closes, queued work aborts, `quiesceAndZero` completes, its WebRTC closes, and only then may the new generation publish. The old session never automatically reclaims control.
+
+### 5.3 State and fencing
 
 ```text
 UNCLAIMED -> AUTHENTICATING -> CONNECTING -> READY
-READY -> DEGRADED | TAKEN_OVER | CLOSING | FAILED
+READY -> DEGRADED | DRAINED | TAKEN_OVER | CLOSING | FAILED
+DEGRADED | DRAINED | TAKEN_OVER | FAILED -> RECONNECTING -> READY(new generation)
 ```
 
-Maintain `connectionEpoch`, monotonic `displayGeneration`, `dispatchGeneration`, unique `operationId`, one bounded mutation coordinator, and an emergency release lane.
+The coordinator maintains:
 
-Display generation changes continuously through browser-side observation of route/navigation, video `loadedmetadata`/resize/source/rotation, rendered content-rectangle changes, and bridge remount. A change aborts active work and invalidates every view. Before first dispatch it yields `not_sent`; after any dispatch it yields unknown outcome and sends no remaining events.
+- opaque `session_id`;
+- monotonic `session_generation`;
+- monotonic `connection_epoch`;
+- monotonic `display_generation`;
+- monotonic `dispatch_generation`;
+- browser `channel_generation`;
+- unique `operation_id`;
+- client mutation `request_id`;
+- one bounded normal mutation queue and one emergency-release lane.
 
-Every HID-affecting event uses one-shot arm -> synchronous capture guard -> normal product handler -> transport-level receipt. Node prechecks before arming; capture admission is never dispatch proof.
+A reconnect always increments session generation, invalidates all observations, and sets `fresh_capture_required:true`. No input mutation is admitted until a new capture from that exact generation succeeds.
 
-Emergency release is atomic in this order:
+There is no existing unified reconnect or native restart acknowledgement to reuse. Native auto-restart, `quiesceAndZero`, ICE close, and takeover cleanup are not reconnect proof. The reconnect adapter must observe a newly established Browser/WebRTC connection, RPC channel, HID capability, browser channel generation, and compatible bridge state before returning `applied`; otherwise it returns `not_sent` or `unknown` at the actual boundary and keeps fresh capture required.
 
-1. close the controller mutation gate, invalidate views, advance `dispatchGeneration`, and abort active/queued controller work;
-2. cancel and join every deferred UI producer and establish the capture-guard no-further-event barrier;
-3. always request correlated paste cancellation;
-4. bridge-call wire `quiesceAndZero(operationId)`; the server injects originating-session generation, then drains/cancels/joins before maintenance-leased zero writes;
-5. require correlated acknowledgement for draining, macro/paste inactive, ordinary leases zero, keyboard zero, and pointer zero.
+## 6. Observation fencing
 
-Timeout/missing acknowledgement preserves unknown and leaves both controller and firmware generation closed. Success also leaves that generation drained; further mutation requires explicit session restart/reclaim and a fresh screenshot.
+### 6.1 Fresh frame
 
-Connection/takeover/display changes never replay mutations. A new screenshot is required after recovery.
-## 6. Screenshot and view contract
+Capture records decoded metadata, then waits for `requestVideoFrameCallback` to advance `presentedFrames` or `mediaTime` after capture begins. It draws that exact frame. No advancement before the deadline returns `VIDEO_STALLED`.
 
-### 6.1 Fresh decoded frames
-
-Capture records current decoded metadata, waits for `requestVideoFrameCallback` to advance `presentedFrames` or `mediaTime` after the request begins, then draws that exact frame. No advance before timeout returns `VIDEO_STALLED`.
-
-A view records opaque `view_id`, connection epoch, display generation, decoded-frame identity/media time, monotonic capture time, source/image dimensions, rotation, immutable rendered content geometry, and format.
-
-### 6.2 Age, reservation, and consumption
-
-- `JETKVM_MAX_VIEW_AGE_MS` has a bounded default of 30,000 ms and is checked with a monotonic clock at operation admission and immediately before first dispatch/paste acceptance.
-- Admission atomically reserves a view for one action or paste operation.
-- The view is consumed when the first mutation dispatch or paste acceptance occurs. Sent/unknown mutations can never reuse it, even if geometry is unchanged.
-- An operation that remains `not_sent` releases its reservation; a pure screenshot creates a new unreserved view.
-- `computer_actions` always returns a fresh post-batch screenshot. There is no “none” option in v0.1.
-- Later frames alone do not invalidate an unused view, but maximum age and current decoded-frame health still apply.
-
-### 6.3 Image and coordinates
-
-- Default image preserves aspect ratio, does not crop/upscale, fits within 1280x720, uses JPEG quality 88, and is at most 2 MiB before base64. Explicit PNG is available.
-- Coordinates refer to that exact returned image, origin top-left, integer exclusive bounds.
-- Mapping is returned image -> native video -> current rendered content rectangle with letterbox/pillarbox removed -> normal UI absolute HID conversion.
-- Browser-side observers increment display generation for route/navigation, metadata, dimensions, rotation/source, element/content geometry, and bridge remount.
-- Every HID-affecting event rechecks reserved display/dispatch generation and the abort signal. A change before first dispatch is `STALE_VIEW`/`DISPLAY_CHANGED` with zero input; after dispatch it is unknown outcome and suppresses all remaining events.
-- Errors include a best-effort fresh view only when video trust/freshness can be re-established.
-## 7. MCP protocol and public tools
-
-### 7.1 Protocol/transports
-
-- Pin `@modelcontextprotocol/sdk` v1.29.0 exactly and target finalized MCP protocol `2025-11-25`.
-- Put all SDK-specific code under `src/mcp/` so SDK v2/protocol migration does not change controller APIs.
-- Do not use experimental Tasks. Paste is a normal cancellable tool with progress.
-- Stdio is default; stdout contains MCP frames only and all logs use stderr.
-- `serve` enables Streamable HTTP explicitly at `/mcp`, binds `127.0.0.1` by default, validates `Origin`, has bounded request sizes/timeouts, and requires separate MCP authentication before non-loopback binding.
-
-Every schema is strict and uses output schemas. Structured data plus compact JSON text carry metadata only. Screenshot bytes are authorised solely at `content[]` entries whose `type` is `"image"`; that field must decode to the expected image/hash and the same payload is forbidden everywhere else.
-
-### 7.2 `computer_screenshot`
-
-Input:
+An `Observation` contains:
 
 ```ts
-{
-  format?: "jpeg" | "png"; // jpeg
-  max_width?: number;       // 1280, bounded by 1920
-  max_height?: number;      // 720, bounded by 1080
-}
+type Observation = {
+  observationId: string;
+  sessionId: string;
+  sessionGeneration: number;
+  connectionEpoch: number;
+  displayGeneration: number;
+  frameId: string;
+  capturedAt: string;
+  monotonicAgeMs: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+  rotation: 0 | 90 | 180 | 270;
+  geometry: RenderedContentGeometry;
+  format: "jpeg" | "png";
+  sha256: string;
+  byteLength: number;
+};
 ```
 
-Read-only/idempotent. Returns a fresh `View` and image. No crop/region mode in v0.1.
+Image bytes appear only in the MCP `content[]` image block referenced by the structured result. They never appear in structured JSON, text results, logs, errors, reports, replays, or evidence.
 
-### 7.3 `computer_actions`
+### 6.2 Reservation, consumption, and invalidation
+
+- An input mutation requires a current `observation_id` from the same session and generation.
+- Maximum observation age defaults to 30,000 ms and is operator-bounded. It is checked at admission and immediately before first dispatch or paste acceptance.
+- Admission atomically reserves an observation for one mutation.
+- First transport write or paste acceptance consumes it.
+- `not_sent` releases the reservation if the observation is still current.
+- `applied`, `already_applied`, or `unknown` consumes it permanently.
+- Route/navigation, video metadata, dimensions, source, rotation, rendered content rectangle, bridge remount, reconnect, takeover, or connection epoch changes increment/invalidate the relevant generation and all observations.
+- Mouse coordinates are integer, top-left-origin coordinates within the exact returned image. Mapping removes letterbox/pillarbox and uses the immutable captured geometry.
+- Later decoded frames alone do not invalidate an unused observation, but age and current stream health still apply.
+
+Every successful mouse, keyboard, or paste mutation attempts a fresh post-operation capture. Failure of that secondary capture is reported as partial verification; it never turns dispatched input into `not_sent`.
+
+## 7. Transport and network security
+
+### 7.1 Stdio
+
+- Stdio is the default and requires no network listener.
+- Stdout contains MCP protocol frames only.
+- Logs and diagnostics use stderr and remain field-aware and redacted.
+- Startup assertions run before any stdout write, browser launch, listener, credential read, or device contact.
+- Stdio EOF initiates process cleanup, but the transport identity is still not a hardware ownership identity.
+
+### 7.2 Legacy HTTP/SSE
+
+Legacy SSE is enabled only by an explicit `serve-sse` operator choice. The MCP HTTP adapter—not the JetKVM UI server and not deprecated per-transport header options—owns the complete boundary:
+
+- Authentication, authorization, exact Host validation, and Origin/anti-CSRF policy run in MCP HTTP middleware on **both** `GET /sse` and `POST /messages` before transport creation, transport lookup, or body dispatch. The transport's header options cannot protect `GET /sse` and are not the primary control.
+- `GET /sse` creates one SDK 1.29 `SSEServerTransport("/messages", response)`, stores it under its generated UUID routing key, and opens `text/event-stream` with `Cache-Control: no-cache, no-transform` and `Connection: keep-alive`.
+- Its first frame is exactly `event: endpoint` with `/messages?sessionId=<uuid>` as data. Server JSON-RPC frames are exactly `event: message` with one JSON value as data.
+- `sessionId` is only an opaque map key. It is never authentication, authorization, a device-session ID, or hardware ownership evidence. Authentication occurs before lookup; the map entry is additionally principal-bound.
+- `POST /messages?sessionId=<uuid>` requires one `application/json` JSON-RPC message and a maximum 1 MiB body. The adapter parses once and passes that parsed body to `handlePostMessage`; it never lets two body readers race.
+- Missing or malformed `sessionId` returns adapter-owned 400; unknown, closed, expired, or cross-principal routing returns adapter-owned 404 without revealing which condition; invalid media type/body/message returns 400; an accepted message returns 202. Authentication/authorization failures use the common MCP HTTP 401/403 policy before these routing statuses. If `handlePostMessage` finds that the GET-created SSE response is no longer active, installed SDK 1.29 writes 500 `SSE connection not established` and throws; the adapter catch checks `headersSent`/`writableEnded`, preserves that response, and never writes a second status or body. Any other pre-header internal POST failure returns one redacted 500.
+- A close removes the map entry and principal binding exactly once, while tolerating the SDK close callback more than once. Server shutdown closes all transports and empties the map. There is no legacy transport resumption API.
+- If the SSE stream closes between lookup and `handlePostMessage`, the adapter preserves the SDK's already-written response, does not attempt a second response, and reports transport closure through redacted diagnostics.
+- Keepalive comments carry no application data. Header, connection, idle, write, and total operation deadlines are bounded.
+- Transport close cancels only requests carried by that transport; it does not transfer, create, reconnect, take over, or silently destroy a device session.
+
+The listener binds `127.0.0.1` by default. Every request on both routes validates `Host` against the configured public/listen authority. Loopback rejects a mismatched `Origin` when one is present. Non-loopback binding additionally requires explicit enablement, authentication independent of JetKVM credentials, exact Host and Origin allowlists, anti-CSRF protection, no wildcard credentialed CORS, and bounded rate/concurrency. An absent Origin is rejected for non-loopback requests.
+
+Plain HTTP is allowed only through explicit operator opt-in and emits a persistent warning. Non-loopback plaintext requires a second explicit dangerous-network opt-in. HTTPS uses system certificate validation with no insecure bypass. LAN addresses, Tailscale-routed addresses, and HTTPS names are operator configuration, not discovery or authorization signals.
+
+The JetKVM device URL and credentials are process configuration. They never appear in tool inputs and cannot be selected by the model. Configuration precedence is non-secret CLI options, environment, then safe defaults. Secrets are supplied through a protected file or secret environment source; conflicts fail closed and secrets never appear on the command line.
+
+## 8. Common wire, result, and error contracts
+
+### 8.1 Strict roots and deadlines
+
+All input and output roots set `additionalProperties:false`. Nested objects do the same. Unknown enum values, unknown fields, wrong types, duplicate semantic aliases, and out-of-bound values fail before controller invocation.
+
+`timeout_ms` is required on every tool:
+
+| Tool class | Minimum | Maximum |
+|---|---:|---:|
+| status/read | 100 ms | 30,000 ms |
+| connect/reconnect/capture | 100 ms | 60,000 ms |
+| mouse/keyboard/release/power | 100 ms | 60,000 ms |
+| paste | 100 ms | 300,000 ms |
+
+The server may impose a lower operator-configured maximum. One monotonic deadline covers queue wait, plane calls, downstream acknowledgement, verification, and post-operation capture. Subsystems receive remaining time, never a reset timeout.
+
+All opaque IDs are 1–128 printable ASCII characters matching `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`. Generations, dimensions, counts, coordinates, and millisecond values are non-negative JSON integers within the documented range. Normalized paste content is 1–262,144 UTF-8 bytes. Error messages are 1–512 characters and contain no downstream body or secret.
 
 ```ts
-{
-  view_id: string;
-  actions: Array<
-    | { type: "click"; x: number; y: number; button?: "left" | "middle" | "right"; keys?: string[] }
-    | { type: "double_click"; x: number; y: number; button?: "left" | "middle" | "right"; keys?: string[] }
-    | { type: "move"; x: number; y: number; keys?: string[] }
-    | { type: "drag"; path: Array<{ x: number; y: number }>; keys?: string[] }
-    | { type: "scroll"; x: number; y: number; scroll_y: number; scroll_x?: 0; keys?: string[] }
-    | { type: "keypress"; keys: string[] }
-    | { type: "type"; text: string }
-    | { type: "wait"; ms: number }
-  >;
-}
+type PermissionName =
+  | "session.connect" | "session.status" | "session.reconnect" | "session.takeover"
+  | "display.capture" | "display.status"
+  | "input.mouse" | "input.keyboard" | "input.paste" | "input.release"
+  | "power.control";
+
+type CapabilitySnapshot = {
+  session_status: boolean;
+  display_capture: boolean;
+  display_status: boolean;
+  mouse: boolean;
+  absolute_pointer: boolean;
+  keyboard: boolean;
+  reliable_paste: boolean;
+  input_release: boolean;
+  power_control: boolean;
+  edid_read: boolean;
+};
 ```
 
-Limits: 1-16 actions; drag 2-64 points; `type.text` 1-256 code points after shared normalization; wait 0-10,000 ms; keys 1-8. Nonzero horizontal scroll fails before any batch input.
+### 8.2 Common success
 
-The complete batch prevalidates before admission. Codex aliases normalize once. For `type`, BrowserController calls bridge `resolveText` against the configured/effective layout and receives explicit physical key/modifier events, including dead-key sequences. It emits those events through Playwright key down/up; it never uses `keyboard.insertText` or relies on US-layout `keyboard.type`. Modifiers press first and release in reverse order.
-
-Every event checks view/dispatch generation. A success receipt means ordered UI/device dispatch, not host acceptance, and always carries a fresh post-batch view.
-### 7.4 `computer_paste_text`
+Every success is an exact snake_case object:
 
 ```ts
-{
-  view_id: string;
-  text: string;
-  profile?: "reliable" | "fast"; // reliable
-  timeout_ms?: number;
-}
+type Success<T> = {
+  ok: true;
+  tool: JetKvmToolName;
+  operation_id: string;
+  session_id: string | null;
+  session_generation: number | null;
+  duration_ms: number;
+  result: T;
+};
 ```
 
-There is no clear, OCR, SSH verification, or automatic-focus option. Focus is a caller precondition.
-
-Text normalization is one shared contract: strip one leading UTF-8 BOM, convert CRLF and lone CR to LF, then NFC-normalize. Size limits, validation, progress, input/result hashes, and authoritative release comparison use the normalized UTF-8 bytes; results separately report original and normalized byte counts.
-
-Before acceptance the controller requires an unused current view, healthy decoded stream, current channel generation, `pasteLifecycle:"ready"`, and configured/effective keyboard-layout equality. `unknown`/`unsupported` rejects without invoking the paste engine; no best-effort lifecycle fallback is allowed.
-
-After acceptance, only correlated monotonic events for that operation/channel count. Progress can coalesce, but terminal state remains retained until consumed. `EVENT_GAP`, missing active, duplicate/out-of-order terminal, capability downgrade, disconnect, unmount, or timeout after acceptance maps to `PASTE_OUTCOME_UNKNOWN` and closes mutation.
-
-MCP progress is monotonic normalized UTF-8 bytes at phase changes and <=4 Hz. Success requires the exact operation’s `submitted -> active -> succeeded`. Cancellation requires device inactive plus correlated terminal `cancelled`. Completion proves queue drain, not target-host byte acceptance, and returns a fresh view.
-### 7.5 `computer_status`
-
-Read-only/idempotent. It reports:
-
-- mode: `observe | control`;
-- controller state and takeover state;
-- device reachability/setup/auth mode;
-- browser/page/route readiness;
-- WebRTC/HID/video states;
-- connection/display epochs;
-- native dimensions and last decoded-frame age;
-- paste capability `unknown | ready | unsupported` and current operation state;
-- mutation gate reason, if blocked;
-- server/package/protocol/UI-contract versions.
-
-Unknown facts remain `unknown`; they are never inferred from HID-RPC version alone. No credential, cookie, SDP, ICE, paste text, or stack trace may appear.
-
-### 7.6 `computer_release_input`
+Every mutation result payload includes:
 
 ```ts
-{} // strict empty input
+type MutationState = {
+  request_id: string;
+  outcome: "applied" | "already_applied" | "not_sent" | "unknown";
+  verification: "device_state_verified" | "device_ack_only" | "none";
+  safe_to_retry: boolean;
+  required_next_step:
+    | "none"
+    | "capture_then_retry"
+    | "reconnect_then_capture"
+    | "release_then_reconnect_then_capture"
+    | "inspect_device_state_before_retry"
+    | "wait_or_request_takeover"
+    | "grant_permission"
+    | "enable_capability";
+};
 ```
 
-This idempotent path always cancels paste and sends wire `quiesceAndZero(operationId)`. The session-bound server handler injects authoritative generation. Receipt returns operation/generation plus draining, joins, paste/macro inactive, ordinary leases zero, maintenance keyboard zero and pointer zero. Missing/stale acknowledgement is unknown and keeps mutation closed.
-## 8. Input semantics
+`applied` means a definitive correlated device acknowledgement was received. It does not claim the target application accepted input. `device_state_verified` requires an independent post-action device read matching the intended state. `device_ack_only` is limited to a definitive correlated device acknowledgement. `none` makes no verification claim.
 
-- The isolated controller context is forced to absolute pointer mode and zero scroll throttling; state mismatch blocks views/actions.
-- Pointer actions target the rendered native-video content rectangle, not JetKVM chrome.
-- Click is move/down/hold/up; double-click is two complete sequences; drag visits every point and releases in `finally`.
-- Pointer modifiers press before pointer dispatch and release afterward.
-- Vertical wheel chunks preserve signed total. `scroll_x` only accepts zero.
-- Wait is abort-aware, sends no HID, and rechecks generation before the next event.
-- Keypress uses normalized aliases. Type uses bridge-resolved physical layout events, not browser text insertion.
-- Entire action batches prevalidate before view reservation. Every transition rechecks dispatch/display generation.
-- The local held-state ledger supports ordinary cleanup; bridge/device zero-state is authoritative emergency cleanup.
-## 9. Result and error contract
+### 8.3 Common execution error
 
-Every result has a common envelope. Success:
-
-Production TypeScript domain objects use camelCase. `mcp/results.ts` performs an explicit field-by-field conversion to the exact snake_case wire object shown below before placing that one mapped object in both `structuredContent` and JSON text; screenshot image content remains separate. “The same object” below refers to that mapped wire object, never direct serialization of the internal domain object.
-
-```json
-{
-  "ok": true,
-  "operation_id": "op_...",
-  "connection_epoch": 4,
-  "display_generation": 2,
-  "duration_ms": 184,
-  "receipt": {
-    "dispatched_at": "2026-07-12T12:00:00.000Z",
-    "source_view_id": "view_..."
-  }
-}
+```ts
+type ToolError = {
+  ok: false;
+  tool: JetKvmToolName;
+  operation_id: string;
+  session_id: string | null;
+  session_generation: number | null;
+  duration_ms: number;
+  error: {
+    code: ErrorCode;
+    message: string;
+    phase: "validate" | "authorize" | "queue" | "connect" | "execute" | "verify" | "cleanup";
+    outcome: "applied" | "already_applied" | "not_sent" | "unknown" | null;
+    verification: "device_state_verified" | "device_ack_only" | "none";
+    safe_to_retry: boolean;
+    required_next_step: MutationState["required_next_step"];
+    details: {
+      permission: PermissionName | null;
+      capability: keyof CapabilitySnapshot | null;
+      failed_action_index: number | null;
+      dispatched_action_count: number | null;
+      completed_action_count: number | null;
+      downstream_stage: "none" | "admission" | "write" | "acknowledgement" | "verification";
+      expected_generation: number | null;
+      actual_generation: number | null;
+      observation_id: string | null;
+    };
+  };
+};
 ```
 
-Dispatch success does not claim host acceptance.
+Errors use `isError:true` and place the same mapped object in `structuredContent` and compact JSON text. MCP protocol errors are reserved for malformed MCP messages, unknown tools, schema-invalid calls, or broken server dispatch.
 
-Execution error:
+Stable error families include:
 
-```json
-{
-  "ok": false,
-  "operation_id": "op_...",
-  "error": {
-    "code": "ACTION_OUTCOME_UNKNOWN",
-    "message": "The connection closed after input dispatch began.",
-    "phase": "execute",
-    "outcome": "unknown",
-    "retryable": false,
-    "effects_unknown": true,
-    "failed_action_index": 1,
-    "completed_action_count": 1,
-    "required_next_action": "restart_session_then_screenshot"
-  }
-}
-```
+- configuration/auth: `CONFIG_INVALID`, `AUTH_FAILED`, `AUTH_RATE_LIMITED`, `AUTH_EXPIRED`;
+- permission/policy: `PERMISSION_DENIED`, `OBSERVE_ONLY`, `SAFETY_DENIED`;
+- capability/compatibility: `CAPABILITY_MISSING`, `UNSUPPORTED_UI_VERSION`, `FIRMWARE_INCOMPATIBLE`, `BROWSER_UNSUPPORTED`;
+- session/ownership: `SESSION_NOT_FOUND`, `STALE_SESSION_GENERATION`, `SESSION_TAKEN_OVER`, `CONTROL_BUSY`, `SESSION_DRAINED`;
+- connection/protocol: `DEVICE_UNREACHABLE`, `CONNECTION_LOST`, `DOWNSTREAM_MALFORMED_RESPONSE`;
+- display/observation: `VIDEO_UNAVAILABLE`, `VIDEO_STALLED`, `FRAME_TIMEOUT`, `STALE_OBSERVATION`, `OBSERVATION_CONSUMED`, `DISPLAY_CHANGED`, `EDID_READ_FAILED`, `DISPLAY_STATUS_STALE`;
+- input/paste: `INVALID_COORDINATE`, `INVALID_KEY`, `UNSUPPORTED_SCROLL_AXIS`, `PASTE_BUSY`, `PASTE_REJECTED`, `PASTE_FAILED`, `PASTE_CANCELLED`, `EVENT_GAP`;
+- power: `POWER_ACTION_REJECTED`, `ATX_EXTENSION_INACTIVE`, `ATX_SERIAL_UNAVAILABLE`, `ATX_BUSY`, `POWER_STATE_UNVERIFIED`;
+- generic mutation: `CANCELLED`, `DEADLINE_EXCEEDED`, `MUTATION_OUTCOME_UNKNOWN`, `PARTIAL_VERIFICATION`;
+- idempotency: `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`.
 
-Errors are returned with `isError:true` and the same object in `structuredContent` and JSON text. MCP protocol errors are reserved for malformed protocol/tool calls or broken server dispatch.
+Permission and capability errors name the exact missing permission/capability in `details`, use `not_sent` for mutations, and select `grant_permission` or `enable_capability` as the required next step.
 
-Stable codes include:
+### 8.4 Idempotency, disconnect timing, and cancellation
 
-- config/auth: `CONFIG_INVALID`, `AUTH_FAILED`, `AUTH_RATE_LIMITED`, `AUTH_EXPIRED`;
-- compatibility: `UNSUPPORTED_UI_VERSION`, `FIRMWARE_INCOMPATIBLE`, `BROWSER_UNSUPPORTED`;
-- connection/ownership: `DEVICE_UNREACHABLE`, `CONNECTION_LOST`, `SESSION_TAKEN_OVER`, `CONTROL_BUSY`;
-- video/view: `VIDEO_UNAVAILABLE`, `VIDEO_STALLED`, `FRAME_TIMEOUT`, `STALE_VIEW`, `VIEW_CONSUMED`, `DISPLAY_CHANGED`;
-- input: `INVALID_COORDINATE`, `INVALID_KEY`, `UNSUPPORTED_CHARACTER`, `UNSUPPORTED_SCROLL_AXIS`, `USE_PASTE_TEXT`, `INPUT_RELEASE_UNKNOWN`;
-- paste: `PASTE_BUSY`, `PASTE_REJECTED`, `PASTE_FAILED`, `PASTE_TIMEOUT`, `PASTE_CANCELLED`, `EVENT_GAP`, `PASTE_OUTCOME_UNKNOWN`;
-- generic mutation: `CANCELLED`, `ACTION_TIMEOUT`, `ACTION_OUTCOME_UNKNOWN`;
-- policy: `OBSERVE_ONLY`, `SAFETY_DENIED`.
+Every mutation requires a client-generated `request_id`. Session-bound IDs are scoped to session ID and generation; connect IDs are scoped before session creation to the authenticated principal and configured device. The server stores a digest of the normalized input and the definitive result:
 
-`retryable` means repeating the same operation is safe. A transient connection problem after dispatch is not retryable.
+- First use executes once.
+- Same ID and same digest returns `already_applied` only when the stored result proves the original applied; it returns the original `not_sent` result when no write occurred.
+- Same ID with a different digest returns `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT` without dispatch.
+- An `unknown` result is retained as unknown. Reuse never replays it.
+- Cache loss never permits the server to infer that an operation was not sent.
 
-## 10. Configuration, browser contract, and security
+Timing classification is mandatory:
 
-Configuration precedence is CLI non-secret options > environment > defaults. V0.1 has no config-file layer. Credentials never appear on the command line; password file takes precedence over password environment and conflicts fail closed.
-
-Inputs include fixed URL/password source, mode/explicit claim, layout/profile, bounded operation/view limits, maximum paste bytes, HTTP bind/origin/auth, and claim-doctor device-lease proof/acquisition. V0.1 uses system TLS trust only: no config file, custom CA, fingerprint, or insecure bypass.
-
-### Supported browser
-
-- Playwright Core 1.57 is pinned. Hardware-free CI provisions the exact matching Playwright-managed Chromium and OS dependencies; it never relies on runner state.
-- Live/release compatibility names one approved Chrome for Testing/Chrome distribution and tested version range. Executable resolution accepts only explicit path or the pinned managed/browser-channel location; arbitrary Chromium is unsupported.
-- Default `doctor` is offline: executable path/hash, browser product/version, sandbox, `requestVideoFrameCallback`, and synthetic H.264 decode only. It makes zero device signalling/WebRTC requests.
-- `doctor --claim-session` is explicitly session-destructive, requires claim permission plus an atomically acquired device-keyed lease (or matching inherited lease proof), and checks auth/facade/layout/pointer/WebRTC/HID/live frame/LAN ICE.
-- Browser uses a new nonpersistent isolated context. Downloads, recording, tracing, extensions, and persistent profile storage are disabled by default.
-- Chromium sandbox is enabled without `--no-sandbox`; child environment is allowlisted and excludes JetKVM/MCP passwords, tokens, and bearer credentials.
-- Failure to prove the checks applicable to the selected doctor mode is fail-closed.
-
-### Security rules
-
-- The model cannot choose URL/credential.
-- Explicit LAN HTTP emits a warning; HTTPS uses system validation and cannot be disabled.
-- Stdio stdout is protocol-only. Password/cookie/bearer/lease tokens plus SDP/ICE/paste data are forbidden from env, logs, stderr, structured/JSON results, doctor, reports, proofs, schemas, and package. Screenshot bytes are permitted only in the exact MCP `content[type="image"].data` field and forbidden from every other field/sink.
-- The server and harness never persist screenshots. Field-aware tests decode/hash the authorised image block, then assert the identical payload is absent everywhere else.
-- Evidence stores hashes, sizes, timings, safe action metadata, outcomes, and identities—not payloads, headers, or lease proof tokens.
-- Streamable HTTP binds loopback, validates Origin, bounds body/concurrency/time, and requires separate auth for non-loopback.
-- Tool annotations are hints; semantic approval remains with the MCP host.
-- GPL-2.0 repository licensing applies to repository code/release.
-## 11. Verification and evidence
-
-### 11.1 Hardware-free gates
-
-1. **Go gates:** hardware-free CI runs pure `go test -race ./internal/controlsession` and native-builds/compiles the root handler integrations; it never executes cross-built ARM tests.
-2. **UI contract tests:** explicit TSX lifecycle, capture/transport receipts, channel replacement, capability reset, normalization, producer joins, and correlated bridge-to-firmware quiesce.
-3. **MCP unit/contract tests:** schemas/views/actions/paste/takeover/auth, strict-empty release, maintenance receipts, fake-clock HTTP TTL/deadline/quiesce, and field-aware authorised image sink/redaction.
-4. **Real BrowserController fixture:** pinned browser imports exact guard; stale move/drag, channel barriers, video/geometry, takeover/paste, blocked writers and zero post-zero events.
-5. **Production build/pack gate:** allowlist only production files; no tests, fixtures, fixture switch, Vitest import, test server, secret source map, or undeclared file.
-6. **Installed transport smokes:** exact tarball over stdio and two-client HTTP; loopback/path/origin/auth/bind failures, leases, exact authorised image/hash, payload absent from every other sink, sentinels clean.
-7. **Schema check:** generate into a temporary directory and compare complete file names/bytes with tracked schemas, including untracked-file detection.
-8. **Required CI:** pinned Node/browser dependencies; pure Go race plus root compile, explicitly listed UI TSX, MCP unit/adapter/build/pack/smoke/schema, and harness manifest/lease/orchestration. Public CI has no hardware secrets.
-
-### 11.2 Requirement-to-evidence matrix
-
-| Contract | Hardware-free evidence | Live independent evidence |
+| Boundary | Outcome | Retry rule |
 |---|---|---|
-| atomic takeover | pure dispatch-lease race/barriers; compiled root handler suite | leased test-only device handler run; near-simultaneous offers; zero old-generation HID; no auto-reclaim |
-| screenshot pixels/freshness | two nonce frames; frozen rejection; browser version | controlled host nonce change; H.264 decode/frame advance; status/image dimensions |
-| max-age/single-use view | fake clock, reservation/consumption, owner namespace | delayed unchanged-screen action and post-mutation reuse produce zero HID |
-| input dispatch boundary | guard/handler/transport receipts; deterministic admission-to-send replacement barrier | live close before event is `not_sent`; close after queued is unknown; no replay |
-| status | every field driven by fixture oracle/redaction | cross-check device/bridge before/after video/HID/takeover |
-| click/double/move/drag | exact event and release logs | deterministic target counters/hover/drag state |
-| vertical/horizontal scroll | signed sum; nonzero X rejected | target offset; horizontal zero target events |
-| keypress/type | alias and resolved physical layout plans | exact bytes/hash; uppercase/symbol/dead-key/non-US rows; no held keys |
-| wait | elapsed/abort/zero events | tee/event count unchanged |
-| paste reliable/fast | channel-ready requirement, normalization, event/gap/cancel/failure | original/normalized counts, SHA-256, first mismatch, terminal queue state |
-| unsupported lifecycle | reject before execute/HID in fixture | release candidate proves current channel is `ready` before first paste |
-| release input | draining/maintenance-lease command, blocked writer/queue/stale-generation barriers, step receipts | exact correlated acks; zero post-zero HID; no stuck input; session remains drained |
-| HTTP ownership | fake-clock long-op expiry/disconnect; quiesce+close old controller; fresh controller/generation; old-view rejection; B screenshot then mutation | exact T proves A/busy, A quiesce+close, B fresh claim/view and successful mutation |
-| cancellation/disconnect | deterministic barriers pre/post dispatch | zero-HID `not_sent`; exactly-once/unknown after dispatch; no replay |
-| redaction/package | field-aware image decode/hash plus four-class/data scans outside authorised image field | manifest stores hashes/lengths only; no persisted image/bearer/lease token |
+| validation/authorization/queue failure before downstream write | `not_sent` | safe only after the named prerequisite |
+| cancellation or disconnect before transport write | `not_sent` | may retry with same current observation if its reservation was released |
+| downstream write began, no definitive correlated acknowledgement | `unknown` | never automatically retry; inspect, release/reconnect, and capture |
+| definitive acknowledgement received, post-read unavailable | `applied` | do not replay; verification is `device_ack_only` |
+| definitive acknowledgement and independent matching read | `applied` | do not replay; verification is `device_state_verified` |
+| duplicate definitive request | `already_applied` | do not replay |
 
-Every retained option has a row. Unsupported/untested options are absent from schemas.
+MCP cancellation and timeout propagate through the coordinator and planes. Queued work is removed. Active work stops at the first safe boundary. After any possible write, cancellation is an unknown outcome unless a definitive correlated acknowledgement already establishes `applied`. Background completion may refine internal cleanup but never silently changes the result already returned to the caller.
 
-### 11.3 Live safety and lease
+No tool reports silent no-op, partial success, or success for an unobserved acknowledgement. If a multi-event mutation dispatches only a prefix, it stops the suffix and returns `unknown` with dispatched/completed counts. It never retries the prefix or suffix.
 
-The release live lease is acquired before any deployment or device read and held as one inherited proof in an outer `finally` across persistent deployment/reboot, identity checks, destructive doctor, packed server, every matrix, final reads, evidence flush, and cleanup. Stale leases fail closed; CI uses matching device concurrency.
+## 9. Exact public tool catalogue
 
-The Phase-A handler suite runs with `--run-go-tests-only` under the shared `with-device-lease.mjs` atomic lease wrapper; it records and rechecks `/metrics` revision so the production app is never replaced. The same lease proof format is reused by claim-doctor, live harness, and installed server.
+The schemas below are normative TypeScript shorthand for strict JSON Schema. Every listed field is required unless marked `?`; no unlisted field is accepted. All output payloads are wrapped in `Success<T>` or `ToolError`. `DisplayCaptureResult` used by mutation results means exactly the §9.4 `Result` object; it is not an open or extensible type.
 
-Preflight requires `/metrics` revision `C`, local `C^{tree}=G`, recorded running binary hash, auto-update disabled, isolated `C:\\Users\\Robert\\paste-rig`, fresh fixture, layout match, Caps Lock off, focus watchdog, approved browser/sandbox/H.264, and artifacts on every exit. SSH prepares/reads only.
+### 9.1 `jetkvm_session_connect`
 
-Live suites are explicit/manual/nightly and mandatory before release; public PR CI never waits for hardware.
+```ts
+type Input = {
+  request_id: string;
+  takeover?: boolean; // default false
+  timeout_ms: number; // 100..60000
+};
 
-### 11.4 User stories
+type Result = MutationState & {
+  state: "ready";
+  connection_epoch: number;
+  display_generation: number;
+  takeover_performed: boolean;
+  fresh_capture_required: true;
+  permissions: PermissionName[];
+  capabilities: CapabilitySnapshot;
+};
+```
 
-1. Fresh changing host nonces and H.264 view evidence.
-2. Run dialog/Notepad/PowerShell via physical key events.
-3. Safe file creation through normalized Reliable Paste and separate Enter.
-4. Reliable/fast punctuation/non-US campaigns with SHA-256/first mismatch.
-5. Click/double/hover/drag/vertical scroll target fixture.
-6. Terminal long-paste cancel with no later characters/stuck input.
-7. Disconnect before/after dispatch with `not_sent`/unknown and no replay.
-8. View age/reuse/display change; fixture closes after admission; live closes only before event or after transport queue.
-9. Near-simultaneous normal UI takeover with atomic old-session revocation.
-10. Unexpected target focus proves queue completion is not host verification.
-11. Emergency release races every event class and proves no later dispatch.
+The server issues the output `session_id` and generation in the common envelope. It uses only the operator-configured URL/credential. Required permission is `session.connect`; `takeover:true` additionally requires `session.takeover`. Capability or compatibility failure returns the precise missing item. Connect never steals unless both explicit takeover and permission are present.
 
-### 11.5 External exact-candidate manifest
+Connect is an idempotent mutation. Reusing the same connect `request_id` and normalized input returns the same issued session with `already_applied`; it never creates or takes over a second session.
 
-All code, generated schemas, docs, licence/package metadata, workflow, and harness land before candidate freeze. Freeze PR-head commit `C` and repository tree `G`; build tarball `T` once; deploy UI/firmware from `C`; run all live evidence against `C/G/T`.
+### 9.2 `jetkvm_session_status`
 
-The machine-validated manifest is an immutable PR/CI artifact and later GitHub release asset, never committed inside `G`. It records tested PR commit/tree, spec/plan blob hashes, package/version/tarball/lockfile/package-tree hashes, Node/browser executable version/hash/sandbox, harness, device production revision/tree/UI contract, target/rig/layout/resolution, guards, every zero-skip requirement, operation/view/generation IDs, byte/hash/mismatch/timing, and artifact hashes.
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  timeout_ms: number; // 100..30000
+};
 
-Merge must preserve `C` as an ancestor and produce a main tree equal to `G`; the release tag points to `C` itself. Any conflict resolution, source/package/lockfile/tree change creates a new candidate and requires rebuilding `T` and rerunning affected live rows. The release never silently substitutes a new tarball.
-## 12. Delivery and checker gates
+type Result = {
+  state: "connecting" | "ready" | "degraded" | "drained" | "taken_over" | "closing" | "failed";
+  connection_epoch: number;
+  display_generation: number;
+  dispatch_generation: number;
+  browser_channel_generation: number | null;
+  device_reachable: boolean | null;
+  setup_state: "complete" | "required" | "unknown";
+  auth_mode: "password" | "no_password" | "unknown";
+  rpc_reachability: "reachable" | "unreachable" | "unknown";
+  native_process: "available" | "unavailable" | "restarting" | "unknown";
+  web_rtc: "connecting" | "connected" | "disconnected" | "failed" | "unknown";
+  hid: "ready" | "not_ready" | "unknown";
+  decoded_video: "ready" | "stalled" | "unavailable" | "unknown";
+  native_capture_observation: {
+    state: "ready" | "no_signal" | "no_lock" | "out_of_range" | "unknown";
+    observed_at: string | null;
+    age_ms: number | null;
+    freshness: "fresh" | "stale" | "unknown";
+    source: "cached_event";
+  };
+  active_mutation: boolean;
+  fresh_capture_required: boolean;
+  permissions: PermissionName[];
+  capabilities: CapabilitySnapshot;
+  blocked_reason: string | null;
+  versions: {
+    server: string;
+    protocol: string;
+    ui_contract: string | null;
+    firmware: string | null;
+  };
+};
+```
 
-Canonical documents are this spec and `docs/superpowers/plans/2026-07-12-jetkvm-computer-use-mcp.md`.
+Read-only and required permission `session.status`. RPC reachability, native-process availability, native capture observation, WebRTC, HID, and decoded-video state remain separate facts; the adapter never collapses them into a unified health assertion. Native capture state is cached/event-derived and carries provenance/freshness. The omitted proxy `streaming` value is not trustworthy. Unknown facts remain `unknown`/`null`; they are never inferred. No credentials, cookies, SDP, ICE, input text, or stack traces appear.
 
-1. Commit approved spec/plan on `feat/jetkvm-computer-use-mcp`.
-2. Test-first maker phase: server-side session revocation, domain/config, production bridge and paste/layout bootstrap.
-3. **Checker Gate A:** independent contract/ownership/UI lifecycle reviewer; all blocker/major findings fixed and rechecked.
-4. Maker phase: frame/action/paste/controller, emergency release, MCP stdio/HTTP.
-5. **Checker Gate B:** independent race/outcome/view/release/HTTP/browser/schema reviewer; fix/recheck.
-6. Maker phase: real fixture, production build allowlist, docs/licence, installed smoke, schema check, harness lease/manifest, required CI.
-7. **Checker Gate C:** independent artifact/security/CI/evidence-matrix reviewer; fix/recheck.
-8. Freeze candidate `C/G/T`; preflight, push unchanged C, open a detailed draft PR, and require hardware-free CI before device access; run the live release matrix under one inherited lease; upload immutable evidence and update only PR metadata.
-9. Final independent whole-diff/manifest review; finalize the PR, mark ready, obtain required approval, and leave no unresolved blocker/major.
-10. Merge only with `C` preserved as ancestor and equal tree, then tag `C` as `jetkvm-mcp-v0.1.0`.
-11. Create GitHub release with exact `T`, checksum, generated schemas, compatibility/setup/rollback, SBOM if produced, and external immutable live manifest.
-12. Download/install in a clean directory, reverify checksum, initialize/list tools over stdio and loopback `serve`, then run default offline doctor with zero device signalling.
+### 9.3 `jetkvm_session_reconnect`
+
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  request_id: string;
+  takeover?: boolean; // default false
+  timeout_ms: number; // 100..60000
+};
+
+type Result = MutationState & {
+  previous_session_generation: number;
+  new_session_generation: number;
+  connection_epoch: number;
+  state: "ready";
+  takeover_performed: boolean;
+  fresh_capture_required: true;
+};
+```
+
+Required permission is `session.reconnect`; takeover additionally requires `session.takeover`. Reconnect closes/quiesces the old generation before publishing the new one and never replays an interrupted mutation. All old observations become stale. Input is blocked until a fresh capture on the new generation.
+
+The result is not inferred from automatic native-process restart, successful input quiesce, takeover cleanup, or an ICE close. It requires new WebRTC/RPC/HID/browser-channel observations from the new generation.
+
+### 9.4 `jetkvm_display_capture`
+
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  format?: "jpeg" | "png"; // jpeg
+  max_width?: number; // 64..1920, default 1280
+  max_height?: number; // 64..1080, default 720
+  timeout_ms: number; // 100..60000
+};
+
+type Result = {
+  observation_id: string;
+  connection_epoch: number;
+  display_generation: number;
+  frame_id: string;
+  captured_at: string;
+  source_width: number;
+  source_height: number;
+  image_width: number;
+  image_height: number;
+  rotation: 0 | 90 | 180 | 270;
+  geometry: {
+    content_x: number;
+    content_y: number;
+    content_width: number;
+    content_height: number;
+  };
+  image: {
+    content_index: number;
+    mime_type: "image/jpeg" | "image/png";
+    sha256: string;
+    byte_length: number;
+  };
+};
+```
+
+Read-only, required permission `display.capture`, required capability `display_capture`. JPEG preserves aspect ratio, does not crop or upscale, defaults to quality 88, and is limited to 2 MiB before base64. Capture is the only way to establish an input observation fence.
+
+### 9.5 `jetkvm_display_status`
+
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  timeout_ms: number; // 100..30000
+};
+
+type Result = {
+  signal: "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown";
+  native_resolution: {
+    width: number;
+    height: number;
+    refresh_hz: number | null;
+    fps: number | null;
+  } | null;
+  observed_at: string | null;
+  freshness: {
+    source: "cached_event";
+    age_ms: number | null;
+    state: "fresh" | "stale" | "unknown";
+  };
+  edid: {
+    read_status: "hardware_read_verified" | "not_reported";
+    observed_at: string | null;
+    sha256: string | null;
+    manufacturer_id: string | null;
+    product_code: number | null;
+    serial_number: string | null;
+    display_name: string | null;
+    preferred_resolution: {
+      width: number;
+      height: number;
+      refresh_hz: number | null;
+    } | null;
+  };
+};
+```
+
+Read-only, required permission `display.status`, required capability `display_status`; EDID retrieval additionally requires `edid_read`. Resolution/signal/FPS are cached native callback observations and must include observation time and freshness; the adapter never exposes or trusts the proxy `streaming` field. EDID uses only the read-only `VIDIOC_G_EDID` path. `hardware_read_verified` is legal only after the adapter receives an explicit successful lower-layer read; open/ioctl/cgo failure returns `EDID_READ_FAILED`, never `not_reported` or fabricated empty success. `not_reported` means a proven successful read reported no EDID.
+
+### 9.6 `jetkvm_input_mouse`
+
+```ts
+type MouseAction =
+  | { type: "move"; x: number; y: number }
+  | { type: "click"; x: number; y: number; button: "left" | "middle" | "right" }
+  | { type: "double_click"; x: number; y: number; button: "left" | "middle" | "right" }
+  | { type: "drag"; button: "left" | "middle" | "right"; path: Array<{ x: number; y: number }> }
+  | { type: "scroll"; x: number; y: number; delta_y: number; delta_x?: 0 };
+
+type Input = {
+  session_id: string;
+  session_generation: number;
+  observation_id: string;
+  request_id: string;
+  actions: MouseAction[]; // 1..16; drag path 2..64
+  timeout_ms: number; // 100..60000
+};
+
+type Result = MutationState & {
+  dispatched_action_count: number;
+  completed_action_count: number;
+  post_capture: DisplayCaptureResult | null;
+};
+```
+
+Required permission `input.mouse`, capabilities `mouse` and absolute pointer mode. Coordinates are fenced to the observation. The whole batch validates before reservation. Drag releases in cleanup. Nonzero horizontal scroll is rejected before input.
+
+### 9.7 `jetkvm_input_keyboard`
+
+```ts
+type Letter = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z";
+type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+type FunctionNumber = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12";
+type PhysicalKey =
+  | `Key${Letter}` | `Digit${Digit}` | `F${FunctionNumber}` | `Numpad${Digit}`
+  | "Escape" | "Tab" | "CapsLock" | "Space" | "Enter" | "Backspace"
+  | "Insert" | "Delete" | "Home" | "End" | "PageUp" | "PageDown"
+  | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PrintScreen"
+  | "ScrollLock" | "Pause" | "NumLock" | "NumpadAdd" | "NumpadSubtract"
+  | "NumpadMultiply" | "NumpadDivide" | "NumpadDecimal" | "NumpadEnter"
+  | "Minus" | "Equal" | "BracketLeft" | "BracketRight" | "Backslash"
+  | "Semicolon" | "Quote" | "Backquote" | "Comma" | "Period" | "Slash"
+  | "ShiftLeft" | "ShiftRight" | "ControlLeft" | "ControlRight"
+  | "AltLeft" | "AltRight" | "MetaLeft" | "MetaRight" | "ContextMenu";
+
+type KeyboardAction =
+  | { type: "key_down"; key: PhysicalKey }
+  | { type: "key_up"; key: PhysicalKey }
+  | { type: "key_press"; key: PhysicalKey }
+  | { type: "chord"; keys: PhysicalKey[] }; // 1..8, press order then reverse release
+
+type Input = {
+  session_id: string;
+  session_generation: number;
+  observation_id: string;
+  request_id: string;
+  actions: KeyboardAction[]; // 1..64
+  timeout_ms: number; // 100..60000
+};
+
+type Result = MutationState & {
+  dispatched_action_count: number;
+  completed_action_count: number;
+  held_keys: PhysicalKey[];
+  post_capture: DisplayCaptureResult | null;
+};
+```
+
+Required permission `input.keyboard`, capability `keyboard`. This tool accepts physical keys only: there is no text, character, typing, insertion, script, or command field. Unknown keys and impossible transitions fail before dispatch. Modifiers press in listed order and release in reverse order. The held-state ledger supports ordinary cleanup; emergency release is authoritative.
+
+### 9.8 `jetkvm_input_paste`
+
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  observation_id: string;
+  request_id: string;
+  text: string;
+  timeout_ms: number; // 100..300000
+};
+
+type Result = MutationState & {
+  original_byte_count: number;
+  normalized_byte_count: number;
+  normalized_sha256: string;
+  accepted_at: string | null;
+  completed_at: string | null;
+  terminal_state: "succeeded" | "failed" | "cancelled" | "unknown";
+  measured_chars_per_second: number | null;
+  post_capture: DisplayCaptureResult | null;
+};
+```
+
+Required permission `input.paste`, capabilities `reliable_paste` and current deterministic paste lifecycle. This is the only public tool that accepts free text. The validated Reliable Paste profile targets approximately 91 characters/second while retaining device batching, pacing, flow control, and correlated terminal state; it never substitutes a fixed sleep.
+
+Normalization strips one leading UTF-8 BOM, converts CRLF and lone CR to LF, then NFC-normalizes. Limits, hashes, progress, and evidence use normalized UTF-8 bytes while reporting both counts. Before acceptance, the controller requires an unused current observation, healthy decoded stream, current channel generation, lifecycle `ready`, and configured/effective keyboard-layout equality.
+
+Only correlated monotonic events for the operation and channel count. Success requires `submitted -> active -> succeeded`. Event gaps, missing active, duplicate/out-of-order terminal events, capability downgrade, disconnect, unmount, or timeout after acceptance produce unknown outcome and close mutation. Queue drain does not prove target-application acceptance.
+
+### 9.9 `jetkvm_input_release`
+
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  request_id: string;
+  timeout_ms: number; // 100..60000
+};
+
+type Result = MutationState & {
+  mutation_gate_closed: boolean;
+  deferred_producers_joined: boolean;
+  paste_terminal: "cancelled" | "inactive" | "unknown";
+  ordinary_leases_zero: boolean | null;
+  keyboard_zero: boolean | null;
+  pointer_zero: boolean | null;
+  generation_drained: boolean;
+};
+```
+
+Required permission `input.release`, capability `input_release`. This emergency lane does not require an observation and preempts the normal queue. It closes the gate, invalidates observations, advances dispatch generation, aborts queued work, joins deferred producers, cancels correlated paste, and calls generation-bound `quiesceAndZero`.
+
+Success requires correlated acknowledgements for draining, producer/macro/paste inactivity, ordinary leases zero, keyboard zero, and pointer zero, and therefore uses `device_state_verified`. Missing or stale acknowledgement returns unknown, leaves mutation closed, and requires operator inspection before retry. A successfully drained generation also remains closed; reconnect and fresh capture are required before further input.
+
+### 9.10 `jetkvm_power_control`
+
+```ts
+type Input = {
+  session_id: string;
+  session_generation: number;
+  request_id: string;
+  action: "press_power" | "hold_power" | "press_reset";
+  timeout_ms: number; // 100..60000
+};
+
+type Result = MutationState & {
+  action: "press_power" | "hold_power" | "press_reset";
+  wire_action: "power-short" | "power-long" | "reset";
+  fixed_press_ms: 200 | 5000;
+  serial_sequence_completed: boolean;
+  atx_led_observation: {
+    power: boolean | null;
+    hdd: boolean | null;
+    observed_at: string | null;
+    freshness: "fresh" | "stale" | "unknown";
+  };
+};
+```
+
+Required permission `power.control`, capability `power_control`. The adapter additionally requires active `atx-power` extension and serial readiness, holds a single ATX mutex across the complete ON/sleep/OFF sequence, and reserves the request-id before the first write. It maps `press_power` to `power-short`/200 ms, `hold_power` to `power-long`/5000 ms, and `press_reset` to `reset`/200 ms. No duration, delay, repeat, pin, level, or arbitrary sequence is accepted.
+
+A definitive receipt means only that the local serial ON and OFF writes completed. The asynchronous cached ATX LED observation is reported separately with time/freshness and is not correlated host-state proof. Therefore current ATX success uses at most `device_ack_only`, never `device_state_verified`. Failure of OFF after ON is unknown, closes the ATX gate, performs bounded best-effort release cleanup, and is never replayed. Disconnect after the first write without a complete receipt is likewise unknown.
+
+## 10. Permission and capability matrix
+
+Every handler performs authorization before capability probing that could disclose unavailable device details, then rechecks session generation immediately before downstream work.
+
+| Tool | Required permission | Required capability |
+|---|---|---|
+| `jetkvm_session_connect` | `session.connect`; optional `session.takeover` | compatible auth/UI/WebRTC |
+| `jetkvm_session_status` | `session.status` | native status |
+| `jetkvm_session_reconnect` | `session.reconnect`; optional `session.takeover` | compatible auth/UI/WebRTC |
+| `jetkvm_display_capture` | `display.capture` | display capture |
+| `jetkvm_display_status` | `display.status` | display status; optional EDID read |
+| `jetkvm_input_mouse` | `input.mouse` | mouse and absolute pointer |
+| `jetkvm_input_keyboard` | `input.keyboard` | physical keyboard |
+| `jetkvm_input_paste` | `input.paste` | deterministic Reliable Paste |
+| `jetkvm_input_release` | `input.release` | generation-bound release |
+| `jetkvm_power_control` | `power.control` | ATX control |
+
+Permission denial and capability absence are never treated as no-op success. Required next steps tell the operator to grant the named permission or enable/upgrade the named capability.
+
+## 11. Story-first verification
+
+### 11.1 Machine-readable story manifest
+
+A versioned machine-readable manifest is the acceptance source for fake E2E, replay, user documentation, live hardware orchestration, and release evidence. Human prose may explain a story but may not define a second set of steps or expectations.
+
+Each story record is strict and contains:
+
+```ts
+type AcceptanceStory = {
+  id: string;
+  title: string;
+  requirements: string[];
+  tools: JetKvmToolName[];
+  environments: Array<"fake" | "replay" | "live">;
+  preconditions: StoryCondition[];
+  fault_script: FaultStep[];
+  steps: StoryStep[];
+  pass: StoryAssertion[];
+  evidence: EvidenceField[];
+  restore: RestoreStep[];
+  privacy: PrivacyRule[];
+};
+```
+
+Every story must declare setup, exact calls, timing/fault boundaries, observable pass assertions, allowed evidence fields, and unconditional restore steps. The harness validates schema and requirement coverage before execution. Generated documentation renders tool examples and failure guidance from the same manifest/schema identifiers.
+
+Required named stories include:
+
+1. `session-connect-without-takeover-busy`
+2. `session-explicit-authorized-takeover`
+3. `session-reconnect-invalidates-observations`
+4. `display-capture-fresh-frame-and-geometry`
+5. `display-status-resolution-and-read-only-edid`
+6. `mouse-observation-fence-and-single-use`
+7. `keyboard-physical-keys-only`
+8. `reliable-paste-91cps-correlated-terminal`
+9. `emergency-release-races-every-writer`
+10. `power-three-semantic-actions`
+11. `disconnect-before-write-not-sent`
+12. `disconnect-after-write-unknown-no-replay`
+13. `duplicate-request-id-definitive-replay`
+14. `malformed-response-fails-closed`
+15. `permission-and-capability-errors-actionable`
+16. `stale-generation-zero-downstream-write`
+17. `partial-verification-does-not-replay`
+18. `transport-reconnect-does-not-own-device`
+19. `display-status-cached-freshness-and-streaming-omission`
+20. `edid-low-level-failure-propagates`
+21. `reconnect-requires-new-channel-observations`
+22. `atx-extension-serialization-idempotency-and-nonproof`
+23. `sse-get-and-post-share-http-security-boundary`
+24. `sse-session-id-is-routing-not-authentication`
+The shared `DeviceRpcAdapter` has no separate story ID. Story 21 owns single-channel injection, old-binding invalidation, and new-generation replacement proof; story 19 owns cached/stale display behavior across binding loss; story 22 owns stale and mid-flight ATX fencing with pre/post-write outcome classification. The three §11.2 behavior rows are mandatory assertions within those canonical stories.
+
+### 11.2 Every-handler branch matrix
+
+Every public handler must have a manifest-linked unit/adapter assertion for every applicable branch:
+
+| Branch | Required assertion |
+|---|---|
+| strict schema rejection | no controller/plane call |
+| permission denied | actionable `PERMISSION_DENIED`, no capability disclosure, no write |
+| capability missing | actionable `CAPABILITY_MISSING`, no mutation |
+| deadline before admission | `not_sent`, queue/reservation released |
+| cancellation before write | `not_sent`, zero downstream writes |
+| disconnect before write | `not_sent`, safe retry classification |
+| disconnect after write | `unknown`, gate closes, zero replay |
+| malformed downstream response | fail closed; `not_sent` or `unknown` according to write boundary |
+| stale session generation | `STALE_SESSION_GENERATION`, zero downstream writes |
+| busy without takeover | `CONTROL_BUSY`, incumbent unchanged |
+| authorized takeover | old generation quiesced before new publish |
+| unauthorized takeover | permission error, incumbent unchanged |
+| definitive acknowledgement | `applied` with exact verification strength |
+| duplicate same request/digest | cached definitive result, zero second write |
+| duplicate changed digest | idempotency error, zero second write |
+| partial verification | applied acknowledgement preserved; no replay |
+| partial multi-event dispatch | unknown with exact counts; suffix suppressed |
+| post-reconnect input without capture | stale/fresh-capture error, zero input |
+| cleanup failure | error evidence retained, no fabricated restoration |
+| cached display observation | observed time/age/provenance returned; stale policy enforced; proxy streaming omitted |
+| EDID lower-layer failure | `EDID_READ_FAILED`; no empty or qualified success |
+| reconnect evidence | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected |
+| ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing |
+| ATX acknowledgement semantics | serial completion only; cached LED fact separate; no host-state proof |
+| SSE route security | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup |
+| SSE routing/close | sessionId never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers |
+| shared DeviceRpcAdapter binding | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel |
+| DeviceRpcAdapter replacement | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes |
+| DeviceRpcAdapter mid-flight loss | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay |
+
+Input handlers additionally cover stale/consumed/foreign observations, display change before and after first dispatch, invalid coordinates/keys, held-state cleanup, and post-operation capture failure. Paste additionally covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release additionally races every deferred producer and ordinary writer. Power covers all three actions and no fourth value.
+
+### 11.3 Test layers
+
+1. **Go generation manager:** pure race tests and root integration compile/tests cover lease admission, stale generation, takeover, quiesce, maintenance zero writes, writer joins, and ICE scoping.
+2. **UI bridge and DeviceRpcAdapter:** lifecycle, single-RPC-channel injection, generation/connection/channel fencing, old-adapter invalidation before replacement, capture guard, transport receipts, capability reset, physical-key resolution, Reliable Paste events, producer joins, and correlated release.
+3. **Domain/controller:** strict schemas, deadlines, observation reservation, idempotency, outcome classification, permissions, capabilities, shared-adapter identity, stale/replaced binding branches, plane errors, and redaction.
+4. **Fake E2E:** every manifest story runs with deterministic plane faults and a fake monotonic clock.
+5. **Replay E2E:** sanitized production-shaped traces prove call ordering and reject unrecorded behavior.
+6. **Transport:** installed tarball over stdio and two-client legacy SSE; stdout purity; exact endpoint/message framing; MCP HTTP middleware on both `/sse` and `/messages`; auth-before-lookup; sessionId routing-only semantics; adapter-owned body/status/close behavior; Host, Origin, anti-CSRF, cancellation, and device-session independence.
+7. **Real browser fixture:** exactly one WebRTC/RPC channel shared through one adapter, adapter replacement fencing, fresh frame, geometry, pointer, physical keyboard, paste lifecycle, disconnect timing, takeover, ATX pre/post-write loss, and zero post-release events.
+8. **Live hardware:** manual/nightly and mandatory for release, serialized under the release lease.
+9. **Package/schema:** generated schema byte comparison, production allowlist, installed artifact, secret/payload scans, dependency/browser pins, and clean-checkout reproducibility.
+
+No advertised option or branch may lack a manifest requirement and evidence row. Unsupported options are absent from schemas.
+
+### 11.4 Hardware safety, privacy, and restore
+
+All hardware stories run serially under one device-keyed lease inherited from the outer harness. The lease is acquired before any device read, deployment, browser claim, doctor action, packed-server run, or evidence capture and is released only after final restoration and evidence flush. Stale or mismatched lease proof fails closed.
+
+Before each story, the harness records safe baseline facts: candidate/device revision, session generation, display resolution, layout, lock-key state, ATX-observable state, browser version/sandbox, and fixture identity. Each story has an outer `finally` that executes its manifest restore steps even after assertion, timeout, or cancellation failure. Restoration includes emergency release, paste inactivity, zero held keys/buttons, browser/session cleanup, fixture reset, and—where a power story changed it—the declared baseline power state. The next story cannot start until restore assertions pass.
+
+Hardware evidence is privacy-safe and machine-validated. It may store:
+
+- story/requirement IDs and pass/fail;
+- commit/tree/package/schema hashes;
+- sanitized device/firmware/browser versions;
+- opaque operation, request, observation, and generation IDs;
+- dimensions, counts, durations, outcome, verification, acknowledgement steps, and first-mismatch index;
+- normalized test-payload hashes and artifact hashes.
+
+It must not store screenshots, raw image/base64, pasted text, typed keys beyond allowlisted fixture action names, credentials, cookies, bearer tokens, lease proofs, headers, SDP/ICE, target document contents, serial-like EDID values in public artifacts, or stack traces containing secrets. The server and harness never persist screenshots.
+
+## 12. Documentation contract
+
+V0.1 documentation is generated or checked against public schemas and story IDs and must include:
+
+- exact ten-tool catalogue and examples;
+- explicit device-session versus MCP transport-session semantics;
+- takeover default false and authorization requirements;
+- observation fencing, reconnect, cancellation, disconnect timing, idempotency, and unknown-outcome recovery;
+- physical-key-only keyboard guidance and Reliable Paste as the sole free-text path;
+- expected approximately 91 characters/second paste profile without a universal throughput guarantee;
+- cached/event-derived resolution status with `observed_at`/freshness, omission of untrustworthy proxy streaming, qualified read-only EDID results/failures, and the three fixed ATX mappings/timings with serial acknowledgement explicitly not host-state proof;
+- stdio setup and protocol-only stdout;
+- opt-in legacy SSE setup, exact `/sse` and `/messages` framing/body/status/close behavior, both routes protected at the MCP HTTP layer, `sessionId` as routing only, loopback default, and non-loopback Host/Origin/auth requirements;
+- operator-configured LAN, Tailscale-routed, and HTTPS URLs without implying any required network product;
+- plain-HTTP warnings, system TLS validation, secret handling, permissions, capabilities, and actionable errors;
+- safety/limitations, no target-application acceptance claim, recovery, hardware restore, compatibility, release verification, and rollback.
+
+Documentation examples must execute against fake or replay adapters in CI. No example may use a hidden tool, unbounded timeout, model-selected URL/credential, arbitrary ATX timing, mutation replay after unknown, or stale observation.
+
+## 13. Six-phase branch, PR, and release flow
+
+Work lands through exactly six sequential branches/PRs:
+
+| Phase | Branch | Deliverable |
+|---:|---|---|
+| 1 | `feat/jetkvm-mcp-foundation` | Preserved Node package/domain/device lease; Go generation manager, dispatch leases, quiesce/zero, takeover and ICE fencing; strict shared result/error/idempotency types |
+| 2 | `feat/jetkvm-mcp-transport-api` | Exact ten schemas and adapter handlers; stdio; legacy `/sse` + `/messages`; auth/Host/Origin/security; explicit transport-independent session registry; fake/replay base |
+| 3 | `feat/jetkvm-mcp-input-display` | BrowserPlane capture/observation fences, mouse, physical keyboard, Reliable Paste near 91 chars/s, emergency release, and the single-session DeviceRpcAdapter lifecycle/injection/generation-fencing boundary |
+| 4 | `feat/jetkvm-mcp-power-session` | NativeControlPlane semantics over the injected DeviceRpcAdapter: separate status observations, cached resolution freshness, qualified read-only EDID, explicit connect/status/reconnect/takeover with new-channel proof, and serialized/idempotent exact-timing ATX with no host-state claim |
+| 5 | `feat/jetkvm-mcp-system-e2e-docs` | Machine-readable story manifest, every-handler branch matrix, fake/replay/transport/browser E2E, generated/checked docs, packaging and required CI |
+| 6 | `feat/jetkvm-mcp-hardware-release` | Serialized live stories, privacy-safe evidence, per-story restore gates, exact-candidate manifest, clean-install verification, tag and GitHub release assets |
+
+### 13.1 Mandatory gate for every phase
+
+Each branch is created from the freshly updated default branch after the preceding PR merges. Branches are not stacked. Each phase opens a fresh PR and must satisfy all of these before merge:
+
+1. The phase contract and changed schemas/stories receive an advisor review that cites `jetkvm-expanded-api-advisor` and `jetkvm-expanded-security-test-advisor`, with any deliberate divergence recorded.
+2. Independent PR reviewers classify findings P0 (safety/security/data loss), P1 (contract/correctness/release blocker), P2 (maintainability/test gap), or P3 (minor).
+3. All P0/P1 findings are fixed and re-reviewed to zero. P2 findings are fixed or explicitly accepted by the maintainer with rationale; P3 findings are tracked or resolved.
+4. Required CI is green for the exact reviewed head.
+5. The full applicable local suite passes from a clean checkout of that exact head, including package/install tests rather than only workspace tests.
+6. The worktree is clean, generated schemas match, production/package allowlists match, and no unreviewed diff exists.
+7. Any code, lockfile, generated file, schema, story, documentation, workflow, or package change after a gate invalidates downstream approvals and reruns the affected advisor review, reviewer check, CI, local suite, and clean-checkout gate.
+
+No phase merges with an unresolved P0/P1, red CI, skipped applicable local gate, dirty checkout, or evidence from a different commit.
+
+### 13.2 Final candidate and hardware gate
+
+Phase 6 freezes PR-head commit `C`, tree `G`, and one allowlisted npm tarball `T`. The hardware lease covers deployment/readiness, every live story, every per-story restore, final status, evidence flush, and cleanup. Live evidence must identify `C/G/T`; it may not be reused from another tree or artifact.
+
+The external immutable manifest is a PR/CI artifact and later a GitHub release asset, never self-referential content inside `G`. It records spec/schema/story hashes, candidate commit/tree, tarball/lockfile/package-tree hashes, Node/browser/device versions and hashes, all zero-skip requirements, story outcomes, operation/request/observation/generation IDs, sanitized timing/count/hash evidence, restore results, and artifact hashes.
+
+Merge must preserve `C` as an ancestor and produce the reviewed tree `G`. Conflict resolution or any source/package/lockfile/tree change creates a new candidate and reruns affected gates and live stories. The release tag points to the verified candidate. The GitHub release contains exact `T`, checksum, schemas, compatibility/setup/security/rollback guidance, and the immutable manifest.
+
+Finally, a clean directory downloads the release assets, verifies checksums, installs `T`, initializes and lists exactly the ten tools over stdio and loopback legacy SSE, exercises manifest smoke stories, and runs the offline doctor with zero device signaling. Release is blocked unless this exact-artifact verification and final hardware restoration both pass.
