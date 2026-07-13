@@ -1,0 +1,140 @@
+{
+  "id": "partial-verification-does-not-replay",
+  "title": "Partial verification preserves definitive acknowledgement without replay",
+  "requirements": [
+    "branch:definitive-acknowledgement",
+    "branch:partial-verification"
+  ],
+  "tools": ["jetkvm_power_control"],
+  "environments": ["fake", "replay"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The ATX sequence returns a definitive correlated serial receipt and the separate cached LED post-read can fail.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "fail-post-ack-read",
+      "after_step": "power-with-post-read-failure",
+      "boundary": "during_verification",
+      "action": "Complete both serial writes and their correlated receipt, then fail the optional cached LED observation.",
+      "expected_effect": "The mutation remains applied with device_ack_only, is stored, and is never replayed."
+    }
+  ],
+  "steps": [
+    {
+      "id": "power-with-post-read-failure",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request",
+        "timeout_ms": 1000,
+        "action": "press_reset"
+      },
+      "timeout_ms": 1000,
+      "expect": "applied with device_ack_only and a separate unavailable or stale LED fact."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:definitive-acknowledgement",
+      "assertion": "A correlated definitive acknowledgement is applied with its exact verification strength."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:partial-verification",
+      "assertion": "A definitive applied acknowledgement remains device_ack_only when post-read verification fails and is never replayed."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:definitive-acknowledgement",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:partial-verification",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

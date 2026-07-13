@@ -1,0 +1,292 @@
+{
+  "id": "mouse-observation-fence-and-single-use",
+  "title": "Mouse input fences observations, enforces single use, and validates scrolling",
+  "requirements": [
+    "branch:cancellation-before-write",
+    "branch:partial-multi-event-dispatch",
+    "branch:scroll-validation",
+    "contract:observation-single-use"
+  ],
+  "tools": ["jetkvm_display_capture", "jetkvm_input_mouse"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "A fresh capture supplies immutable geometry and the mouse plane records admission, dispatch, and completion counts.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "cancel-and-partial-dispatch",
+      "after_step": "capture-mouse-observation",
+      "boundary": "before_write",
+      "action": "Cancel one admitted request before write and interrupt a separate two-action request after its first event.",
+      "expected_effect": "The cancelled request is not_sent; the partial request is unknown with its suffix suppressed."
+    }
+  ],
+  "steps": [
+    {
+      "id": "capture-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A current unused observation for the valid cases."
+    },
+    {
+      "id": "scroll-negative-bound",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-scroll-neg",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": -127
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The -127 vertical HID step is accepted."
+    },
+    {
+      "id": "scroll-positive-bound",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-scroll-pos",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": 127,
+            "delta_x": 0
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The 127 vertical HID step with zero horizontal value is accepted."
+    },
+    {
+      "id": "reject-zero-scroll",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-scroll-zero",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": 0
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The whole request is schema-rejected with zero plane calls."
+    },
+    {
+      "id": "reject-fractional-scroll",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-scroll-frac",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": 0.5
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The whole request is schema-rejected with zero plane calls."
+    },
+    {
+      "id": "reject-overflow-scroll",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-scroll-over",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": 128
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The whole request is schema-rejected with zero plane calls."
+    },
+    {
+      "id": "reject-horizontal-scroll",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-scroll-x",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": 1,
+            "delta_x": 1
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The whole request is schema-rejected with zero plane calls."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:cancellation-before-write",
+      "assertion": "Cancellation before the write boundary is not_sent and records zero downstream writes."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "assertion": "A partial multi-event dispatch is unknown with exact dispatched and completed counts and suppresses the suffix."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:scroll-validation",
+      "assertion": "Only nonzero integer vertical HID wheel steps from -127 through 127 pass; every invalid scroll rejects the whole request before plane calls."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:observation-single-use",
+      "assertion": "Foreign, stale, consumed, and display-changed observations fail before input; a reserved observation is consumed exactly once."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:cancellation-before-write",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:scroll-validation",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:observation-single-use",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "id": "atx-extension-serialization-idempotency-and-nonproof",
+  "title": "ATX gates, serializes, fences replacement, and never proves host state",
+  "requirements": [
+    "branch:atx-gate-and-serialization",
+    "branch:atx-acknowledgement-semantics",
+    "branch:device-rpc-adapter-mid-flight-loss",
+    "contract:atx-idempotent-nonproof"
+  ],
+  "tools": ["jetkvm_power_control"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "ATX extension and serial readiness can be gated; one request-ledger reservation and full-sequence mutex are observable.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "atx-midflight-binding-loss",
+      "after_step": null,
+      "boundary": "after_write",
+      "action": "Exercise extension and serial preflight, then replace the binding before write in one case and after ON write in another case.",
+      "expected_effect": "Pre-write loss is not_sent; post-write loss is unknown; stale bindings write zero; no case replays or claims host state."
+    }
+  ],
+  "steps": [
+    {
+      "id": "serialized-power-short",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-atx-serialized",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "One reserved request holds the mutex through exact 200 ms ON and OFF sequencing."
+    },
+    {
+      "id": "repeat-power-short",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-atx-serialized",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The definitive cached result is returned without a second serial write."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:atx-gate-and-serialization",
+      "assertion": "ATX checks extension and serial readiness, reserves the request identifier, holds one full-sequence mutex, and uses fixed timing."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:atx-acknowledgement-semantics",
+      "assertion": "ATX acknowledgement proves serial completion only; cached LED facts remain separate and no host state is claimed."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:device-rpc-adapter-mid-flight-loss",
+      "assertion": "Mid-flight reads error or return explicitly stale cached qualification; ATX uses pre-write or post-write outcome classification without replay."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:atx-idempotent-nonproof",
+      "assertion": "Serial completion is at most device_ack_only; cached LED facts are separate, and no result claims target-host state."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:atx-gate-and-serialization",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:atx-acknowledgement-semantics",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:device-rpc-adapter-mid-flight-loss",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:atx-idempotent-nonproof",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

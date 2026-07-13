@@ -1,0 +1,159 @@
+{
+  "id": "duplicate-request-id-definitive-replay",
+  "title": "Duplicate request identifiers replay only definitive results",
+  "requirements": [
+    "branch:duplicate-same-request-digest",
+    "branch:duplicate-changed-digest"
+  ],
+  "tools": ["jetkvm_input_release"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The request ledger is empty and the release operation can return a definitive generation-drained result.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "repeat-ledger-key",
+      "after_step": "initial-release",
+      "boundary": "before_admission",
+      "action": "Repeat the exact normalized request, then reuse its request identifier with a changed timeout.",
+      "expected_effect": "The exact repeat returns the cached definitive result and changed input returns the idempotency error; neither repeats a write."
+    }
+  ],
+  "steps": [
+    {
+      "id": "initial-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied generation-drained result is stored."
+    },
+    {
+      "id": "same-release-request",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the stored result with zero second write."
+    },
+    {
+      "id": "changed-release-request",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request",
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second write."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:duplicate-same-request-digest",
+      "assertion": "A duplicate request and normalized digest returns the cached definitive result with zero second write."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:duplicate-changed-digest",
+      "assertion": "A reused request identifier with changed input returns REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second write."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:duplicate-same-request-digest",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:duplicate-changed-digest",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

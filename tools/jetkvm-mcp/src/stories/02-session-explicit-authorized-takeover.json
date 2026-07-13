@@ -1,0 +1,169 @@
+{
+  "id": "session-explicit-authorized-takeover",
+  "title": "Explicit authorized takeover quiesces before publication",
+  "requirements": [
+    "branch:permission-denied",
+    "branch:authorized-takeover",
+    "branch:unauthorized-takeover"
+  ],
+  "tools": ["jetkvm_session_connect", "jetkvm_session_status"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "An incumbent session is ready; one principal has session.takeover and a second principal does not.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "alternate-takeover-permission",
+      "after_step": null,
+      "boundary": "before_admission",
+      "action": "Run the denied takeover first, then grant only the authorized principal the takeover permission.",
+      "expected_effect": "The denied request preserves the incumbent; the authorized request drains it before new publication."
+    }
+  ],
+  "steps": [
+    {
+      "id": "denied-takeover",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-denied-takeover",
+        "takeover": true,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED with no capability disclosure and no write."
+    },
+    {
+      "id": "authorized-takeover",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-authorized-takeover",
+        "takeover": true,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A new ready generation after the old generation is quiesced."
+    },
+    {
+      "id": "inspect-old-generation",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-incumbent-session",
+        "session_generation": 6,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old generation is taken_over and cannot mutate."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:permission-denied",
+      "assertion": "The response is actionable PERMISSION_DENIED, reveals no capability details, and records zero downstream writes."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:authorized-takeover",
+      "assertion": "Authorized explicit takeover quiesces the old generation before publishing the new generation."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:unauthorized-takeover",
+      "assertion": "Unauthorized takeover returns a permission error and leaves the incumbent generation unchanged."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:permission-denied",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:authorized-takeover",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:unauthorized-takeover",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

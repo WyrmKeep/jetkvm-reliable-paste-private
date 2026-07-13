@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "session_generation": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "format": {
+      "type": "string",
+      "enum": [
+        "jpeg",
+        "png"
+      ],
+      "default": "jpeg"
+    },
+    "max_width": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 1920,
+      "default": 1280
+    },
+    "max_height": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 1080,
+      "default": 720
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 60000
+    }
+  },
+  "required": [
+    "session_id",
+    "session_generation",
+    "timeout_ms"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

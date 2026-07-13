@@ -1,0 +1,173 @@
+{
+  "id": "reliable-paste-91cps-correlated-terminal",
+  "title": "Reliable Paste sustains nominal pacing with correlated terminal events",
+  "requirements": [
+    "branch:cancellation-before-write",
+    "branch:disconnect-after-write",
+    "branch:partial-multi-event-dispatch",
+    "contract:reliable-paste-correlated-terminal"
+  ],
+  "tools": ["jetkvm_display_capture", "jetkvm_input_paste"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The configured and effective keyboard layouts match, decoded video is healthy, and Reliable Paste lifecycle is ready.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "paste-boundary-sequence",
+      "after_step": "capture-paste-observation",
+      "boundary": "after_write",
+      "action": "Exercise cancellation before acceptance separately from an accepted operation that loses its channel before a correlated terminal event.",
+      "expected_effect": "Pre-acceptance cancellation is not_sent; post-acceptance loss is unknown with no replay and exact event counts."
+    }
+  ],
+  "steps": [
+    {
+      "id": "capture-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh unused observation."
+    },
+    {
+      "id": "submit-reliable-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 300000
+      },
+      "timeout_ms": 300000,
+      "expect": "Submitted, active, and succeeded events correlate monotonically to the operation and measured pacing is reported."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:cancellation-before-write",
+      "assertion": "Cancellation before the write boundary is not_sent and records zero downstream writes."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:disconnect-after-write",
+      "assertion": "Disconnect after a possible write is unknown, closes the mutation gate, and performs zero replay writes."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "assertion": "A partial multi-event dispatch is unknown with exact dispatched and completed counts and suppresses the suffix."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:reliable-paste-correlated-terminal",
+      "assertion": "Only submitted-active-succeeded proves success; gaps, layout mismatch, lifecycle downgrade, cancellation, and timeout remain explicit and never claim target-application acceptance."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:cancellation-before-write",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:disconnect-after-write",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:reliable-paste-correlated-terminal",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

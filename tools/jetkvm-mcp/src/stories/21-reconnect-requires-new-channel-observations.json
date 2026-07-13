@@ -1,0 +1,172 @@
+{
+  "id": "reconnect-requires-new-channel-observations",
+  "title": "Reconnect requires a new browser-owned channel and invalidates the old adapter",
+  "requirements": [
+    "branch:reconnect-evidence",
+    "branch:shared-device-rpc-adapter-binding",
+    "branch:device-rpc-adapter-replacement",
+    "contract:reconnect-channel-observations"
+  ],
+  "tools": ["jetkvm_session_reconnect", "jetkvm_session_status"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The ready session exposes one browser-owned RPC channel and the exact same generation-bound adapter instance to both planes.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "replace-one-shared-adapter",
+      "after_step": "reconnect-with-new-channel",
+      "boundary": "during_verification",
+      "action": "Invalidate the old binding before publishing one replacement adapter backed by the new browser channel; reject restart-only evidence first.",
+      "expected_effect": "Restart or quiesce alone cannot pass; the old binding makes zero writes; both planes receive the same replacement instance."
+    }
+  ],
+  "steps": [
+    {
+      "id": "reconnect-with-new-channel",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-channel-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Success only after new WebRTC, RPC, HID, connection epoch, and browser-channel generation observations."
+    },
+    {
+      "id": "inspect-replacement-channel",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The new generation reports one current browser channel and fresh_capture_required true."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:reconnect-evidence",
+      "assertion": "Reconnect requires new WebRTC, RPC, HID, and browser-channel generation evidence; restart or quiesce alone fails."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:shared-device-rpc-adapter-binding",
+      "assertion": "One browser-owned WebRTC RPC channel and the same injected adapter instance serve both planes with no bypass channel."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:device-rpc-adapter-replacement",
+      "assertion": "The old binding is invalid before new publication; stale EDID and ATX make zero writes and stale display is explicitly qualified."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:reconnect-channel-observations",
+      "assertion": "No second browser, peer connection, data channel, signaling flow, direct native bypass, or raw method dispatch exists."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:reconnect-evidence",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:shared-device-rpc-adapter-binding",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:device-rpc-adapter-replacement",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:reconnect-channel-observations",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "id": "power-three-semantic-actions",
+  "title": "Power exposes exactly three fixed semantic ATX actions",
+  "requirements": [
+    "branch:definitive-acknowledgement",
+    "contract:three-semantic-atx-actions"
+  ],
+  "tools": ["jetkvm_power_control"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The ATX extension is active, serial readiness is proven, and the safe power baseline is recorded.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "fixed-atx-sequence",
+      "after_step": null,
+      "boundary": "before_write",
+      "action": "Run the three actions serially and record the fixed ON, wait, and OFF receipt for each case.",
+      "expected_effect": "Only press_power, hold_power, and press_reset are admitted with 200 ms, 5000 ms, and 200 ms fixed presses."
+    }
+  ],
+  "steps": [
+    {
+      "id": "press-power",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-short",
+        "timeout_ms": 1000,
+        "action": "press_power"
+      },
+      "timeout_ms": 1000,
+      "expect": "power-short uses exactly 200 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "hold-power",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-long",
+        "timeout_ms": 1000,
+        "action": "hold_power"
+      },
+      "timeout_ms": 1000,
+      "expect": "power-long uses exactly 5000 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "press-reset",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reset",
+        "timeout_ms": 1000,
+        "action": "press_reset"
+      },
+      "timeout_ms": 1000,
+      "expect": "reset uses exactly 200 ms and returns a correlated serial receipt."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:definitive-acknowledgement",
+      "assertion": "A correlated definitive acknowledgement is applied with its exact verification strength."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "contract:three-semantic-atx-actions",
+      "assertion": "No fourth action, duration, delay, repeat, pin, level, GPIO operation, or arbitrary sequence is accepted."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:definitive-acknowledgement",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "contract:three-semantic-atx-actions",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

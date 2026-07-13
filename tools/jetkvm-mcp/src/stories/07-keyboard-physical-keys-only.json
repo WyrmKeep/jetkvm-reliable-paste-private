@@ -1,0 +1,169 @@
+{
+  "id": "keyboard-physical-keys-only",
+  "title": "Keyboard accepts physical keys only and cleans held state",
+  "requirements": [
+    "branch:cancellation-before-write",
+    "branch:partial-multi-event-dispatch",
+    "contract:physical-keys-only"
+  ],
+  "tools": ["jetkvm_display_capture", "jetkvm_input_keyboard"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "A current observation exists and the keyboard plane resolves only the canonical physical-key allowlist.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "interrupt-key-sequence",
+      "after_step": "capture-keyboard-observation",
+      "boundary": "after_write",
+      "action": "Stop a multi-action dispatch after one correlated physical-key event and force ordinary held-state cleanup.",
+      "expected_effect": "The suffix is suppressed, counts are exact, outcome is unknown, and cleanup releases held keys."
+    }
+  ],
+  "steps": [
+    {
+      "id": "capture-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh unused observation."
+    },
+    {
+      "id": "send-physical-keys",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-keys",
+        "actions": [
+          {
+            "type": "chord",
+            "keys": ["ControlLeft", "KeyA"]
+          },
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Physical keys press in order, release in reverse order, and report exact counts."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:cancellation-before-write",
+      "assertion": "Cancellation before the write boundary is not_sent and records zero downstream writes."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "assertion": "A partial multi-event dispatch is unknown with exact dispatched and completed counts and suppresses the suffix."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "contract:physical-keys-only",
+      "assertion": "Text, characters, scripts, commands, unknown keys, and impossible transitions are rejected before dispatch."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:cancellation-before-write",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "contract:physical-keys-only",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

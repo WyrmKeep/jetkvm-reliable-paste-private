@@ -1,0 +1,387 @@
+{
+  "$ref": "#/definitions/AcceptanceStory",
+  "definitions": {
+    "AcceptanceStory": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:branch|contract):[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "minItems": 1
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "jetkvm_display_capture",
+              "jetkvm_display_status",
+              "jetkvm_input_keyboard",
+              "jetkvm_input_mouse",
+              "jetkvm_input_paste",
+              "jetkvm_input_release",
+              "jetkvm_power_control",
+              "jetkvm_session_connect",
+              "jetkvm_session_reconnect",
+              "jetkvm_session_status"
+            ]
+          },
+          "minItems": 1
+        },
+        "environments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "fake",
+              "replay",
+              "live"
+            ]
+          },
+          "minItems": 1
+        },
+        "preconditions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "id",
+              "description",
+              "required"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "fault_script": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "after_step": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "boundary": {
+                "type": "string",
+                "enum": [
+                  "before_admission",
+                  "queued",
+                  "before_write",
+                  "after_write",
+                  "after_acknowledgement",
+                  "during_verification",
+                  "during_cleanup",
+                  "transport_route"
+                ]
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "expected_effect": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "after_step",
+              "boundary",
+              "action",
+              "expected_effect"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "tool": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "jetkvm_display_capture",
+                      "jetkvm_display_status",
+                      "jetkvm_input_keyboard",
+                      "jetkvm_input_mouse",
+                      "jetkvm_input_paste",
+                      "jetkvm_input_release",
+                      "jetkvm_power_control",
+                      "jetkvm_session_connect",
+                      "jetkvm_session_reconnect",
+                      "jetkvm_session_status"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "call": {
+                "type": "string",
+                "minLength": 1
+              },
+              "input": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "timeout_ms": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 300000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expect": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "tool",
+              "call",
+              "input",
+              "timeout_ms",
+              "expect"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "pass": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "requirement": {
+                "type": "string",
+                "pattern": "^(?:branch|contract):[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "assertion": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "requirement",
+              "assertion"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "requirement": {
+                "type": "string",
+                "pattern": "^(?:branch|contract):[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "field": {
+                "type": "string",
+                "enum": [
+                  "requirement_result",
+                  "source_hash",
+                  "artifact_hash",
+                  "sanitized_version",
+                  "opaque_identifier",
+                  "generation_identifier",
+                  "dimensions",
+                  "count",
+                  "duration_ms",
+                  "outcome",
+                  "verification",
+                  "acknowledgement_step",
+                  "first_mismatch_index",
+                  "normalized_payload_hash",
+                  "restore_result",
+                  "http_status"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1
+              },
+              "retention": {
+                "type": "string",
+                "enum": [
+                  "test_run",
+                  "release_manifest"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "requirement",
+              "field",
+              "source",
+              "retention"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "restore": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "assertion": {
+                "type": "string",
+                "minLength": 1
+              },
+              "always": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "id",
+              "action",
+              "assertion",
+              "always"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        },
+        "privacy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+              },
+              "rule": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prohibited": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "bearer_tokens",
+                    "cookies",
+                    "credentials",
+                    "headers",
+                    "lease_proofs",
+                    "network_topology",
+                    "raw_payloads",
+                    "screenshots",
+                    "sdp_ice",
+                    "secrets",
+                    "serial_edid",
+                    "stack_traces",
+                    "target_contents"
+                  ]
+                },
+                "minItems": 1
+              },
+              "always": {
+                "type": "boolean",
+                "const": true
+              }
+            },
+            "required": [
+              "id",
+              "rule",
+              "prohibited",
+              "always"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "requirements",
+        "tools",
+        "environments",
+        "preconditions",
+        "fault_script",
+        "steps",
+        "pass",
+        "evidence",
+        "restore",
+        "privacy"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
