@@ -3,6 +3,7 @@ static/*
 .idea
 .DS_Store
 .claude/
+.worktrees/
 
 .cache
 .vite
