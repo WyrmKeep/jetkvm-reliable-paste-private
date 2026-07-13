@@ -72,8 +72,9 @@ type UsbGadget struct {
 	keyboardState byte          // keyboard latched state (NumLock, CapsLock, ScrollLock, Compose, Kana)
 	keysDownState KeysDownState // keyboard dynamic state (modifier keys and pressed keys)
 
-	kbdAutoReleaseLock   sync.Mutex
-	kbdAutoReleaseTimers map[byte]*time.Timer
+	kbdAutoReleaseLock            sync.Mutex
+	kbdAutoReleaseTimers          map[byte]*time.Timer
+	beforeAutoReleaseKeyboardLock func() // deterministic test seam; nil in production
 
 	keyboardStateLock   sync.Mutex
 	keyboardStateCtx    context.Context

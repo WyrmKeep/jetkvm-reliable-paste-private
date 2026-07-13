@@ -230,15 +230,25 @@ func (u *UsbGadget) DelayAutoReleaseWithDuration(resetDuration time.Duration) {
 }
 
 func (u *UsbGadget) performAutoRelease(key byte) {
-	u.kbdAutoReleaseLock.Lock()
+	if u.beforeAutoReleaseKeyboardLock != nil {
+		u.beforeAutoReleaseKeyboardLock()
+	}
 
-	if u.kbdAutoReleaseTimers[key] == nil {
+	// Match the keyboard -> auto-release lock order used by KeypressReport and
+	// ClearKeyboardState. Once the keyboard lock is held, timer validation and
+	// the release report form one serialized transaction.
+	u.keyboardLock.Lock()
+	defer u.keyboardLock.Unlock()
+
+	u.kbdAutoReleaseLock.Lock()
+	timer := u.kbdAutoReleaseTimers[key]
+	if timer == nil {
 		u.log.Warn().Uint8("key", key).Msg("autoRelease timer not found")
 		u.kbdAutoReleaseLock.Unlock()
 		return
 	}
 
-	u.kbdAutoReleaseTimers[key].Stop()
+	timer.Stop()
 	u.kbdAutoReleaseTimers[key] = nil
 	delete(u.kbdAutoReleaseTimers, key)
 	u.kbdAutoReleaseLock.Unlock()
@@ -258,7 +268,8 @@ func (u *UsbGadget) performAutoRelease(key byte) {
 		return
 	}
 
-	_, err := u.keypressReport(key, false)
+	_, err := u.keypressReportLocked(key, false)
+	u.resetUserInputTime()
 	if err != nil {
 		u.log.Warn().Uint8("key", key).Msg("failed to release key")
 	}
