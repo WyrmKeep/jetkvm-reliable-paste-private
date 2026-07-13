@@ -52,6 +52,13 @@ var wheelReportWrite = func(wheelY int8) error {
 	return gadget.AbsMouseWheelReport(wheelY)
 }
 
+var maintenanceHIDDevicesRead = func() usbgadget.Devices {
+	if config == nil || config.UsbDevices == nil {
+		return defaultUsbDevices
+	}
+	return *config.UsbDevices
+}
+
 type absolutePointerPosition struct {
 	mu sync.Mutex
 	x  int
@@ -79,6 +86,9 @@ var maintenanceKeyboardZeroWrite = func(lease controlsession.MaintenanceLease) e
 	if !lease.Valid() {
 		return errStaleControlSession
 	}
+	if !maintenanceHIDDevicesRead().Keyboard {
+		return nil
+	}
 	return keyboardStateClearWrite()
 }
 
@@ -87,18 +97,18 @@ var maintenancePointerZeroWrite = func(lease controlsession.MaintenanceLease) er
 		return errStaleControlSession
 	}
 
-	lastAbsolutePointerPosition.mu.Lock()
-	defer lastAbsolutePointerPosition.mu.Unlock()
-	absoluteErr := maintenanceAbsPointerZeroWrite(lastAbsolutePointerPosition.x, lastAbsolutePointerPosition.y)
-	relativeErr := relMouseReportWrite(0, 0, 0)
-	switch {
-	case absoluteErr == nil:
-		return relativeErr
-	case relativeErr == nil:
-		return absoluteErr
-	default:
-		return errors.Join(absoluteErr, relativeErr)
+	enabled := maintenanceHIDDevicesRead()
+	var absoluteErr error
+	if enabled.AbsoluteMouse {
+		lastAbsolutePointerPosition.mu.Lock()
+		absoluteErr = maintenanceAbsPointerZeroWrite(lastAbsolutePointerPosition.x, lastAbsolutePointerPosition.y)
+		lastAbsolutePointerPosition.mu.Unlock()
 	}
+	var relativeErr error
+	if enabled.RelativeMouse {
+		relativeErr = relMouseReportWrite(0, 0, 0)
+	}
+	return errors.Join(absoluteErr, relativeErr)
 }
 
 func zeroInputWithMaintenanceLease(lease controlsession.MaintenanceLease) (error, error) {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jetkvm/kvm/internal/controlsession"
+	"github.com/jetkvm/kvm/internal/usbgadget"
 )
 
 type pointerWriterCall struct {
@@ -22,6 +23,7 @@ func installPointerZeroTestSeams(t *testing.T, absErr, relErr error) (*Session, 
 	oldManager := sessionManager
 	oldAbs := absMouseReportWrite
 	oldRel := relMouseReportWrite
+	oldEnabled := maintenanceHIDDevicesRead
 	lastAbsolutePointerPosition.mu.Lock()
 	oldX := lastAbsolutePointerPosition.x
 	oldY := lastAbsolutePointerPosition.y
@@ -32,6 +34,9 @@ func installPointerZeroTestSeams(t *testing.T, absErr, relErr error) (*Session, 
 	session.managerGenerationStore(snapshot.Generation)
 	sessionManager = manager
 
+	maintenanceHIDDevicesRead = func() usbgadget.Devices {
+		return usbgadget.Devices{AbsoluteMouse: true, RelativeMouse: true, Keyboard: true}
+	}
 	calls := &[]pointerWriterCall{}
 	absMouseReportWrite = func(x, y int, buttons uint8) error {
 		*calls = append(*calls, pointerWriterCall{interfaceName: "absolute", x: x, y: y, buttons: buttons})
@@ -49,6 +54,7 @@ func installPointerZeroTestSeams(t *testing.T, absErr, relErr error) (*Session, 
 		sessionManager = oldManager
 		absMouseReportWrite = oldAbs
 		relMouseReportWrite = oldRel
+		maintenanceHIDDevicesRead = oldEnabled
 		lastAbsolutePointerPosition.mu.Lock()
 		lastAbsolutePointerPosition.x = oldX
 		lastAbsolutePointerPosition.y = oldY
@@ -122,6 +128,87 @@ func TestMaintenancePointerZeroReportsEitherInterfaceFailure(t *testing.T) {
 			}
 			if !reflect.DeepEqual(*calls, want) {
 				t.Fatalf("pointer writes=%+v, want %+v", *calls, want)
+			}
+		})
+	}
+}
+
+func TestMaintenanceZeroSkipsDisabledHIDFunctions(t *testing.T) {
+	tests := []struct {
+		name               string
+		devices            usbgadget.Devices
+		wantPointerWrites  []string
+		wantKeyboardWrites int
+	}{
+		{
+			name:               "absolute only",
+			devices:            usbgadget.Devices{AbsoluteMouse: true, Keyboard: true},
+			wantPointerWrites:  []string{"absolute"},
+			wantKeyboardWrites: 1,
+		},
+		{
+			name:               "relative only",
+			devices:            usbgadget.Devices{RelativeMouse: true, Keyboard: true},
+			wantPointerWrites:  []string{"relative"},
+			wantKeyboardWrites: 1,
+		},
+		{
+			name:               "no pointer interfaces",
+			devices:            usbgadget.Devices{Keyboard: true},
+			wantPointerWrites:  []string{},
+			wantKeyboardWrites: 1,
+		},
+		{
+			name:               "keyboard disabled",
+			devices:            usbgadget.Devices{AbsoluteMouse: true, RelativeMouse: true},
+			wantPointerWrites:  []string{"absolute", "relative"},
+			wantKeyboardWrites: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, generation, calls := installPointerZeroTestSeams(t, nil, nil)
+			maintenanceHIDDevicesRead = func() usbgadget.Devices { return tt.devices }
+			disabledWrite := errors.New("disabled HID function was called")
+			absMouseReportWrite = func(x, y int, buttons uint8) error {
+				*calls = append(*calls, pointerWriterCall{interfaceName: "absolute", x: x, y: y, buttons: buttons})
+				if !tt.devices.AbsoluteMouse {
+					return disabledWrite
+				}
+				return nil
+			}
+			relMouseReportWrite = func(dx, dy int8, buttons uint8) error {
+				*calls = append(*calls, pointerWriterCall{interfaceName: "relative", x: int(dx), y: int(dy), buttons: buttons})
+				if !tt.devices.RelativeMouse {
+					return disabledWrite
+				}
+				return nil
+			}
+			oldKeyboardWrite := keyboardStateClearWrite
+			keyboardWrites := 0
+			keyboardStateClearWrite = func() error {
+				keyboardWrites++
+				if !tt.devices.Keyboard {
+					return disabledWrite
+				}
+				return nil
+			}
+			t.Cleanup(func() { keyboardStateClearWrite = oldKeyboardWrite })
+
+			receipt := sessionManager.QuiesceAndZero(context.Background(), generation, "enabled-hid-zero", zeroInputWithMaintenanceLease)
+			if receipt.Outcome != controlsession.OutcomeReleased || !receipt.KeyboardZero || !receipt.PointerZero {
+				t.Fatalf("receipt=%+v", receipt)
+			}
+			gotPointerWrites := make([]string, 0, len(*calls))
+			for _, call := range *calls {
+				gotPointerWrites = append(gotPointerWrites, call.interfaceName)
+			}
+			if !reflect.DeepEqual(gotPointerWrites, tt.wantPointerWrites) {
+				t.Fatalf("pointer writes=%v, want %v", gotPointerWrites, tt.wantPointerWrites)
+			}
+			if keyboardWrites != tt.wantKeyboardWrites {
+				t.Fatalf("keyboard writes=%d, want %d", keyboardWrites, tt.wantKeyboardWrites)
 			}
 		})
 	}
