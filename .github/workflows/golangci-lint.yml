@@ -26,7 +26,9 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v6
         with:
-          go-version: "^1.25.1"
+          go-version: "1.25.1"
+      - name: Assert Go version
+        run: test "$(go version)" = "go version go1.25.1 linux/amd64"
       - name: Create empty resource directory
         run: |
           mkdir -p static && touch static/.gitkeep
