@@ -219,6 +219,9 @@ var (
 	sessionManager      = controlsession.New[*Session]()
 	sessionActivationMu sync.Mutex
 )
+var prepareSessionGeneration = func(session *Session, generation controlsession.Generation) {
+	session.managerGenerationStore(generation)
+}
 
 func currentSessionSnapshot() controlsession.Snapshot[*Session] {
 	return sessionManager.Snapshot()
@@ -241,12 +244,20 @@ func activateSession(ctx context.Context, session *Session, operationID string) 
 
 	sessionActivationMu.Lock()
 	previous := currentSessionRead()
-	snapshot, receipt := sessionManager.Takeover(ctx, session, operationID, zeroInputWithMaintenanceLease)
+	_, receipt := sessionManager.TakeoverPrepared(
+		ctx,
+		session,
+		operationID,
+		func(generation controlsession.Generation) {
+			prepareSessionGeneration(session, generation)
+		},
+		zeroInputWithMaintenanceLease,
+	)
 	if receipt.Outcome != controlsession.OutcomeReleased {
 		sessionActivationMu.Unlock()
 		return receipt, fmt.Errorf("session takeover %s: %s", operationID, receipt.Outcome)
 	}
-	session.managerGeneration = snapshot.Generation
+	// The generation is stored by TakeoverPrepared before the session becomes observable.
 	session.startManagedWorkers()
 	sessionActivationMu.Unlock()
 
@@ -260,7 +271,20 @@ func closeManagedSession(session *Session, operationID string) controlsession.Re
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), controlSessionQuiesceTimeout)
 	defer cancel()
-	return sessionManager.Close(ctx, session.managerGeneration, operationID, zeroInputWithMaintenanceLease)
+	return sessionManager.Close(ctx, session.managerGenerationLoad(), operationID, zeroInputWithMaintenanceLease)
+}
+func closeUnownedSession(session *Session) {
+	if session != nil && session.peerConnection != nil {
+		_ = session.peerConnection.Close()
+	}
+}
+
+func activateCandidateSession(ctx context.Context, session *Session, operationID string) (controlsession.Receipt, error) {
+	receipt, err := activateSession(ctx, session, operationID)
+	if err != nil {
+		closeUnownedSession(session)
+	}
+	return receipt, err
 }
 
 var addICECandidateToSession = func(session *Session, candidate webrtc.ICECandidateInit) error {
@@ -272,6 +296,13 @@ var addICECandidateToSession = func(session *Session, candidate webrtc.ICECandid
 
 func routeSignallingCandidate(session *Session, candidate webrtc.ICECandidateInit) error {
 	return addICECandidateToSession(session, candidate)
+}
+func updateSignallingSession(current *Session, establish func() (*Session, error)) (*Session, error) {
+	next, err := establish()
+	if err != nil {
+		return current, err
+	}
+	return next, nil
 }
 
 func notifyAndSchedulePreviousSessionClose(session *Session) {
@@ -305,10 +336,11 @@ func handleWebRTCSession(c *gin.Context) {
 
 	sd, err := session.ExchangeOffer(req.Sd)
 	if err != nil {
+		closeUnownedSession(session)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
 	}
-	if _, err := activateSession(c.Request.Context(), session, "local-takeover-"+uuid.NewString()); err != nil {
+	if _, err := activateCandidateSession(c.Request.Context(), session, "local-takeover-"+uuid.NewString()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -507,7 +539,9 @@ func handleWebRTCSignalWsMessages(
 
 			metricConnectionSessionRequestCount.WithLabelValues(sourceType, source).Inc()
 			metricConnectionLastSessionRequestTimestamp.WithLabelValues(sourceType, source).SetToCurrentTime()
-			signallingSession, err = handleSessionRequest(runCtx, wsCon, req, isCloudConnection, source, &l)
+			signallingSession, err = updateSignallingSession(signallingSession, func() (*Session, error) {
+				return handleSessionRequest(runCtx, wsCon, req, isCloudConnection, source, &l)
+			})
 			if err != nil {
 				l.Warn().Str("error", err.Error()).Msg("error starting new session")
 				continue

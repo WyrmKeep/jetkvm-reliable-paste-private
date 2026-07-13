@@ -462,10 +462,11 @@ func handleSessionRequest(
 
 	sd, err := session.ExchangeOffer(req.Sd)
 	if err != nil {
+		closeUnownedSession(session)
 		_ = wsjson.Write(context.Background(), c, gin.H{"error": err})
 		return nil, err
 	}
-	if _, err := activateSession(ctx, session, "websocket-takeover-"+uuid.NewString()); err != nil {
+	if _, err := activateCandidateSession(ctx, session, "websocket-takeover-"+uuid.NewString()); err != nil {
 		_ = wsjson.Write(context.Background(), c, gin.H{"error": err})
 		return nil, err
 	}

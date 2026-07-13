@@ -176,7 +176,7 @@ func rpcQuiesceAndZero(session *Session, operationID string) controlsession.Rece
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), controlSessionQuiesceTimeout)
 	defer cancel()
-	return sessionManager.QuiesceAndZero(ctx, session.managerGeneration, operationID, zeroInputWithMaintenanceLease)
+	return sessionManager.QuiesceAndZero(ctx, session.managerGenerationLoad(), operationID, zeroInputWithMaintenanceLease)
 }
 
 func rpcPing() (string, error) {
@@ -638,7 +638,7 @@ func rpcSetUsbEmulationState(session *Session, enabled bool) error {
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		if enabled {
 			return gadget.BindUDC()
 		}
@@ -655,7 +655,7 @@ func rpcSetUsbConfig(session *Session, usbConfig usbgadget.Config) error {
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		LoadConfig()
 		config.UsbConfig = &usbConfig
 		gadget.SetGadgetConfig(config.UsbConfig)
@@ -876,7 +876,7 @@ func rpcSetUsbDevices(session *Session, usbDevices usbgadget.Devices) error {
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		config.UsbDevices = &usbDevices
 		gadget.SetGadgetDevices(config.UsbDevices)
 		return updateUsbRelatedConfig()
@@ -887,7 +887,7 @@ func rpcSetUsbDeviceState(session *Session, device string, enabled bool) error {
 	if session == nil {
 		return errStaleControlSession
 	}
-	return withOrdinaryGeneration(session.managerGeneration, func() error {
+	return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 		switch device {
 		case "absoluteMouse":
 			config.UsbDevices.AbsoluteMouse = enabled
@@ -1164,9 +1164,11 @@ var (
 	// rotated by cancelAndDrainMacroQueue so that enqueuers blocked on a full
 	// macroQueue wake up, roll back their paste-depth reservation, and return
 	// ctx.Err() to the caller.
-	macroEnqueueCtx    context.Context
-	macroEnqueueCancel context.CancelFunc
-	macroEnqueueMu     sync.Mutex
+	macroEnqueueCtx                    context.Context
+	macroEnqueueCancel                 context.CancelFunc
+	macroEnqueueMu                     sync.Mutex
+	beforeCanceledMacroEnqueueRollback func()
+	pasteStateEmitHook                 func(state bool)
 )
 
 // startMacroQueue creates the macro queue channel, the enqueue cancellation
@@ -1205,6 +1207,9 @@ func emitPasteState(session *Session, state bool, failed bool) {
 		IsPaste: true,
 		Failed:  failed,
 	})
+	if pasteStateEmitHook != nil {
+		pasteStateEmitHook(state)
+	}
 }
 
 // drainMacroQueue is the sole consumer of macroQueue. It executes each macro
@@ -1298,6 +1303,7 @@ func discardQueuedMacrosAfterPastePreflightFailure(reason string) {
 
 	var discardedTotal int
 	var discardedPaste int32
+	var discardedProducers []*controlsession.Producer
 	draining := true
 	for draining {
 		select {
@@ -1306,7 +1312,7 @@ func discardQueuedMacrosAfterPastePreflightFailure(reason string) {
 			if item.isPaste {
 				discardedPaste++
 			}
-			item.producer.Done()
+			discardedProducers = append(discardedProducers, item.producer)
 		default:
 			draining = false
 		}
@@ -1321,6 +1327,9 @@ func discardQueuedMacrosAfterPastePreflightFailure(reason string) {
 		Msg("discarded queued keyboard macros after paste preflight failure")
 	if discardedPaste > 0 {
 		pasteDepth.Add(-discardedPaste)
+	}
+	for _, producer := range discardedProducers {
+		producer.Done()
 	}
 }
 
@@ -1363,6 +1372,7 @@ func cancelAndDrainMacroQueue() {
 	var discardedTotal int
 	var discardedPaste int32
 	var lastPasteSession *Session
+	var discardedProducers []*controlsession.Producer
 	draining := true
 	for draining {
 		select {
@@ -1372,7 +1382,7 @@ func cancelAndDrainMacroQueue() {
 				discardedPaste++
 				lastPasteSession = item.session
 			}
-			item.producer.Done()
+			discardedProducers = append(discardedProducers, item.producer)
 		default:
 			draining = false
 		}
@@ -1386,6 +1396,35 @@ func cancelAndDrainMacroQueue() {
 			logger.Debug().Msg("paste-depth 1->0 (cancel sweep)")
 			emitPasteState(lastPasteSession, false, pasteFailures.Swap(0) > 0)
 		}
+	}
+	for _, producer := range discardedProducers {
+		producer.Done()
+	}
+}
+
+func finishCanceledMacroEnqueue(session *Session, macroID uint64, isPaste bool, producer *controlsession.Producer) {
+	if beforeCanceledMacroEnqueueRollback != nil {
+		beforeCanceledMacroEnqueueRollback()
+	}
+	if isPaste {
+		if pasteDepth.Add(-1) == 0 {
+			logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (enqueue rollback)")
+			emitPasteState(session, false, pasteFailures.Swap(0) > 0)
+		}
+	}
+	producer.Done()
+}
+
+func enqueueMacroItem(queue chan<- queuedMacro, item queuedMacro, enqueueCtx context.Context, macroID uint64) error {
+	select {
+	case queue <- item:
+		return nil
+	case <-enqueueCtx.Done():
+		finishCanceledMacroEnqueue(item.session, macroID, item.isPaste, item.producer)
+		return enqueueCtx.Err()
+	case <-item.producer.Context().Done():
+		finishCanceledMacroEnqueue(item.session, macroID, item.isPaste, item.producer)
+		return item.producer.Context().Err()
 	}
 }
 
@@ -1407,7 +1446,7 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	if isPaste {
 		kind = controlsession.ProducerPaste
 	}
-	producer, ok := sessionManager.StartProducer(session.managerGeneration, kind)
+	producer, ok := sessionManager.StartProducer(session.managerGenerationLoad(), kind)
 	if !ok {
 		return errStaleControlSession
 	}
@@ -1417,7 +1456,6 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// send, the snapshot we hold still fires on the old Cancel and unblocks
 	// us cleanly.
 	ctx := currentEnqueueCtx()
-	producerCtx := producer.Context()
 
 	// Pre-increment: reserve a paste-depth slot BEFORE we attempt to enqueue.
 	// Emit State:true if this Add is the 0→1 transition.
@@ -1433,27 +1471,13 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// pressed cancel → cancelAndDrainMacroQueue rotated the context) before
 	// the channel accepts the item, roll back the pasteDepth increment and
 	// emit State:false if the rollback is itself the 1→0 transition.
-	select {
-	case macroQueue <- queuedMacro{steps: steps, isPaste: isPaste, session: session, generation: session.managerGeneration, producer: producer}:
-		return nil
-	case <-ctx.Done():
-		producer.Done()
-		if isPaste {
-			if pasteDepth.Add(-1) == 0 {
-				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (enqueue rollback)")
-				emitPasteState(session, false, pasteFailures.Swap(0) > 0)
-			}
-		}
-		return ctx.Err()
-	case <-producerCtx.Done():
-		producer.Done()
-		if isPaste {
-			if pasteDepth.Add(-1) == 0 {
-				emitPasteState(session, false, pasteFailures.Swap(0) > 0)
-			}
-		}
-		return producerCtx.Err()
-	}
+	return enqueueMacroItem(macroQueue, queuedMacro{
+		steps:      steps,
+		isPaste:    isPaste,
+		session:    session,
+		generation: session.managerGenerationLoad(),
+		producer:   producer,
+	}, ctx, macroID)
 }
 
 func rpcCancelKeyboardMacro() {

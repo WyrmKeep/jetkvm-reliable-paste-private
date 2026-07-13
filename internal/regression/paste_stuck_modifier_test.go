@@ -11,7 +11,7 @@ import (
 func TestMacroWriteErrorPathSendsAllClearBeforeReturning(t *testing.T) {
 	source := readRepoFile(t, "jsonrpc.go")
 
-	requireContains(t, source, "sendKeyboardAllClearAfterMacroWriteError(err)\n\t\t\treturn err")
+	requireContains(t, source, "sendKeyboardAllClearAfterMacroWriteError(err)\n\t\treturn err")
 	requireContains(t, source, "func sendKeyboardAllClearAfterMacroWriteError(originalErr error)")
 	requireContains(t, source, "rpcKeyboardReport(0, keyboardClearStateKeys)")
 }

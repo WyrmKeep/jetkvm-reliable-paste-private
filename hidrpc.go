@@ -186,7 +186,7 @@ func handleHidRPCKeypressKeepAlive(session *Session) error {
 	session.lastKeepAliveArrivalTime = now
 	session.lastTimerResetTime = now
 	if gadget != nil {
-		return withOrdinaryGeneration(session.managerGeneration, func() error {
+		return withOrdinaryGeneration(session.managerGenerationLoad(), func() error {
 			gadget.DelayAutoReleaseWithDuration(timerExtension)
 			return nil
 		})
@@ -211,7 +211,7 @@ func handleHidRPCKeyboardInput(message hidrpc.Message, session *Session) error {
 			logger.Warn().Err(err).Msg("failed to get keyboard report")
 			return err
 		}
-		return rpcKeyboardReportForGeneration(session.managerGeneration, keyboardReport.Modifier, keyboardReport.Keys)
+		return rpcKeyboardReportForGeneration(session.managerGenerationLoad(), keyboardReport.Modifier, keyboardReport.Keys)
 	}
 
 	return fmt.Errorf("unknown HID RPC message type: %d", message.Type())

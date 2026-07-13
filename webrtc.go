@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jetkvm/kvm/internal/controlsession"
@@ -24,7 +25,7 @@ import (
 )
 
 type Session struct {
-	managerGeneration controlsession.Generation
+	managerGeneration atomic.Uint64
 
 	peerConnection           *webrtc.PeerConnection
 	VideoTrack               *webrtc.TrackLocalStaticSample
@@ -33,7 +34,17 @@ type Session struct {
 	HidChannel               *webrtc.DataChannel
 	shouldUmountVirtualMedia bool
 
-	rpcQueue chan rpcQueueMessage
+	rpcQueueLock       sync.Mutex
+	rpcQueue           chan rpcQueueMessage
+	rpcAdmissionCtx    context.Context
+	rpcAdmissionCancel context.CancelFunc
+	rpcWorkerCtx       context.Context
+	rpcWorkerCancel    context.CancelFunc
+	rpcWorkerDone      chan struct{}
+	rpcWorkerStarted   bool
+	rpcQueueAdmissions sync.WaitGroup
+	rpcQueueClosing    bool
+	rpcQueueHandler    func(webrtc.DataChannelMessage, *Session)
 
 	hidRPCAvailable          bool
 	lastKeepAliveArrivalTime time.Time  // Track when last keep-alive packet arrived
@@ -46,9 +57,43 @@ type Session struct {
 	managedWorkersStarted bool
 }
 
+func (s *Session) managerGenerationLoad() controlsession.Generation {
+	return controlsession.Generation(s.managerGeneration.Load())
+}
+
+func (s *Session) managerGenerationStore(generation controlsession.Generation) {
+	s.managerGeneration.Store(uint64(generation))
+}
+
+type rpcQueueAdmission struct {
+	ctx     context.Context
+	done    sync.Once
+	release func()
+}
+
+func (a *rpcQueueAdmission) Context() context.Context {
+	if a == nil || a.ctx == nil {
+		return context.Background()
+	}
+	return a.ctx
+}
+
+func (a *rpcQueueAdmission) Done() {
+	if a == nil {
+		return
+	}
+	a.done.Do(func() {
+		if a.release != nil {
+			a.release()
+		}
+	})
+}
+
 type rpcQueueMessage struct {
-	message  webrtc.DataChannelMessage
-	producer *controlsession.Producer
+	message     webrtc.DataChannelMessage
+	producer    *controlsession.Producer
+	admission   *rpcQueueAdmission
+	maintenance bool
 }
 
 var (
@@ -182,6 +227,164 @@ func (s *Session) initQueues() {
 		s.hidQueue = append(s.hidQueue, q)
 	}
 }
+func (s *Session) initRPCQueue() {
+	s.rpcQueueLock.Lock()
+	defer s.rpcQueueLock.Unlock()
+
+	if s.rpcQueue == nil {
+		s.rpcQueue = make(chan rpcQueueMessage, 256)
+	}
+	if s.rpcAdmissionCtx == nil {
+		s.rpcAdmissionCtx, s.rpcAdmissionCancel = context.WithCancel(context.Background())
+	}
+	if s.rpcWorkerCtx == nil {
+		s.rpcWorkerCtx, s.rpcWorkerCancel = context.WithCancel(context.Background())
+		s.rpcWorkerDone = make(chan struct{})
+	}
+	if s.rpcQueueHandler == nil {
+		s.rpcQueueHandler = onRPCMessage
+	}
+}
+
+func (s *Session) beginRPCQueueAdmission() (*rpcQueueAdmission, bool) {
+	s.rpcQueueLock.Lock()
+	defer s.rpcQueueLock.Unlock()
+	if s.rpcQueueClosing || s.rpcQueue == nil || s.rpcAdmissionCtx == nil {
+		return nil, false
+	}
+	s.rpcQueueAdmissions.Add(1)
+	return &rpcQueueAdmission{
+		ctx:     s.rpcAdmissionCtx,
+		release: s.rpcQueueAdmissions.Done,
+	}, true
+}
+
+func (s *Session) stopRPCQueue() {
+	s.rpcQueueLock.Lock()
+	if !s.rpcQueueClosing {
+		s.rpcQueueClosing = true
+		if s.rpcAdmissionCancel != nil {
+			s.rpcAdmissionCancel()
+		}
+	}
+	s.rpcQueueLock.Unlock()
+
+	// Keep the consumer alive until every admitted sender or dispatched handler
+	// releases admission. This lets canceled sends either return or enqueue and
+	// be discarded without stranding a queue entry.
+	s.rpcQueueAdmissions.Wait()
+
+	s.rpcQueueLock.Lock()
+	if s.rpcWorkerCancel != nil {
+		s.rpcWorkerCancel()
+	}
+	workerDone := s.rpcWorkerDone
+	workerStarted := s.rpcWorkerStarted
+	s.rpcQueueLock.Unlock()
+	if workerStarted {
+		<-workerDone
+	}
+}
+
+func (s *Session) enqueueRPCQueueMessage(item rpcQueueMessage) bool {
+	s.rpcQueueLock.Lock()
+	queue := s.rpcQueue
+	s.rpcQueueLock.Unlock()
+	if queue == nil || item.admission == nil {
+		return false
+	}
+
+	var producerDone <-chan struct{}
+	if item.producer != nil {
+		producerDone = item.producer.Context().Done()
+	}
+	select {
+	case queue <- item:
+		return true
+	case <-item.admission.Context().Done():
+		return false
+	case <-producerDone:
+		return false
+	}
+}
+
+func (s *Session) enqueueRPCMessage(message webrtc.DataChannelMessage) bool {
+	admission, ok := s.beginRPCQueueAdmission()
+	if !ok {
+		return false
+	}
+
+	maintenance := isMaintenanceRPCMessage(message)
+	var producer *controlsession.Producer
+	if !maintenance {
+		producer, ok = sessionManager.StartProducer(s.managerGenerationLoad(), controlsession.ProducerRPC)
+		if !ok {
+			admission.Done()
+			return false
+		}
+	}
+
+	item := rpcQueueMessage{
+		message:     message,
+		producer:    producer,
+		admission:   admission,
+		maintenance: maintenance,
+	}
+	if s.enqueueRPCQueueMessage(item) {
+		return true
+	}
+	if producer != nil {
+		producer.Done()
+	}
+	admission.Done()
+	return false
+}
+
+func (s *Session) handleRPCQueueItem(item rpcQueueMessage) {
+	if item.admission == nil {
+		if item.producer != nil {
+			item.producer.Done()
+		}
+		return
+	}
+	if item.admission.Context().Err() != nil ||
+		(item.producer != nil && item.producer.Context().Err() != nil) {
+		if item.producer != nil {
+			item.producer.Done()
+		}
+		item.admission.Done()
+		return
+	}
+
+	handler := s.rpcQueueHandler
+	if handler == nil {
+		handler = onRPCMessage
+	}
+	if item.maintenance {
+		// Maintenance quiesces its own session. Release queue admission first so
+		// shutdown can join senders without making the handler join itself.
+		item.admission.Done()
+		handler(item.message, s)
+		return
+	}
+
+	defer item.admission.Done()
+	if item.producer != nil {
+		defer item.producer.Done()
+	}
+	handler(item.message, s)
+}
+
+func (s *Session) handleRPCQueue(queue <-chan rpcQueueMessage, workerCtx context.Context) {
+	for {
+		select {
+		case <-workerCtx.Done():
+			return
+		case item := <-queue:
+			go s.handleRPCQueueItem(item)
+		}
+	}
+}
 
 func (s *Session) startManagedWorkers() {
 	s.hidQueueLock.Lock()
@@ -190,24 +393,22 @@ func (s *Session) startManagedWorkers() {
 		return
 	}
 	s.managedWorkersStarted = true
-	rpcQueue := s.rpcQueue
 	hidQueues := append([]chan hidQueueMessage(nil), s.hidQueue...)
 	s.hidQueueLock.Unlock()
 
-	if rpcQueue != nil {
+	s.rpcQueueLock.Lock()
+	rpcQueue := s.rpcQueue
+	rpcWorkerCtx := s.rpcWorkerCtx
+	rpcWorkerDone := s.rpcWorkerDone
+	startRPCWorker := rpcQueue != nil && rpcWorkerCtx != nil && !s.rpcQueueClosing
+	if startRPCWorker {
+		s.rpcWorkerStarted = true
+	}
+	s.rpcQueueLock.Unlock()
+	if startRPCWorker {
 		go func() {
-			for item := range rpcQueue {
-				go func(item rpcQueueMessage) {
-					if item.producer == nil {
-						onRPCMessage(item.message, s)
-						return
-					}
-					defer item.producer.Done()
-					if item.producer.Context().Err() == nil {
-						onRPCMessage(item.message, s)
-					}
-				}(item)
-			}
+			defer close(rpcWorkerDone)
+			s.handleRPCQueue(rpcQueue, rpcWorkerCtx)
 		}()
 	}
 	for _, queue := range hidQueues {
@@ -223,15 +424,14 @@ func (s *Session) handleQueues(queue <-chan hidQueueMessage) {
 
 func (s *Session) enqueueHIDQueueMessage(queueIndex int, msg hidQueueMessage) (int, bool) {
 	s.hidQueueLock.Lock()
+	defer s.hidQueueLock.Unlock()
 	if queueIndex >= len(s.hidQueue) || queueIndex < 0 {
 		queueIndex = 3
 	}
 	if queueIndex >= len(s.hidQueue) {
-		s.hidQueueLock.Unlock()
 		return queueIndex, false
 	}
 	queue := s.hidQueue[queueIndex]
-	s.hidQueueLock.Unlock()
 	if queue == nil {
 		return queueIndex, false
 	}
@@ -321,7 +521,7 @@ func getOnHidMessageHandler(session *Session, scopedLogger *zerolog.Logger, chan
 
 		// Register before the potentially blocking enqueue so draining cancels
 		// blocked and queued work as one producer.
-		producer, ok := sessionManager.StartProducer(session.managerGeneration, controlsession.ProducerHIDQueue)
+		producer, ok := sessionManager.StartProducer(session.managerGenerationLoad(), controlsession.ProducerHIDQueue)
 		if !ok {
 			l.Debug().Msg("rejecting HID message for stale or draining session")
 			return
@@ -410,7 +610,7 @@ func newSession(config SessionConfig) (*Session, error) {
 	}
 
 	session := &Session{peerConnection: peerConnection}
-	session.rpcQueue = make(chan rpcQueueMessage, 256)
+	session.initRPCQueue()
 	session.initQueues()
 	session.initKeysDownStateQueue()
 
@@ -435,19 +635,8 @@ func newSession(config SessionConfig) (*Session, error) {
 		case "rpc":
 			session.RPCChannel = d
 			d.OnMessage(func(msg webrtc.DataChannelMessage) {
-				if isMaintenanceRPCMessage(msg) {
-					session.rpcQueue <- rpcQueueMessage{message: msg}
-					return
-				}
-				producer, ok := sessionManager.StartProducer(session.managerGeneration, controlsession.ProducerRPC)
-				if !ok {
-					return
-				}
-				item := rpcQueueMessage{message: msg, producer: producer}
-				select {
-				case session.rpcQueue <- item:
-				case <-producer.Context().Done():
-					producer.Done()
+				if !session.enqueueRPCMessage(msg) {
+					scopedLogger.Debug().Msg("rejecting RPC message because session queue is unavailable")
 				}
 			})
 			// Wait for channel to be open before sending initial state
@@ -522,11 +711,9 @@ func newSession(config SessionConfig) (*Session, error) {
 		if connectionState == webrtc.ICEConnectionStateClosed {
 			scopedLogger.Debug().Msg("ICE Connection State is closed, unmounting virtual media")
 			closeManagedSession(session, "session-close")
-			// Stop RPC processor
-			if session.rpcQueue != nil {
-				close(session.rpcQueue)
-				session.rpcQueue = nil
-			}
+			// Cancel and join queue admission before stopping its consumer. The
+			// queue remains allocated because no sender-visible channel is closed.
+			session.stopRPCQueue()
 
 			// Stop HID RPC processor
 			session.closeHIDQueues()

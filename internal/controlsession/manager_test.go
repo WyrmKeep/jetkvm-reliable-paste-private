@@ -243,6 +243,168 @@ func TestMissingZeroAcknowledgementReturnsUnknownAndKeepsDrained(t *testing.T) {
 	}
 }
 
+func TestFirstTakeoverPerformsZeroBeforePublishing(t *testing.T) {
+	m := New[*testSession]()
+	next := &testSession{name: "first"}
+	var zeroCalls atomic.Int32
+	var prepared atomic.Bool
+
+	snapshot, receipt := m.TakeoverPrepared(
+		context.Background(),
+		next,
+		"initial",
+		func(generation Generation) {
+			if zeroCalls.Load() != 1 {
+				t.Fatalf("prepared before zero: calls=%d", zeroCalls.Load())
+			}
+			if generation != 1 {
+				t.Fatalf("prepared generation=%d, want 1", generation)
+			}
+			prepared.Store(true)
+		},
+		func(maintenance MaintenanceLease) (error, error) {
+			if !maintenance.Valid() {
+				t.Fatal("initial zero received invalid maintenance lease")
+			}
+			if m.Snapshot().HasCurrent {
+				t.Fatal("initial session was published before zero")
+			}
+			zeroCalls.Add(1)
+			return nil, nil
+		},
+	)
+
+	if zeroCalls.Load() != 1 || !prepared.Load() {
+		t.Fatalf("zeroCalls=%d prepared=%v", zeroCalls.Load(), prepared.Load())
+	}
+	if snapshot.Current != next || !snapshot.HasCurrent || snapshot.Generation != 1 || snapshot.Draining {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	if receipt.OperationID != "initial" || receipt.Generation != snapshot.Generation ||
+		receipt.Outcome != OutcomeReleased || receipt.Draining ||
+		!receipt.ProducersJoined || !receipt.MacroInactive || !receipt.PasteInactive ||
+		!receipt.OrdinaryLeasesZero || !receipt.KeyboardZero || !receipt.PointerZero {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+}
+
+func TestFirstTakeoverHonorsPreCanceledContextWithoutPublishing(t *testing.T) {
+	m := New[*testSession]()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var zeroCalls atomic.Int32
+	var prepareCalls atomic.Int32
+
+	snapshot, receipt := m.TakeoverPrepared(
+		ctx,
+		&testSession{name: "never-published"},
+		"canceled-initial",
+		func(Generation) { prepareCalls.Add(1) },
+		func(MaintenanceLease) (error, error) {
+			zeroCalls.Add(1)
+			return nil, nil
+		},
+	)
+
+	if snapshot.HasCurrent || m.Snapshot().HasCurrent {
+		t.Fatalf("canceled takeover published snapshot=%+v current=%+v", snapshot, m.Snapshot())
+	}
+	if zeroCalls.Load() != 0 || prepareCalls.Load() != 0 {
+		t.Fatalf("zeroCalls=%d prepareCalls=%d", zeroCalls.Load(), prepareCalls.Load())
+	}
+	if receipt.OperationID != "canceled-initial" || receipt.Generation != 1 ||
+		receipt.Outcome != OutcomeUnknown || receipt.Draining || receipt.ProducersJoined ||
+		receipt.MacroInactive || receipt.PasteInactive || receipt.OrdinaryLeasesZero ||
+		receipt.KeyboardZero || receipt.PointerZero {
+		t.Fatalf("fabricated canceled receipt=%+v", receipt)
+	}
+}
+
+func TestFirstTakeoverZeroFailureDoesNotPublishOrPrepare(t *testing.T) {
+	m := New[*testSession]()
+	zeroErr := errors.New("pointer zero failed")
+	var prepareCalls atomic.Int32
+
+	snapshot, receipt := m.TakeoverPrepared(
+		context.Background(),
+		&testSession{name: "never-published"},
+		"failed-initial",
+		func(Generation) { prepareCalls.Add(1) },
+		func(MaintenanceLease) (error, error) { return nil, zeroErr },
+	)
+
+	if snapshot.HasCurrent || m.Snapshot().HasCurrent || prepareCalls.Load() != 0 {
+		t.Fatalf("failed takeover snapshot=%+v current=%+v prepareCalls=%d", snapshot, m.Snapshot(), prepareCalls.Load())
+	}
+	if receipt.Outcome != OutcomeUnknown || receipt.Draining ||
+		!receipt.ProducersJoined || !receipt.MacroInactive || !receipt.PasteInactive ||
+		!receipt.OrdinaryLeasesZero || !receipt.KeyboardZero || receipt.PointerZero {
+		t.Fatalf("failed zero receipt=%+v", receipt)
+	}
+}
+
+func TestFirstTakeoverCancellationDuringZeroDoesNotPublishOrPrepare(t *testing.T) {
+	m := New[*testSession]()
+	ctx, cancel := context.WithCancel(context.Background())
+	var prepareCalls atomic.Int32
+
+	snapshot, receipt := m.TakeoverPrepared(
+		ctx,
+		&testSession{name: "never-published"},
+		"cancel-during-initial-zero",
+		func(Generation) { prepareCalls.Add(1) },
+		func(MaintenanceLease) (error, error) {
+			cancel()
+			return nil, nil
+		},
+	)
+
+	if snapshot.HasCurrent || m.Snapshot().HasCurrent || prepareCalls.Load() != 0 {
+		t.Fatalf("canceled takeover snapshot=%+v current=%+v prepareCalls=%d", snapshot, m.Snapshot(), prepareCalls.Load())
+	}
+	if receipt.Outcome != OutcomeUnknown || receipt.Draining ||
+		!receipt.ProducersJoined || !receipt.MacroInactive || !receipt.PasteInactive ||
+		!receipt.OrdinaryLeasesZero || !receipt.KeyboardZero || !receipt.PointerZero {
+		t.Fatalf("canceled zero receipt=%+v", receipt)
+	}
+}
+
+func TestFirstTakeoverCancellationDuringPreparationDoesNotPublish(t *testing.T) {
+	m := New[*testSession]()
+	ctx, cancel := context.WithCancel(context.Background())
+	var preparedGeneration Generation
+
+	snapshot, receipt := m.TakeoverPrepared(
+		ctx,
+		&testSession{name: "never-published"},
+		"cancel-during-preparation",
+		func(generation Generation) {
+			preparedGeneration = generation
+			cancel()
+		},
+		successfulZero,
+	)
+
+	afterCanceled := m.Snapshot()
+	if preparedGeneration != 1 || snapshot.HasCurrent || afterCanceled.HasCurrent || afterCanceled.Generation != preparedGeneration {
+		t.Fatalf("preparedGeneration=%d snapshot=%+v current=%+v", preparedGeneration, snapshot, afterCanceled)
+	}
+	if receipt.Outcome != OutcomeUnknown || receipt.Draining ||
+		!receipt.ProducersJoined || !receipt.OrdinaryLeasesZero ||
+		!receipt.KeyboardZero || !receipt.PointerZero {
+		t.Fatalf("canceled preparation receipt=%+v", receipt)
+	}
+	next, nextReceipt := m.Takeover(
+		context.Background(),
+		&testSession{name: "next"},
+		"after-canceled-preparation",
+		successfulZero,
+	)
+	if nextReceipt.Outcome != OutcomeReleased || next.Generation != 2 {
+		t.Fatalf("abandoned generation was reused: snapshot=%+v receipt=%+v", next, nextReceipt)
+	}
+}
+
 func TestNearSimultaneousTakeoversPublishOneGenerationAtATime(t *testing.T) {
 	m := New[*testSession]()
 	m.PublishInitial(&testSession{name: "initial"})

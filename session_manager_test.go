@@ -17,6 +17,7 @@ func installSessionManagerTestSeams(t *testing.T) (*atomic.Int32, *atomic.Int32)
 	oldManager := sessionManager
 	oldKeyboardClear := keyboardStateClearWrite
 	oldPointer := relMouseReportWrite
+	oldAbsolutePointer := maintenanceAbsPointerZeroWrite
 	sessionManager = controlsession.New[*Session]()
 	keyboardWrites := &atomic.Int32{}
 	pointerWrites := &atomic.Int32{}
@@ -28,10 +29,12 @@ func installSessionManagerTestSeams(t *testing.T) (*atomic.Int32, *atomic.Int32)
 		pointerWrites.Add(1)
 		return nil
 	}
+	maintenanceAbsPointerZeroWrite = func(int, int) error { return nil }
 	t.Cleanup(func() {
 		sessionManager = oldManager
 		keyboardStateClearWrite = oldKeyboardClear
 		relMouseReportWrite = oldPointer
+		maintenanceAbsPointerZeroWrite = oldAbsolutePointer
 	})
 	return keyboardWrites, pointerWrites
 }
@@ -59,14 +62,16 @@ func TestActivateSessionSerializesSimultaneousOffers(t *testing.T) {
 	close(start)
 	wg.Wait()
 	snapshot := currentSessionSnapshot()
-	if snapshot.Generation != 3 || !snapshot.HasCurrent || snapshot.Current.managerGeneration == 0 {
+	currentGeneration := snapshot.Current.managerGenerationLoad()
+	firstGeneration := sessions[0].managerGenerationLoad()
+	secondGeneration := sessions[1].managerGenerationLoad()
+	if snapshot.Generation != 3 || !snapshot.HasCurrent || currentGeneration == 0 {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	if sessions[0].managerGeneration == sessions[1].managerGeneration ||
-		sessions[0].managerGeneration == 0 || sessions[1].managerGeneration == 0 {
-		t.Fatalf("offer generations=%d,%d", sessions[0].managerGeneration, sessions[1].managerGeneration)
+	if firstGeneration == secondGeneration || firstGeneration == 0 || secondGeneration == 0 {
+		t.Fatalf("offer generations=%d,%d", firstGeneration, secondGeneration)
 	}
-	if keyboardWrites.Load() != 2 || pointerWrites.Load() != 2 {
+	if keyboardWrites.Load() != 3 || pointerWrites.Load() != 3 {
 		t.Fatalf("zero writes keyboard=%d pointer=%d", keyboardWrites.Load(), pointerWrites.Load())
 	}
 }
@@ -83,7 +88,7 @@ func TestOldSessionWireQuiesceIsCorrelatedStaleAndDoesNotWrite(t *testing.T) {
 	}
 	beforeKeyboard, beforePointer := keyboardWrites.Load(), pointerWrites.Load()
 	receipt := rpcQuiesceAndZero(old, "operation-old")
-	if receipt.OperationID != "operation-old" || receipt.Generation != old.managerGeneration || receipt.Outcome != controlsession.OutcomeStale {
+	if receipt.OperationID != "operation-old" || receipt.Generation != old.managerGenerationLoad() || receipt.Outcome != controlsession.OutcomeStale {
 		t.Fatalf("receipt=%+v", receipt)
 	}
 	if receipt.KeyboardZero || receipt.PointerZero || keyboardWrites.Load() != beforeKeyboard || pointerWrites.Load() != beforePointer {
@@ -147,14 +152,14 @@ func TestEmergencyAndTakeoverUseSameQuiescePrimitive(t *testing.T) {
 	if emergency.Outcome != controlsession.OutcomeReleased {
 		t.Fatalf("emergency=%+v", emergency)
 	}
-	if _, ok := sessionManager.Acquire(first.managerGeneration); ok {
+	if _, ok := sessionManager.Acquire(first.managerGenerationLoad()); ok {
 		t.Fatal("emergency release reopened generation")
 	}
 	second := &Session{}
 	if _, err := activateSession(context.Background(), second, "takeover-after-emergency"); err != nil {
 		t.Fatal(err)
 	}
-	if keyboardWrites.Load() != 2 || pointerWrites.Load() != 2 {
+	if keyboardWrites.Load() != 3 || pointerWrites.Load() != 3 {
 		t.Fatalf("zero writes keyboard=%d pointer=%d", keyboardWrites.Load(), pointerWrites.Load())
 	}
 }
@@ -181,6 +186,125 @@ func TestSignallingCandidateTargetsOriginatingOfferSession(t *testing.T) {
 	}
 	if got != first {
 		t.Fatalf("candidate routed to %p, want originating %p", got, first)
+	}
+}
+
+func TestFailedOfferRetainsLastSuccessfulSignallingSession(t *testing.T) {
+	first := &Session{}
+	offerErr := errors.New("second offer failed")
+
+	signallingSession, err := updateSignallingSession(nil, func() (*Session, error) {
+		return first, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signallingSession, err = updateSignallingSession(signallingSession, func() (*Session, error) {
+		return nil, offerErr
+	})
+	if !errors.Is(err, offerErr) {
+		t.Fatalf("second offer error=%v", err)
+	}
+
+	oldAdd := addICECandidateToSession
+	var got *Session
+	addICECandidateToSession = func(session *Session, candidate webrtc.ICECandidateInit) error {
+		got = session
+		return nil
+	}
+	t.Cleanup(func() { addICECandidateToSession = oldAdd })
+	if err := routeSignallingCandidate(signallingSession, webrtc.ICECandidateInit{Candidate: "candidate"}); err != nil {
+		t.Fatal(err)
+	}
+	if got != first {
+		t.Fatalf("candidate routed to %p, want retained session %p", got, first)
+	}
+}
+
+func TestSessionGenerationAccessIsRaceSafe(t *testing.T) {
+	session := &Session{}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for generation := controlsession.Generation(1); generation <= 10_000; generation++ {
+			session.managerGenerationStore(generation)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 10_000 {
+			_ = session.managerGenerationLoad()
+		}
+	}()
+	close(start)
+	wg.Wait()
+	if generation := session.managerGenerationLoad(); generation != 10_000 {
+		t.Fatalf("final generation=%d, want 10000", generation)
+	}
+}
+
+func TestGenerationPreparedBeforePublicationAllowsBoundaryClose(t *testing.T) {
+	installSessionManagerTestSeams(t)
+	oldPrepare := prepareSessionGeneration
+	prepared := make(chan struct{})
+	allowPublication := make(chan struct{})
+	prepareSessionGeneration = func(session *Session, generation controlsession.Generation) {
+		oldPrepare(session, generation)
+		close(prepared)
+		<-allowPublication
+	}
+	t.Cleanup(func() { prepareSessionGeneration = oldPrepare })
+
+	session := &Session{}
+	activationDone := make(chan error, 1)
+	go func() {
+		_, err := activateSession(context.Background(), session, "boundary-activation")
+		activationDone <- err
+	}()
+	<-prepared
+	boundGeneration := session.managerGenerationLoad()
+	if boundGeneration == 0 {
+		t.Fatal("generation was not stored at preparation boundary")
+	}
+
+	closeDone := make(chan controlsession.Receipt, 1)
+	go func() { closeDone <- closeManagedSession(session, "boundary-close") }()
+	close(allowPublication)
+	if err := <-activationDone; err != nil {
+		t.Fatal(err)
+	}
+	receipt := <-closeDone
+	if receipt.Outcome != controlsession.OutcomeReleased || receipt.Generation != boundGeneration {
+		t.Fatalf("boundary close receipt=%+v boundGeneration=%d", receipt, boundGeneration)
+	}
+	if snapshot := currentSessionSnapshot(); snapshot.HasCurrent {
+		t.Fatalf("boundary close did not clear exact published generation: %+v", snapshot)
+	}
+}
+
+func TestFailedCandidateActivationClosesPeerConnection(t *testing.T) {
+	installSessionManagerTestSeams(t)
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &Session{peerConnection: peerConnection}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	receipt, err := activateCandidateSession(ctx, session, "forced-failure")
+	if err == nil || receipt.Outcome != controlsession.OutcomeUnknown {
+		t.Fatalf("activation err=%v receipt=%+v", err, receipt)
+	}
+	if snapshot := currentSessionSnapshot(); snapshot.HasCurrent {
+		t.Fatalf("failed candidate was published: %+v", snapshot)
+	}
+	if state := peerConnection.ConnectionState(); state != webrtc.PeerConnectionStateClosed {
+		t.Fatalf("failed candidate peer connection state=%s, want closed", state)
 	}
 }
 
@@ -253,11 +377,11 @@ func TestQuiesceCancelsAndJoinsMacroAndPasteProducers(t *testing.T) {
 	if _, err := activateSession(context.Background(), session, "initial"); err != nil {
 		t.Fatal(err)
 	}
-	macro, ok := sessionManager.StartProducer(session.managerGeneration, controlsession.ProducerMacro)
+	macro, ok := sessionManager.StartProducer(session.managerGenerationLoad(), controlsession.ProducerMacro)
 	if !ok {
 		t.Fatal("macro producer rejected")
 	}
-	paste, ok := sessionManager.StartProducer(session.managerGeneration, controlsession.ProducerPaste)
+	paste, ok := sessionManager.StartProducer(session.managerGenerationLoad(), controlsession.ProducerPaste)
 	if !ok {
 		t.Fatal("paste producer rejected")
 	}

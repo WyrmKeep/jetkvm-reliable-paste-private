@@ -25,7 +25,7 @@ func withKeyboardReportWrite(t *testing.T, fn func(modifier byte, keys []byte) e
 	sessionManager = controlsession.New[*Session]()
 	session := &Session{}
 	snapshot := sessionManager.PublishInitial(session)
-	session.managerGeneration = snapshot.Generation
+	session.managerGenerationStore(snapshot.Generation)
 	var calls []keyboardReportCall
 	keyboardReportWrite = func(modifier byte, keys []byte) error {
 		copiedKeys := append([]byte(nil), keys...)
@@ -184,6 +184,8 @@ func TestQuiesceAndZeroWireHandlerInjectsOriginatingSessionGeneration(t *testing
 	if _, err := activateSession(context.Background(), origin, "initial"); err != nil {
 		t.Fatal(err)
 	}
+	keyboardWritesBeforeQuiesce := keyboardWrites.Load()
+	pointerWritesBeforeQuiesce := pointerWrites.Load()
 	logger := zerolog.Nop()
 	result, err := callRPCHandler(logger, rpcHandlers["quiesceAndZero"], map[string]any{
 		"operationId": "wire-operation",
@@ -192,7 +194,7 @@ func TestQuiesceAndZeroWireHandlerInjectsOriginatingSessionGeneration(t *testing
 	receipt, ok := result.(controlsession.Receipt)
 	require.True(t, ok)
 	require.Equal(t, "wire-operation", receipt.OperationID)
-	require.Equal(t, origin.managerGeneration, receipt.Generation)
+	require.Equal(t, origin.managerGenerationLoad(), receipt.Generation)
 	require.Equal(t, controlsession.OutcomeReleased, receipt.Outcome)
 	require.True(t, receipt.Draining)
 	require.True(t, receipt.ProducersJoined)
@@ -201,8 +203,8 @@ func TestQuiesceAndZeroWireHandlerInjectsOriginatingSessionGeneration(t *testing
 	require.True(t, receipt.OrdinaryLeasesZero)
 	require.True(t, receipt.KeyboardZero)
 	require.True(t, receipt.PointerZero)
-	require.Equal(t, int32(1), keyboardWrites.Load())
-	require.Equal(t, int32(1), pointerWrites.Load())
+	require.Equal(t, keyboardWritesBeforeQuiesce+1, keyboardWrites.Load())
+	require.Equal(t, pointerWritesBeforeQuiesce+1, pointerWrites.Load())
 }
 
 func TestQuiesceAndZeroWireHandlerDeclaresOnlyOperationID(t *testing.T) {

@@ -268,6 +268,50 @@ func (m *Manager[T]) quiesceAndZeroLocked(ctx context.Context, expected Generati
 	}
 	return receipt
 }
+func (m *Manager[T]) zeroBeforeInitialPublicationLocked(
+	ctx context.Context,
+	generation Generation,
+	operationID string,
+	zero func(MaintenanceLease) (keyboardErr, pointerErr error),
+) Receipt {
+	receipt := Receipt{OperationID: operationID, Generation: generation}
+	if ctx.Err() != nil {
+		receipt.Outcome = OutcomeUnknown
+		return receipt
+	}
+	if !m.waitFor(ctx, func() bool { return len(m.workers) == 0 }) {
+		receipt.Outcome = OutcomeUnknown
+		return receipt
+	}
+	receipt.ProducersJoined = true
+	receipt.MacroInactive = true
+	receipt.PasteInactive = true
+	if !m.waitFor(ctx, func() bool { return m.ordinary == 0 }) {
+		receipt.Outcome = OutcomeUnknown
+		return receipt
+	}
+	receipt.OrdinaryLeasesZero = true
+	if ctx.Err() != nil {
+		receipt.Outcome = OutcomeUnknown
+		return receipt
+	}
+
+	token := &maintenanceToken{}
+	token.active.Store(true)
+	maintenance := MaintenanceLease{manager: m, token: token}
+	keyboardErr, pointerErr := func() (error, error) {
+		defer token.active.Store(false)
+		return zero(maintenance)
+	}()
+	receipt.KeyboardZero = keyboardErr == nil
+	receipt.PointerZero = pointerErr == nil
+	if ctx.Err() != nil || !receipt.KeyboardZero || !receipt.PointerZero {
+		receipt.Outcome = OutcomeUnknown
+		return receipt
+	}
+	receipt.Outcome = OutcomeReleased
+	return receipt
+}
 
 func (m *Manager[T]) waitFor(ctx context.Context, predicate func() bool) bool {
 	for {
@@ -287,29 +331,50 @@ func (m *Manager[T]) waitFor(ctx context.Context, predicate func() bool) bool {
 }
 
 func (m *Manager[T]) Takeover(ctx context.Context, next T, operationID string, zero func(MaintenanceLease) (keyboardErr, pointerErr error)) (Snapshot[T], Receipt) {
+	return m.TakeoverPrepared(ctx, next, operationID, nil, zero)
+}
+
+func (m *Manager[T]) TakeoverPrepared(
+	ctx context.Context,
+	next T,
+	operationID string,
+	prepare func(Generation),
+	zero func(MaintenanceLease) (keyboardErr, pointerErr error),
+) (Snapshot[T], Receipt) {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
 	m.mu.Lock()
-	if !m.hasCurrent {
-		m.generation++
-		m.current = next
-		m.hasCurrent = true
-		m.draining = false
-		m.signalLocked()
-		snapshot := m.snapshotLocked()
-		m.mu.Unlock()
-		return snapshot, Receipt{OperationID: operationID, Generation: snapshot.Generation, Outcome: OutcomeReleased, Draining: true, ProducersJoined: true, MacroInactive: true, PasteInactive: true, OrdinaryLeasesZero: true, KeyboardZero: true, PointerZero: true}
-	}
+	hasCurrent := m.hasCurrent
 	expected := m.generation
+	nextGeneration := expected + 1
 	m.mu.Unlock()
 
-	receipt := m.quiesceAndZeroLocked(ctx, expected, operationID, zero)
+	var receipt Receipt
+	if hasCurrent {
+		receipt = m.quiesceAndZeroLocked(ctx, expected, operationID, zero)
+	} else {
+		receipt = m.zeroBeforeInitialPublicationLocked(ctx, nextGeneration, operationID, zero)
+	}
 	if receipt.Outcome != OutcomeReleased {
 		return m.Snapshot(), receipt
 	}
+
 	m.mu.Lock()
-	m.generation++
+	if ctx.Err() != nil {
+		m.mu.Unlock()
+		receipt.Outcome = OutcomeUnknown
+		return m.Snapshot(), receipt
+	}
+	m.generation = nextGeneration
+	if prepare != nil {
+		prepare(nextGeneration)
+	}
+	if ctx.Err() != nil {
+		m.mu.Unlock()
+		receipt.Outcome = OutcomeUnknown
+		return m.Snapshot(), receipt
+	}
 	m.current = next
 	m.hasCurrent = true
 	m.draining = false
