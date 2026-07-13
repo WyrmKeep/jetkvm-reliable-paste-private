@@ -6,6 +6,7 @@ import {
   DEVICE_TEST_TARGET_ENV,
   parseDeviceIdentity,
   runDeviceGoTests,
+  runDeviceGoTestsCli,
 } from "./run-device-go-tests.mjs";
 
 const FIXTURE_TARGET = "192.0.2.110";
@@ -95,7 +96,7 @@ test("reads identity, runs only the test-only command, rechecks, and flushes in 
   assert.deepEqual(result.before, result.after);
   assert.deepEqual(result.command, {
     executable: "./dev_deploy.sh",
-    args: ["-r", FIXTURE_TARGET, "--run-go-tests-only"],
+    args: ["-r", "<configured-target>", "--run-go-tests-only"],
   });
   assert.deepEqual(h.events, [
     `fetch:before:http://${FIXTURE_TARGET}/metrics`,
@@ -105,10 +106,9 @@ test("reads identity, runs only the test-only command, rechecks, and flushes in 
     "artifact:flushed",
   ]);
   assert.equal(h.artifactWriter.artifact.ok, true);
-  assert.equal(
-    JSON.stringify(h.artifactWriter.artifact).includes(FIXTURE_PROOF_REFERENCE),
-    false,
-  );
+  const persistedEvidence = JSON.stringify(h.artifactWriter.artifact);
+  assert.equal(persistedEvidence.includes(FIXTURE_TARGET), false);
+  assert.equal(persistedEvidence.includes(FIXTURE_PROOF_REFERENCE), false);
   assert.equal(h.fetchCalls[0].options.method, "GET");
   assert.deepEqual(h.fetchCalls[0].options.headers, { accept: "text/plain" });
   assert.ok(h.fetchCalls[0].options.signal instanceof AbortSignal);
@@ -441,6 +441,84 @@ test("artifact flush failure rejects an otherwise successful run", async () => {
   const h = harness({ flushError: new Error("flush unavailable") });
   await assert.rejects(runHarness(h), /flush unavailable/);
   assert.equal(h.events.at(-1), "artifact:start:/artifact.json");
+});
+
+test("redacts target, proof, and credential sentinels from persisted failures", async () => {
+  const target = "sentinel-device.invalid";
+  const proof = "/private/sentinel-proof.json";
+  const credential = "sentinel-credential";
+  const h = harness({
+    spawnError: new Error(
+      `spawn failed for ${target} using ${proof} and ${credential}`,
+    ),
+  });
+  await assert.rejects(
+    runHarness(h, {
+      target,
+      environment: {
+        [DEVICE_LEASE_PROOF_REFERENCE_ENV]: proof,
+        DEVICE_API_TOKEN: credential,
+      },
+    }),
+    /spawn failed/,
+  );
+
+  const persistedEvidence = JSON.stringify(h.artifactWriter.artifact);
+  assert.equal(persistedEvidence.includes(target), false);
+  assert.equal(persistedEvidence.includes(proof), false);
+  assert.equal(persistedEvidence.includes(credential), false);
+  assert.deepEqual(h.artifactWriter.artifact.command, {
+    executable: "./dev_deploy.sh",
+    args: ["-r", "<configured-target>", "--run-go-tests-only"],
+  });
+});
+
+test("CLI output is status-only on success and failure", async () => {
+  const sentinels = [
+    "sentinel-device.invalid",
+    "/private/sentinel-proof.json",
+    "sentinel-credential",
+  ];
+  const secretText = sentinels.join(" ");
+  const stdout = [];
+  const stderr = [];
+  const streams = {
+    stdout: { write: (value) => stdout.push(value) },
+    stderr: { write: (value) => stderr.push(value) },
+  };
+
+  assert.equal(
+    await runDeviceGoTestsCli({
+      ...streams,
+      run: async () => ({ details: secretText }),
+    }),
+    0,
+  );
+  assert.deepEqual(stdout, [
+    "Device Go tests passed; evidence artifact flushed.\n",
+  ]);
+  for (const sentinel of sentinels) {
+    assert.equal(stdout.join("").includes(sentinel), false);
+  }
+
+  assert.equal(
+    await runDeviceGoTestsCli({
+      ...streams,
+      run: async () => {
+        throw new Error(secretText);
+      },
+    }),
+    1,
+  );
+  assert.deepEqual(stderr, [
+    "Device Go tests failed; evidence artifact flush attempted.\n",
+  ]);
+  for (const sentinel of sentinels) {
+    assert.equal(
+      `${stdout.join("")}${stderr.join("")}`.includes(sentinel),
+      false,
+    );
+  }
 });
 
 test("preserves both the operation and artifact failures when flush also fails", async () => {

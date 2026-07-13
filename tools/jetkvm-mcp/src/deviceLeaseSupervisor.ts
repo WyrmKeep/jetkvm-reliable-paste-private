@@ -21,7 +21,7 @@ type SupervisorMessage =
   | { type: "stop"; signal?: NodeJS.Signals };
 
 type GroupMessage = {
-  type: "ready" | "started" | "result";
+  type: "ready" | "result";
   pgid?: number;
   code?: number;
   signal?: NodeJS.Signals | null;
@@ -171,10 +171,6 @@ group.on("message", async (message: GroupMessage) => {
     await reportReady();
     return;
   }
-  if (message.type === "started") {
-    send({ type: "started" });
-    return;
-  }
   if (message.type === "result") {
     await finish(message.code ?? 1, message.signal ?? null, true);
   }
@@ -208,7 +204,7 @@ process.on("message", async (message: SupervisorMessage) => {
     return;
   }
   if (message.type === "stop") {
-    await finish(1, message.signal ?? "SIGTERM", false);
+    await finish(1, message.signal ?? "SIGTERM", true);
     return;
   }
   if (message.type !== "start" || bound === undefined) {

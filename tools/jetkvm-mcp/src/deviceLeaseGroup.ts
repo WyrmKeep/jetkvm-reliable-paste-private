@@ -70,7 +70,6 @@ process.on(
     commandChild.once("close", (code, signal) => {
       reportResult(code ?? 1, signal);
     });
-    send({ type: "started" });
   },
 );
 

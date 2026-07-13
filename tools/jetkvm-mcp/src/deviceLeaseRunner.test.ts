@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   mkdir,
   mkdtemp,
@@ -12,12 +13,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { buildLeaseChildEnvironment } from "./deviceLeaseRunner.js";
+import { describe, expect, it, vi } from "vitest";
 import {
+  buildLeaseChildEnvironment,
+  runDeviceLeaseCli,
+  runSupervisedChild,
+} from "./deviceLeaseRunner.js";
+import {
+  DeviceLeaseError,
   acquireDeviceLease,
   loadDeviceLeaseProofReference,
   removeStaleDeviceLease,
+  type DeviceLease,
+  type DeviceLeaseSupervisor,
 } from "./deviceLease.js";
 
 const wrapperPath = fileURLToPath(
@@ -25,6 +33,51 @@ const wrapperPath = fileURLToPath(
 );
 
 type ProcessResult = { code: number | null; stdout: string; stderr: string };
+
+class FakeSupervisorChild extends EventEmitter {
+  connected = true;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  readonly sent: object[] = [];
+
+  send(message: object, callback?: (error: Error | null) => void): boolean {
+    this.sent.push(message);
+    callback?.(null);
+    return true;
+  }
+}
+
+function fakeLease(release = vi.fn(async () => undefined)): DeviceLease {
+  return {
+    path: "/lease.json",
+    inherited: false,
+    proof: {
+      path: "/lease.json",
+      referencePath: "/proof.json",
+      ownerId: "owner",
+      token: "token",
+    },
+    release,
+  };
+}
+
+function fakeSupervisor(child: FakeSupervisorChild): DeviceLeaseSupervisor & {
+  child: ChildProcess;
+  livenessDirectory: string;
+  bound: boolean;
+  retired: boolean;
+} {
+  return {
+    child: child as unknown as ChildProcess,
+    pid: 101,
+    pgid: 202,
+    livenessId: "liveness",
+    livenessPath: "/liveness",
+    livenessDirectory: "/",
+    bound: true,
+    retired: false,
+  };
+}
 
 function scrubDeviceLeaseEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
@@ -127,6 +180,201 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe("device lease runner", () => {
+  it("rejects an unsupported runtime before reading arguments or environment", async () => {
+    let observableEffects = 0;
+    const args = new Proxy([] as string[], {
+      get() {
+        observableEffects += 1;
+        throw new Error("arguments must not be read");
+      },
+    });
+    const environment = new Proxy({} as NodeJS.ProcessEnv, {
+      get() {
+        observableEffects += 1;
+        throw new Error("environment must not be read");
+      },
+    });
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      await expect(
+        runDeviceLeaseCli(args, environment, "21.99.0"),
+      ).resolves.toBe(1);
+      expect(observableEffects).toBe(0);
+      expect(error).toHaveBeenCalledOnce();
+      expect(error).toHaveBeenCalledWith(
+        "Unsupported Node.js runtime; expected >=22.23.1 <23.",
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("retires a reported PGID without probing or signaling a reused group", async () => {
+    const child = new FakeSupervisorChild();
+    const supervisor = fakeSupervisor(child);
+    const lease = fakeLease();
+    const replacementSignals: Array<[number, string | number]> = [];
+    const kill = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid, signal = "SIGTERM") => {
+        replacementSignals.push([pid, signal]);
+        return true;
+      });
+    try {
+      const completion = runSupervisedChild(
+        ["/command"],
+        {},
+        lease,
+        supervisor,
+        new AbortController().signal,
+      );
+      await Promise.resolve();
+      child.emit("message", { type: "result", code: 0, signal: null });
+      await expect(completion).resolves.toBe(0);
+      expect(supervisor.retired).toBe(true);
+      expect(replacementSignals).toEqual([]);
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it("routes graceful abort through the connected supervisor", async () => {
+    const child = new FakeSupervisorChild();
+    const supervisor = fakeSupervisor(child);
+    const controller = new AbortController();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      const completion = runSupervisedChild(
+        ["/command"],
+        {},
+        fakeLease(),
+        supervisor,
+        controller.signal,
+      );
+      controller.abort(
+        new DeviceLeaseError(
+          "DEVICE_LEASE_INTERRUPTED",
+          "interrupted",
+          "SIGINT",
+        ),
+      );
+      expect(child.sent).toEqual([
+        {
+          type: "start",
+          command: ["/command"],
+          environment: { JETKVM_DEVICE_LEASE_PROOF_PATH: "/proof.json" },
+        },
+        { type: "stop", signal: "SIGINT" },
+      ]);
+      expect(kill).not.toHaveBeenCalled();
+      child.emit("message", { type: "result", code: 1, signal: "SIGINT" });
+      await expect(completion).resolves.toBe(1);
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it("waits for a healthy result without a maximum-duration timer", async () => {
+    vi.useFakeTimers();
+    const child = new FakeSupervisorChild();
+    const supervisor = fakeSupervisor(child);
+    const release = vi.fn(async () => undefined);
+    const lease = fakeLease(release);
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    let settled = false;
+    try {
+      const completion = runSupervisedChild(
+        ["/command"],
+        {},
+        lease,
+        supervisor,
+        new AbortController().signal,
+      ).finally(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0x80000000);
+      expect(settled).toBe(false);
+      expect(kill).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+
+      child.emit("message", { type: "result", code: 0, signal: null });
+      await expect(completion).resolves.toBe(0);
+    } finally {
+      kill.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves lease proof when its bound supervisor disappears", async () => {
+    const child = new FakeSupervisorChild();
+    const supervisor = fakeSupervisor(child);
+    const release = vi.fn(async () => undefined);
+    const lease = fakeLease(release);
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      const completion = runSupervisedChild(
+        ["/command"],
+        {},
+        lease,
+        supervisor,
+        new AbortController().signal,
+      );
+      await Promise.resolve();
+      child.emit("exit", 1, null);
+      await expect(completion).rejects.toThrow(
+        "Supervisor exited before command completion.",
+      );
+      await expect(lease.release()).rejects.toMatchObject({
+        code: "DEVICE_LEASE_STALE_UNPROVEN",
+      });
+      expect(release).not.toHaveBeenCalled();
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it("does not acknowledge start when the command executable is missing", async () => {
+    const groupPath = fileURLToPath(
+      new URL(
+        import.meta.url.endsWith(".ts")
+          ? "./deviceLeaseGroup.ts"
+          : "./deviceLeaseGroup.js",
+        import.meta.url,
+      ),
+    );
+    const group = spawn(process.execPath, [groupPath], {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    const messages: Array<{ type?: string; code?: number }> = [];
+    const result = Promise.withResolvers<{ type?: string; code?: number }>();
+    group.on("message", (message: { type?: string; code?: number }) => {
+      messages.push(message);
+      if (message.type === "ready") {
+        group.send({
+          type: "start",
+          command: [join(tmpdir(), `missing-${randomUUID()}`)],
+          environment: {},
+        });
+      } else if (message.type === "result") {
+        result.resolve(message);
+      }
+    });
+    try {
+      await expect(result.promise).resolves.toMatchObject({
+        type: "result",
+        code: 1,
+      });
+      expect(messages.map(({ type }) => type)).toEqual(["ready", "result"]);
+    } finally {
+      if (group.exitCode === null && group.signalCode === null) {
+        group.kill("SIGKILL");
+      }
+    }
+  });
   it("passes only a protected proof reference and scrubs all lease variables", () => {
     const environment = buildLeaseChildEnvironment(
       {
@@ -276,7 +524,7 @@ describe("device lease runner", () => {
     }
   });
 
-  it("drains the command group before release when the supervisor is killed", async () => {
+  it("leaves a killed supervisor lease fail-closed without signalling its live group", async () => {
     const isolatedTmp = await mkdtemp(
       join(tmpdir(), "jetkvm-supervisor-killed-"),
     );
@@ -314,14 +562,18 @@ describe("device lease runner", () => {
       }
       process.kill(record.supervisor_pid, "SIGKILL");
       await wrapperExit.promise;
-      await waitForProcessGroupExit(supervisorPgid, 100);
-      const replacement = await acquireDeviceLease({
-        directory: join(isolatedTmp, "jetkvm-device-leases"),
-        deviceKey,
-        ownerId: "owner-b",
-        runId: "run-b",
-      });
-      await replacement.release();
+      expect(() => process.kill(-supervisorPgid!, 0)).not.toThrow();
+      await expect(
+        removeStaleDeviceLease({ proof, confirmOwnerDead: async () => true }),
+      ).rejects.toMatchObject({ code: "DEVICE_LEASE_STALE_UNPROVEN" });
+      await expect(
+        acquireDeviceLease({
+          directory: join(isolatedTmp, "jetkvm-device-leases"),
+          deviceKey,
+          ownerId: "owner-b",
+          runId: "run-b",
+        }),
+      ).rejects.toMatchObject({ code: "DEVICE_LEASE_BUSY" });
     } finally {
       if (wrapper.exitCode === null && wrapper.signalCode === null) {
         wrapper.kill("SIGKILL");
@@ -332,6 +584,7 @@ describe("device lease runner", () => {
         } catch {
           // The killed supervisor's command group was drained.
         }
+        await waitForProcessGroupExit(supervisorPgid);
       }
       await rm(isolatedTmp, { recursive: true, force: true });
     }

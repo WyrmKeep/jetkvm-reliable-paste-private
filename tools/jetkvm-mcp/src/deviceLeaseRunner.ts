@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DeviceLeaseError,
@@ -11,6 +11,7 @@ import {
   type DeviceLease,
   type DeviceLeaseSupervisor,
 } from "./deviceLease.ts";
+import { assertSupportedNodeVersion } from "./runtimePolicy.ts";
 
 const PROOF_REFERENCE_ENV = "JETKVM_DEVICE_LEASE_PROOF_PATH";
 const DEFAULT_SUPERVISOR_READY_TIMEOUT_MS = 5_000;
@@ -22,16 +23,25 @@ const FORBIDDEN_RAW_PROOF_ENV = [
 ] as const;
 
 type SupervisorMessage = {
-  type: "booted" | "ready" | "bound" | "started" | "result";
+  type: "booted" | "ready" | "bound" | "result";
   pid?: number;
   pgid?: number;
   code?: number;
   signal?: NodeJS.Signals | null;
 };
 
-interface SupervisorHandle extends DeviceLeaseSupervisor {
+export interface SupervisorHandle extends DeviceLeaseSupervisor {
   child: ChildProcess;
   livenessDirectory: string;
+  bound: boolean;
+  retired: boolean;
+}
+
+class SupervisorLostError extends Error {
+  constructor(message = "Supervisor exited before command completion.") {
+    super(message);
+    this.name = "SupervisorLostError";
+  }
 }
 
 export function buildLeaseChildEnvironment(
@@ -64,6 +74,16 @@ function sendSupervisorMessage(child: ChildProcess, message: object): boolean {
   }
 }
 
+function preserveLeaseAfterSupervisorLoss(lease: DeviceLease): void {
+  const failure = new DeviceLeaseError(
+    "DEVICE_LEASE_STALE_UNPROVEN",
+    "The device lease supervisor disappeared before proving command-group death.",
+  );
+  lease.release = async () => {
+    throw failure;
+  };
+}
+
 function supervisorModuleUrl(): URL {
   return new URL(
     import.meta.url.endsWith(".ts")
@@ -76,19 +96,28 @@ function supervisorModuleUrl(): URL {
 async function waitForSupervisorMessage(
   child: ChildProcess,
   expectedType: SupervisorMessage["type"],
-  timeoutMs = DEFAULT_SUPERVISOR_READY_TIMEOUT_MS,
+  timeoutMs?: number,
 ): Promise<SupervisorMessage> {
   const completion = Promise.withResolvers<SupervisorMessage>();
-  const timeout = setTimeout(
-    () =>
-      completion.reject(new Error(`Supervisor did not reach ${expectedType}.`)),
-    timeoutMs,
-  );
+  const timeout =
+    timeoutMs === undefined
+      ? undefined
+      : setTimeout(
+          () =>
+            completion.reject(
+              new Error(`Supervisor did not reach ${expectedType}.`),
+            ),
+          timeoutMs,
+        );
   const onMessage = (message: SupervisorMessage) => {
     if (message.type === expectedType) completion.resolve(message);
   };
   const onExit = () =>
-    completion.reject(new Error("Supervisor exited before readiness."));
+    completion.reject(
+      expectedType === "result"
+        ? new SupervisorLostError()
+        : new Error("Supervisor exited before readiness."),
+    );
   child.on("message", onMessage);
   child.once("exit", onExit);
   try {
@@ -97,39 +126,6 @@ async function waitForSupervisorMessage(
     clearTimeout(timeout);
     child.off("message", onMessage);
     child.off("exit", onExit);
-  }
-}
-
-function processGroupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
-async function drainProcessGroup(
-  supervisor: SupervisorHandle,
-  signal: NodeJS.Signals = "SIGTERM",
-): Promise<void> {
-  if (!processGroupAlive(supervisor.pgid)) return;
-  try {
-    process.kill(-supervisor.pgid, signal);
-  } catch {
-    // Group liveness is checked below.
-  }
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (!processGroupAlive(supervisor.pgid)) return;
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 20));
-  }
-  try {
-    process.kill(-supervisor.pgid, "SIGKILL");
-  } catch {
-    // Group liveness is checked below.
-  }
-  while (processGroupAlive(supervisor.pgid)) {
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 20));
   }
 }
 
@@ -154,18 +150,31 @@ async function waitForChildExit(
 }
 
 async function stopSupervisor(supervisor: SupervisorHandle): Promise<void> {
+  if (supervisor.retired) return;
   if (
     supervisor.child.exitCode === null &&
     supervisor.child.signalCode === null
   ) {
+    const stopDelivered = sendSupervisorMessage(supervisor.child, {
+      type: "stop",
+      signal: "SIGTERM",
+    });
+    if (
+      stopDelivered &&
+      (await waitForChildExit(supervisor.child, SUPERVISOR_STOP_GRACE_MS))
+    ) {
+      return;
+    }
+    if (!stopDelivered && supervisor.bound) return;
     supervisor.child.kill("SIGTERM");
     if (!(await waitForChildExit(supervisor.child, SUPERVISOR_STOP_GRACE_MS))) {
       supervisor.child.kill("SIGKILL");
       await waitForChildExit(supervisor.child);
     }
   }
-  await drainProcessGroup(supervisor);
-  await rm(supervisor.livenessDirectory, { recursive: true, force: true });
+  if (!supervisor.bound) {
+    await rm(supervisor.livenessDirectory, { recursive: true, force: true });
+  }
 }
 
 async function startSupervisor(
@@ -211,8 +220,15 @@ async function startSupervisor(
       livenessId,
       livenessPath,
       livenessDirectory,
+      bound: false,
+      retired: false,
     };
-    const bound = waitForSupervisorMessage(child, "bound", readyTimeoutMs);
+    const bound = waitForSupervisorMessage(child, "bound", readyTimeoutMs).then(
+      (message) => {
+        (supervisor as SupervisorHandle).bound = true;
+        return message;
+      },
+    );
     const ready = waitForSupervisorMessage(child, "ready", readyTimeoutMs);
     if (
       !sendSupervisorMessage(child, {
@@ -245,33 +261,37 @@ async function startSupervisor(
   }
 }
 
-async function runSupervisedChild(
+export async function runSupervisedChild(
   command: readonly string[],
   environment: NodeJS.ProcessEnv,
   lease: DeviceLease,
   supervisor: SupervisorHandle,
   signal: AbortSignal,
 ): Promise<number> {
-  const result = waitForSupervisorMessage(
-    supervisor.child,
-    "result",
-    0x7fffffff,
-  );
+  // Listener installation is synchronous: a fast supervisor result cannot race
+  // command delivery, and healthy command execution has no duration timeout.
+  const result = waitForSupervisorMessage(supervisor.child, "result");
+  const deliveryFailure = Promise.withResolvers<never>();
   const onAbort = () => {
     const reason = signal.reason;
     const childSignal =
       reason instanceof DeviceLeaseError && reason.signal !== undefined
         ? reason.signal
         : "SIGTERM";
-    try {
-      process.kill(-supervisor.pgid, childSignal);
-    } catch {
-      // The supervised process group already exited.
+    if (
+      !sendSupervisorMessage(supervisor.child, {
+        type: "stop",
+        signal: childSignal,
+      })
+    ) {
+      deliveryFailure.reject(new SupervisorLostError());
     }
   };
   signal.addEventListener("abort", onAbort, { once: true });
   try {
-    if (
+    if (signal.aborted) {
+      onAbort();
+    } else if (
       !sendSupervisorMessage(supervisor.child, {
         type: "start",
         command,
@@ -281,20 +301,35 @@ async function runSupervisedChild(
         ),
       })
     ) {
-      throw new Error("Supervisor exited before command start.");
+      void result.catch(() => undefined);
+      throw new SupervisorLostError("Supervisor exited before command start.");
     }
-    const completed = await result;
+    const completed = await Promise.race([result, deliveryFailure.promise]);
+    supervisor.retired = true;
     return completed.code ?? signalExitCode(completed.signal ?? null);
+  } catch (error) {
+    if (error instanceof SupervisorLostError) {
+      preserveLeaseAfterSupervisorLoss(lease);
+    }
+    throw error;
   } finally {
     signal.removeEventListener("abort", onAbort);
-    await drainProcessGroup(supervisor);
   }
 }
 
 export async function runDeviceLeaseCli(
-  args = process.argv.slice(2),
-  environment: NodeJS.ProcessEnv = process.env,
+  args?: string[],
+  environment?: NodeJS.ProcessEnv,
+  nodeVersion?: string,
 ): Promise<number> {
+  try {
+    assertSupportedNodeVersion(nodeVersion);
+  } catch {
+    console.error("Unsupported Node.js runtime; expected >=22.23.1 <23.");
+    return 1;
+  }
+  args ??= process.argv.slice(2);
+  environment ??= process.env;
   const separator = args.indexOf("--");
   if (
     args[0] !== "--device-key" ||
@@ -369,14 +404,6 @@ export async function runDeviceLeaseCli(
   }
 }
 
-const entryPoint = process.argv[1];
-const invokedPath =
-  entryPoint === undefined
-    ? undefined
-    : await realpath(resolve(entryPoint)).catch(() => undefined);
-const modulePath = await realpath(fileURLToPath(import.meta.url)).catch(
-  () => undefined,
-);
-if (invokedPath !== undefined && invokedPath === modulePath) {
+if ((import.meta as ImportMeta & { readonly main?: boolean }).main === true) {
   process.exitCode = await runDeviceLeaseCli();
 }

@@ -140,7 +140,7 @@ async function defaultSpawn(executable, args, options) {
       cwd: options.cwd,
       env: options.environment,
       shell: false,
-      stdio: "inherit",
+      stdio: "ignore",
     });
     child.once("error", reject);
     child.once("close", (code, signal) => resolve({ code, signal }));
@@ -172,6 +172,44 @@ function normalizeError(error) {
   return error instanceof Error ? error : new Error(String(error));
 }
 
+function sensitiveEvidenceValues(configuredTarget, environment) {
+  const values = new Set();
+  const target = configuredTarget ?? environment?.[DEVICE_TEST_TARGET_ENV];
+  if (typeof target === "string" && target.length > 0) values.add(target);
+  for (const [name, value] of Object.entries(environment ?? {})) {
+    if (
+      typeof value === "string" &&
+      value.length > 0 &&
+      /(?:AUTH|CREDENTIAL|PASS|PROOF|SECRET|TOKEN)/iu.test(name)
+    ) {
+      values.add(value);
+    }
+  }
+  return [...values].sort((left, right) => right.length - left.length);
+}
+
+function redactEvidence(value, sensitiveValues) {
+  if (typeof value === "string") {
+    let redacted = value;
+    for (const sensitiveValue of sensitiveValues) {
+      redacted = redacted.replaceAll(sensitiveValue, "<redacted>");
+    }
+    return redacted;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactEvidence(entry, sensitiveValues));
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([name, entry]) => [
+        name,
+        redactEvidence(entry, sensitiveValues),
+      ]),
+    );
+  }
+  return value;
+}
+
 function assertValidChildResult(child) {
   if (
     child === null ||
@@ -201,6 +239,7 @@ export async function runDeviceGoTests({
     "tools/paste-harness/artifacts/task2-device-go-tests.json",
   ),
 } = {}) {
+  const sensitiveValues = sensitiveEvidenceValues(target, environment);
   const startedAt = new Date().toISOString();
   let command;
   let before;
@@ -245,15 +284,19 @@ export async function runDeviceGoTests({
     command:
       command === undefined
         ? undefined
-        : { executable: command.executable, args: [...command.args] },
+        : {
+            executable: TEST_EXECUTABLE,
+            args: ["-r", "<configured-target>", "--run-go-tests-only"],
+          },
     before,
     after,
     child,
     error: failure?.message,
   };
 
+  const persistedArtifact = redactEvidence(artifact, sensitiveValues);
   try {
-    await artifactWriter.writeAndFlush(artifactPath, artifact);
+    await artifactWriter.writeAndFlush(artifactPath, persistedArtifact);
   } catch (artifactError) {
     const flushFailure = normalizeError(artifactError);
     if (failure) {
@@ -266,18 +309,29 @@ export async function runDeviceGoTests({
   }
 
   if (failure) throw failure;
-  return artifact;
+  return persistedArtifact;
+}
+
+export async function runDeviceGoTestsCli({
+  run = runDeviceGoTests,
+  stdout = process.stdout,
+  stderr = process.stderr,
+} = {}) {
+  try {
+    await run();
+    stdout.write("Device Go tests passed; evidence artifact flushed.\n");
+    return 0;
+  } catch {
+    stderr.write(
+      "Device Go tests failed; evidence artifact flush attempted.\n",
+    );
+    return 1;
+  }
 }
 
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  try {
-    const result = await runDeviceGoTests();
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-  } catch (error) {
-    process.stderr.write(`${normalizeError(error).message}\n`);
-    process.exitCode = 1;
-  }
+  process.exitCode = await runDeviceGoTestsCli();
 }
