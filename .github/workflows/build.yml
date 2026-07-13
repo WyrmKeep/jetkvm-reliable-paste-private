@@ -39,9 +39,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.23.1"
           cache: "npm"
           cache-dependency-path: "**/package-lock.json"
+      - name: Assert Node.js version
+        run: test "$(node --version)" = "v22.23.1"
       - name: Set up Golang
         uses: actions/setup-go@v6
         with:
