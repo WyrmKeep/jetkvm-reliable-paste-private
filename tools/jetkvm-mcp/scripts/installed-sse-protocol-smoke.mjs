@@ -1,19 +1,26 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 
 import {
   prepareInstalledPackage,
   runInstalledModule,
+  withInstalledPackage,
 } from "./installed-smoke-support.mjs";
 
-const installed = await prepareInstalledPackage("sse");
-try {
-  const result = await runInstalledModule(
-    installed.consumer,
-    "sse-runner.mjs",
-    `import assert from "node:assert/strict";
+export async function runInstalledSseProtocolSmoke({
+  prepareInstalledPackageImpl = prepareInstalledPackage,
+  runInstalledModuleImpl = runInstalledModule,
+} = {}) {
+  return withInstalledPackage(
+    "sse",
+    async (installed) => {
+      const result = await runInstalledModuleImpl(
+        installed.consumer,
+        "sse-runner.mjs",
+        `import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import { activateIndependentLegacySseBearerCredential, DisposableSecret } from "@wyrmkeep/jetkvm-mcp/dist/browser/auth.js";
-import { parseLegacySsePolicy } from "@wyrmkeep/jetkvm-mcp/dist/config.js";
+import { LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES, LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL, LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION, LEGACY_SSE_MAX_HEADER_BYTES, LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES, LEGACY_SSE_QUEUED_RESPONSE_BUDGET_BYTES, LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_PRINCIPAL, LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_STREAM, MCP_TRANSPORT_MAX_REQUEST_BYTES, parseLegacySsePolicy } from "@wyrmkeep/jetkvm-mcp/dist/config.js";
 import { LegacySseAdapter } from "@wyrmkeep/jetkvm-mcp/dist/mcp/legacySse.js";
 import { handlers } from "./deterministic-handlers.mjs";
 const observedContexts = [];
@@ -46,6 +53,15 @@ const policy = parseLegacySsePolicy({
   allowedOrigins: [origin],
   bearerEnvironmentVariable: "JETKVM_INSTALLED_TEST_BEARER",
 });
+assert.equal(MCP_TRANSPORT_MAX_REQUEST_BYTES, 2_097_152);
+assert.equal(LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES, 67_108_864);
+assert.equal(LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL, 16_777_216);
+assert.equal(LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION, 4_194_304);
+assert.equal(LEGACY_SSE_MAX_HEADER_BYTES, 16_384);
+assert.equal(LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES, 14_680_064);
+assert.equal(LEGACY_SSE_QUEUED_RESPONSE_BUDGET_BYTES, 67_108_864);
+assert.equal(LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_PRINCIPAL, 16_777_216);
+assert.equal(LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_STREAM, 16_777_216);
 const transportClosed = Promise.withResolvers();
 const adapter = new LegacySseAdapter({
   handlerRegistry: auditedHandlers,
@@ -58,6 +74,15 @@ const adapter = new LegacySseAdapter({
 const server = adapter.createHttpServer();
 assert.equal(server.maxConnections, policy.maxConnections);
 assert.equal(server.headersTimeout, policy.requestHeaderTimeoutMs);
+assert.equal(server.maxHeaderSize, LEGACY_SSE_MAX_HEADER_BYTES);
+assert.equal(server.insecureHTTPParser, false);
+assert.deepEqual(
+  {
+    configurable: Object.getOwnPropertyDescriptor(server, "maxHeaderSize").configurable,
+    writable: Object.getOwnPropertyDescriptor(server, "maxHeaderSize").writable,
+  },
+  { configurable: false, writable: false },
+);
 assert.deepEqual(
   {
     configurable: Object.getOwnPropertyDescriptor(server, "maxConnections").configurable,
@@ -288,9 +313,14 @@ server.close(closed.resolve);
 await closed.promise;
 console.log("installed SSE protocol smoke ok");
 `,
+      );
+      assert.equal(result.stderr, "legacy SSE plaintext transport enabled\n");
+      assert.equal(result.stdout, "installed SSE protocol smoke ok\n");
+    },
+    { prepareInstalledPackageImpl },
   );
-  assert.equal(result.stderr, "");
-  assert.equal(result.stdout, "installed SSE protocol smoke ok\n");
-} finally {
-  await installed.cleanup();
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await runInstalledSseProtocolSmoke();
 }

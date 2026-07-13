@@ -847,7 +847,7 @@ const mutationErrorDetails = (
         });
       })
       .describe(
-        "Paste progress counts are exact and completed_action_count must not exceed dispatched_action_count.",
+        "Paste progress counts are exact normalized UTF-8 byte offsets and completed_action_count must not exceed dispatched_action_count.",
       );
   }
 
@@ -1360,10 +1360,10 @@ const displayCaptureResultShape = {
   display_generation: nonNegativeIntegerSchema,
   frame_id: opaqueIdSchema,
   captured_at: timestampSchema,
-  source_width: positiveDimensionSchema,
-  source_height: positiveDimensionSchema,
-  image_width: positiveDimensionSchema,
-  image_height: positiveDimensionSchema,
+  source_width: positiveDimensionSchema.max(1_920),
+  source_height: positiveDimensionSchema.max(1_080),
+  image_width: positiveDimensionSchema.max(1_920),
+  image_height: positiveDimensionSchema.max(1_080),
   rotation: z.union([
     z.literal(0),
     z.literal(90),
@@ -1374,8 +1374,8 @@ const displayCaptureResultShape = {
     .object({
       content_x: nonNegativeIntegerSchema,
       content_y: nonNegativeIntegerSchema,
-      content_width: positiveDimensionSchema,
-      content_height: positiveDimensionSchema,
+      content_width: positiveDimensionSchema.max(1_920),
+      content_height: positiveDimensionSchema.max(1_080),
     })
     .strict(),
   image: imageMetadataSchema,
@@ -1418,62 +1418,69 @@ export const sessionConnectResultSchema = mutationResult({
   permissions: z.array(permissionSchema),
   capabilities: capabilitySnapshotSchema,
 });
-export const sessionStatusResultSchema = z
-  .object({
-    state: z.enum([
-      "connecting",
-      "ready",
-      "degraded",
-      "drained",
-      "taken_over",
-      "closing",
-      "failed",
-    ]),
-    connection_epoch: nonNegativeIntegerSchema,
-    display_generation: nonNegativeIntegerSchema,
-    dispatch_generation: nonNegativeIntegerSchema,
-    browser_channel_generation: nonNegativeIntegerSchema.nullable(),
-    device_reachable: z.boolean().nullable(),
-    setup_state: z.enum(["complete", "required", "unknown"]),
-    auth_mode: z.enum(["password", "no_password", "unknown"]),
-    rpc_reachability: z.enum(["reachable", "unreachable", "unknown"]),
-    native_process: z.enum([
-      "available",
-      "unavailable",
-      "restarting",
-      "unknown",
-    ]),
-    web_rtc: z.enum([
-      "connecting",
-      "connected",
-      "disconnected",
-      "failed",
-      "unknown",
-    ]),
-    hid: z.enum(["ready", "not_ready", "unknown"]),
-    decoded_video: z.enum(["ready", "stalled", "unavailable", "unknown"]),
-    native_capture_facts: z
-      .object({
-        signal: observedFactSchema(signalValueSchema, z.literal("unknown")),
-        resolution: observedFactSchema(resolutionSchema.nullable(), z.null()),
-        fps: observedFactSchema(fpsValueSchema, z.null()),
-      })
-      .strict(),
-    active_mutation: z.boolean(),
-    fresh_capture_required: z.boolean(),
-    permissions: z.array(permissionSchema),
-    capabilities: capabilitySnapshotSchema,
-    blocked_reason: z.string().nullable(),
-    versions: z
-      .object({
-        server: z.string(),
-        protocol: z.string(),
-        ui_contract: z.string().nullable(),
-        firmware: z.string().nullable(),
-      })
-      .strict(),
-  })
-  .strict();
+const sessionStatusCommonShape = {
+  display_generation: nonNegativeIntegerSchema,
+  dispatch_generation: nonNegativeIntegerSchema,
+  device_reachable: z.boolean().nullable(),
+  setup_state: z.enum(["complete", "required", "unknown"]),
+  auth_mode: z.enum(["password", "no_password", "unknown"]),
+  rpc_reachability: z.enum(["reachable", "unreachable", "unknown"]),
+  native_process: z.enum(["available", "unavailable", "restarting", "unknown"]),
+  web_rtc: z.enum([
+    "connecting",
+    "connected",
+    "disconnected",
+    "failed",
+    "unknown",
+  ]),
+  hid: z.enum(["ready", "not_ready", "unknown"]),
+  decoded_video: z.enum(["ready", "stalled", "unavailable", "unknown"]),
+  native_capture_facts: z
+    .object({
+      signal: observedFactSchema(signalValueSchema, z.literal("unknown")),
+      resolution: observedFactSchema(resolutionSchema.nullable(), z.null()),
+      fps: observedFactSchema(fpsValueSchema, z.null()),
+    })
+    .strict(),
+  active_mutation: z.boolean(),
+  fresh_capture_required: z.boolean(),
+  permissions: z.array(permissionSchema),
+  capabilities: capabilitySnapshotSchema,
+  blocked_reason: z.string().nullable(),
+  versions: z
+    .object({
+      server: z.string(),
+      protocol: z.string(),
+      ui_contract: z.string().nullable(),
+      firmware: z.string().nullable(),
+    })
+    .strict(),
+} as const;
+export const sessionStatusResultSchema = z.union([
+  z
+    .object({
+      state: z.literal("ready"),
+      connection_epoch: positiveIntegerSchema,
+      browser_channel_generation: positiveIntegerSchema,
+      ...sessionStatusCommonShape,
+    })
+    .strict(),
+  z
+    .object({
+      state: z.enum([
+        "connecting",
+        "degraded",
+        "drained",
+        "taken_over",
+        "closing",
+        "failed",
+      ]),
+      connection_epoch: nonNegativeIntegerSchema,
+      browser_channel_generation: nonNegativeIntegerSchema.nullable(),
+      ...sessionStatusCommonShape,
+    })
+    .strict(),
+]);
 export const sessionReconnectResultSchema = z
   .object({
     ...definitiveMutationShape,

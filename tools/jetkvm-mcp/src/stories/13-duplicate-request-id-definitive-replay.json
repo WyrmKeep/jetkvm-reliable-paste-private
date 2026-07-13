@@ -33,7 +33,7 @@
     },
     {
       "id": "matrix-tool-fixtures",
-      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "description": "The harness serially retires each completed ledger case, provisions the next tool in a unique current session generation, and captures a tool-unique fresh observation before every input case that consumes one.",
       "required": true
     }
   ],
@@ -42,8 +42,8 @@
       "id": "repeat-ledger-key",
       "after_step": "initial-release",
       "boundary": "before_admission",
-      "action": "For every mutation tool, repeat the exact tool-scoped request and digest, then reuse the same request identifier with changed normalized input.",
-      "expected_effect": "The exact duplicate returns cached definitive evidence with zero write; changed input returns REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero write."
+      "action": "Within each explicitly prepared tool case, repeat the exact tool-scoped request and digest, then reuse the same request identifier with changed normalized input before retiring that case.",
+      "expected_effect": "The exact duplicate returns cached definitive evidence with zero write; changed input returns REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero write; no closed generation or consumed observation reaches the next tool."
     }
   ],
   "steps": [
@@ -87,6 +87,20 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second write."
     },
     {
+      "id": "prepare-duplicate-session-connect-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session",
+        "closed_generation": 7,
+        "next_tool": "jetkvm_session_connect",
+        "require_no_incumbent": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Generation 7 is authoritatively drained and retired, its reservations remain only as retained ledger evidence, and the fixture proves no incumbent before the connect case."
+    },
+    {
       "id": "duplicate-initial-jetkvm-session-connect",
       "tool": "jetkvm_session_connect",
       "call": "tools/call",
@@ -96,7 +110,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+      "expect": "A definitive applied result for opaque-session-connect generation 8 is stored under the tool-scoped request ledger key."
     },
     {
       "id": "duplicate-same-request-digest-jetkvm-session-connect",
@@ -123,26 +137,41 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     },
     {
+      "id": "prepare-duplicate-session-reconnect-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-connect",
+        "closed_generation": 8,
+        "next_session_id": "opaque-session-reconnect",
+        "next_generation": 9,
+        "next_tool": "jetkvm_session_reconnect",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The connect case is retired and opaque-session-reconnect generation 9 is proven current before the reconnect duplicate case."
+    },
+    {
       "id": "duplicate-initial-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-reconnect",
+        "session_generation": 9,
         "request_id": "opaque-duplicate-ledger-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+      "expect": "A definitive applied reconnect result publishing opaque-session-reconnect generation 10 is stored under the tool-scoped request ledger key."
     },
     {
       "id": "duplicate-same-request-digest-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-reconnect",
+        "session_generation": 9,
         "request_id": "opaque-duplicate-ledger-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -155,8 +184,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-reconnect",
+        "session_generation": 9,
         "request_id": "opaque-duplicate-ledger-session-reconnect",
         "takeover": false,
         "timeout_ms": 2000
@@ -165,13 +194,29 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     },
     {
+      "id": "prepare-duplicate-keyboard-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-reconnect",
+        "closed_generation": 10,
+        "next_session_id": "opaque-session-keyboard",
+        "next_generation": 11,
+        "next_tool": "jetkvm_input_keyboard",
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-duplicate-keyboard-11"
+      },
+      "timeout_ms": 1000,
+      "expect": "The reconnect successor is retired, opaque-session-keyboard generation 11 is proven current, and fresh opaque-observation-duplicate-keyboard-11 is captured before keyboard input."
+    },
+    {
       "id": "duplicate-initial-jetkvm-input-keyboard",
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-keyboard",
+        "session_id": "opaque-session-keyboard",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-duplicate-keyboard-11",
         "request_id": "opaque-duplicate-ledger-input-keyboard",
         "actions": [
           {
@@ -189,9 +234,9 @@
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-keyboard",
+        "session_id": "opaque-session-keyboard",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-duplicate-keyboard-11",
         "request_id": "opaque-duplicate-ledger-input-keyboard",
         "actions": [
           {
@@ -209,9 +254,9 @@
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-keyboard",
+        "session_id": "opaque-session-keyboard",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-duplicate-keyboard-11",
         "request_id": "opaque-duplicate-ledger-input-keyboard",
         "actions": [
           {
@@ -225,13 +270,29 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     },
     {
+      "id": "prepare-duplicate-mouse-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-keyboard",
+        "closed_generation": 11,
+        "next_session_id": "opaque-session-mouse",
+        "next_generation": 12,
+        "next_tool": "jetkvm_input_mouse",
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-duplicate-mouse-12"
+      },
+      "timeout_ms": 1000,
+      "expect": "The keyboard case is retired, opaque-session-mouse generation 12 is proven current, and fresh opaque-observation-duplicate-mouse-12 is captured before mouse input."
+    },
+    {
       "id": "duplicate-initial-jetkvm-input-mouse",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-mouse",
+        "session_id": "opaque-session-mouse",
+        "session_generation": 12,
+        "observation_id": "opaque-observation-duplicate-mouse-12",
         "request_id": "opaque-duplicate-ledger-input-mouse",
         "actions": [
           {
@@ -250,9 +311,9 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-mouse",
+        "session_id": "opaque-session-mouse",
+        "session_generation": 12,
+        "observation_id": "opaque-observation-duplicate-mouse-12",
         "request_id": "opaque-duplicate-ledger-input-mouse",
         "actions": [
           {
@@ -271,9 +332,9 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-mouse",
+        "session_id": "opaque-session-mouse",
+        "session_generation": 12,
+        "observation_id": "opaque-observation-duplicate-mouse-12",
         "request_id": "opaque-duplicate-ledger-input-mouse",
         "actions": [
           {
@@ -288,13 +349,29 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     },
     {
+      "id": "prepare-duplicate-paste-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-mouse",
+        "closed_generation": 12,
+        "next_session_id": "opaque-session-paste",
+        "next_generation": 13,
+        "next_tool": "jetkvm_input_paste",
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-duplicate-paste-13"
+      },
+      "timeout_ms": 1000,
+      "expect": "The mouse case is retired, opaque-session-paste generation 13 is proven current, and fresh opaque-observation-duplicate-paste-13 is captured before paste input."
+    },
+    {
       "id": "duplicate-initial-jetkvm-input-paste",
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-paste",
+        "session_id": "opaque-session-paste",
+        "session_generation": 13,
+        "observation_id": "opaque-observation-duplicate-paste-13",
         "request_id": "opaque-duplicate-ledger-input-paste",
         "text": "FixturePaste91",
         "timeout_ms": 1000
@@ -307,9 +384,9 @@
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-paste",
+        "session_id": "opaque-session-paste",
+        "session_generation": 13,
+        "observation_id": "opaque-observation-duplicate-paste-13",
         "request_id": "opaque-duplicate-ledger-input-paste",
         "text": "FixturePaste91",
         "timeout_ms": 1000
@@ -322,9 +399,9 @@
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-duplicate-ledger-input-paste",
+        "session_id": "opaque-session-paste",
+        "session_generation": 13,
+        "observation_id": "opaque-observation-duplicate-paste-13",
         "request_id": "opaque-duplicate-ledger-input-paste",
         "text": "FixturePaste91",
         "timeout_ms": 2000
@@ -333,12 +410,27 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     },
     {
+      "id": "prepare-duplicate-release-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-paste",
+        "closed_generation": 13,
+        "next_session_id": "opaque-session-release",
+        "next_generation": 14,
+        "next_tool": "jetkvm_input_release",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The paste producer and case are joined and retired, and opaque-session-release generation 14 is proven current before the release duplicate case."
+    },
+    {
       "id": "duplicate-initial-jetkvm-input-release",
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-release",
+        "session_generation": 14,
         "request_id": "opaque-duplicate-ledger-input-release",
         "timeout_ms": 1000
       },
@@ -350,8 +442,8 @@
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-release",
+        "session_generation": 14,
         "request_id": "opaque-duplicate-ledger-input-release",
         "timeout_ms": 1000
       },
@@ -363,8 +455,8 @@
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-release",
+        "session_generation": 14,
         "request_id": "opaque-duplicate-ledger-input-release",
         "timeout_ms": 2000
       },
@@ -372,26 +464,42 @@
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     },
     {
+      "id": "prepare-duplicate-power-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-release",
+        "closed_generation": 14,
+        "next_session_id": "opaque-session-power",
+        "next_generation": 15,
+        "next_tool": "jetkvm_power_control",
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "The drained release case is retired, the recorded ATX-observable baseline is restored and proven, and opaque-session-power generation 15 is current and serial-ready before power input."
+    },
+    {
       "id": "duplicate-initial-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-power",
+        "session_generation": 15,
         "request_id": "opaque-duplicate-ledger-power-control",
         "action": "press_power",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+      "expect": "A definitive applied/device_ack_only power-short result with the exact correlated 200 ms serial receipt is stored under the tool-scoped request ledger key."
     },
     {
       "id": "duplicate-same-request-digest-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-power",
+        "session_generation": 15,
         "request_id": "opaque-duplicate-ledger-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -404,26 +512,42 @@
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-power",
+        "session_generation": 15,
         "request_id": "opaque-duplicate-ledger-power-control",
         "action": "press_power",
         "timeout_ms": 2000
       },
       "timeout_ms": 2000,
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "restore-and-prove-after-duplicate-power",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session-power",
+        "session_generation": 15,
+        "binding_id": "opaque-atx-binding-generation-15",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the power duplicate case, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before story restoration."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:duplicate-same-request-digest",
-      "assertion": "A duplicate request and normalized digest returns the cached definitive result with zero second write."
+      "assertion": "Within every explicitly prepared current-generation case, an exact duplicate request and normalized digest returns the cached definitive result with zero second write; input cases use their case-owned fresh observation."
     },
     {
       "id": "assertion-2",
       "requirement": "branch:duplicate-changed-digest",
-      "assertion": "A reused request identifier with changed input returns REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second write."
+      "assertion": "Within the same prepared case, reusing the request identifier with changed normalized input returns REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second write; no closed generation or consumed observation reaches a later tool."
     }
   ],
   "evidence": [

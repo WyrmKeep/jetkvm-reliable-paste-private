@@ -11,6 +11,7 @@ import {
   type ServerOptions as HttpsServerOptions,
 } from "node:https";
 import { isIP, Socket, type AddressInfo } from "node:net";
+import process from "node:process";
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
@@ -25,9 +26,27 @@ import {
   type LegacySsePrincipal,
   type LegacySseRequestHeaders,
 } from "../browser/auth.js";
-import type { LegacySseSecurityPolicy } from "../config.js";
-import { createMcpServer, type HandlerRegistry } from "./server.js";
+import {
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES,
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL,
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION,
+  LEGACY_SSE_QUEUED_RESPONSE_BUDGET_BYTES,
+  LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_PRINCIPAL,
+  LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_STREAM,
+  LEGACY_SSE_MAX_HEADER_BYTES,
+  MCP_TRANSPORT_MAX_REQUEST_BYTES,
+  type LegacySseSecurityPolicy,
+} from "../config.js";
+import {
+  assertHandlerRegistry,
+  createMcpServer,
+  type HandlerRegistry,
+} from "./server.js";
 
+interface HttpParserBoundServer {
+  readonly maxHeaderSize: number;
+  readonly insecureHTTPParser: boolean;
+}
 type LegacySseNodeServer = HttpServer | HttpsServer;
 
 interface LegacySseServerConstructionProof {
@@ -43,16 +62,18 @@ const serverConstructionProofs = new WeakMap<
   LegacySseServerConstructionProof
 >();
 
-const MAXIMUM_BODY_BYTES = 1_048_576;
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FATAL_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const INITIAL_REQUEST_BODY_BUFFER_BYTES = 8_192;
+const EMPTY_REQUEST_BODY = Buffer.alloc(0);
 
 export interface LegacySseDiagnostic {
   readonly code:
     | "post_routed"
     | "transport_closed"
     | "post_transport_closed"
+    | "response_capacity_exceeded"
     | "unexpected_error";
 }
 
@@ -82,12 +103,20 @@ interface PostAdmission {
   released: boolean;
 }
 
+interface ActivePostLifecycle {
+  readonly request: IncomingMessage;
+  readonly response: ServerResponse;
+  readonly settled: Promise<void>;
+  readonly resolveSettled: () => void;
+}
+
 interface RoutingEntry {
   readonly principalId: string;
   readonly transport: SSEServerTransport;
   readonly server: McpServer;
   readonly admission: StreamAdmission;
   readonly cleanupWriter: () => void;
+  readonly abortController: AbortController;
   idleTimer: NodeJS.Timeout | undefined;
 }
 
@@ -95,12 +124,16 @@ interface AuthenticatedIncomingMessage extends IncomingMessage {
   auth?: AuthInfo;
 }
 
-type ReadBodyResult =
-  | { readonly kind: "ok"; readonly text: string }
-  | { readonly kind: "invalid_utf8" }
+type ReadBodyOutcome =
+  | { readonly kind: "ok"; readonly bytes: Buffer }
+  | { readonly kind: "capacity_exceeded" }
   | { readonly kind: "too_large" }
   | { readonly kind: "timeout" }
   | { readonly kind: "aborted" };
+
+type ReadBodyResult = ReadBodyOutcome & {
+  readonly release: () => void;
+};
 
 export class LegacySseAdapter {
   readonly #handlerRegistry: HandlerRegistry;
@@ -119,10 +152,17 @@ export class LegacySseAdapter {
   readonly #activePostsBySession = new Map<string, number>();
   readonly #postRateByPrincipal = new Map<string, number>();
   readonly #postRateBySession = new Map<string, number>();
+  readonly #activeRequestBodyBytesByPrincipal = new Map<string, number>();
+  readonly #activeRequestBodyBytesBySession = new Map<string, number>();
+  readonly #activePostLifecycles = new Set<ActivePostLifecycle>();
+  readonly #queuedResponseBytesByPrincipal = new Map<string, number>();
+  readonly #queuedResponseBytesByStream = new WeakMap<object, number>();
   #routeAttemptCount = 0;
   #routeAttemptWindowStartedAt: number | undefined;
   #activeStreams = 0;
   #activePosts = 0;
+  #activeRequestBodyBytes = 0;
+  #queuedResponseBytes = 0;
   #postRateCount = 0;
   #postRateWindowStartedAt: number | undefined;
   #lastStreamRateObservedAt: number | undefined;
@@ -131,10 +171,12 @@ export class LegacySseAdapter {
   #closed = false;
 
   constructor(options: LegacySseAdapterOptions) {
+    const handlerRegistry = options.handlerRegistry ?? {};
+    assertHandlerRegistry(handlerRegistry);
     if (options.bearerCredential !== undefined) {
       assertIndependentLegacySseBearerCredential(options.bearerCredential);
     }
-    this.#handlerRegistry = options.handlerRegistry ?? {};
+    this.#handlerRegistry = handlerRegistry;
     this.#securityPolicy = options.securityPolicy;
     this.#bearerCredential = options.bearerCredential;
     this.#authenticateBearer = options.authenticateBearer;
@@ -143,6 +185,19 @@ export class LegacySseAdapter {
       ((endpoint, response) => new SSEServerTransport(endpoint, response));
     this.#now = options.now ?? Date.now;
     this.#onDiagnostic = options.onDiagnostic;
+  }
+
+  #createPostLifecycle(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): ActivePostLifecycle {
+    const completion = Promise.withResolvers<void>();
+    return {
+      request,
+      response,
+      settled: completion.promise,
+      resolveSettled: completion.resolve,
+    };
   }
 
   createHttpServer(): HttpServer {
@@ -216,6 +271,10 @@ export class LegacySseAdapter {
       server.requestTimeout !==
         this.#securityPolicy.requestBodyTotalTimeoutMs ||
       server.keepAliveTimeout !== this.#securityPolicy.keepAliveTimeoutMs ||
+      (server as LegacySseNodeServer & HttpParserBoundServer).maxHeaderSize !==
+        LEGACY_SSE_MAX_HEADER_BYTES ||
+      (server as LegacySseNodeServer & HttpParserBoundServer)
+        .insecureHTTPParser !== false ||
       server.keepAliveTimeoutBuffer !== 0
     ) {
       throw new Error("Legacy SSE server construction proof is invalid");
@@ -256,6 +315,16 @@ export class LegacySseAdapter {
         value: this.#securityPolicy.maxConnections,
         writable: false,
       },
+      maxHeaderSize: {
+        configurable: false,
+        value: LEGACY_SSE_MAX_HEADER_BYTES,
+        writable: false,
+      },
+      insecureHTTPParser: {
+        configurable: false,
+        value: false,
+        writable: false,
+      },
     });
     this.#httpServer = server;
   }
@@ -267,6 +336,7 @@ export class LegacySseAdapter {
       requestTimeout: this.#securityPolicy.requestBodyTotalTimeoutMs,
       keepAliveTimeout: this.#securityPolicy.keepAliveTimeoutMs,
       keepAliveTimeoutBuffer: 0,
+      maxHeaderSize: LEGACY_SSE_MAX_HEADER_BYTES,
       insecureHTTPParser: false,
       requireHostHeader: true,
     };
@@ -288,6 +358,11 @@ export class LegacySseAdapter {
     });
     try {
       this.attachServer(server);
+      if (scheme === "http" && this.#securityPolicy.enabled) {
+        server.once("listening", () => {
+          process.stderr.write("legacy SSE plaintext transport enabled\n");
+        });
+      }
       return server;
     } catch (error) {
       serverConstructionProofs.delete(server);
@@ -423,29 +498,47 @@ export class LegacySseAdapter {
     let cleanupWriter: (() => void) | undefined;
     let transport: SSEServerTransport | undefined;
     let entry: RoutingEntry | undefined;
+    const streamBudgetKey = Object.freeze({});
+    const abortController = new AbortController();
     try {
       cleanupWriter = installBoundedSseWriter(
         response,
         this.#securityPolicy.maxResponseMessageBytes,
         this.#securityPolicy.maxResponseBufferedBytes,
         this.#securityPolicy.responseBackpressureTimeoutMs,
+        (byteLength) =>
+          this.#reserveQueuedResponseBytes(
+            principal.principalId,
+            streamBudgetKey,
+            byteLength,
+          ),
+        () => {
+          this.#onDiagnostic?.({ code: "response_capacity_exceeded" });
+        },
       );
       transport = this.#transportFactory("/messages", response);
       const sessionId = transport.sessionId;
       if (!SESSION_ID.test(sessionId) || this.#entries.has(sessionId)) {
         throw new Error("Legacy SSE transport returned an invalid routing ID");
       }
-      const server = createMcpServer(this.#handlerRegistry);
+      const server = createMcpServer(this.#handlerRegistry, {
+        admissionKey: this.#handlerRegistry,
+        lifetimeSignal: abortController.signal,
+      });
       entry = {
         principalId: principal.principalId,
         transport,
         server,
         admission,
         cleanupWriter,
+        abortController,
         idleTimer: undefined,
       };
       transport.onclose = () => {
-        this.#removeEntry(sessionId, entry!, "transport_closed");
+        if (!this.#removeEntry(sessionId, entry!, "transport_closed")) return;
+        void entry!.server.close().catch(() => {
+          this.#onDiagnostic?.({ code: "unexpected_error" });
+        });
       };
       this.#entries.set(sessionId, entry);
       this.#refreshIdleTimer(sessionId, entry);
@@ -486,6 +579,9 @@ export class LegacySseAdapter {
       sendPreBodyRejection(request, response, 429, "Too Many Requests");
       return;
     }
+    const lifecycle = this.#createPostLifecycle(request, response);
+    this.#activePostLifecycles.add(lifecycle);
+    let releaseBodyCapacity: (() => void) | undefined;
     try {
       const entry = this.#entries.get(sessionId);
       if (entry === undefined || entry.principalId !== principal.principalId) {
@@ -501,16 +597,37 @@ export class LegacySseAdapter {
       const declaredLength = parseContentLength(
         singleHeader(request, "content-length"),
       );
-      if (declaredLength !== undefined && declaredLength > MAXIMUM_BODY_BYTES) {
+      if (
+        declaredLength !== undefined &&
+        declaredLength > MCP_TRANSPORT_MAX_REQUEST_BYTES
+      ) {
         sendPreBodyRejection(request, response, 400, "Request body too large");
         return;
       }
 
       const body = await readBody(
         request,
+        declaredLength,
         this.#securityPolicy.requestBodyIdleTimeoutMs,
         this.#securityPolicy.requestBodyTotalTimeoutMs,
+        (byteLength) =>
+          this.#reserveRequestBodyBytes(
+            principal.principalId,
+            sessionId,
+            byteLength,
+          ),
+        (byteLength) =>
+          this.#releaseRequestBodyBytes(
+            principal.principalId,
+            sessionId,
+            byteLength,
+          ),
       );
+      releaseBodyCapacity = body.release;
+      if (body.kind === "capacity_exceeded") {
+        sendText(response, 429, "Too Many Requests", true);
+        return;
+      }
       if (body.kind === "too_large") {
         sendText(response, 400, "Request body too large", true);
         return;
@@ -520,19 +637,26 @@ export class LegacySseAdapter {
         return;
       }
       if (body.kind === "aborted") {
-        if (!response.headersSent && !response.writableEnded) {
+        if (
+          !response.headersSent &&
+          !response.writableEnded &&
+          !response.destroyed
+        ) {
           sendText(response, 400, "Bad Request", true);
         }
         return;
       }
-      if (body.kind === "invalid_utf8") {
+
+      let text: string;
+      try {
+        text = FATAL_UTF8_DECODER.decode(body.bytes);
+      } catch {
         sendText(response, 400, "Invalid UTF-8");
         return;
       }
-
       let parsed: unknown;
       try {
-        parsed = JSON.parse(body.text);
+        parsed = JSON.parse(text);
       } catch {
         sendText(response, 400, "Invalid JSON");
         return;
@@ -568,7 +692,10 @@ export class LegacySseAdapter {
         }
       }
     } finally {
+      releaseBodyCapacity?.();
       this.#releasePostAdmission(admission);
+      this.#activePostLifecycles.delete(lifecycle);
+      lifecycle.resolveSettled();
     }
   }
 
@@ -701,6 +828,99 @@ export class LegacySseAdapter {
     decrementCount(this.#activePostsBySession, admission.sessionId);
   }
 
+  #reserveRequestBodyBytes(
+    principalId: string,
+    sessionId: string,
+    byteLength: number,
+  ): boolean {
+    const principalBytes =
+      this.#activeRequestBodyBytesByPrincipal.get(principalId) ?? 0;
+    const sessionBytes =
+      this.#activeRequestBodyBytesBySession.get(sessionId) ?? 0;
+    if (
+      byteLength >
+        LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES -
+          this.#activeRequestBodyBytes ||
+      byteLength >
+        LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL - principalBytes ||
+      byteLength >
+        LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION - sessionBytes
+    ) {
+      return false;
+    }
+    this.#activeRequestBodyBytes += byteLength;
+    this.#activeRequestBodyBytesByPrincipal.set(
+      principalId,
+      principalBytes + byteLength,
+    );
+    this.#activeRequestBodyBytesBySession.set(
+      sessionId,
+      sessionBytes + byteLength,
+    );
+    return true;
+  }
+
+  #releaseRequestBodyBytes(
+    principalId: string,
+    sessionId: string,
+    byteLength: number,
+  ): void {
+    this.#activeRequestBodyBytes -= byteLength;
+    decrementBytes(
+      this.#activeRequestBodyBytesByPrincipal,
+      principalId,
+      byteLength,
+    );
+    decrementBytes(
+      this.#activeRequestBodyBytesBySession,
+      sessionId,
+      byteLength,
+    );
+  }
+
+  #reserveQueuedResponseBytes(
+    principalId: string,
+    streamKey: object,
+    byteLength: number,
+  ): (() => void) | undefined {
+    const principalBytes =
+      this.#queuedResponseBytesByPrincipal.get(principalId) ?? 0;
+    const streamBytes = this.#queuedResponseBytesByStream.get(streamKey) ?? 0;
+    if (
+      byteLength >
+        LEGACY_SSE_QUEUED_RESPONSE_BUDGET_BYTES - this.#queuedResponseBytes ||
+      byteLength >
+        LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_PRINCIPAL - principalBytes ||
+      byteLength > LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_STREAM - streamBytes
+    ) {
+      return undefined;
+    }
+    this.#queuedResponseBytes += byteLength;
+    this.#queuedResponseBytesByPrincipal.set(
+      principalId,
+      principalBytes + byteLength,
+    );
+    this.#queuedResponseBytesByStream.set(streamKey, streamBytes + byteLength);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#queuedResponseBytes -= byteLength;
+      decrementBytes(
+        this.#queuedResponseBytesByPrincipal,
+        principalId,
+        byteLength,
+      );
+      const remainingStreamBytes =
+        (this.#queuedResponseBytesByStream.get(streamKey) ?? 0) - byteLength;
+      if (remainingStreamBytes === 0) {
+        this.#queuedResponseBytesByStream.delete(streamKey);
+      } else {
+        this.#queuedResponseBytesByStream.set(streamKey, remainingStreamBytes);
+      }
+    };
+  }
+
   #refreshIdleTimer(sessionId: string, entry: RoutingEntry): void {
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
     entry.idleTimer = setTimeout(() => {
@@ -729,6 +949,7 @@ export class LegacySseAdapter {
       clearTimeout(entry.idleTimer);
       entry.idleTimer = undefined;
     }
+    entry.abortController.abort();
     entry.cleanupWriter();
     this.#releaseAdmission(entry.admission);
     if (diagnostic !== undefined) this.#onDiagnostic?.({ code: diagnostic });
@@ -739,8 +960,14 @@ export class LegacySseAdapter {
     if (this.#closed) return;
     this.#closed = true;
     const entries = [...this.#entries.entries()];
+    const activePosts = [...this.#activePostLifecycles];
     for (const [sessionId, entry] of entries) {
       this.#removeEntry(sessionId, entry);
+    }
+    for (const lifecycle of activePosts) {
+      lifecycle.request.pause();
+      lifecycle.request.destroy();
+      lifecycle.response.destroy();
     }
     this.#routeAttemptCount = 0;
     this.#routeAttemptWindowStartedAt = undefined;
@@ -751,15 +978,27 @@ export class LegacySseAdapter {
     this.#postRateWindowStartedAt = undefined;
     this.#postRateByPrincipal.clear();
     this.#postRateBySession.clear();
-    await Promise.all(
-      entries.map(async ([, entry]) => {
+    await Promise.all([
+      ...entries.map(async ([, entry]) => {
         try {
           await entry.server.close();
         } catch {
           this.#onDiagnostic?.({ code: "unexpected_error" });
         }
       }),
-    );
+      ...activePosts.map(({ settled }) => settled),
+    ]);
+    if (
+      this.#activePosts !== 0 ||
+      this.#activePostLifecycles.size !== 0 ||
+      this.#activeRequestBodyBytes !== 0 ||
+      this.#activeRequestBodyBytesByPrincipal.size !== 0 ||
+      this.#activeRequestBodyBytesBySession.size !== 0 ||
+      this.#queuedResponseBytes !== 0 ||
+      this.#queuedResponseBytesByPrincipal.size !== 0
+    ) {
+      throw new Error("Legacy SSE adapter cleanup invariant failed");
+    }
   }
 }
 
@@ -854,6 +1093,7 @@ function requestMatchesListenerPolicy(
     !isImmutableKeepAliveTimeoutBuffer(server) ||
     server.maxHeadersCount !== 64 ||
     server.maxRequestsPerSocket !== 1_000 ||
+    !hasImmutableHttpParserBounds(server) ||
     server.maxConnections !== policy.maxConnections ||
     !isImmutableConnectionCap(server, policy.maxConnections)
   ) {
@@ -894,17 +1134,28 @@ function pruneTimestamps(events: number[], cutoff: number): void {
   while (events.length > 0 && events[0]! <= cutoff) events.shift();
 }
 
+const NOOP_BYTE_RELEASE = (): void => undefined;
+const RESERVE_WITHOUT_SHARED_LIMIT = (): (() => void) => NOOP_BYTE_RELEASE;
+
 export function installBoundedSseWriter(
   response: ServerResponse,
   maxMessageBytes: number,
   maxBufferedBytes: number,
   backpressureTimeoutMs: number,
+  reserveQueuedBytes: (
+    byteLength: number,
+  ) => (() => void) | undefined = RESERVE_WITHOUT_SHARED_LIMIT,
+  onCapacityExceeded: () => void = NOOP_BYTE_RELEASE,
 ): () => void {
   const originalWrite = response.write;
+  const pendingReleases = new Set<() => void>();
   let backpressureTimer: NodeJS.Timeout | undefined;
   let cleaned = false;
   let failed = false;
 
+  const releasePending = (): void => {
+    for (const release of pendingReleases) release();
+  };
   const clearBackpressureTimer = (): void => {
     if (backpressureTimer === undefined) return;
     clearTimeout(backpressureTimer);
@@ -916,20 +1167,31 @@ export function installBoundedSseWriter(
     clearBackpressureTimer();
     response.destroy();
   };
+  const failCapacity = (): void => {
+    if (failed) return;
+    try {
+      onCapacityExceeded();
+    } finally {
+      failClosed();
+    }
+  };
   const armBackpressureTimer = (): void => {
     if (backpressureTimer !== undefined || failed) return;
     backpressureTimer = setTimeout(failClosed, backpressureTimeoutMs);
     backpressureTimer.unref();
   };
   const onDrain = (): void => {
+    releasePending();
     clearBackpressureTimer();
   };
   const cleanup = (): void => {
     if (cleaned) return;
     cleaned = true;
     clearBackpressureTimer();
+    releasePending();
     response.off("drain", onDrain);
     response.off("close", cleanup);
+    response.off("error", cleanup);
     if (response.write === guardedWrite) response.write = originalWrite;
   };
   const guardedWrite = ((
@@ -942,14 +1204,48 @@ export function installBoundedSseWriter(
       byteLength > maxMessageBytes ||
       response.writableLength + byteLength > maxBufferedBytes
     ) {
-      failClosed();
+      failCapacity();
       return false;
     }
-    const accepted = Reflect.apply(originalWrite, response, [
-      chunk,
-      encodingOrCallback,
-      callback,
-    ]) as boolean;
+    const sharedRelease = reserveQueuedBytes(byteLength);
+    if (sharedRelease === undefined) {
+      failCapacity();
+      return false;
+    }
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      pendingReleases.delete(release);
+      sharedRelease();
+    };
+    pendingReleases.add(release);
+    const originalCallback =
+      typeof encodingOrCallback === "function"
+        ? (encodingOrCallback as (error?: Error | null) => void)
+        : typeof callback === "function"
+          ? (callback as (error?: Error | null) => void)
+          : undefined;
+    const completed = (error?: Error | null): void => {
+      release();
+      originalCallback?.call(response, error);
+    };
+    const writeArguments =
+      typeof encodingOrCallback === "string"
+        ? [chunk, encodingOrCallback, completed]
+        : [chunk, completed];
+
+    let accepted: boolean;
+    try {
+      accepted = Reflect.apply(
+        originalWrite,
+        response,
+        writeArguments,
+      ) as boolean;
+    } catch (error) {
+      release();
+      throw error;
+    }
     if (!accepted) armBackpressureTimer();
     return accepted;
   }) as typeof response.write;
@@ -957,6 +1253,7 @@ export function installBoundedSseWriter(
   response.write = guardedWrite;
   response.on("drain", onDrain);
   response.on("close", cleanup);
+  response.on("error", cleanup);
   return cleanup;
 }
 
@@ -985,6 +1282,19 @@ function decrementCount(counts: Map<string, number>, key: string): void {
   }
 }
 
+function decrementBytes(
+  counts: Map<string, number>,
+  key: string,
+  byteLength: number,
+): void {
+  const remaining = (counts.get(key) ?? 0) - byteLength;
+  if (remaining === 0) {
+    counts.delete(key);
+  } else {
+    counts.set(key, remaining);
+  }
+}
+
 function isImmutableConnectionCap(
   server: LegacySseNodeServer,
   expected: number,
@@ -1008,6 +1318,25 @@ function isImmutableKeepAliveTimeoutBuffer(
     descriptor?.configurable === false &&
     descriptor.writable === false &&
     descriptor.value === 0
+  );
+}
+
+function hasImmutableHttpParserBounds(server: LegacySseNodeServer): boolean {
+  const maxHeaderSize = Object.getOwnPropertyDescriptor(
+    server,
+    "maxHeaderSize",
+  );
+  const insecureHttpParser = Object.getOwnPropertyDescriptor(
+    server,
+    "insecureHTTPParser",
+  );
+  return (
+    maxHeaderSize?.configurable === false &&
+    maxHeaderSize.writable === false &&
+    maxHeaderSize.value === LEGACY_SSE_MAX_HEADER_BYTES &&
+    insecureHttpParser?.configurable === false &&
+    insecureHttpParser.writable === false &&
+    insecureHttpParser.value === false
   );
 }
 
@@ -1069,19 +1398,34 @@ function parseContentLength(value: string | undefined): number | undefined {
 
 async function readBody(
   request: IncomingMessage,
+  declaredLength: number | undefined,
   idleTimeoutMs: number,
   totalTimeoutMs: number,
+  reserveCapacity: (byteLength: number) => boolean,
+  releaseCapacity: (byteLength: number) => void,
 ): Promise<ReadBodyResult> {
   const completion = Promise.withResolvers<ReadBodyResult>();
-  const chunks: Buffer[] = [];
+  const maximumBodyBytes = declaredLength ?? MCP_TRANSPORT_MAX_REQUEST_BYTES;
+  let bytes: Buffer | undefined;
   let byteLength = 0;
+  let reservedBytes = 0;
   let idleTimer: NodeJS.Timeout | undefined;
   let totalTimer: NodeJS.Timeout | undefined;
   let settled = false;
+  let released = false;
 
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    bytes?.fill(0);
+    bytes = undefined;
+    if (reservedBytes === 0) return;
+    releaseCapacity(reservedBytes);
+    reservedBytes = 0;
+  };
   const cleanup = (): void => {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
-    if (totalTimer !== undefined) clearTimeout(totalTimer);
+    clearTimeout(idleTimer);
+    clearTimeout(totalTimer);
     idleTimer = undefined;
     totalTimer = undefined;
     request.off("data", onData);
@@ -1089,36 +1433,65 @@ async function readBody(
     request.off("aborted", onAborted);
     request.off("error", onAborted);
   };
-  const settle = (result: ReadBodyResult): void => {
+  const settle = (result: ReadBodyOutcome): void => {
     if (settled) return;
     settled = true;
     cleanup();
-    completion.resolve(result);
+    if (result.kind !== "ok") request.pause();
+    completion.resolve({ ...result, release });
   };
   const armIdleTimer = (): void => {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    clearTimeout(idleTimer);
     idleTimer = setTimeout(() => settle({ kind: "timeout" }), idleTimeoutMs);
     idleTimer.unref();
   };
+  const ensureCapacity = (requiredBytes: number): boolean => {
+    if (requiredBytes <= (bytes?.byteLength ?? 0)) return true;
+
+    let nextCapacity = Math.min(
+      INITIAL_REQUEST_BODY_BUFFER_BYTES,
+      maximumBodyBytes,
+    );
+    while (nextCapacity < requiredBytes) {
+      nextCapacity = Math.min(nextCapacity * 2, maximumBodyBytes);
+    }
+    if (!reserveCapacity(nextCapacity)) return false;
+
+    try {
+      const next = Buffer.allocUnsafe(nextCapacity);
+      bytes?.copy(next, 0, 0, byteLength);
+      bytes?.fill(0);
+      if (reservedBytes !== 0) releaseCapacity(reservedBytes);
+      bytes = next;
+      reservedBytes = nextCapacity;
+      return true;
+    } catch (error) {
+      releaseCapacity(nextCapacity);
+      throw error;
+    }
+  };
   function onData(chunk: Buffer | string): void {
     armIdleTimer();
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    byteLength += bytes.byteLength;
-    if (byteLength > MAXIMUM_BODY_BYTES) {
+    const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (incoming.byteLength > maximumBodyBytes - byteLength) {
       settle({ kind: "too_large" });
       return;
     }
-    chunks.push(bytes);
-  }
-  function onEnd(): void {
-    let text: string;
-    try {
-      text = FATAL_UTF8_DECODER.decode(Buffer.concat(chunks, byteLength));
-    } catch {
-      settle({ kind: "invalid_utf8" });
+    if (!ensureCapacity(byteLength + incoming.byteLength)) {
+      settle({ kind: "capacity_exceeded" });
       return;
     }
-    settle({ kind: "ok", text });
+    incoming.copy(bytes!, byteLength);
+    byteLength += incoming.byteLength;
+  }
+  function onEnd(): void {
+    settle({
+      kind: "ok",
+      bytes:
+        bytes === undefined
+          ? EMPTY_REQUEST_BODY
+          : bytes.subarray(0, byteLength),
+    });
   }
   function onAborted(): void {
     settle({ kind: "aborted" });

@@ -884,6 +884,206 @@ describe("DeviceSessionClient", () => {
     ]);
   });
 
+  it("rejects a same-valued but distinct Browser-owned adapter on connect", async () => {
+    const browser = new FakeBrowserPlane();
+    const originalConnect = browser.connect.bind(browser);
+    browser.connect = async (ref, deadline) => {
+      const connection = await originalConnect(ref, deadline);
+      return {
+        ...connection,
+        deviceRpc: {
+          binding: { ...connection.deviceRpc.binding },
+        } as DeviceRpcAdapter,
+      };
+    };
+    let capabilityProbes = 0;
+    const { client } = makeClient({
+      browser,
+      capabilitiesForConnection: async () => {
+        capabilityProbes += 1;
+        return ALL_CAPABILITIES;
+      },
+    });
+
+    const error = await expectClientError(
+      client.connect("principal-a", connectInput()),
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+    );
+
+    expect(error.outcome).toBe("unknown");
+    expect(capabilityProbes).toBe(0);
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+    ]);
+  });
+
+  it("rejects a same-valued but distinct adapter after reconnect invalidates the old bundle", async () => {
+    const browser = new FakeBrowserPlane();
+    let capabilityProbes = 0;
+    const { client } = makeClient({
+      browser,
+      capabilitiesForConnection: async () => {
+        capabilityProbes += 1;
+        return ALL_CAPABILITIES;
+      },
+    });
+    const connected = await client.connect("principal-a", connectInput());
+    const oldAdapter = browser.deviceRpc;
+    const originalReconnect = browser.reconnect.bind(browser);
+    browser.reconnect = async (ref, deadline) => {
+      const connection = await originalReconnect(ref, deadline);
+      return {
+        ...connection,
+        deviceRpc: {
+          binding: { ...connection.deviceRpc.binding },
+        } as DeviceRpcAdapter,
+      };
+    };
+
+    const error = await expectClientError(
+      client.reconnect("principal-a", reconnectInput(connected.ref)),
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+    );
+
+    expect(error.outcome).toBe("unknown");
+    expect(capabilityProbes).toBe(1);
+    expect(browser.deviceRpc).not.toBe(oldAdapter);
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+      "reconnect",
+      "close",
+    ]);
+    await expectClientError(
+      Promise.resolve().then(() =>
+        client.resolveSession("principal-a", {
+          ...connected.ref,
+          sessionGeneration: 2,
+        }),
+      ),
+      "SESSION_DRAINED",
+    );
+  });
+
+  it("rejects connection evidence mutated coherently during capability qualification", async () => {
+    const browser = new FakeBrowserPlane();
+    const originalConnect = browser.connect.bind(browser);
+    let opened: BrowserConnection | undefined;
+    browser.connect = async (ref, deadline) => {
+      opened = await originalConnect(ref, deadline);
+      return opened;
+    };
+    const probeStarted = Promise.withResolvers<void>();
+    const capabilities = Promise.withResolvers<CapabilitySnapshot>();
+    const { client } = makeClient({
+      browser,
+      capabilitiesForConnection: async () => {
+        probeStarted.resolve();
+        return capabilities.promise;
+      },
+    });
+    const pending = client.connect("principal-a", connectInput());
+    await probeStarted.promise;
+    if (opened === undefined) {
+      throw new Error("expected the browser connection to be captured");
+    }
+    const replacementBinding = {
+      ...opened.binding,
+      connectionEpoch: opened.connectionEpoch + 1,
+    };
+    Object.assign(opened, {
+      binding: replacementBinding,
+      connectionEpoch: replacementBinding.connectionEpoch,
+    });
+    Object.assign(opened.deviceRpc, { binding: replacementBinding });
+    capabilities.resolve(ALL_CAPABILITIES);
+
+    const error = await expectClientError(
+      pending,
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+    );
+
+    expect(error.outcome).toBe("unknown");
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+    ]);
+  });
+
+  it("rejects Browser-owned adapter replacement during reconnect qualification", async () => {
+    const browser = new FakeBrowserPlane();
+    const secondProbeStarted = Promise.withResolvers<void>();
+    const secondCapabilities = Promise.withResolvers<CapabilitySnapshot>();
+    let capabilityProbes = 0;
+    const { client } = makeClient({
+      browser,
+      capabilitiesForConnection: async () => {
+        capabilityProbes += 1;
+        if (capabilityProbes === 1) {
+          return ALL_CAPABILITIES;
+        }
+        secondProbeStarted.resolve();
+        return secondCapabilities.promise;
+      },
+    });
+    const connected = await client.connect("principal-a", connectInput());
+    const pending = client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+    await secondProbeStarted.promise;
+    browser.deviceRpc = {
+      binding: { ...browser.deviceRpc.binding },
+    } as DeviceRpcAdapter;
+    secondCapabilities.resolve(ALL_CAPABILITIES);
+
+    const error = await expectClientError(
+      pending,
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+    );
+
+    expect(error.outcome).toBe("unknown");
+    expect(capabilityProbes).toBe(2);
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+      "reconnect",
+      "close",
+    ]);
+    await expectClientError(
+      Promise.resolve().then(() =>
+        client.resolveSession("principal-a", {
+          ...connected.ref,
+          sessionGeneration: 2,
+        }),
+      ),
+      "SESSION_DRAINED",
+    );
+  });
+
+  it("accepts one synchronized Browser-owned replacement adapter on reconnect", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({ browser });
+    const connected = await client.connect("principal-a", connectInput());
+    const oldAdapter = browser.deviceRpc;
+
+    const reconnected = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+
+    expect(browser.deviceRpc).not.toBe(oldAdapter);
+    expect(reconnected.result).toMatchObject({
+      outcome: "applied",
+      new_session_generation: 2,
+      connection_epoch: 11,
+    });
+    expect(client.resolveSession("principal-a", reconnected.ref).state).toBe(
+      "ready",
+    );
+  });
+
   it.each(["connectionEpoch", "browserChannelGeneration"] as const)(
     "rejects a zero %s before publishing the connection",
     async (field) => {
@@ -1236,6 +1436,55 @@ describe("DeviceSessionClient", () => {
 
     expect(error.outcome).toBe("not_sent");
     expect(browser.events).toHaveLength(0);
+  });
+
+  it.each(["request id", "-request", `r${"a".repeat(128)}`])(
+    "rejects a noncanonical connect request ID %s before ledger or plane admission",
+    async (requestId) => {
+      const requestLedger = new RequestLedger({
+        ttlMs: 60_000,
+        maxEntries: 10,
+      });
+      const { client, browser } = makeClient({ requestLedger });
+
+      await expect(
+        client.connect("principal-a", connectInput({ request_id: requestId })),
+      ).rejects.toThrow(/request ID must be canonical/i);
+      expect(requestLedger.size).toBe(0);
+      expect(browser.events).toHaveLength(0);
+    },
+  );
+
+  it("rejects noncanonical reconnect session and request IDs before ledger or plane admission", async () => {
+    const { client, browser } = makeClient();
+    const connected = await client.connect("principal-a", connectInput());
+    const callsBeforeInvalid = browser.events.length;
+
+    await expect(
+      client.reconnect(
+        "principal-a",
+        reconnectInput(connected.ref, { request_id: "request id" }),
+      ),
+    ).rejects.toThrow(/request ID must be canonical/i);
+    await expect(
+      client.reconnect("principal-a", {
+        ...reconnectInput(connected.ref, { request_id: "reconnect-request-2" }),
+        session_id: "-session",
+      }),
+    ).rejects.toThrow(/session ID must be canonical/i);
+    expect(browser.events).toHaveLength(callsBeforeInvalid);
+  });
+
+  it("accepts the 128-character connect request ID boundary", async () => {
+    const requestId = `r${"a".repeat(127)}`;
+    const { client } = makeClient();
+
+    const connected = await client.connect(
+      "principal-a",
+      connectInput({ request_id: requestId }),
+    );
+
+    expect(connected.result.request_id).toBe(requestId);
   });
 
   it("enforces timeout bounds before plane admission", async () => {

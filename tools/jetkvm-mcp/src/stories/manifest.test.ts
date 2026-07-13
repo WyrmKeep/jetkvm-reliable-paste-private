@@ -658,6 +658,30 @@ describe("every-handler behavior matrix", () => {
     }
   });
 
+  it("links keyboard partial dispatch to its faulted two-action call", async () => {
+    const row = TOOL_BEHAVIOR_MATRIX.find(
+      ({ requirement }) =>
+        requirement === "branch:partial-multi-event-dispatch",
+    )!;
+    const cell = row.cells.jetkvm_input_keyboard;
+    expect(cell.applicability).toBe("applicable");
+    if (cell.applicability !== "applicable") {
+      return;
+    }
+    expect(cell.step_id).toBe("send-partial-physical-keys");
+    expect(cell.fault_id).toBe("interrupt-key-sequence");
+
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const story = stories[6]!;
+    const fault = story.fault_script.find(
+      ({ id }) => id === "interrupt-key-sequence",
+    )!;
+    fault.after_step = "send-partial-physical-keys";
+    expect(() => validateAcceptanceStories(stories)).toThrow(
+      /partial multi-event.*armed immediately before.*linked call/i,
+    );
+  });
+
   it("rejects a deadline or cancellation fault armed after its linked call", async () => {
     for (const requirement of [
       "branch:deadline-before-admission",
@@ -915,10 +939,49 @@ describe("reviewed story branch execution", () => {
     );
   });
 
+  it("rejects fixture recovery state that cannot reach the next tool call", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const staleGeneration = structuredClone(stories);
+    const staleRecovery = staleGeneration[12]!.steps.find(
+      ({ id }) => id === "prepare-duplicate-keyboard-case",
+    )!;
+    staleRecovery.input.next_generation = 10;
+    expect(() => validateAcceptanceStories(staleGeneration)).toThrow(
+      /fixture recovery.*next tool.*generation/i,
+    );
+
+    const staleObservation = structuredClone(stories);
+    const observationRecovery = staleObservation[12]!.steps.find(
+      ({ id }) => id === "prepare-duplicate-keyboard-case",
+    )!;
+    observationRecovery.input.next_observation_id =
+      "opaque-observation-from-closed-generation";
+    expect(() => validateAcceptanceStories(staleObservation)).toThrow(
+      /fixture recovery.*next tool.*observation/i,
+    );
+
+    const missingRecovery = structuredClone(stories);
+    missingRecovery[12]!.steps = missingRecovery[12]!.steps.filter(
+      ({ id }) => id !== "prepare-duplicate-session-connect-case",
+    );
+    expect(() => validateAcceptanceStories(missingRecovery)).toThrow(
+      /drained or replaced session.*fixture recovery/i,
+    );
+
+    const missingCapture = structuredClone(stories);
+    missingCapture[20]!.steps = missingCapture[20]!.steps.filter(
+      ({ id }) => id !== "capture-shared-keyboard-observation",
+    );
+    expect(() => validateAcceptanceStories(missingCapture)).toThrow(
+      /observation-consuming call.*immediate fresh capture/i,
+    );
+  });
+
   it("rejects ATX cases without inter-case baseline restoration and reproof", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     for (const [storyIndex, proofId] of [
       [9, "restore-and-prove-hold-power-baseline"],
+      [20, "restore-and-prove-after-shared-power"],
       [21, "restore-and-prove-prewrite-baseline"],
     ] as const) {
       const malformed = structuredClone(stories);
@@ -930,6 +993,19 @@ describe("reviewed story branch execution", () => {
         /ATX.*baseline.*(?:restore|reproof)|inter-case/i,
       );
     }
+  });
+
+  it("requires exact Story 21 power outcomes before ATX recovery", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const malformed = structuredClone(stories);
+    const power = malformed[20]!.steps.find(
+      ({ id }) =>
+        id === "shared-device-rpc-adapter-binding-jetkvm-power-control",
+    )!;
+    power.expect = "The power call succeeds.";
+    expect(() => validateAcceptanceStories(malformed)).toThrow(
+      /power call.*exact outcome.*verification/i,
+    );
   });
 
   it("rejects ATX binding-loss cases without exact duplicate and recovery order", async () => {

@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 import { PHYSICAL_KEYS } from "../../domain.js";
+import { OPAQUE_ID_PATTERN } from "../../device/DeviceRpcAdapter.js";
 import type { RequiredNextStep } from "../../errors.js";
 
 const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
@@ -23,38 +24,46 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
+const MAX_JSON_INTEGER = Number.MAX_SAFE_INTEGER;
+const nonNegativeIntegerSchema = z.number().int().min(0).max(MAX_JSON_INTEGER);
+const positiveIntegerSchema = z.number().int().min(1).max(MAX_JSON_INTEGER);
+const opaqueIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
+
 const sessionRefSchema = z
   .object({
-    sessionId: z.string().min(1).max(256),
-    sessionGeneration: z.number().int().positive(),
+    sessionId: opaqueIdSchema,
+    sessionGeneration: positiveIntegerSchema,
   })
   .strict();
 const bindingSchema = sessionRefSchema
   .extend({
-    connectionEpoch: z.number().int().positive(),
-    browserChannelGeneration: z.number().int().positive(),
+    connectionEpoch: positiveIntegerSchema,
+    browserChannelGeneration: positiveIntegerSchema,
   })
   .strict();
 const refRequestSchema = z.object({ ref: sessionRefSchema }).strict();
 const bindingRequestSchema = z.object({ ref: bindingSchema }).strict();
-const requestIdSchema = z.string().min(1).max(256);
+const requestIdSchema = opaqueIdSchema;
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const timestampSchema = z.string().datetime();
 
-const factSchema = <T extends z.ZodTypeAny>(value: T) =>
+const factSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
+  value: T,
+  unobservedValue: U,
+) =>
   z.discriminatedUnion("source", [
     z
       .object({
         value,
         observedAt: timestampSchema,
-        ageMs: z.number().int().nonnegative(),
+        ageMs: nonNegativeIntegerSchema,
         freshness: z.enum(["fresh", "stale"]),
         source: z.enum(["cached_snapshot", "cached_event"]),
       })
       .strict(),
     z
       .object({
-        value,
+        value: unobservedValue,
         observedAt: z.null(),
         ageMs: z.null(),
         freshness: z.literal("unknown"),
@@ -66,18 +75,20 @@ const displayObjectSchema = z
   .object({
     signal: factSchema(
       z.enum(["present", "no_signal", "no_lock", "out_of_range", "unknown"]),
+      z.literal("unknown"),
     ),
     resolution: factSchema(
       z
         .object({
-          width: z.number().int().positive(),
-          height: z.number().int().positive(),
-          refreshHz: z.number().positive().nullable(),
+          width: positiveIntegerSchema,
+          height: positiveIntegerSchema,
+          refreshHz: z.number().positive().finite().nullable(),
         })
         .strict()
         .nullable(),
+      z.null(),
     ),
-    fps: factSchema(z.number().nonnegative().nullable()),
+    fps: factSchema(z.number().nonnegative().finite().nullable(), z.null()),
     qualification: z.enum(["current_binding", "binding_lost_cached_only"]),
   })
   .strict();
@@ -133,14 +144,14 @@ const edidSchema = z.discriminatedUnion("status", [
         .object({
           sha256: sha256Schema,
           manufacturerId: z.string().nullable(),
-          productCode: z.number().int().nonnegative().nullable(),
+          productCode: nonNegativeIntegerSchema.nullable(),
           serialNumber: z.string().nullable(),
           displayName: z.string().nullable(),
           preferredResolution: z
             .object({
-              width: z.number().int().positive(),
-              height: z.number().int().positive(),
-              refreshHz: z.number().positive().nullable(),
+              width: positiveIntegerSchema,
+              height: positiveIntegerSchema,
+              refreshHz: z.number().positive().finite().nullable(),
             })
             .strict()
             .nullable(),
@@ -230,9 +241,9 @@ const connectionSchema = z
     state: z.literal("ready"),
     ref: sessionRefSchema,
     binding: bindingSchema,
-    connectionEpoch: z.number().int().positive(),
-    browserChannelGeneration: z.number().int().positive(),
-    displayGeneration: z.number().int().nonnegative(),
+    connectionEpoch: positiveIntegerSchema,
+    browserChannelGeneration: positiveIntegerSchema,
+    displayGeneration: nonNegativeIntegerSchema,
   })
   .strict();
 const observationArtifactSchema = z.discriminatedUnion("mimeType", [
@@ -261,16 +272,16 @@ const observationArtifactSchema = z.discriminatedUnion("mimeType", [
 ]);
 const observationSchema = z
   .object({
-    observationId: z.string().min(1).max(256),
-    sessionGeneration: z.number().int().positive(),
-    connectionEpoch: z.number().int().positive(),
-    displayGeneration: z.number().int().nonnegative(),
-    frameId: z.string().min(1).max(256),
+    observationId: opaqueIdSchema,
+    sessionGeneration: positiveIntegerSchema,
+    connectionEpoch: positiveIntegerSchema,
+    displayGeneration: nonNegativeIntegerSchema,
+    frameId: opaqueIdSchema,
     capturedAt: timestampSchema,
-    sourceWidth: z.number().int().positive(),
-    sourceHeight: z.number().int().positive(),
-    imageWidth: z.number().int().positive(),
-    imageHeight: z.number().int().positive(),
+    sourceWidth: positiveIntegerSchema,
+    sourceHeight: positiveIntegerSchema,
+    imageWidth: positiveIntegerSchema,
+    imageHeight: positiveIntegerSchema,
     rotation: z.union([
       z.literal(0),
       z.literal(90),
@@ -293,8 +304,8 @@ const mutationReceiptSchema = z
     requestId: requestIdSchema,
     outcome: z.enum(["applied", "already_applied"]),
     verification: z.enum(["device_ack_only", "device_state_verified"]),
-    dispatchedCount: z.number().int().nonnegative(),
-    completedCount: z.number().int().nonnegative(),
+    dispatchedCount: nonNegativeIntegerSchema,
+    completedCount: nonNegativeIntegerSchema,
     acknowledgedAt: timestampSchema,
   })
   .strict()
@@ -304,11 +315,11 @@ const pasteReceiptSchema = z
     requestId: requestIdSchema,
     outcome: z.enum(["applied", "already_applied"]),
     verification: z.enum(["device_ack_only", "device_state_verified"]),
-    dispatchedCount: z.number().int().nonnegative(),
-    completedCount: z.number().int().nonnegative(),
+    dispatchedCount: nonNegativeIntegerSchema,
+    completedCount: nonNegativeIntegerSchema,
     acknowledgedAt: timestampSchema,
-    originalByteCount: z.number().int().nonnegative(),
-    normalizedByteCount: z.number().int().nonnegative(),
+    originalByteCount: nonNegativeIntegerSchema,
+    normalizedByteCount: nonNegativeIntegerSchema,
     normalizedSha256: sha256Schema,
     acceptedAt: timestampSchema.nullable(),
     completedAt: timestampSchema.nullable(),
@@ -322,8 +333,8 @@ const releaseReceiptSchema = z
     requestId: requestIdSchema,
     outcome: z.enum(["applied", "already_applied"]),
     verification: z.enum(["device_ack_only", "device_state_verified"]),
-    dispatchedCount: z.number().int().nonnegative(),
-    completedCount: z.number().int().nonnegative(),
+    dispatchedCount: nonNegativeIntegerSchema,
+    completedCount: nonNegativeIntegerSchema,
     acknowledgedAt: timestampSchema,
     mutationGateClosed: z.boolean(),
     deferredProducersJoined: z.boolean(),
@@ -338,21 +349,21 @@ const releaseReceiptSchema = z
   .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
 
 const pointSchema = z
-  .object({ x: z.number().finite(), y: z.number().finite() })
+  .object({ x: nonNegativeIntegerSchema, y: nonNegativeIntegerSchema })
   .strict();
 const mouseActionSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("move"),
-      x: z.number().finite(),
-      y: z.number().finite(),
+      x: nonNegativeIntegerSchema,
+      y: nonNegativeIntegerSchema,
     })
     .strict(),
   z
     .object({
       type: z.enum(["click", "double_click"]),
-      x: z.number().finite(),
-      y: z.number().finite(),
+      x: nonNegativeIntegerSchema,
+      y: nonNegativeIntegerSchema,
       button: z.enum(["left", "middle", "right"]),
     })
     .strict(),
@@ -360,14 +371,14 @@ const mouseActionSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("drag"),
       button: z.enum(["left", "middle", "right"]),
-      path: z.array(pointSchema).min(1),
+      path: z.array(pointSchema).min(2).max(64),
     })
     .strict(),
   z
     .object({
       type: z.literal("scroll"),
-      x: z.number().finite(),
-      y: z.number().finite(),
+      x: nonNegativeIntegerSchema,
+      y: nonNegativeIntegerSchema,
       delta_y: z
         .number()
         .int()
@@ -386,7 +397,10 @@ const keyboardActionSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z
-    .object({ type: z.literal("chord"), keys: z.array(z.enum(PHYSICAL_KEYS)) })
+    .object({
+      type: z.literal("chord"),
+      keys: z.array(z.enum(PHYSICAL_KEYS)).min(1).max(8),
+    })
     .strict(),
 ]);
 const browserMutationRequest = <T extends z.ZodTypeAny>(request: T) =>
@@ -394,29 +408,30 @@ const browserMutationRequest = <T extends z.ZodTypeAny>(request: T) =>
 const mouseRequestSchema = browserMutationRequest(
   z
     .object({
-      observationId: z.string().min(1).max(256),
+      observationId: opaqueIdSchema,
       requestId: requestIdSchema,
-      actions: z.array(mouseActionSchema),
+      actions: z.array(mouseActionSchema).min(1).max(16),
     })
     .strict(),
 );
 const keyboardRequestSchema = browserMutationRequest(
   z
     .object({
-      observationId: z.string().min(1).max(256),
+      observationId: opaqueIdSchema,
       requestId: requestIdSchema,
-      actions: z.array(keyboardActionSchema),
+      actions: z.array(keyboardActionSchema).min(1).max(64),
     })
     .strict(),
 );
 const pasteRequestSchema = browserMutationRequest(
   z
     .object({
-      observationId: z.string().min(1).max(256),
+      observationId: opaqueIdSchema,
       requestId: requestIdSchema,
-      textByteLength: z.number().int().nonnegative(),
-      sourceCharacterCount: z.number().int().nonnegative(),
-      textSha256: sha256Schema,
+      originalByteCount: nonNegativeIntegerSchema,
+      originalSha256: sha256Schema,
+      normalizedByteCount: nonNegativeIntegerSchema,
+      normalizedSha256: sha256Schema,
     })
     .strict(),
 );
@@ -427,8 +442,8 @@ const captureRequestSchema = browserMutationRequest(
   z
     .object({
       format: z.enum(["jpeg", "png"]),
-      maxWidth: z.number().int().positive(),
-      maxHeight: z.number().int().positive(),
+      maxWidth: positiveIntegerSchema,
+      maxHeight: positiveIntegerSchema,
     })
     .strict(),
 );
@@ -453,7 +468,6 @@ type ReplayErrorCode =
   | "DEADLINE_EXCEEDED"
   | "CANCELLED"
   | "CONNECTION_LOST"
-  | "MALFORMED_RESPONSE"
   | "DOWNSTREAM_MALFORMED_RESPONSE"
   | "PERMISSION_DENIED"
   | "AUTH_FAILED"
@@ -539,6 +553,7 @@ function publicRecoveryFor(rule: ReplayErrorRule): ReplayPublicRecovery {
         safeToRetry: true,
         requiredNextStep: "reconnect_then_capture",
       };
+    case "DOWNSTREAM_MALFORMED_RESPONSE":
     case "STALE_SESSION_GENERATION":
       return {
         safeToRetry: false,
@@ -683,7 +698,7 @@ const ERROR_RULES = {
     counts: "complete",
   },
   malformedSend: {
-    code: "MALFORMED_RESPONSE",
+    code: "DOWNSTREAM_MALFORMED_RESPONSE",
     boundary: "send",
     outcome: "not_sent",
     writeBegan: false,
@@ -692,7 +707,7 @@ const ERROR_RULES = {
     counts: "zero",
   },
   malformedAck: {
-    code: "MALFORMED_RESPONSE",
+    code: "DOWNSTREAM_MALFORMED_RESPONSE",
     boundary: "ack",
     outcome: "unknown",
     writeBegan: true,
@@ -973,10 +988,10 @@ function replayErrorSchema(
       return z
         .object({
           ...exactFields,
-          requestedCount: z.number().int().positive(),
-          dispatchedCount: z.number().int().nonnegative(),
-          completedCount: z.number().int().nonnegative(),
-          failedIndex: z.number().int().nonnegative(),
+          requestedCount: positiveIntegerSchema,
+          dispatchedCount: nonNegativeIntegerSchema,
+          completedCount: nonNegativeIntegerSchema,
+          failedIndex: nonNegativeIntegerSchema,
         })
         .strict()
         .superRefine((error, context) => {
@@ -997,8 +1012,8 @@ function replayErrorSchema(
     return z
       .object({
         ...exactFields,
-        dispatchedCount: z.number().int().nonnegative(),
-        completedCount: z.number().int().nonnegative(),
+        dispatchedCount: nonNegativeIntegerSchema,
+        completedCount: nonNegativeIntegerSchema,
       })
       .strict()
       .superRefine((error, context) => {
@@ -1034,6 +1049,7 @@ function replayErrorSchema(
 
 const highLevelCommonErrorRules = [
   ERROR_RULES.deadlineAdmission,
+  ERROR_RULES.malformedSend,
   ERROR_RULES.cancelledAdmission,
   ERROR_RULES.connectionSend,
   ERROR_RULES.connectionAck,
@@ -1047,6 +1063,7 @@ const browserConnectErrorSchema = replayErrorSchema(
   false,
   [
     ERROR_RULES.deadlineAdmission,
+    ERROR_RULES.malformedSend,
     ERROR_RULES.cancelledAdmission,
     ERROR_RULES.connectionSend,
     ERROR_RULES.connectionAck,
@@ -1246,9 +1263,27 @@ const browserCaptureResponseMatchesRequest: ReplayResponseCorrelation = (
   const typedResponse = response as z.infer<typeof observationSchema>;
   const expectedMimeType =
     typedRequest.request.format === "jpeg" ? "image/jpeg" : "image/png";
+  const rotated =
+    typedResponse.rotation === 90 || typedResponse.rotation === 270;
+  const sourceWidth = rotated
+    ? typedResponse.sourceHeight
+    : typedResponse.sourceWidth;
+  const sourceHeight = rotated
+    ? typedResponse.sourceWidth
+    : typedResponse.sourceHeight;
   return (
     typedResponse.sessionGeneration === typedRequest.ref.sessionGeneration &&
-    typedResponse.artifact.mimeType === expectedMimeType
+    typedResponse.artifact.mimeType === expectedMimeType &&
+    typedResponse.imageWidth <= typedRequest.request.maxWidth &&
+    typedResponse.imageHeight <= typedRequest.request.maxHeight &&
+    typedResponse.imageWidth <= sourceWidth &&
+    typedResponse.imageHeight <= sourceHeight &&
+    typedResponse.imageWidth * sourceHeight ===
+      typedResponse.imageHeight * sourceWidth &&
+    typedResponse.geometry.contentX + typedResponse.geometry.contentWidth <=
+      typedResponse.imageWidth &&
+    typedResponse.geometry.contentY + typedResponse.geometry.contentHeight <=
+      typedResponse.imageHeight
   );
 };
 
@@ -1256,8 +1291,9 @@ type BrowserCountedRequest = {
   readonly request: {
     readonly requestId: string;
     readonly actions?: readonly unknown[];
-    readonly sourceCharacterCount?: number;
-    readonly textByteLength?: number;
+    readonly originalByteCount?: number;
+    readonly normalizedByteCount?: number;
+    readonly normalizedSha256?: string;
   };
 };
 type BrowserCountedResult = {
@@ -1268,11 +1304,13 @@ type BrowserCountedResult = {
   readonly requestedCount?: number;
   readonly failedIndex?: number;
   readonly originalByteCount?: number;
+  readonly normalizedByteCount?: number;
+  readonly normalizedSha256?: string;
 };
 
 const browserCountedResponseMatchesRequest = (
   expectedCount: (request: BrowserCountedRequest) => number,
-  requireOriginalByteCount = false,
+  requirePasteMetadata = false,
 ): ReplayResponseCorrelation => {
   return (request, response) => {
     const typedRequest = request as BrowserCountedRequest;
@@ -1282,8 +1320,13 @@ const browserCountedResponseMatchesRequest = (
       typedResponse.requestId === typedRequest.request.requestId &&
       typedResponse.dispatchedCount === requestedCount &&
       typedResponse.completedCount === requestedCount &&
-      (!requireOriginalByteCount ||
-        typedResponse.originalByteCount === typedRequest.request.textByteLength)
+      (!requirePasteMetadata ||
+        (typedResponse.originalByteCount ===
+          typedRequest.request.originalByteCount &&
+          typedResponse.normalizedByteCount ===
+            typedRequest.request.normalizedByteCount &&
+          typedResponse.normalizedSha256 ===
+            typedRequest.request.normalizedSha256))
     );
   };
 };
@@ -1367,11 +1410,11 @@ const browserExchangeSchema = z.union([
     pasteReceiptSchema,
     browserPasteErrorSchema,
     browserCountedResponseMatchesRequest(
-      (request) => request.request.sourceCharacterCount ?? -1,
+      (request) => request.request.normalizedByteCount ?? -1,
       true,
     ),
     browserCountedErrorMatchesRequest(
-      (request) => request.request.sourceCharacterCount ?? -1,
+      (request) => request.request.normalizedByteCount ?? -1,
     ),
   ),
   exchangeSchema(
@@ -1390,11 +1433,28 @@ const nativeExchangeSchema = z.union([
     refRequestSchema,
     z
       .object({
-        rpcReachability: z.literal("reachable"),
-        nativeProcess: z.literal("available"),
+        rpcReachability: z.enum(["reachable", "unreachable", "unknown"]),
+        nativeProcess: z.enum([
+          "available",
+          "restarting",
+          "unavailable",
+          "unknown",
+        ]),
         display: displaySchema,
       })
-      .strict(),
+      .strict()
+      .superRefine((status, context) => {
+        if (
+          status.display.qualification === "binding_lost_cached_only" &&
+          status.rpcReachability === "reachable"
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["rpcReachability"],
+            message: "A lost RPC binding cannot be reachable.",
+          });
+        }
+      }),
     nativeReadErrorSchema,
   ),
   exchangeSchema(

@@ -38,7 +38,7 @@
     },
     {
       "id": "matrix-tool-fixtures",
-      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "description": "The harness executes one ordered state machine: every linked call uses the current case-owned session generation and four-part bundle, input calls consume a separately captured current-generation observation, and connect/reconnect transitions publish the exact identities used by later steps.",
       "required": true
     }
   ],
@@ -47,8 +47,8 @@
       "id": "replace-one-shared-adapter",
       "after_step": "reconnect-with-new-channel",
       "boundary": "during_verification",
-      "action": "At the adapter boundary, verify the current generation-8 four-part session/generation/connection/channel binding is the sole injected adapter for each shared-binding call; for each replacement call, inject the invalidated generation-7 prior-connection prior-channel four-part binding while leaving the public input on generation 8.",
-      "expected_effect": "Current public inputs pass the generation fence, shared calls traverse only the current adapter, and replacement calls reject or qualify the injected old binding at the adapter boundary before any stale ATX write or second channel."
+      "action": "For each shared-binding call, verify the exact current four-part session/generation/connection/channel bundle published by the immediately preceding state transition and the one Browser-owned adapter identity. For each replacement call, inject only the invalidated prior four-part binding at the adapter or bundle-inspection boundary while the public input remains current.",
+      "expected_effect": "Browser-only calls remain on BrowserPlane with zero DeviceRpcAdapter method calls; display-state and ATX calls alone invoke the adapter; session calls inspect or publish bundle identity; every old binding is rejected or explicitly qualified without a direct or second channel."
     }
   ],
   "steps": [
@@ -91,7 +91,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_display_capture call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "BrowserPlane returns the linked fresh decoded frame with zero DeviceRpcAdapter method calls while the fixture proves the exact current adapter identity and sole Browser/WebRTC channel."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-display-status",
@@ -103,7 +103,22 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_display_status call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "NativeControlPlane invokes readDisplayState exactly once through the exact current Browser-owned DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "capture-shared-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Immediately before keyboard input, BrowserPlane captures fresh opaque-observation-shared-keyboard-8 with zero DeviceRpcAdapter method calls."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-input-keyboard",
@@ -112,7 +127,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 8,
-        "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-keyboard",
+        "observation_id": "opaque-observation-shared-keyboard-8",
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-keyboard",
         "actions": [
           {
@@ -123,7 +138,22 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_input_keyboard call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "BrowserPlane applies the physical keyboard event using current opaque-observation-shared-keyboard-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
+    },
+    {
+      "id": "capture-shared-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-shared-mouse-8 after keyboard input with zero DeviceRpcAdapter method calls."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-input-mouse",
@@ -132,7 +162,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 8,
-        "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-mouse",
+        "observation_id": "opaque-observation-shared-mouse-8",
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-mouse",
         "actions": [
           {
@@ -144,7 +174,22 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_input_mouse call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "BrowserPlane applies the mouse event using current opaque-observation-shared-mouse-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
+    },
+    {
+      "id": "capture-shared-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-shared-paste-8 after mouse input with zero DeviceRpcAdapter method calls."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-input-paste",
@@ -153,13 +198,13 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 8,
-        "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-paste",
+        "observation_id": "opaque-observation-shared-paste-8",
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-paste",
         "text": "FixturePaste91",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_input_paste call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "BrowserPlane applies the Reliable Paste request using current opaque-observation-shared-paste-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-input-release",
@@ -172,7 +217,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_input_release call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "BrowserPlane drains and acknowledges the current input generation with zero held state and zero DeviceRpcAdapter method calls; the exact shared adapter and sole channel identities remain unchanged."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-power-control",
@@ -186,7 +231,38 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_power_control call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "NativeControlPlane invokes setATXPowerAction exactly once through the exact current Browser-owned DeviceRpcAdapter and sole RPC channel, returning applied/device_ack_only with a correlated power-short 200 ms serial receipt, separately qualified cached LED evidence, zero host-state proof, and zero direct or second channel."
+    },
+    {
+      "id": "restore-and-prove-after-shared-power",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "binding_id": "opaque-shared-atx-binding-generation-8",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "Immediately after the shared power call, restore the recorded ATX-observable baseline and re-prove the active extension, serial readiness, baseline, and exact current binding before the session-connect case."
+    },
+    {
+      "id": "prepare-shared-session-connect-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session",
+        "closed_generation": 8,
+        "next_tool": "jetkvm_session_connect",
+        "require_no_incumbent": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "The generation-8 input and ATX case is retired with its baseline proven, and the fixture proves no incumbent before the shared session-connect call."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-session-connect",
@@ -198,69 +274,84 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_session_connect call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "SessionService publishes opaque-session-shared-connect generation 9 with one Browser-owned WebRTC RPC channel and the exact same adapter object in the Browser and native bundle; this evidence does not claim an adapter method invocation."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 9,
         "request_id": "opaque-shared-device-rpc-adapter-binding-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_session_reconnect call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "SessionService invalidates generation 9 before publishing opaque-session-shared-connect generation 10 with a new Browser/WebRTC channel and exact shared adapter identity; this evidence does not claim an adapter method invocation."
     },
     {
       "id": "shared-device-rpc-adapter-binding-jetkvm-session-status",
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The jetkvm_session_status call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+      "expect": "SessionService reads the current generation-10 bundle and reports the exact one-channel/one-adapter identities without claiming an adapter method invocation or direct channel."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-display-capture",
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
         "format": "jpeg",
         "max_width": 1280,
         "max_height": 720,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_display_capture call observes the newly published binding; stale operations make zero writes."
+      "expect": "BrowserPlane returns the linked fresh decoded frame with zero DeviceRpcAdapter method calls; the fixture separately proves the invalidated old four-part binding is not published or used."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-display-status",
       "tool": "jetkvm_display_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_display_status call observes the newly published binding; stale operations make zero writes."
+      "expect": "The injected old four-part binding is rejected or explicitly qualified at readDisplayState admission while the public session remains generation 10; no direct or second channel is created."
+    },
+    {
+      "id": "capture-replacement-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Immediately before keyboard input, BrowserPlane captures fresh opaque-observation-replacement-keyboard-10 with zero DeviceRpcAdapter method calls."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-input-keyboard",
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
-        "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-keyboard",
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-replacement-keyboard-10",
         "request_id": "opaque-device-rpc-adapter-replacement-input-keyboard",
         "actions": [
           {
@@ -271,16 +362,31 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_input_keyboard call observes the newly published binding; stale operations make zero writes."
+      "expect": "BrowserPlane applies the keyboard event using current opaque-observation-replacement-keyboard-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
+    },
+    {
+      "id": "capture-replacement-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-replacement-mouse-10 after keyboard input with zero DeviceRpcAdapter method calls."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-input-mouse",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
-        "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-mouse",
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-replacement-mouse-10",
         "request_id": "opaque-device-rpc-adapter-replacement-input-mouse",
         "actions": [
           {
@@ -292,49 +398,79 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_input_mouse call observes the newly published binding; stale operations make zero writes."
+      "expect": "BrowserPlane applies the mouse event using current opaque-observation-replacement-mouse-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
+    },
+    {
+      "id": "capture-replacement-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-replacement-paste-10 after mouse input with zero DeviceRpcAdapter method calls."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-input-paste",
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
-        "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-paste",
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-replacement-paste-10",
         "request_id": "opaque-device-rpc-adapter-replacement-input-paste",
         "text": "FixturePaste91",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_input_paste call observes the newly published binding; stale operations make zero writes."
+      "expect": "BrowserPlane applies the Reliable Paste request using current opaque-observation-replacement-paste-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-input-release",
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
         "request_id": "opaque-device-rpc-adapter-replacement-input-release",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_input_release call observes the newly published binding; stale operations make zero writes."
+      "expect": "BrowserPlane drains and acknowledges generation 10 with zero held state and zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
         "request_id": "opaque-device-rpc-adapter-replacement-power-control",
         "action": "press_power",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_power_control call observes the newly published binding; stale operations make zero writes."
+      "expect": "The injected old four-part binding fails setATXPowerAction at adapter admission with public CONNECTION_LOST/not_sent, verification none, zero ATX transport writes, zero replay, and the current generation-10 bundle unchanged."
+    },
+    {
+      "id": "prepare-replacement-session-connect-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-shared-connect",
+        "closed_generation": 10,
+        "next_tool": "jetkvm_session_connect",
+        "require_no_incumbent": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "Generation 10 is authoritatively drained and retired, the recorded ATX-observable baseline is proven, and no incumbent remains before the replacement session-connect case."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-session-connect",
@@ -346,33 +482,33 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_session_connect call observes the newly published binding; stale operations make zero writes."
+      "expect": "SessionService refuses to publish the injected old four-part binding and instead publishes opaque-session-replacement-connect generation 11 with one current Browser-owned channel and exact shared adapter identity; this evidence does not claim an adapter method invocation."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-replacement-connect",
+        "session_generation": 11,
         "request_id": "opaque-device-rpc-adapter-replacement-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_session_reconnect call observes the newly published binding; stale operations make zero writes."
+      "expect": "SessionService invalidates generation 11 and the injected old four-part binding before publishing opaque-session-replacement-connect generation 12 with one new Browser-owned channel and exact shared adapter identity; this evidence does not claim an adapter method invocation."
     },
     {
       "id": "device-rpc-adapter-replacement-jetkvm-session-status",
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 8,
+        "session_id": "opaque-session-replacement-connect",
+        "session_generation": 12,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The old adapter binding is invalidated before the jetkvm_session_status call observes the newly published binding; stale operations make zero writes."
+      "expect": "SessionService reads only the current generation-12 bundle; the invalidated old four-part binding remains unpublished and no adapter method, direct channel, or second channel is invoked."
     }
   ],
   "pass": [
@@ -384,12 +520,12 @@
     {
       "id": "assertion-2",
       "requirement": "branch:shared-device-rpc-adapter-binding",
-      "assertion": "One browser-owned WebRTC RPC channel and the same injected adapter instance serve both planes with no bypass channel."
+      "assertion": "BrowserPlane exclusively owns capture, keyboard, mouse, paste, and release; display status and ATX alone invoke the same Browser-owned DeviceRpcAdapter through one RPC channel; SessionService verifies or publishes the exact shared bundle identity with no bypass."
     },
     {
       "id": "assertion-3",
       "requirement": "branch:device-rpc-adapter-replacement",
-      "assertion": "The old binding is invalid before new publication; stale EDID and ATX make zero writes and stale display is explicitly qualified."
+      "assertion": "Public calls always use the current produced generation and fresh observations; the old four-part binding is injected only at the adapter or bundle boundary, is invalid before new publication, and makes zero stale ATX writes."
     },
     {
       "id": "assertion-4",

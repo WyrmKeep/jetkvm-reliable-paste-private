@@ -25,6 +25,7 @@ export type PlaneFault =
   | "disconnect_after_ack_before_post_read"
   | "disconnect_after_persisted_terminal"
   | "malformed_response"
+  | "malformed_response_before_write"
   | "permission_denied"
   | "capability_missing"
   | "control_busy"
@@ -43,6 +44,8 @@ export interface PlaneScenarioStep {
   readonly result?: unknown;
   readonly dispatchedCount?: number;
   readonly completedCount?: number;
+  readonly requestedCount?: number;
+  readonly failedIndex?: number;
 }
 
 export interface PlaneScenario {
@@ -135,6 +138,15 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
     safeToRetry: false,
     requiredNextStep: "inspect_device_state_before_retry",
     boundary: "ack",
+    acknowledged: false,
+    suffixSuppressed: false,
+  },
+  malformed_response_before_write: {
+    code: "DOWNSTREAM_MALFORMED_RESPONSE",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+    boundary: "send",
     acknowledged: false,
     suffixSuppressed: false,
   },
@@ -246,6 +258,7 @@ export class PlaneFaultError extends Error {
   public readonly boundary: FaultClassification["boundary"];
   public readonly acknowledged: boolean;
   public readonly suffixSuppressed: boolean;
+  public readonly writeBegan: boolean;
   public readonly safeToRetry: boolean;
   public readonly requiredNextStep: RequiredNextStep;
 
@@ -253,6 +266,8 @@ export class PlaneFaultError extends Error {
     public readonly fault: PlaneFault,
     public readonly dispatchedCount: number,
     public readonly completedCount: number,
+    public readonly requestedCount?: number,
+    public readonly failedIndex?: number,
   ) {
     const classification = FAULT_CLASSIFICATION[fault];
     super(`The fake plane forced ${classification.code}.`);
@@ -262,6 +277,10 @@ export class PlaneFaultError extends Error {
     this.requiredNextStep = classification.requiredNextStep;
     this.boundary = classification.boundary;
     this.acknowledged = classification.acknowledged;
+    this.writeBegan =
+      classification.boundary === "ack" ||
+      classification.boundary === "post_ack" ||
+      classification.boundary === "persisted";
     this.suffixSuppressed = classification.suffixSuppressed;
   }
 }
@@ -274,6 +293,9 @@ export class PlaneScenarioEngine {
   public loadScenario(scenario: PlaneScenario): void {
     if (scenario.version !== 1 || !Array.isArray(scenario.steps)) {
       throw new Error("Invalid fake plane scenario.");
+    }
+    for (const step of scenario.steps) {
+      this.validateStep(step);
     }
     this.steps = scenario.steps.map((step) => ({ ...step }));
     this.eventLog.length = 0;
@@ -288,7 +310,7 @@ export class PlaneScenarioEngine {
     if (deadline.signal.aborted) {
       throw new PlaneFaultError("cancellation_before_admission", 0, 0);
     }
-    if (!Number.isSafeInteger(deadline.timeoutMs) || deadline.timeoutMs < 100) {
+    if (!Number.isSafeInteger(deadline.timeoutMs) || deadline.timeoutMs <= 0) {
       throw new PlaneFaultError("deadline_before_admission", 0, 0);
     }
     const step = this.steps[0];
@@ -297,6 +319,7 @@ export class PlaneScenarioEngine {
         `Unexpected fake plane call ${operation}; expected ${step?.operation ?? "no further calls"}.`,
       );
     }
+    this.validatePartialRequestCorrelation(step, metadata);
     this.steps.shift();
     const event: PlaneEvent = {
       sequence: ++this.sequence,
@@ -319,9 +342,122 @@ export class PlaneScenarioEngine {
         step.fault,
         step.dispatchedCount ?? 0,
         step.completedCount ?? 0,
+        step.requestedCount,
+        step.failedIndex,
       );
     }
     return step.result;
+  }
+
+  private validateStep(step: PlaneScenarioStep): void {
+    if (
+      typeof step !== "object" ||
+      step === null ||
+      typeof step.operation !== "string" ||
+      (step.fault !== undefined &&
+        !Object.hasOwn(FAULT_CLASSIFICATION, step.fault))
+    ) {
+      throw new Error("Invalid fake plane scenario.");
+    }
+    const counts = [
+      step.dispatchedCount,
+      step.completedCount,
+      step.requestedCount,
+      step.failedIndex,
+    ];
+    if (
+      counts.some(
+        (count) =>
+          count !== undefined && (!Number.isSafeInteger(count) || count < 0),
+      ) ||
+      (step.dispatchedCount !== undefined &&
+        step.completedCount !== undefined &&
+        step.completedCount > step.dispatchedCount)
+    ) {
+      throw new Error("Invalid fake plane scenario.");
+    }
+    if (step.fault === undefined) {
+      if (counts.some((count) => count !== undefined)) {
+        throw new Error("Invalid fake plane scenario.");
+      }
+      return;
+    }
+    if (step.fault === "disconnect_after_persisted_terminal") {
+      if (step.result === undefined) {
+        throw new Error("Invalid fake plane scenario.");
+      }
+      return;
+    }
+
+    const classification = FAULT_CLASSIFICATION[step.fault];
+    const writeBegan =
+      classification.boundary === "ack" ||
+      classification.boundary === "post_ack" ||
+      classification.boundary === "persisted";
+    const dispatchedCount = step.dispatchedCount ?? 0;
+    const completedCount = step.completedCount ?? 0;
+    if (
+      (!writeBegan && (dispatchedCount !== 0 || completedCount !== 0)) ||
+      (writeBegan && dispatchedCount < 1) ||
+      (classification.acknowledged && completedCount !== dispatchedCount)
+    ) {
+      throw new Error("Invalid fake plane scenario.");
+    }
+
+    if (step.fault !== "partial_multi_event") {
+      if (step.requestedCount !== undefined || step.failedIndex !== undefined) {
+        throw new Error("Invalid fake plane scenario.");
+      }
+      return;
+    }
+    const requestedCount = step.requestedCount;
+    const failedIndex = step.failedIndex;
+    if (
+      requestedCount === undefined ||
+      requestedCount < 1 ||
+      failedIndex === undefined ||
+      failedIndex !== completedCount ||
+      completedCount >= requestedCount ||
+      dispatchedCount > requestedCount
+    ) {
+      throw new Error("Invalid fake plane scenario.");
+    }
+    if (
+      (step.operation === "mouse" || step.operation === "keyboard") &&
+      dispatchedCount !== completedCount + 1
+    ) {
+      throw new Error("Invalid fake plane scenario.");
+    }
+    if (
+      step.operation !== "mouse" &&
+      step.operation !== "keyboard" &&
+      step.operation !== "paste"
+    ) {
+      throw new Error("Invalid fake plane scenario.");
+    }
+  }
+
+  private validatePartialRequestCorrelation(
+    step: PlaneScenarioStep,
+    metadata: Readonly<Record<string, unknown>>,
+  ): void {
+    if (step.fault !== "partial_multi_event") return;
+    const request =
+      typeof metadata.request === "object" &&
+      metadata.request !== null &&
+      !Array.isArray(metadata.request)
+        ? metadata.request
+        : undefined;
+    const actualRequested =
+      request === undefined
+        ? undefined
+        : Reflect.get(
+            request,
+            step.operation === "paste" ? "normalizedByteCount" : "actionCount",
+          );
+    if (actualRequested !== step.requestedCount) {
+      throw new Error("Invalid fake plane scenario request correlation.");
+    }
   }
 
   public events(): readonly PlaneEvent[] {

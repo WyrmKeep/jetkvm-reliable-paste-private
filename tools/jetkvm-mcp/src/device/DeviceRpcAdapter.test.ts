@@ -62,6 +62,26 @@ function atxWireResult(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+function edidWireResult() {
+  return {
+    status: "available",
+    read_completed: true,
+    reason: null,
+    observed_at: "2026-07-13T00:00:00.000Z",
+    data: {
+      sha256: "a".repeat(64),
+      manufacturer_id: null,
+      product_code: 1,
+      serial_number: "serial-a",
+      display_name: null,
+      preferred_resolution: {
+        width: 1920,
+        height: 1080,
+        refresh_hz: 60,
+      },
+    },
+  };
+}
 
 function expectDeviceError(error: unknown, expected: Partial<DeviceRpcError>) {
   expect(error).toBeInstanceOf(DeviceRpcError);
@@ -143,6 +163,22 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
 
     expect(events).toEqual(["old-invalidated", "new-published"]);
     expect(adapter.binding).toEqual(takeover);
+  });
+
+  it.each([["session id"], ["-session"], ["s".repeat(129)]])(
+    "rejects a noncanonical opaque session ID %s",
+    (sessionId) => {
+      expect(() =>
+        mapDeviceRpcBindingToWire({ ...BINDING, sessionId }),
+      ).toThrow(/invalid device RPC binding/i);
+    },
+  );
+
+  it("accepts the 128-character opaque session ID boundary", () => {
+    const sessionId = `s${"a".repeat(127)}`;
+    expect(
+      mapDeviceRpcBindingToWire({ ...BINDING, sessionId }).session_id,
+    ).toBe(sessionId);
   });
 
   it("rejects malformed binding values before changing the active binding", () => {
@@ -597,6 +633,51 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
+  it("rejects a display read continuation from repopulating cache after binding replacement", async () => {
+    const oldChannel = new FakeDeviceRpcChannel();
+    const nextChannel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await oldChannel.waitForWrites(1);
+    oldChannel.respondToWrite(0, displayWireResult());
+    await Promise.resolve();
+    const nextBinding = { ...BINDING, browserChannelGeneration: 14 };
+    adapter.replaceBinding(nextBinding, nextChannel);
+
+    await expect(pending).rejects.toMatchObject({
+      code: "BINDING_REPLACED",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+    nextChannel.close();
+    await expect(
+      adapter.readDisplayState(nextBinding, deadline()),
+    ).rejects.toMatchObject({
+      code: "CONNECTION_LOST",
+      outcome: "not_sent",
+    });
+  });
+
+  it("rejects an EDID read continuation after binding replacement", async () => {
+    const oldChannel = new FakeDeviceRpcChannel();
+    const nextChannel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+    const pending = adapter.readEdid(BINDING, deadline());
+    await oldChannel.waitForWrites(1);
+    oldChannel.respondToWrite(0, edidWireResult());
+    await Promise.resolve();
+    adapter.replaceBinding(
+      { ...BINDING, browserChannelGeneration: 14 },
+      nextChannel,
+    );
+
+    await expect(pending).rejects.toMatchObject({
+      code: "BINDING_REPLACED",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
+
   it("rejects an out-of-range deadline before admission", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
@@ -608,6 +689,38 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     expectDeviceError(error, {
       code: "INVALID_DEADLINE",
       boundary: "admission",
+      outcome: "not_sent",
+    });
+    expect(channel.writes()).toHaveLength(0);
+  });
+
+  it("admits a positive one-millisecond internal deadline", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline(1));
+    const admission = await Promise.race([
+      pending.then(
+        () => "resolved",
+        (error: unknown) => error,
+      ),
+      channel.waitForWrites(1).then(() => "written"),
+    ]);
+
+    expect(admission).toBe("written");
+    channel.respondToWrite(0, displayWireResult());
+    await expect(pending).resolves.toMatchObject({
+      qualification: "current_binding",
+    });
+  });
+
+  it("rejects an exhausted zero-millisecond internal deadline", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+
+    await expect(
+      adapter.readDisplayState(BINDING, deadline(0)),
+    ).rejects.toMatchObject({
+      code: "INVALID_DEADLINE",
       outcome: "not_sent",
     });
     expect(channel.writes()).toHaveLength(0);
@@ -631,6 +744,41 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
       outcome: "not_sent",
     });
     expect(channel.writes()).toHaveLength(0);
+  });
+
+  it.each(["request id", "-request", `r${"a".repeat(128)}`])(
+    "rejects a noncanonical opaque request ID %s",
+    async (requestId) => {
+      const channel = new FakeDeviceRpcChannel({ rejectWrite: true });
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+
+      await expect(
+        adapter.performAtx(
+          BINDING,
+          { requestId, action: "press_power" },
+          deadline(),
+        ),
+      ).rejects.toMatchObject({
+        code: "INVALID_REQUEST",
+        outcome: "not_sent",
+      });
+      expect(channel.writes()).toHaveLength(0);
+    },
+  );
+
+  it("accepts the 128-character opaque request ID boundary", async () => {
+    const requestId = `r${"a".repeat(127)}`;
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.performAtx(
+      BINDING,
+      { requestId, action: "press_power" },
+      deadline(),
+    );
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, atxWireResult({ request_id: requestId }));
+
+    await expect(pending).resolves.toMatchObject({ requestId });
   });
 
   it.each([
@@ -704,6 +852,124 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
         hdd: null,
         observedAt: "2026-07-13T00:00:00.000Z",
         freshness: "stale",
+      },
+    });
+  });
+
+  it.each([
+    [
+      "fact age",
+      {
+        ...displayWireResult(),
+        signal: {
+          ...displayWireResult().signal,
+          age_ms: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+    ],
+    [
+      "resolution width",
+      {
+        ...displayWireResult(),
+        resolution: {
+          ...displayWireResult().resolution,
+          value: {
+            ...displayWireResult().resolution.value,
+            width: Number.MAX_SAFE_INTEGER + 1,
+          },
+        },
+      },
+    ],
+  ])("rejects an unsafe display integer in %s", async (_label, response) => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, response);
+
+    await expect(pending).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      outcome: "unknown",
+    });
+  });
+
+  it("rejects unsafe EDID and preferred-resolution integers", async () => {
+    const base = edidWireResult();
+    const unsafe = Number.MAX_SAFE_INTEGER + 1;
+    const responses = [
+      { ...base, data: { ...base.data, product_code: unsafe } },
+      {
+        ...base,
+        data: {
+          ...base.data,
+          preferred_resolution: {
+            ...base.data.preferred_resolution,
+            height: unsafe,
+          },
+        },
+      },
+    ];
+
+    for (const response of responses) {
+      const channel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+      const pending = adapter.readEdid(BINDING, deadline());
+      await channel.waitForWrites(1);
+      channel.respondToWrite(0, response);
+      await expect(pending).rejects.toMatchObject({
+        code: "MALFORMED_RESPONSE",
+        outcome: "unknown",
+      });
+    }
+  });
+
+  it("maps maximum-safe display and EDID integer boundaries", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const displayResult = displayWireResult();
+    const displayPending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, {
+      ...displayResult,
+      signal: {
+        ...displayResult.signal,
+        age_ms: Number.MAX_SAFE_INTEGER,
+      },
+      resolution: {
+        ...displayResult.resolution,
+        value: {
+          ...displayResult.resolution.value,
+          width: Number.MAX_SAFE_INTEGER,
+        },
+      },
+    });
+    await expect(displayPending).resolves.toMatchObject({
+      signal: { ageMs: Number.MAX_SAFE_INTEGER },
+      resolution: { value: { width: Number.MAX_SAFE_INTEGER } },
+    });
+
+    const edidResult = edidWireResult();
+    const edidPending = adapter.readEdid(BINDING, deadline());
+    await channel.waitForWrites(2);
+    channel.respondToWrite(1, {
+      ...edidResult,
+      data: {
+        ...edidResult.data,
+        product_code: Number.MAX_SAFE_INTEGER,
+        preferred_resolution: {
+          ...edidResult.data.preferred_resolution,
+          width: Number.MAX_SAFE_INTEGER,
+          height: Number.MAX_SAFE_INTEGER,
+        },
+      },
+    });
+    await expect(edidPending).resolves.toMatchObject({
+      data: {
+        productCode: Number.MAX_SAFE_INTEGER,
+        preferredResolution: {
+          width: Number.MAX_SAFE_INTEGER,
+          height: Number.MAX_SAFE_INTEGER,
+        },
       },
     });
   });

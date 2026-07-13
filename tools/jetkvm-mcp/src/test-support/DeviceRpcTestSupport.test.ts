@@ -175,6 +175,54 @@ describe("FakeDeviceRpcAdapter", () => {
       ),
     ).rejects.toThrow(/ATX result shape is invalid/i);
   });
+
+  it("strictly validates display and EDID read results", async () => {
+    const cases = [
+      {
+        operation: "readDisplayState" as const,
+        result: {
+          ...display,
+          signal: { ...display.signal, source: "none" },
+        },
+        invoke: (fake: FakeDeviceRpcAdapter) =>
+          fake.readDisplayState(binding, deadline),
+      },
+      {
+        operation: "readEdid" as const,
+        result: { ...edid, readCompleted: true },
+        invoke: (fake: FakeDeviceRpcAdapter) =>
+          fake.readEdid(binding, deadline),
+      },
+    ];
+
+    for (const { operation, result, invoke } of cases) {
+      const fake = new FakeDeviceRpcAdapter(binding);
+      fake.loadScenario({ version: 1, steps: [{ operation, result }] });
+      await expect(invoke(fake)).rejects.toThrow(/result shape is invalid/i);
+    }
+  });
+
+  it("correlates fake ATX receipts with request identity and fixed wire semantics", async () => {
+    for (const result of [
+      { ...atx, requestId: "wrong-request" },
+      { ...atx, action: "hold_power" },
+      { ...atx, wireAction: "power-long" },
+      { ...atx, fixedPressMs: 5000 },
+    ]) {
+      const fake = new FakeDeviceRpcAdapter(binding);
+      fake.loadScenario({
+        version: 1,
+        steps: [{ operation: "performAtx", result }],
+      });
+      await expect(
+        fake.performAtx(
+          binding,
+          { requestId: "power-a", action: "press_power" },
+          deadline,
+        ),
+      ).rejects.toThrow(/ATX result.*invalid/i);
+    }
+  });
 });
 
 describe("ReplayDeviceRpcAdapter", () => {

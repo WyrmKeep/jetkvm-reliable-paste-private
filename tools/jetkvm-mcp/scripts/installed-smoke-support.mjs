@@ -6,6 +6,54 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+const PACKAGE_COMMAND_TIMEOUT_MS = 120_000;
+const INSTALLED_MODULE_TIMEOUT_MS = 30_000;
+const FORCE_KILL_SIGNAL = "SIGKILL";
+
+class InstalledSmokePhaseError extends Error {
+  constructor(phase) {
+    super(`Installed smoke phase failed: ${phase}`);
+    this.name = "InstalledSmokePhaseError";
+    this.code = "INSTALLED_SMOKE_PHASE_FAILED";
+    this.phase = phase;
+  }
+}
+
+function executionOptions(cwd, timeout) {
+  return {
+    cwd,
+    killSignal: FORCE_KILL_SIGNAL,
+    maxBuffer: MAX_BUFFER_BYTES,
+    signal: AbortSignal.timeout(timeout),
+    timeout,
+    windowsHide: true,
+  };
+}
+
+async function executePhase(execFileImpl, phase, command, args, options) {
+  try {
+    return await execFileImpl(command, args, options);
+  } catch {
+    throw new InstalledSmokePhaseError(phase);
+  }
+}
+
+function parsePackResult(stdout) {
+  try {
+    const packResult = JSON.parse(stdout);
+    if (
+      !Array.isArray(packResult) ||
+      typeof packResult[0]?.filename !== "string"
+    ) {
+      throw new TypeError("Invalid npm pack result");
+    }
+    return packResult;
+  } catch {
+    throw new InstalledSmokePhaseError("npm_pack_result");
+  }
+}
+
 export async function prepareInstalledPackage(
   label,
   {
@@ -35,23 +83,21 @@ export async function prepareInstalledPackage(
       `${JSON.stringify({ private: true, type: "module" })}\n`,
     );
 
-    const packed = await execFileImpl(
+    const packed = await executePhase(
+      execFileImpl,
+      "npm_pack",
       process.env.npm_execpath ?? "npm",
       ["pack", "--json", "--pack-destination", artifacts],
-      { cwd: process.cwd(), maxBuffer: 4 * 1024 * 1024 },
+      executionOptions(process.cwd(), PACKAGE_COMMAND_TIMEOUT_MS),
     );
-    const packResult = JSON.parse(packed.stdout);
-    if (
-      !Array.isArray(packResult) ||
-      typeof packResult[0]?.filename !== "string"
-    ) {
-      throw new Error("npm pack did not report a tarball");
-    }
+    const packResult = parsePackResult(packed.stdout);
     const tarball = join(artifacts, packResult[0].filename);
-    await execFileImpl(
+    await executePhase(
+      execFileImpl,
+      "npm_install",
       process.env.npm_execpath ?? "npm",
       ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
-      { cwd: consumer, maxBuffer: 4 * 1024 * 1024 },
+      executionOptions(consumer, PACKAGE_COMMAND_TIMEOUT_MS),
     );
     await writeDeterministicHandlers(consumer, writeFileImpl);
 
@@ -74,13 +120,54 @@ export async function prepareInstalledPackage(
   }
 }
 
-export async function runInstalledModule(consumer, filename, source) {
+export async function withInstalledPackage(
+  label,
+  operation,
+  { prepareInstalledPackageImpl = prepareInstalledPackage } = {},
+) {
+  const installed = await prepareInstalledPackageImpl(label);
+  let operationFailed = false;
+  let operationError;
+  let operationResult;
+  try {
+    operationResult = await operation(installed);
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  }
+
+  try {
+    await installed.cleanup();
+  } catch (cleanupError) {
+    if (operationFailed) {
+      throw new AggregateError(
+        [operationError, cleanupError],
+        "Installed smoke operation and temporary-directory cleanup both failed",
+        { cause: operationError },
+      );
+    }
+    throw cleanupError;
+  }
+
+  if (operationFailed) throw operationError;
+  return operationResult;
+}
+
+export async function runInstalledModule(
+  consumer,
+  filename,
+  source,
+  { execFileImpl = execFileAsync, writeFileImpl = writeFile } = {},
+) {
   const path = join(consumer, filename);
-  await writeFile(path, source);
-  return execFileAsync(process.execPath, [path], {
-    cwd: consumer,
-    maxBuffer: 4 * 1024 * 1024,
-  });
+  await writeFileImpl(path, source);
+  return executePhase(
+    execFileImpl,
+    "installed_module",
+    process.execPath,
+    [path],
+    executionOptions(consumer, INSTALLED_MODULE_TIMEOUT_MS),
+  );
 }
 
 async function writeDeterministicHandlers(consumer, writeFileImpl) {

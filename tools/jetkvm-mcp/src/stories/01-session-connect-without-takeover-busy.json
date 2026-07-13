@@ -158,15 +158,15 @@
       "id": "expire-before-admission-jetkvm-power-control",
       "after_step": "retry-deadline-before-admission-jetkvm-input-release",
       "boundary": "before_admission",
-      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_power_control only.",
-      "expected_effect": "The next jetkvm_power_control call expires before admission with zero downstream calls."
+      "action": "Arm the jetkvm_power_control-only injector and advance the fake monotonic clock beyond the call's 1000ms deadline before controller admission.",
+      "expected_effect": "The 1000ms request expires deterministically before admission as DEADLINE_EXCEEDED/not_sent with zero controller, adapter, or ATX writes; its request reservation is released."
     },
     {
       "id": "clear-expired-deadline-jetkvm-power-control",
       "after_step": "deadline-before-admission-jetkvm-power-control",
       "boundary": "during_cleanup",
-      "action": "Clear the jetkvm_power_control deadline injector while preserving its request reservation for retry.",
-      "expected_effect": "The same normalized power request can retry through ordinary admission."
+      "action": "Clear the jetkvm_power_control deadline injector while preserving the exact normalized request for a new-deadline retry.",
+      "expected_effect": "The same 1000ms normalized power request receives a fresh deadline, reaches ordinary admission, completes the fixed 200ms press_power pulse, and cannot inherit the expired deadline."
     },
     {
       "id": "expire-before-admission-jetkvm-session-connect",
@@ -593,10 +593,10 @@
         "session_generation": 7,
         "request_id": "opaque-deadline-before-admission-power-control",
         "action": "press_power",
-        "timeout_ms": 100
+        "timeout_ms": 1000
       },
-      "timeout_ms": 100,
-      "expect": "not_sent for jetkvm_power_control before admission with zero downstream calls and the queue and request reservation released."
+      "timeout_ms": 1000,
+      "expect": "DEADLINE_EXCEEDED mutation ToolError with phase queue, outcome not_sent, verification none, safe_to_retry true, required_next_step none, null public action counts, and details.downstream_stage none. Separately, the fake clock expires the 1000ms deadline before admission and ordered evidence records controller admission count 0, adapter request count 0, and ATX write count 0."
     },
     {
       "id": "retry-deadline-before-admission-jetkvm-power-control",
@@ -607,10 +607,10 @@
         "session_generation": 7,
         "request_id": "opaque-deadline-before-admission-power-control",
         "action": "press_power",
-        "timeout_ms": 100
+        "timeout_ms": 1000
       },
-      "timeout_ms": 100,
-      "expect": "applied through ordinary admission after the deadline fault is cleared, proving the power request reservation was released."
+      "timeout_ms": 1000,
+      "expect": "The same normalized request and request_id receive a new 1000ms deadline after fault clear, reach ordinary admission, complete the fixed 200ms press_power pulse once, and return an applied non-retryable result."
     },
     {
       "id": "restore-reprove-atx-after-deadline-power-retry",
@@ -714,7 +714,7 @@
     {
       "id": "assertion-2",
       "requirement": "branch:deadline-before-admission",
-      "assertion": "Each linked mutation call runs under its compatible deadline-before-admission fault and returns not_sent; the three read calls return DEADLINE_EXCEEDED with outcome null and verification none. Separate harness evidence proves zero admissions and zero downstream writes, each one-shot fault is cleared, and every mutation retries the same normalized input to ordinary applied or CONTROL_BUSY handling."
+      "assertion": "Each linked mutation call runs under its compatible deadline-before-admission fault and returns not_sent; the three read calls return DEADLINE_EXCEEDED with outcome null and verification none. Separate harness evidence proves zero admissions and zero downstream writes, each one-shot fault is cleared, and every mutation retries the same normalized input to ordinary applied or CONTROL_BUSY handling. The power pair uses identical 1000ms inputs: the first fake deadline is expired before admission, while the fresh retry deadline permits exactly one fixed 200ms press_power pulse."
     },
     {
       "id": "assertion-3",
@@ -734,7 +734,7 @@
       "id": "evidence-2",
       "requirement": "branch:deadline-before-admission",
       "field": "requirement_result",
-      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "source": "The focused deadline assertions and ordered fake/replay events, including the power call's 1000ms pre-admission expiry, zero ATX writes, fresh 1000ms retry deadline, and exactly one completed 200ms press_power pulse.",
       "retention": "release_manifest"
     },
     {

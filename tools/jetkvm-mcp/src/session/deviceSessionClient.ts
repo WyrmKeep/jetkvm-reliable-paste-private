@@ -12,7 +12,13 @@ import {
   type ErrorCode,
   type RequiredNextStep,
 } from "../errors.js";
-import type { Deadline, SessionRef } from "../device/DeviceRpcAdapter.js";
+import {
+  isCanonicalOpaqueId,
+  type Deadline,
+  type DeviceRpcAdapter,
+  type DeviceRpcBinding,
+  type SessionRef,
+} from "../device/DeviceRpcAdapter.js";
 import type {
   BrowserConnection,
   BrowserPlane,
@@ -151,6 +157,18 @@ type DeadlineScope = {
   abortKind(): "caller" | "deadline" | null;
   dispose(): void;
 };
+type ConnectionEvidenceSnapshot = {
+  readonly refIdentity: SessionRef;
+  readonly refValue: SessionRef;
+  readonly bindingIdentity: DeviceRpcBinding;
+  readonly bindingValue: DeviceRpcBinding;
+  readonly deviceRpcIdentity: DeviceRpcAdapter;
+  readonly rpcBindingIdentity: DeviceRpcBinding;
+  readonly rpcBindingValue: DeviceRpcBinding;
+  readonly connectionEpoch: number;
+  readonly browserChannelGeneration: number;
+  readonly displayGeneration: number;
+};
 
 class DeadlineAbort extends Error {
   public constructor(public readonly kind: "caller" | "deadline") {
@@ -230,6 +248,9 @@ export class DeviceSessionClient {
     input: SessionConnectInput,
     callerSignal?: AbortSignal,
   ): Promise<DeviceSessionConnectSuccess> {
+    if (!isCanonicalOpaqueId(input.request_id)) {
+      throw new TypeError("Session request ID must be canonical.");
+    }
     const scope = this.#deadline(input.timeout_ms, callerSignal);
     const takeover = input.takeover ?? false;
     let reservation: LedgerReservation | null = null;
@@ -334,10 +355,7 @@ export class DeviceSessionClient {
 
         this.#throwIfAborted(scope, planeInvoked);
         const sessionId = this.#createSessionId();
-        if (
-          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(sessionId) ||
-          this.#sessions.has(sessionId)
-        ) {
+        if (!isCanonicalOpaqueId(sessionId) || this.#sessions.has(sessionId)) {
           throw new Error("createSessionId must return a unique canonical ID");
         }
         const record: SessionRecord = {
@@ -362,11 +380,15 @@ export class DeviceSessionClient {
           );
           connectionOpened = true;
           this.#assertConnection(connection, ref);
+          const connectionEvidence =
+            this.#captureConnectionEvidence(connection);
           const capabilities = await this.#capabilitiesForConnection(
             connection,
             scope.remaining(),
           );
           this.#throwIfAborted(scope, true);
+          this.#assertConnection(connection, ref);
+          this.#assertConnectionUnchanged(connection, connectionEvidence);
           const result: DeviceSessionConnectSuccess = {
             ref,
             result: {
@@ -452,6 +474,12 @@ export class DeviceSessionClient {
     input: SessionReconnectInput,
     callerSignal?: AbortSignal,
   ): Promise<DeviceSessionReconnectSuccess> {
+    if (!isCanonicalOpaqueId(input.session_id)) {
+      throw new TypeError("Session ID must be canonical.");
+    }
+    if (!isCanonicalOpaqueId(input.request_id)) {
+      throw new TypeError("Session request ID must be canonical.");
+    }
     const scope = this.#deadline(input.timeout_ms, callerSignal);
     const takeover = input.takeover ?? false;
     let reservation: LedgerReservation | null = null;
@@ -612,8 +640,15 @@ export class DeviceSessionClient {
             connectionEpoch: previousConnectionEpoch,
             browserChannelGeneration: previousBrowserChannelGeneration,
           });
+          const connectionEvidence =
+            this.#captureConnectionEvidence(connection);
           await this.#capabilitiesForConnection(connection, scope.remaining());
           this.#throwIfAborted(scope, true);
+          this.#assertConnection(connection, nextRef, {
+            connectionEpoch: previousConnectionEpoch,
+            browserChannelGeneration: previousBrowserChannelGeneration,
+          });
+          this.#assertConnectionUnchanged(connection, connectionEvidence);
           const result: DeviceSessionReconnectSuccess = {
             ref: nextRef,
             result: {
@@ -900,6 +935,9 @@ export class DeviceSessionClient {
   }
 
   #recordForPrincipal(principal: string, sessionId: string): SessionRecord {
+    if (!isCanonicalOpaqueId(sessionId)) {
+      throw new TypeError("Session ID must be canonical.");
+    }
     const record = this.#sessions.get(sessionId);
     if (record === undefined || record.principal !== principal) {
       throw clientError(
@@ -919,6 +957,65 @@ export class DeviceSessionClient {
     };
   }
 
+  #captureConnectionEvidence(
+    connection: BrowserConnection,
+  ): ConnectionEvidenceSnapshot {
+    const rpcBinding = connection.deviceRpc.binding;
+    return {
+      refIdentity: connection.ref,
+      refValue: { ...connection.ref },
+      bindingIdentity: connection.binding,
+      bindingValue: { ...connection.binding },
+      deviceRpcIdentity: connection.deviceRpc,
+      rpcBindingIdentity: rpcBinding,
+      rpcBindingValue: { ...rpcBinding },
+      connectionEpoch: connection.connectionEpoch,
+      browserChannelGeneration: connection.browserChannelGeneration,
+      displayGeneration: connection.displayGeneration,
+    };
+  }
+
+  #assertConnectionUnchanged(
+    connection: BrowserConnection,
+    snapshot: ConnectionEvidenceSnapshot,
+  ): void {
+    const rpcBinding = connection.deviceRpc.binding;
+    if (
+      connection.ref !== snapshot.refIdentity ||
+      connection.ref.sessionId !== snapshot.refValue.sessionId ||
+      connection.ref.sessionGeneration !==
+        snapshot.refValue.sessionGeneration ||
+      connection.binding !== snapshot.bindingIdentity ||
+      connection.binding.sessionId !== snapshot.bindingValue.sessionId ||
+      connection.binding.sessionGeneration !==
+        snapshot.bindingValue.sessionGeneration ||
+      connection.binding.connectionEpoch !==
+        snapshot.bindingValue.connectionEpoch ||
+      connection.binding.browserChannelGeneration !==
+        snapshot.bindingValue.browserChannelGeneration ||
+      connection.deviceRpc !== snapshot.deviceRpcIdentity ||
+      this.#browser.deviceRpc !== snapshot.deviceRpcIdentity ||
+      rpcBinding !== snapshot.rpcBindingIdentity ||
+      rpcBinding.sessionId !== snapshot.rpcBindingValue.sessionId ||
+      rpcBinding.sessionGeneration !==
+        snapshot.rpcBindingValue.sessionGeneration ||
+      rpcBinding.connectionEpoch !== snapshot.rpcBindingValue.connectionEpoch ||
+      rpcBinding.browserChannelGeneration !==
+        snapshot.rpcBindingValue.browserChannelGeneration ||
+      connection.connectionEpoch !== snapshot.connectionEpoch ||
+      connection.browserChannelGeneration !==
+        snapshot.browserChannelGeneration ||
+      connection.displayGeneration !== snapshot.displayGeneration
+    ) {
+      throw clientError(
+        "DOWNSTREAM_MALFORMED_RESPONSE",
+        "unknown",
+        false,
+        "inspect_device_state_before_retry",
+      );
+    }
+  }
+
   #assertConnection(
     connection: BrowserConnection,
     expected: SessionRef,
@@ -928,8 +1025,10 @@ export class DeviceSessionClient {
     },
   ): void {
     const binding = connection.binding;
+    const browserDeviceRpc = this.#browser.deviceRpc;
     const rpcBinding = connection.deviceRpc.binding;
     if (
+      connection.deviceRpc !== browserDeviceRpc ||
       connection.state !== "ready" ||
       connection.ref.sessionId !== expected.sessionId ||
       connection.ref.sessionGeneration !== expected.sessionGeneration ||

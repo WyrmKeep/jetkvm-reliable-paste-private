@@ -111,16 +111,24 @@
                       "$ref": "#/anyOf/0/properties/result/properties/accepted_at"
                     },
                     "source_width": {
-                      "$ref": "#/anyOf/0/properties/session_generation"
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1920
                     },
                     "source_height": {
-                      "$ref": "#/anyOf/0/properties/session_generation"
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1080
                     },
                     "image_width": {
-                      "$ref": "#/anyOf/0/properties/session_generation"
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1920
                     },
                     "image_height": {
-                      "$ref": "#/anyOf/0/properties/session_generation"
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1080
                     },
                     "rotation": {
                       "type": "number",
@@ -141,10 +149,14 @@
                           "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         "content_width": {
-                          "$ref": "#/anyOf/0/properties/session_generation"
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1920
                         },
                         "content_height": {
-                          "$ref": "#/anyOf/0/properties/session_generation"
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1080
                         }
                       },
                       "required": [
@@ -2226,7 +2238,7 @@
                     "observation_id"
                   ],
                   "additionalProperties": false,
-                  "description": "Paste progress counts are exact and completed_action_count must not exceed dispatched_action_count."
+                  "description": "Paste progress counts are exact normalized UTF-8 byte offsets and completed_action_count must not exceed dispatched_action_count."
                 }
               },
               "required": [
@@ -2800,7 +2812,7 @@
                     "observation_id"
                   ],
                   "additionalProperties": false,
-                  "description": "Paste progress counts are exact and completed_action_count must not exceed dispatched_action_count."
+                  "description": "Paste progress counts are exact normalized UTF-8 byte offsets and completed_action_count must not exceed dispatched_action_count."
                 }
               },
               "required": [

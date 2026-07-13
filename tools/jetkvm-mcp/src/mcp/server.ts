@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
   McpError,
   type CallToolResult,
+  type CancelledNotification,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
@@ -20,6 +21,29 @@ export type JetKvmHandlerContext = Readonly<{
   correlationId: string;
 }>;
 
+export const MCP_SERVER_BUSY_ERROR_CODE = -32_002;
+export const TOOL_HANDLER_GLOBAL_CAPACITY = 8;
+export const TOOL_HANDLER_PER_PRINCIPAL_CAPACITY = 4;
+export const TOOL_HANDLER_PER_SESSION_CAPACITY = 2;
+
+class ServerBusyError extends Error {
+  readonly code = MCP_SERVER_BUSY_ERROR_CODE;
+
+  constructor() {
+    super("Server busy");
+    this.name = "ServerBusyError";
+  }
+}
+
+class RequestCancelledError extends Error {
+  readonly code = ErrorCode.ConnectionClosed;
+
+  constructor() {
+    super("Request cancelled");
+    this.name = "RequestCancelledError";
+  }
+}
+
 export type JetKvmToolHandler = (
   input: unknown,
   context: JetKvmHandlerContext,
@@ -29,7 +53,67 @@ export type HandlerRegistry = Readonly<
   Partial<Record<JetKvmToolName, JetKvmToolHandler>>
 >;
 
-export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
+export type CreateMcpServerOptions = Readonly<{
+  admissionKey?: object;
+  lifetimeSignal?: AbortSignal;
+}>;
+
+type AdmissionToken = {
+  readonly principalKey: string;
+  readonly sessionKey: string | null;
+  released: boolean;
+};
+
+class ToolHandlerAdmission {
+  #active = 0;
+  readonly #byPrincipal = new Map<string, number>();
+  readonly #bySession = new Map<string, number>();
+
+  tryAcquire(
+    principalKey: string,
+    sessionKey: string | null,
+  ): AdmissionToken | null {
+    const principalCount = this.#byPrincipal.get(principalKey) ?? 0;
+    const sessionCount =
+      sessionKey === null ? 0 : (this.#bySession.get(sessionKey) ?? 0);
+    if (
+      this.#active >= TOOL_HANDLER_GLOBAL_CAPACITY ||
+      principalCount >= TOOL_HANDLER_PER_PRINCIPAL_CAPACITY ||
+      (sessionKey !== null && sessionCount >= TOOL_HANDLER_PER_SESSION_CAPACITY)
+    ) {
+      return null;
+    }
+    this.#active += 1;
+    this.#byPrincipal.set(principalKey, principalCount + 1);
+    if (sessionKey !== null) {
+      this.#bySession.set(sessionKey, sessionCount + 1);
+    }
+    return { principalKey, sessionKey, released: false };
+  }
+
+  release(token: AdmissionToken): void {
+    if (token.released) return;
+    token.released = true;
+    this.#active -= 1;
+    const principalCount = this.#byPrincipal.get(token.principalKey);
+    if (principalCount === 1) {
+      this.#byPrincipal.delete(token.principalKey);
+    } else if (principalCount !== undefined) {
+      this.#byPrincipal.set(token.principalKey, principalCount - 1);
+    }
+    if (token.sessionKey === null) return;
+    const sessionCount = this.#bySession.get(token.sessionKey);
+    if (sessionCount === 1) {
+      this.#bySession.delete(token.sessionKey);
+    } else if (sessionCount !== undefined) {
+      this.#bySession.set(token.sessionKey, sessionCount - 1);
+    }
+  }
+}
+
+const ADMISSION_BY_REGISTRY = new WeakMap<object, ToolHandlerAdmission>();
+
+export function assertHandlerRegistry(handlerRegistry: HandlerRegistry): void {
   const registeredEntries = Object.entries(handlerRegistry);
   for (const [name, handler] of registeredEntries) {
     if (!Object.hasOwn(TOOL_CATALOGUE_BY_NAME, name)) {
@@ -39,7 +123,6 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
       throw new Error(`Handler registry is missing canonical tool: ${name}`);
     }
   }
-
   if (
     registeredEntries.length !== 0 &&
     registeredEntries.length !== JETKVM_TOOL_NAMES.length
@@ -48,11 +131,88 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
       "Handler registry must be empty or contain all ten canonical tools",
     );
   }
+}
+
+export function createMcpServer(
+  handlerRegistry: HandlerRegistry = {},
+  options: CreateMcpServerOptions = {},
+): Server {
+  assertHandlerRegistry(handlerRegistry);
+  const registeredEntries = Object.entries(handlerRegistry);
+  const admissionKey = options.admissionKey ?? handlerRegistry;
+
+  let admission = ADMISSION_BY_REGISTRY.get(admissionKey);
+  if (admission === undefined) {
+    admission = new ToolHandlerAdmission();
+    ADMISSION_BY_REGISTRY.set(admissionKey, admission);
+  }
 
   const server = new Server(
     { name: "jetkvm-mcp", version: "0.1.0" },
     { capabilities: { tools: {} } },
   );
+  const lifetimeController = new AbortController();
+  const activeInvocationControllers = new Set<AbortController>();
+  const invocationControllersByRequestId = new Map<
+    string,
+    Set<AbortController>
+  >();
+  const abortActiveInvocations = () => {
+    if (!lifetimeController.signal.aborted) lifetimeController.abort();
+    for (const controller of activeInvocationControllers) controller.abort();
+    activeInvocationControllers.clear();
+    invocationControllersByRequestId.clear();
+  };
+  const onExternalLifetimeAbort = () => abortActiveInvocations();
+  if (options.lifetimeSignal?.aborted) {
+    abortActiveInvocations();
+  } else {
+    options.lifetimeSignal?.addEventListener("abort", onExternalLifetimeAbort, {
+      once: true,
+    });
+  }
+  let downstreamCloseHandler: (() => void) | undefined;
+  const lifetimeCloseHandler = () => {
+    options.lifetimeSignal?.removeEventListener(
+      "abort",
+      onExternalLifetimeAbort,
+    );
+    abortActiveInvocations();
+    downstreamCloseHandler?.();
+  };
+  Object.defineProperty(server, "onclose", {
+    configurable: true,
+    get: () => lifetimeCloseHandler,
+    set: (handler: (() => void) | undefined) => {
+      if (handler !== lifetimeCloseHandler) downstreamCloseHandler = handler;
+    },
+  });
+  const sdkClose = server.close.bind(server);
+  server.close = async () => {
+    options.lifetimeSignal?.removeEventListener(
+      "abort",
+      onExternalLifetimeAbort,
+    );
+    abortActiveInvocations();
+    await sdkClose();
+  };
+
+  const sdkOnCancel = Reflect.get(server, "_oncancel");
+  if (typeof sdkOnCancel !== "function") {
+    throw new Error("Installed MCP SDK is missing cancellation dispatch.");
+  }
+  Reflect.set(server, "_oncancel", (notification: CancelledNotification) => {
+    const requestId = notification.params.requestId;
+    if (requestId !== undefined) {
+      const requestKey = canonicalRequestId(requestId);
+      for (const controller of invocationControllersByRequestId.get(
+        requestKey,
+      ) ?? []) {
+        controller.abort();
+      }
+    }
+    Reflect.apply(sdkOnCancel, server, [notification]);
+  });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools:
@@ -96,10 +256,6 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
         `Invalid arguments for ${name}`,
       );
     }
-    const correlationSnapshot = createCallCorrelationSnapshot(
-      toolName,
-      input.data,
-    );
     const handler = handlerRegistry[toolName];
     if (typeof handler !== "function") {
       throw new McpError(
@@ -108,33 +264,107 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
       );
     }
 
-    const context: JetKvmHandlerContext = Object.freeze({
-      signal: extra.signal,
-      principalId: sanitizedPrincipalId(extra.authInfo?.clientId),
-      correlationId: correlationIdFor(extra.requestId),
-    });
-    let result: CallToolResult;
-    try {
-      result = await handler(input.data, context);
-    } catch {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Tool handler failed for ${name}`,
-      );
+    const principalId = sanitizedPrincipalId(extra.authInfo?.clientId);
+    const requestKey = canonicalRequestId(extra.requestId);
+    const duplicateControllers =
+      invocationControllersByRequestId.get(requestKey);
+    if (duplicateControllers !== undefined) {
+      for (const controller of duplicateControllers) controller.abort();
+      throw new ServerBusyError();
     }
+    const token = admission.tryAcquire(
+      principalId ?? "anonymous",
+      sessionAdmissionKey(principalId, input.data),
+    );
+    if (token === null) {
+      throw new ServerBusyError();
+    }
+    const invocationController = new AbortController();
+    activeInvocationControllers.add(invocationController);
+    invocationControllersByRequestId.set(
+      requestKey,
+      new Set([invocationController]),
+    );
     try {
-      const mapped = validateAndMapMcpResult(toolName, result);
-      validateCallResultCorrelation(toolName, correlationSnapshot, mapped);
-      return mapped;
-    } catch {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Invalid handler result for ${name}`,
+      const correlationSnapshot = createCallCorrelationSnapshot(
+        toolName,
+        input.data,
       );
+      const context: JetKvmHandlerContext = Object.freeze({
+        signal: AbortSignal.any([
+          extra.signal,
+          invocationController.signal,
+          lifetimeController.signal,
+        ]),
+        principalId,
+        correlationId: correlationIdFor(extra.requestId),
+      });
+      let result: CallToolResult;
+      try {
+        result = await handler(input.data, context);
+      } catch {
+        if (context.signal.aborted) throw new RequestCancelledError();
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Tool handler failed for ${name}`,
+        );
+      }
+      if (context.signal.aborted) throw new RequestCancelledError();
+      try {
+        const mapped = validateAndMapMcpResult(toolName, result);
+        validateCallResultCorrelation(toolName, correlationSnapshot, mapped);
+        return mapped;
+      } catch {
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Invalid handler result for ${name}`,
+        );
+      }
+    } finally {
+      const requestControllers =
+        invocationControllersByRequestId.get(requestKey);
+      requestControllers?.delete(invocationController);
+      if (requestControllers?.size === 0) {
+        invocationControllersByRequestId.delete(requestKey);
+      }
+      activeInvocationControllers.delete(invocationController);
+      if (!invocationController.signal.aborted) invocationController.abort();
+      admission.release(token);
     }
   });
 
   return server;
+}
+
+function sessionAdmissionKey(
+  principalId: string | null,
+  input: unknown,
+): string | null {
+  if (
+    !isRecord(input) ||
+    typeof input.session_id !== "string" ||
+    typeof input.session_generation !== "number"
+  ) {
+    return null;
+  }
+  return createHash("sha256")
+    .update("jetkvm-mcp:handler-session:v1\u0000", "utf8")
+    .update(principalId ?? "anonymous", "utf8")
+    .update("\u0000", "utf8")
+    .update(input.session_id, "utf8")
+    .update("\u0000", "utf8")
+    .update(String(input.session_generation), "utf8")
+    .digest("hex");
+}
+function canonicalRequestId(requestId: string | number): string {
+  const canonical =
+    typeof requestId === "number"
+      ? `number:${requestId}`
+      : `string:${requestId}`;
+  return createHash("sha256")
+    .update("jetkvm-mcp:jsonrpc-request:v1\u0000", "utf8")
+    .update(canonical, "utf8")
+    .digest("hex");
 }
 
 function sanitizedPrincipalId(principalId: string | undefined): string | null {
@@ -160,9 +390,7 @@ type CallCorrelationSnapshot = Readonly<{
   captureMaxWidth: number | null;
   captureMaxHeight: number | null;
   powerAction: "press_power" | "hold_power" | "press_reset" | null;
-  pasteOriginalCodePointCount: number | null;
   pasteOriginalByteCount: number | null;
-  pasteNormalizedCodePointCount: number | null;
   pasteNormalizedByteCount: number | null;
   pasteNormalizedSha256: string | null;
 }>;
@@ -182,9 +410,7 @@ function createCallCorrelationSnapshot(
   if (!isRecord(input)) {
     throw new Error("Invalid parsed call correlation input.");
   }
-  let pasteOriginalCodePointCount: number | null = null;
   let pasteOriginalByteCount: number | null = null;
-  let pasteNormalizedCodePointCount: number | null = null;
   let pasteNormalizedByteCount: number | null = null;
   let pasteNormalizedSha256: string | null = null;
   if (tool === "jetkvm_input_paste") {
@@ -197,21 +423,13 @@ function createCallCorrelationSnapshot(
       .replace(/\r\n/g, "\n")
       .replace(/\r/g, "\n")
       .normalize("NFC");
-    pasteOriginalCodePointCount = 0;
-    for (const _character of input.text) pasteOriginalCodePointCount += 1;
-    pasteNormalizedCodePointCount = 0;
-    for (const _character of normalizedText) {
-      pasteNormalizedCodePointCount += 1;
-    }
     pasteOriginalByteCount = Buffer.byteLength(input.text, "utf8");
     pasteNormalizedByteCount = Buffer.byteLength(normalizedText, "utf8");
     pasteNormalizedSha256 = createHash("sha256")
       .update(normalizedText, "utf8")
       .digest("hex");
     if (
-      pasteOriginalCodePointCount < 1 ||
       pasteOriginalByteCount < 1 ||
-      pasteNormalizedCodePointCount < 1 ||
       pasteNormalizedByteCount < 1 ||
       pasteNormalizedByteCount > 262_144
     ) {
@@ -240,12 +458,92 @@ function createCallCorrelationSnapshot(
       input.action === "press_reset"
         ? input.action
         : null,
-    pasteOriginalCodePointCount,
     pasteOriginalByteCount,
-    pasteNormalizedCodePointCount,
     pasteNormalizedByteCount,
     pasteNormalizedSha256,
   });
+}
+
+type CaptureGeometryFacts = Readonly<{
+  image: Record<string, unknown>;
+  imageWidth: number;
+  imageHeight: number;
+}>;
+
+function validateCaptureGeometry(capture: unknown): CaptureGeometryFacts {
+  if (!isRecord(capture)) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  const image = capture.image;
+  const geometry = capture.geometry;
+  if (!isRecord(image) || !isRecord(geometry)) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  const sourceWidth = capture.source_width;
+  const sourceHeight = capture.source_height;
+  const imageWidth = capture.image_width;
+  const imageHeight = capture.image_height;
+  const rotation = capture.rotation;
+  const contentX = geometry.content_x;
+  const contentY = geometry.content_y;
+  const contentWidth = geometry.content_width;
+  const contentHeight = geometry.content_height;
+  if (
+    typeof sourceWidth !== "number" ||
+    !Number.isSafeInteger(sourceWidth) ||
+    sourceWidth < 1 ||
+    sourceWidth > 1_920 ||
+    typeof sourceHeight !== "number" ||
+    !Number.isSafeInteger(sourceHeight) ||
+    sourceHeight < 1 ||
+    sourceHeight > 1_080 ||
+    typeof imageWidth !== "number" ||
+    !Number.isSafeInteger(imageWidth) ||
+    imageWidth < 1 ||
+    imageWidth > 1_920 ||
+    typeof imageHeight !== "number" ||
+    !Number.isSafeInteger(imageHeight) ||
+    imageHeight < 1 ||
+    imageHeight > 1_080 ||
+    (rotation !== 0 &&
+      rotation !== 90 &&
+      rotation !== 180 &&
+      rotation !== 270) ||
+    typeof contentX !== "number" ||
+    !Number.isSafeInteger(contentX) ||
+    contentX < 0 ||
+    typeof contentY !== "number" ||
+    !Number.isSafeInteger(contentY) ||
+    contentY < 0 ||
+    typeof contentWidth !== "number" ||
+    !Number.isSafeInteger(contentWidth) ||
+    contentWidth < 1 ||
+    contentWidth > 1_920 ||
+    typeof contentHeight !== "number" ||
+    !Number.isSafeInteger(contentHeight) ||
+    contentHeight < 1 ||
+    contentHeight > 1_080 ||
+    (image.mime_type !== "image/jpeg" && image.mime_type !== "image/png")
+  ) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  const rotatedSourceWidth =
+    rotation === 90 || rotation === 270 ? sourceHeight : sourceWidth;
+  const rotatedSourceHeight =
+    rotation === 90 || rotation === 270 ? sourceWidth : sourceHeight;
+  if (
+    contentWidth > imageWidth ||
+    contentHeight > imageHeight ||
+    contentX > imageWidth - contentWidth ||
+    contentY > imageHeight - contentHeight ||
+    contentWidth > rotatedSourceWidth ||
+    contentHeight > rotatedSourceHeight ||
+    BigInt(contentWidth) * BigInt(rotatedSourceHeight) !==
+      BigInt(contentHeight) * BigInt(rotatedSourceWidth)
+  ) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  return Object.freeze({ image, imageWidth, imageHeight });
 }
 
 function validateCallResultCorrelation(
@@ -314,60 +612,26 @@ function validateCallResultCorrelation(
       throw new Error("Invalid handler result correlation.");
     }
     if (tool === "jetkvm_display_capture") {
-      const image = result.image;
-      const geometry = result.geometry;
+      const capture = validateCaptureGeometry(result);
       if (
         snapshot.captureFormat === null ||
         snapshot.captureMaxWidth === null ||
         snapshot.captureMaxHeight === null ||
-        !isRecord(image) ||
-        !isRecord(geometry)
+        capture.image.mime_type !==
+          (snapshot.captureFormat === "png" ? "image/png" : "image/jpeg") ||
+        capture.imageWidth > snapshot.captureMaxWidth ||
+        capture.imageHeight > snapshot.captureMaxHeight
       ) {
         throw new Error("Invalid handler result correlation.");
       }
-      const sourceWidth = result.source_width;
-      const sourceHeight = result.source_height;
-      const imageWidth = result.image_width;
-      const imageHeight = result.image_height;
-      const rotation = result.rotation;
-      const contentX = geometry.content_x;
-      const contentY = geometry.content_y;
-      const contentWidth = geometry.content_width;
-      const contentHeight = geometry.content_height;
-      if (
-        typeof sourceWidth !== "number" ||
-        typeof sourceHeight !== "number" ||
-        typeof imageWidth !== "number" ||
-        typeof imageHeight !== "number" ||
-        typeof rotation !== "number" ||
-        typeof contentX !== "number" ||
-        typeof contentY !== "number" ||
-        typeof contentWidth !== "number" ||
-        typeof contentHeight !== "number"
-      ) {
-        throw new Error("Invalid handler result correlation.");
-      }
-      const expectedMimeType =
-        snapshot.captureFormat === "png" ? "image/png" : "image/jpeg";
-      const rotatedSourceWidth =
-        rotation === 90 || rotation === 270 ? sourceHeight : sourceWidth;
-      const rotatedSourceHeight =
-        rotation === 90 || rotation === 270 ? sourceWidth : sourceHeight;
-      if (
-        image.mime_type !== expectedMimeType ||
-        imageWidth > snapshot.captureMaxWidth ||
-        imageHeight > snapshot.captureMaxHeight ||
-        contentWidth > imageWidth ||
-        contentHeight > imageHeight ||
-        contentX > imageWidth - contentWidth ||
-        contentY > imageHeight - contentHeight ||
-        contentWidth > rotatedSourceWidth ||
-        contentHeight > rotatedSourceHeight ||
-        BigInt(contentWidth) * BigInt(rotatedSourceHeight) !==
-          BigInt(contentHeight) * BigInt(rotatedSourceWidth)
-      ) {
-        throw new Error("Invalid handler result correlation.");
-      }
+    }
+    if (
+      (tool === "jetkvm_input_keyboard" ||
+        tool === "jetkvm_input_mouse" ||
+        tool === "jetkvm_input_paste") &&
+      result.post_capture !== null
+    ) {
+      validateCaptureGeometry(result.post_capture);
     }
     if (
       (tool === "jetkvm_input_keyboard" || tool === "jetkvm_input_mouse") &&
@@ -394,7 +658,7 @@ function validateCallResultCorrelation(
     typeof error.code === "string" &&
     Object.hasOwn(PASTE_PROGRESS_ERROR_CODES, error.code)
   ) {
-    const requestedCount = snapshot.pasteNormalizedCodePointCount;
+    const requestedCount = snapshot.pasteNormalizedByteCount;
     if (
       requestedCount === null ||
       typeof details.dispatched_action_count !== "number" ||

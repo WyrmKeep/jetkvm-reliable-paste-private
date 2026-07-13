@@ -1898,6 +1898,7 @@ describe("strict canonical tool schemas", () => {
     expect(JSON.stringify(document)).toContain(
       "completed_action_count must not exceed dispatched_action_count",
     );
+    expect(JSON.stringify(document)).toContain("normalized UTF-8 byte");
   });
 
   it("requires positive ready-state connection epochs in runtime and generated schemas", () => {
@@ -1925,6 +1926,57 @@ describe("strict canonical tool schemas", () => {
       });
       expect(TOOL_RESULT_SCHEMAS[tool].safeParse(invalid).success).toBe(false);
       expect(validate(invalid)).toBe(false);
+    }
+  });
+  it("requires established epochs for ready session status only", () => {
+    const readyPayload = validPayloads.jetkvm_session_status;
+    if (typeof readyPayload !== "object" || readyPayload === null) {
+      throw new Error("Expected session status payload fixture.");
+    }
+    const document =
+      generateJsonSchemaDocuments()[
+        "jetkvm_session_status.result.schema.json"
+      ]!;
+    const validate = new Ajv({ strict: false }).compile(document);
+    const ready = successEnvelope("jetkvm_session_status", readyPayload);
+    expect(
+      TOOL_RESULT_SCHEMAS.jetkvm_session_status.safeParse(ready).success,
+    ).toBe(true);
+    expect(validate(ready)).toBe(true);
+    for (const invalidPayload of [
+      { ...readyPayload, connection_epoch: 0 },
+      { ...readyPayload, browser_channel_generation: 0 },
+      { ...readyPayload, browser_channel_generation: null },
+    ]) {
+      const invalid = successEnvelope("jetkvm_session_status", invalidPayload);
+      expect(
+        TOOL_RESULT_SCHEMAS.jetkvm_session_status.safeParse(invalid).success,
+      ).toBe(false);
+      expect(validate(invalid)).toBe(false);
+    }
+    for (const transitionalPayload of [
+      {
+        ...readyPayload,
+        state: "connecting",
+        connection_epoch: 0,
+        browser_channel_generation: null,
+      },
+      {
+        ...readyPayload,
+        state: "degraded",
+        connection_epoch: 1,
+        browser_channel_generation: 0,
+      },
+    ]) {
+      const transitional = successEnvelope(
+        "jetkvm_session_status",
+        transitionalPayload,
+      );
+      expect(
+        TOOL_RESULT_SCHEMAS.jetkvm_session_status.safeParse(transitional)
+          .success,
+      ).toBe(true);
+      expect(validate(transitional)).toBe(true);
     }
   });
 
@@ -1957,6 +2009,10 @@ describe("strict canonical tool schemas", () => {
       { ...minimum, source_height: 0 },
       { ...minimum, image_width: 0 },
       { ...minimum, image_height: 0 },
+      { ...minimum, source_width: 1_921 },
+      { ...minimum, source_height: 1_081 },
+      { ...minimum, image_width: 1_921 },
+      { ...minimum, image_height: 1_081 },
       {
         ...minimum,
         geometry: { ...minimum.geometry, content_width: 0 },
@@ -1964,6 +2020,14 @@ describe("strict canonical tool schemas", () => {
       {
         ...minimum,
         geometry: { ...minimum.geometry, content_height: 0 },
+      },
+      {
+        ...minimum,
+        geometry: { ...minimum.geometry, content_width: 1_921 },
+      },
+      {
+        ...minimum,
+        geometry: { ...minimum.geometry, content_height: 1_081 },
       },
     ]) {
       const invalid = successEnvelope("jetkvm_display_capture", invalidResult);

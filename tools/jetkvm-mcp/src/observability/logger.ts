@@ -1,5 +1,9 @@
 const REDACTED = "[REDACTED]";
 const SAFE_EVENT_NAME = /^[a-z][a-z0-9_.-]{0,63}$/u;
+const SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_.-]{0,63}$/u;
+const SAFE_ERROR_STATE = /^[a-z][a-z0-9_.-]{0,63}$/u;
+const SAFE_ERROR_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const SAFE_ERROR_NAMES: Readonly<Record<string, true>> = {
   AggregateError: true,
   Error: true,
@@ -10,11 +14,24 @@ const SAFE_ERROR_NAMES: Readonly<Record<string, true>> = {
   TypeError: true,
   URIError: true,
 };
+const EXACT_SENSITIVE_FIELDS: Readonly<Record<string, true>> = {
+  displayname: true,
+  edid: true,
+  key: true,
+  keys: true,
+  manufacturerid: true,
+  productcode: true,
+  serialnumber: true,
+};
 const SENSITIVE_FIELD =
   /(?:address|authorization|authority|base64|bearer|bytes|clipboard|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
 const SENSITIVE_STRING =
   /(?:\b(?:https?|wss?|file):\/\/|\bBearer\s+\S+|\b(?:[a-z0-9_]*(?:authorization|bearer|cookie|credential|password|secret|token)[a-z0-9_]*)\s*[:=]\s*\S+|\bcandidate:\d+|\ba=fingerprint:|(?:^|\r?\n)v=0(?:\r?\n|$)|data:image\/)/iu;
 const MALFORMED_QUOTED_FIELD = /\\?["']((?:\\.|[^"'\\\r\n])+?)\\?["']\s*:/gu;
+const MALFORMED_ESCAPED_JSON_FIELD =
+  /[\[{,]\s*\\?["']((?:\\.|[^"'\\\r\n])+?)\\?["']\s*:/gu;
+const MALFORMED_UNQUOTED_FIELD =
+  /(?<![a-z0-9_./?&:-])([a-z_][a-z0-9_.-]*)\s*[:=]\s*(?!\/\/)/giu;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -57,7 +74,11 @@ export function createStructuredLogger(
       throw new TypeError("Structured log fields must be a plain object");
     }
 
-    const redactedFields = redactStructuredData(fields);
+    const redactedFields = redactValue(
+      fields,
+      new Set<object>(),
+      level === "error",
+    );
     if (!isPlainObject(redactedFields)) {
       throw new TypeError("Structured log fields must be a plain object");
     }
@@ -136,22 +157,27 @@ function redactValue(
 
     const redactData = isEncodedBinaryDataContainer(value);
     const errorRecord = isErrorRecord(value, errorContext);
-    const redacted: Record<string, unknown> = {};
+    const effectiveErrorContext = errorContext || errorRecord;
+    const redacted = Object.create(null) as Record<string, unknown>;
     for (const [key, nested] of Object.entries(value)) {
       const normalizedKey = normalizeFieldName(key);
       if (
         (key === "data" && redactData) ||
-        SENSITIVE_FIELD.test(normalizedKey) ||
+        isSensitiveFieldName(normalizedKey) ||
         (errorRecord && isErrorDiagnosticField(normalizedKey))
       ) {
         redacted[key] = REDACTED;
       } else if (errorRecord && normalizedKey === "name") {
         redacted[key] = redactErrorName(nested);
+      } else if (effectiveErrorContext && typeof nested === "string") {
+        redacted[key] = isSafeErrorContextString(normalizedKey, nested)
+          ? nested
+          : redactString(nested, ancestors, true);
       } else {
         redacted[key] = redactValue(
           nested,
           ancestors,
-          isErrorContextField(normalizedKey),
+          effectiveErrorContext || isErrorContextField(normalizedKey),
         );
       }
     }
@@ -170,6 +196,9 @@ function redactString(
     const parsed: unknown = JSON.parse(value);
     return JSON.stringify(redactValue(parsed, ancestors, errorContext));
   } catch {
+    if (errorContext) {
+      return REDACTED;
+    }
     return SENSITIVE_STRING.test(value) || hasMalformedSensitiveField(value)
       ? REDACTED
       : value;
@@ -179,6 +208,22 @@ function redactErrorName(value: unknown): string {
   return typeof value === "string" && Object.hasOwn(SAFE_ERROR_NAMES, value)
     ? value
     : "Error";
+}
+
+function isSafeErrorContextString(
+  normalizedKey: string,
+  value: string,
+): boolean {
+  if (normalizedKey === "code") {
+    return SAFE_ERROR_CODE.test(value);
+  }
+  if (normalizedKey === "status" || normalizedKey === "stage") {
+    return SAFE_ERROR_STATE.test(value);
+  }
+  return (
+    (normalizedKey === "timestamp" || normalizedKey.endsWith("at")) &&
+    SAFE_ERROR_TIMESTAMP.test(value)
+  );
 }
 
 function isErrorRecord(value: object, errorContext: boolean): boolean {
@@ -224,19 +269,31 @@ function isErrorContextField(normalizedKey: string): boolean {
 }
 
 function hasMalformedSensitiveField(value: string): boolean {
-  const trimmed = value.trimStart();
-  const jsonLike = trimmed.startsWith("{") || trimmed.startsWith("[");
+  for (const match of value.matchAll(MALFORMED_ESCAPED_JSON_FIELD)) {
+    if (match[1]?.includes("\\") === true) {
+      return true;
+    }
+  }
   for (const match of value.matchAll(MALFORMED_QUOTED_FIELD)) {
     const key = match[1];
-    if (
-      key !== undefined &&
-      ((jsonLike && key.includes("\\")) ||
-        SENSITIVE_FIELD.test(normalizeFieldName(key)))
-    ) {
+    if (key !== undefined && isSensitiveFieldName(normalizeFieldName(key))) {
+      return true;
+    }
+  }
+  for (const match of value.matchAll(MALFORMED_UNQUOTED_FIELD)) {
+    const key = match[1];
+    if (key !== undefined && isSensitiveFieldName(normalizeFieldName(key))) {
       return true;
     }
   }
   return false;
+}
+
+function isSensitiveFieldName(normalizedKey: string): boolean {
+  return (
+    Object.hasOwn(EXACT_SENSITIVE_FIELDS, normalizedKey) ||
+    SENSITIVE_FIELD.test(normalizedKey)
+  );
 }
 
 function normalizeFieldName(key: string): string {

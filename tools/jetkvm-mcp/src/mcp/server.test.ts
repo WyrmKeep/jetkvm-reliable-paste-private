@@ -4,7 +4,11 @@ import { readFileSync } from "node:fs";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  LATEST_PROTOCOL_VERSION,
+  type CallToolResult,
+  type JSONRPCMessage,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,7 +17,13 @@ import {
   type JetKvmToolName,
 } from "../domain.js";
 import {
+  MCP_SERVER_BUSY_ERROR_CODE,
+  TOOL_HANDLER_GLOBAL_CAPACITY,
+  TOOL_HANDLER_PER_PRINCIPAL_CAPACITY,
+  TOOL_HANDLER_PER_SESSION_CAPACITY,
+  assertHandlerRegistry,
   createMcpServer,
+  type CreateMcpServerOptions,
   type HandlerRegistry,
   type JetKvmToolHandler,
 } from "./server.js";
@@ -123,8 +133,9 @@ function completeRegistry(
 async function connectedClient(
   registry: HandlerRegistry,
   clientId?: string,
+  options?: CreateMcpServerOptions,
 ): Promise<Client> {
-  const server = createMcpServer(registry);
+  const server = createMcpServer(registry, options);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   if (clientId !== undefined) {
@@ -709,16 +720,16 @@ describe("createMcpServer", () => {
     });
   });
 
-  it("correlates paste error progress to normalized source code points", async () => {
+  it("correlates paste error progress to normalized UTF-8 bytes", async () => {
     let mutateText = true;
     let progress = {
-      failed_action_index: 3,
-      dispatched_action_count: 4,
-      completed_action_count: 3,
+      failed_action_index: 8,
+      dispatched_action_count: 9,
+      completed_action_count: 8,
     };
     const handler: JetKvmToolHandler = async (input) => {
       if (mutateText) {
-        mutableRecord(input).text = "A😀éZ";
+        mutableRecord(input).text = "\uFEFFA😀e\u0301\r\nZ";
       }
       const envelope = {
         ok: false,
@@ -758,7 +769,7 @@ describe("createMcpServer", () => {
         session_generation: 1,
         observation_id: "observation-1",
         request_id: "request-paste-progress",
-        text: "A😀é",
+        text: "\uFEFFA😀e\u0301\r\n",
         timeout_ms: 100,
       },
     };
@@ -768,26 +779,26 @@ describe("createMcpServer", () => {
     );
     mutateText = false;
     progress = {
-      failed_action_index: 1,
-      dispatched_action_count: 2,
-      completed_action_count: 1,
+      failed_action_index: 6,
+      dispatched_action_count: 7,
+      completed_action_count: 6,
     };
     await expect(client.callTool(call)).resolves.toMatchObject({
       isError: true,
       structuredContent: {
         error: {
           details: {
-            failed_action_index: 1,
-            dispatched_action_count: 2,
-            completed_action_count: 1,
+            failed_action_index: 6,
+            dispatched_action_count: 7,
+            completed_action_count: 6,
           },
         },
       },
     });
     progress = {
       failed_action_index: 0,
-      dispatched_action_count: 2,
-      completed_action_count: 1,
+      dispatched_action_count: 7,
+      completed_action_count: 6,
     };
     await expect(client.callTool(call)).rejects.toThrow(
       /Invalid handler result/,
@@ -901,6 +912,155 @@ describe("createMcpServer", () => {
       },
     });
   });
+
+  it.each([
+    {
+      tool: "jetkvm_input_keyboard" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-post-capture",
+        actions: [{ type: "key_press", key: "KeyA" }],
+        timeout_ms: 100,
+      },
+    },
+    {
+      tool: "jetkvm_input_mouse" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-post-capture",
+        actions: [{ type: "move", x: 1, y: 1 }],
+        timeout_ms: 100,
+      },
+    },
+    {
+      tool: "jetkvm_input_paste" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-post-capture",
+        text: "x",
+        timeout_ms: 100,
+      },
+    },
+  ])(
+    "validates invariant-only $tool post-capture geometry",
+    async ({ tool, arguments: callArguments }) => {
+      const postCaptureBytes = Uint8Array.of(1);
+      const postCaptureData = Buffer.from(postCaptureBytes).toString("base64");
+      const postCaptureSha256 = createHash("sha256")
+        .update(postCaptureBytes)
+        .digest("hex");
+      let validGeometry = false;
+      const handler: JetKvmToolHandler = async () => {
+        const postCapture = {
+          observation_id: "observation-post-capture",
+          connection_epoch: 1,
+          display_generation: 1,
+          frame_id: "frame-post-capture",
+          captured_at: "2026-07-13T00:00:00.000Z",
+          source_width: validGeometry ? 64 : 32,
+          source_height: validGeometry ? 64 : 32,
+          image_width: 64,
+          image_height: 64,
+          rotation: 0,
+          geometry: {
+            content_x: 0,
+            content_y: 0,
+            content_width: 64,
+            content_height: 64,
+          },
+          image: {
+            content_index: 1,
+            mime_type: "image/png",
+            sha256: postCaptureSha256,
+            byte_length: 1,
+          },
+        };
+        const common = {
+          request_id: "request-post-capture",
+          outcome: "applied",
+          verification: "device_ack_only",
+          safe_to_retry: false,
+          required_next_step: "none",
+          post_capture: postCapture,
+        };
+        const result =
+          tool === "jetkvm_input_keyboard"
+            ? {
+                ...common,
+                dispatched_action_count: 1,
+                completed_action_count: 1,
+                held_keys: [],
+              }
+            : tool === "jetkvm_input_mouse"
+              ? {
+                  ...common,
+                  dispatched_action_count: 1,
+                  completed_action_count: 1,
+                }
+              : {
+                  ...common,
+                  original_byte_count: 1,
+                  normalized_byte_count: 1,
+                  normalized_sha256: createHash("sha256")
+                    .update("x", "utf8")
+                    .digest("hex"),
+                  accepted_at: "2026-07-13T00:00:00.000Z",
+                  completed_at: "2026-07-13T00:00:01.000Z",
+                  terminal_state: "succeeded",
+                  measured_chars_per_second: null,
+                };
+        const envelope = {
+          ok: true,
+          tool,
+          operation_id: "operation-post-capture",
+          session_id: "session-1",
+          session_generation: 1,
+          duration_ms: 1,
+          result,
+        };
+        return {
+          structuredContent: envelope,
+          content: [
+            { type: "text" as const, text: JSON.stringify(envelope) },
+            {
+              type: "image" as const,
+              data: postCaptureData,
+              mimeType: "image/png",
+            },
+          ],
+        };
+      };
+      const client = await connectedClient(
+        completeRegistry({ [tool]: handler }),
+      );
+
+      await expect(
+        client.callTool({ name: tool, arguments: callArguments }),
+      ).rejects.toThrow(/Invalid handler result/);
+      validGeometry = true;
+      await expect(
+        client.callTool({ name: tool, arguments: callArguments }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          result: {
+            post_capture: {
+              source_width: 64,
+              source_height: 64,
+              image_width: 64,
+              image_height: 64,
+            },
+          },
+        },
+      });
+    },
+  );
 
   it("correlates power action against the pre-handler request snapshot", async () => {
     let mutateAction = true;
@@ -1126,6 +1286,32 @@ describe("createMcpServer", () => {
     ).rejects.toThrow(/not active/);
   });
 
+  it("preflights empty or exact-ten handler registries without server effects", () => {
+    expect(() => assertHandlerRegistry({})).not.toThrow();
+    expect(() => assertHandlerRegistry(completeRegistry())).not.toThrow();
+    expect(() =>
+      assertHandlerRegistry({
+        jetkvm_session_connect: async () =>
+          businessError("jetkvm_session_connect"),
+      }),
+    ).toThrow(/empty or contain all ten/i);
+    expect(() =>
+      assertHandlerRegistry({
+        ...completeRegistry(),
+        not_a_jetkvm_tool: async () => businessError("jetkvm_session_connect"),
+      } as HandlerRegistry),
+    ).toThrow(/unknown tool/i);
+    const nonFunction = completeRegistry();
+    Object.defineProperty(nonFunction, "jetkvm_session_status", {
+      configurable: true,
+      enumerable: true,
+      value: undefined,
+    });
+    expect(() => assertHandlerRegistry(nonFunction)).toThrow(
+      /missing canonical tool/i,
+    );
+  });
+
   it("rejects a partial registry rather than exposing incomplete production behavior", () => {
     expect(() =>
       createMcpServer({
@@ -1153,5 +1339,630 @@ describe("createMcpServer", () => {
     } as HandlerRegistry;
 
     expect(() => createMcpServer(registry)).toThrow(/unknown tool/i);
+  });
+
+  it("bounds one principal without starving another and recovers completed slots", async () => {
+    expect(TOOL_HANDLER_PER_PRINCIPAL_CAPACITY).toBeLessThan(
+      TOOL_HANDLER_GLOBAL_CAPACITY,
+    );
+    const blocked = Promise.withResolvers<void>();
+    const handler = vi.fn(async () => {
+      await blocked.promise;
+      return businessError("jetkvm_session_connect");
+    });
+    const registry = completeRegistry({ jetkvm_session_connect: handler });
+    const principalA = await connectedClient(registry, "principal-a");
+    const principalB = await connectedClient(registry, "principal-b");
+    const activeA = Array.from(
+      { length: TOOL_HANDLER_PER_PRINCIPAL_CAPACITY },
+      (_, index) =>
+        principalA.callTool({
+          name: "jetkvm_session_connect",
+          arguments: { request_id: `principal-a-${index}`, timeout_ms: 100 },
+        }),
+    );
+    await vi.waitFor(() =>
+      expect(handler).toHaveBeenCalledTimes(
+        TOOL_HANDLER_PER_PRINCIPAL_CAPACITY,
+      ),
+    );
+
+    const principalOverload = await principalA
+      .callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "principal-a-overload", timeout_ms: 100 },
+      })
+      .catch((error: unknown) => error);
+    expect(principalOverload).toMatchObject({
+      code: MCP_SERVER_BUSY_ERROR_CODE,
+    });
+    expect(principalOverload).toMatchObject({
+      message: "MCP error -32002: Server busy",
+    });
+    expect(String(principalOverload)).toContain("Server busy");
+    expect(String(principalOverload)).not.toContain("principal-a-overload");
+    expect(handler).toHaveBeenCalledTimes(TOOL_HANDLER_PER_PRINCIPAL_CAPACITY);
+
+    const activeB = principalB.callTool({
+      name: "jetkvm_session_connect",
+      arguments: { request_id: "principal-b-accepted", timeout_ms: 100 },
+    });
+    await vi.waitFor(() =>
+      expect(handler).toHaveBeenCalledTimes(
+        TOOL_HANDLER_PER_PRINCIPAL_CAPACITY + 1,
+      ),
+    );
+
+    blocked.resolve();
+    await Promise.all([...activeA, activeB]);
+    await expect(
+      principalA.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "principal-a-recovered", timeout_ms: 100 },
+      }),
+    ).resolves.toMatchObject({ isError: true });
+  });
+
+  it("enforces a shared global handler cap across server instances with no queue", async () => {
+    const blocked = Promise.withResolvers<void>();
+    const handler = vi.fn(async () => {
+      await blocked.promise;
+      return businessError("jetkvm_session_connect");
+    });
+    const registry = completeRegistry({ jetkvm_session_connect: handler });
+    const principalCount =
+      TOOL_HANDLER_GLOBAL_CAPACITY / TOOL_HANDLER_PER_PRINCIPAL_CAPACITY;
+    expect(Number.isInteger(principalCount)).toBe(true);
+    const clients = await Promise.all(
+      Array.from({ length: principalCount }, (_, index) =>
+        connectedClient(registry, `global-principal-${index}`),
+      ),
+    );
+    const active = clients.flatMap((client, principalIndex) =>
+      Array.from(
+        { length: TOOL_HANDLER_PER_PRINCIPAL_CAPACITY },
+        (_, callIndex) =>
+          client.callTool({
+            name: "jetkvm_session_connect",
+            arguments: {
+              request_id: `global-${principalIndex}-${callIndex}`,
+              timeout_ms: 100,
+            },
+          }),
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(handler).toHaveBeenCalledTimes(TOOL_HANDLER_GLOBAL_CAPACITY),
+    );
+
+    const overloaded = await connectedClient(registry, "global-overload");
+    const globalOverload = await overloaded
+      .callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "secret-overload-input", timeout_ms: 100 },
+      })
+      .catch((error: unknown) => error);
+    expect(globalOverload).toMatchObject({
+      code: MCP_SERVER_BUSY_ERROR_CODE,
+    });
+    expect(globalOverload).toMatchObject({
+      message: "MCP error -32002: Server busy",
+    });
+    expect(String(globalOverload)).toContain("Server busy");
+    expect(String(globalOverload)).not.toContain("secret-overload-input");
+    expect(handler).toHaveBeenCalledTimes(TOOL_HANDLER_GLOBAL_CAPACITY);
+
+    blocked.resolve();
+    await Promise.all(active);
+  });
+
+  it("caps one session across tools and releases every slot after completion", async () => {
+    const blocked = Promise.withResolvers<void>();
+    const statusHandler = vi.fn(async () => {
+      await blocked.promise;
+      return businessError("jetkvm_session_status");
+    });
+    const pasteHandler = vi.fn(async () => businessError("jetkvm_input_paste"));
+    const registry = completeRegistry({
+      jetkvm_session_status: statusHandler,
+      jetkvm_input_paste: pasteHandler,
+    });
+    const client = await connectedClient(registry, "session-principal");
+    const active = Array.from(
+      { length: TOOL_HANDLER_PER_SESSION_CAPACITY },
+      () =>
+        client.callTool({
+          name: "jetkvm_session_status",
+          arguments: {
+            session_id: "session-cap",
+            session_generation: 1,
+            timeout_ms: 100,
+          },
+        }),
+    );
+    await vi.waitFor(() =>
+      expect(statusHandler).toHaveBeenCalledTimes(
+        TOOL_HANDLER_PER_SESSION_CAPACITY,
+      ),
+    );
+
+    const secret = "Bearer-secret-paste-body";
+    await expect(
+      client.callTool({
+        name: "jetkvm_input_paste",
+        arguments: {
+          session_id: "session-cap",
+          session_generation: 1,
+          observation_id: "observation-1",
+          request_id: "paste-overload",
+          text: secret,
+          timeout_ms: 100,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: MCP_SERVER_BUSY_ERROR_CODE,
+      message: expect.not.stringContaining(secret),
+    });
+    expect(pasteHandler).not.toHaveBeenCalled();
+
+    blocked.resolve();
+    await Promise.all(active);
+    await expect(
+      client.callTool({
+        name: "jetkvm_input_paste",
+        arguments: {
+          session_id: "session-cap",
+          session_generation: 1,
+          observation_id: "observation-1",
+          request_id: "paste-recovered",
+          text: "safe",
+          timeout_ms: 100,
+        },
+      }),
+    ).resolves.toMatchObject({ isError: true });
+    expect(pasteHandler).toHaveBeenCalledOnce();
+  });
+
+  it("aborts every active invocation on transport close and recovers shared slots", async () => {
+    const observedSignals: AbortSignal[] = [];
+    let shouldBlock = true;
+    const handler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        observedSignals.push(context.signal);
+        if (shouldBlock && !context.signal.aborted) {
+          await new Promise<void>((resolve) =>
+            context.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+        }
+        return businessError("jetkvm_session_connect");
+      },
+    );
+    const registry = completeRegistry({ jetkvm_session_connect: handler });
+    const server = createMcpServer(registry);
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({
+      name: "server-lifetime-test",
+      version: "1.0.0",
+    });
+    openClients.push(client);
+    await client.connect(clientTransport);
+    const pending = [
+      client.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "lifetime-a", timeout_ms: 100 },
+      }),
+      client.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "lifetime-b", timeout_ms: 100 },
+      }),
+    ];
+    await vi.waitFor(() => expect(observedSignals).toHaveLength(2));
+
+    await client.close();
+    await vi.waitFor(() =>
+      expect(observedSignals.every((signal) => signal.aborted)).toBe(true),
+    );
+    await Promise.allSettled(pending);
+
+    shouldBlock = false;
+    const replacement = await connectedClient(registry);
+    await expect(
+      replacement.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "lifetime-recovered", timeout_ms: 100 },
+      }),
+    ).resolves.toMatchObject({ isError: true });
+  });
+
+  it("releases session slots after request cancellation", async () => {
+    const entered = Promise.withResolvers<void>();
+    let enteredCount = 0;
+    const statusHandler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        enteredCount += 1;
+        if (enteredCount === TOOL_HANDLER_PER_SESSION_CAPACITY) {
+          entered.resolve();
+        }
+        if (!context.signal.aborted) {
+          await new Promise<void>((resolve) =>
+            context.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+        }
+        return businessError("jetkvm_session_status");
+      },
+    );
+    const pasteHandler = vi.fn(async () => businessError("jetkvm_input_paste"));
+    const registry = completeRegistry({
+      jetkvm_session_status: statusHandler,
+      jetkvm_input_paste: pasteHandler,
+    });
+    const client = await connectedClient(registry, "cancel-principal");
+    const cancellations = Array.from(
+      { length: TOOL_HANDLER_PER_SESSION_CAPACITY },
+      () => new AbortController(),
+    );
+    const pending = cancellations.map((controller) =>
+      client.callTool(
+        {
+          name: "jetkvm_session_status",
+          arguments: {
+            session_id: "cancel-session",
+            session_generation: 1,
+            timeout_ms: 100,
+          },
+        },
+        undefined,
+        { signal: controller.signal },
+      ),
+    );
+    await entered.promise;
+    for (const controller of cancellations) controller.abort();
+    await Promise.allSettled(pending);
+    await vi.waitFor(() =>
+      expect(
+        statusHandler.mock.calls.every((call) => call[1].signal.aborted),
+      ).toBe(true),
+    );
+
+    await expect(
+      client.callTool({
+        name: "jetkvm_input_paste",
+        arguments: {
+          session_id: "cancel-session",
+          session_generation: 1,
+          observation_id: "observation-1",
+          request_id: "after-cancel",
+          text: "safe",
+          timeout_ms: 100,
+        },
+      }),
+    ).resolves.toMatchObject({ isError: true });
+    expect(pasteHandler).toHaveBeenCalledOnce();
+  });
+
+  it("releases session slots after handler rejection without exposing error text", async () => {
+    let shouldReject = true;
+    const secret = "https://operator:password@example.test Bearer-secret";
+    const handler = vi.fn(async () => {
+      if (shouldReject) throw new Error(secret);
+      return businessError("jetkvm_session_status");
+    });
+    const registry = completeRegistry({ jetkvm_session_status: handler });
+    const client = await connectedClient(registry, "reject-principal");
+    for (
+      let index = 0;
+      index < TOOL_HANDLER_PER_SESSION_CAPACITY + 1;
+      index += 1
+    ) {
+      const rejection = await client
+        .callTool({
+          name: "jetkvm_session_status",
+          arguments: {
+            session_id: "reject-session",
+            session_generation: 1,
+            timeout_ms: 100,
+          },
+        })
+        .catch((error: unknown) => error);
+      expect(String(rejection)).toContain("Tool handler failed");
+      expect(String(rejection)).not.toContain(secret);
+    }
+    expect(handler).toHaveBeenCalledTimes(
+      TOOL_HANDLER_PER_SESSION_CAPACITY + 1,
+    );
+
+    shouldReject = false;
+    await expect(
+      client.callTool({
+        name: "jetkvm_session_status",
+        arguments: {
+          session_id: "reject-session",
+          session_generation: 1,
+          timeout_ms: 100,
+        },
+      }),
+    ).resolves.toMatchObject({ isError: true });
+  });
+
+  it("fail-closes a duplicate active JSON-RPC ID and cancels the original", async () => {
+    const observedSignals: AbortSignal[] = [];
+    const handler = vi.fn(
+      async (
+        _input: unknown,
+        context: { signal: AbortSignal },
+      ): Promise<CallToolResult> => {
+        observedSignals.push(context.signal);
+        if (handler.mock.calls.length === 1 && !context.signal.aborted) {
+          await new Promise<void>((resolve) =>
+            context.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+        }
+        return businessError("jetkvm_session_connect");
+      },
+    );
+    const server = createMcpServer(
+      completeRegistry({ jetkvm_session_connect: handler }),
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const messages: JSONRPCMessage[] = [];
+    clientTransport.onmessage = (message) => messages.push(message);
+    await server.connect(serverTransport);
+    await clientTransport.start();
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "duplicate-id-test", version: "1.0.0" },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        messages.some((message) => "id" in message && message.id === 1),
+      ).toBe(true),
+    );
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    const duplicateCall = {
+      jsonrpc: "2.0" as const,
+      id: 77,
+      method: "tools/call" as const,
+      params: {
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "duplicate-id", timeout_ms: 100 },
+      },
+    };
+    await clientTransport.send(duplicateCall);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    await clientTransport.send(duplicateCall);
+    await vi.waitFor(() =>
+      expect(
+        messages.some(
+          (message) =>
+            "id" in message &&
+            message.id === 77 &&
+            "error" in message &&
+            message.error.code === MCP_SERVER_BUSY_ERROR_CODE,
+        ),
+      ).toBe(true),
+    );
+    expect(handler).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(observedSignals[0]?.aborted).toBe(true));
+
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 77, reason: "cancel duplicate ID" },
+    });
+    await vi.waitFor(() => expect(observedSignals[0]?.aborted).toBe(true));
+    await vi.waitFor(() =>
+      expect(
+        messages.filter((message) => "id" in message && message.id === 77),
+      ).toHaveLength(2),
+    );
+    expect(
+      messages
+        .filter((message) => "id" in message && message.id === 77)
+        .every((message) => "error" in message),
+    ).toBe(true);
+
+    await clientTransport.send(duplicateCall);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(
+        messages.filter((message) => "id" in message && message.id === 77),
+      ).toHaveLength(3),
+    );
+    expect(
+      messages.filter(
+        (message) =>
+          "id" in message && message.id === 77 && "result" in message,
+      ),
+    ).toHaveLength(1);
+    await server.close();
+  });
+
+  it("shares every admission cap across cloned registries with one stable key", async () => {
+    const admissionKey = {};
+    let blocked = Promise.withResolvers<void>();
+    const handler = vi.fn(async () => {
+      await blocked.promise;
+      return businessError("jetkvm_session_connect");
+    });
+    const registry = () =>
+      completeRegistry({ jetkvm_session_connect: handler });
+
+    const principalClients = await Promise.all([
+      connectedClient(registry(), "shared-principal", { admissionKey }),
+      connectedClient(registry(), "shared-principal", { admissionKey }),
+    ]);
+    const principalActive = Array.from(
+      { length: TOOL_HANDLER_PER_PRINCIPAL_CAPACITY },
+      (_, index) =>
+        principalClients[index % principalClients.length]!.callTool({
+          name: "jetkvm_session_connect",
+          arguments: {
+            request_id: `shared-principal-${index}`,
+            timeout_ms: 100,
+          },
+        }),
+    );
+    await vi.waitFor(() =>
+      expect(handler).toHaveBeenCalledTimes(
+        TOOL_HANDLER_PER_PRINCIPAL_CAPACITY,
+      ),
+    );
+    await expect(
+      principalClients[0]!.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "shared-principal-overload", timeout_ms: 100 },
+      }),
+    ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+    blocked.resolve();
+    await Promise.all(principalActive);
+
+    blocked = Promise.withResolvers<void>();
+    handler.mockClear();
+    const globalClients = await Promise.all(
+      Array.from({ length: TOOL_HANDLER_GLOBAL_CAPACITY }, (_, index) =>
+        connectedClient(registry(), `shared-global-${index}`, {
+          admissionKey,
+        }),
+      ),
+    );
+    const globalActive = globalClients.map((client, index) =>
+      client.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: `shared-global-${index}`, timeout_ms: 100 },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(handler).toHaveBeenCalledTimes(TOOL_HANDLER_GLOBAL_CAPACITY),
+    );
+    const sharedOverload = await connectedClient(
+      registry(),
+      "shared-global-overload",
+      { admissionKey },
+    );
+    await expect(
+      sharedOverload.callTool({
+        name: "jetkvm_session_connect",
+        arguments: { request_id: "shared-global-overload", timeout_ms: 100 },
+      }),
+    ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+
+    const isolated = await connectedClient(registry(), "isolated-principal", {
+      admissionKey: {},
+    });
+    const isolatedActive = isolated.callTool({
+      name: "jetkvm_session_connect",
+      arguments: { request_id: "isolated-accepted", timeout_ms: 100 },
+    });
+    await vi.waitFor(() =>
+      expect(handler).toHaveBeenCalledTimes(TOOL_HANDLER_GLOBAL_CAPACITY + 1),
+    );
+    blocked.resolve();
+    await Promise.all([...globalActive, isolatedActive]);
+  });
+
+  it("shares session caps across cloned registries and isolates lifetime aborts", async () => {
+    const admissionKey = {};
+    const lifetimeA = new AbortController();
+    const lifetimeB = new AbortController();
+    const signalsA: AbortSignal[] = [];
+    const signalsB: AbortSignal[] = [];
+    const handlerFor =
+      (signals: AbortSignal[]): JetKvmToolHandler =>
+      async (_input, context) => {
+        signals.push(context.signal);
+        if (!context.signal.aborted) {
+          await new Promise<void>((resolve) =>
+            context.signal.addEventListener("abort", () => resolve(), {
+              once: true,
+            }),
+          );
+        }
+        return businessError("jetkvm_session_status");
+      };
+    const clientA = await connectedClient(
+      completeRegistry({
+        jetkvm_session_status: handlerFor(signalsA),
+      }),
+      "shared-session",
+      { admissionKey, lifetimeSignal: lifetimeA.signal },
+    );
+    const clientB = await connectedClient(
+      completeRegistry({
+        jetkvm_session_status: handlerFor(signalsB),
+      }),
+      "shared-session",
+      { admissionKey, lifetimeSignal: lifetimeB.signal },
+    );
+    const statusArguments = {
+      session_id: "shared-session-id",
+      session_generation: 1,
+      timeout_ms: 100,
+    };
+    const activeA = clientA.callTool({
+      name: "jetkvm_session_status",
+      arguments: statusArguments,
+    });
+    const activeB = clientB.callTool({
+      name: "jetkvm_session_status",
+      arguments: statusArguments,
+    });
+    await vi.waitFor(() =>
+      expect(signalsA.length + signalsB.length).toBe(
+        TOOL_HANDLER_PER_SESSION_CAPACITY,
+      ),
+    );
+    await expect(
+      clientB.callTool({
+        name: "jetkvm_session_status",
+        arguments: statusArguments,
+      }),
+    ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+
+    lifetimeA.abort();
+    await vi.waitFor(() => expect(signalsA[0]?.aborted).toBe(true));
+    expect(signalsB[0]?.aborted).toBe(false);
+    await Promise.allSettled([activeA]);
+    const replacementLifetime = new AbortController();
+    const replacementSignals: AbortSignal[] = [];
+    const replacement = await connectedClient(
+      completeRegistry({
+        jetkvm_session_status: handlerFor(replacementSignals),
+      }),
+      "shared-session",
+      { admissionKey, lifetimeSignal: replacementLifetime.signal },
+    );
+    const replacementActive = replacement.callTool({
+      name: "jetkvm_session_status",
+      arguments: statusArguments,
+    });
+    await vi.waitFor(() => expect(replacementSignals).toHaveLength(1));
+
+    lifetimeB.abort();
+    replacementLifetime.abort();
+    await Promise.allSettled([activeB, replacementActive]);
   });
 });

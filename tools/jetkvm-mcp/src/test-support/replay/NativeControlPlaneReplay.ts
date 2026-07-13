@@ -1,10 +1,11 @@
 import { z } from "zod";
 
-import type {
-  Deadline,
-  DeviceRpcAdapter,
-  DeviceRpcBinding,
-  SessionRef,
+import {
+  OPAQUE_ID_PATTERN,
+  type Deadline,
+  type DeviceRpcAdapter,
+  type DeviceRpcBinding,
+  type SessionRef,
 } from "../../device/DeviceRpcAdapter.js";
 import type {
   NativeControlPlane,
@@ -15,13 +16,14 @@ import type {
 } from "../../planes/NativeControlPlane.js";
 import {
   SanitizedReplayCursor,
+  atxReplayReceiptMatchesRequest,
   type JsonValue,
   type SanitizedReplayTape,
 } from "./SanitizedReplayTape.js";
 
 const powerReceiptSchema = z
   .object({
-    requestId: z.string().min(1),
+    requestId: z.string().regex(OPAQUE_ID_PATTERN),
     action: z.enum(["press_power", "hold_power", "press_reset"]),
     wireAction: z.enum(["power-short", "power-long", "reset"]),
     fixedPressMs: z.union([z.literal(200), z.literal(5000)]),
@@ -51,6 +53,18 @@ const powerReceiptSchema = z
       .strict(),
   })
   .strict();
+const recordedSessionStatusSchema = z
+  .object({
+    rpcReachability: z.enum(["reachable", "unreachable", "unknown"]),
+    nativeProcess: z.enum([
+      "available",
+      "restarting",
+      "unavailable",
+      "unknown",
+    ]),
+    display: z.unknown(),
+  })
+  .strict();
 
 export class NativeControlPlaneReplay implements NativeControlPlane {
   private readonly replay: SanitizedReplayCursor;
@@ -72,13 +86,17 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
   ): Promise<NativeSessionStatus> {
     this.validateDeadline(deadline);
     const expected = this.replay.consume("sessionStatus", { ref: { ...ref } });
+    const recorded = recordedSessionStatusSchema.safeParse(expected);
+    if (!recorded.success) {
+      throw new Error("Native replay session status shape is invalid.");
+    }
     const display = await this.deviceRpc.readDisplayState(
       this.bindingFor(ref),
       deadline,
     );
     const actual: NativeSessionStatus = {
-      rpcReachability: "reachable",
-      nativeProcess: "available",
+      rpcReachability: recorded.data.rpcReachability,
+      nativeProcess: recorded.data.nativeProcess,
       display,
     };
     this.replay.assertResult("sessionStatus", expected, this.asJson(actual));
@@ -114,8 +132,12 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
       request,
       deadline,
     );
-    if (!powerReceiptSchema.safeParse(actual).success) {
+    const parsed = powerReceiptSchema.safeParse(actual);
+    if (!parsed.success) {
       throw new Error("Native replay ATX receipt shape is invalid.");
+    }
+    if (!atxReplayReceiptMatchesRequest(request, parsed.data)) {
+      throw new Error("Native replay ATX receipt correlation is invalid.");
     }
     this.replay.assertResult("powerControl", expected, this.asJson(actual));
     return actual;
@@ -123,21 +145,19 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
 
   private bindingFor(ref: SessionRef): DeviceRpcBinding {
     const binding = this.deviceRpc.binding;
-    return binding.sessionId === ref.sessionId &&
-      binding.sessionGeneration === ref.sessionGeneration
-      ? binding
-      : {
-          sessionId: ref.sessionId,
-          sessionGeneration: ref.sessionGeneration,
-          connectionEpoch: binding.connectionEpoch,
-          browserChannelGeneration: binding.browserChannelGeneration,
-        };
+    if (
+      binding.sessionId !== ref.sessionId ||
+      binding.sessionGeneration !== ref.sessionGeneration
+    ) {
+      throw new Error("Native replay session reference is stale.");
+    }
+    return binding;
   }
 
   private validateDeadline(deadline: Deadline): void {
     if (deadline.signal.aborted)
       throw new Error("Replay plane call was cancelled before admission.");
-    if (!Number.isSafeInteger(deadline.timeoutMs) || deadline.timeoutMs < 100) {
+    if (!Number.isSafeInteger(deadline.timeoutMs) || deadline.timeoutMs <= 0) {
       throw new Error("Replay plane deadline is invalid.");
     }
   }

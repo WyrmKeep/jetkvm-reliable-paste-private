@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 
 import {
   prepareInstalledPackage,
   runInstalledModule,
+  withInstalledPackage,
 } from "./installed-smoke-support.mjs";
 
-const installed = await prepareInstalledPackage("contracts");
-try {
-  const result = await runInstalledModule(
-    installed.consumer,
-    "contracts-runner.mjs",
-    `import assert from "node:assert/strict";
+export async function runInstalledContractsSmoke({
+  prepareInstalledPackageImpl = prepareInstalledPackage,
+  runInstalledModuleImpl = runInstalledModule,
+} = {}) {
+  return withInstalledPackage(
+    "contracts",
+    async (installed) => {
+      const result = await runInstalledModuleImpl(
+        installed.consumer,
+        "contracts-runner.mjs",
+        `import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { JETKVM_TOOL_NAMES } from "@wyrmkeep/jetkvm-mcp/dist/domain.js";
@@ -62,9 +69,14 @@ assert.deepEqual(handlerCalls, Object.fromEntries(JETKVM_TOOL_NAMES.map((name) =
 await client.close();
 console.log("installed contracts smoke ok");
 `,
+      );
+      assert.equal(result.stderr, "");
+      assert.equal(result.stdout, "installed contracts smoke ok\n");
+    },
+    { prepareInstalledPackageImpl },
   );
-  assert.equal(result.stderr, "");
-  assert.equal(result.stdout, "installed contracts smoke ok\n");
-} finally {
-  await installed.cleanup();
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  await runInstalledContractsSmoke();
 }

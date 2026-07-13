@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -11,7 +13,11 @@ import type {
 import { validateSessionPlaneBundle } from "../planes/SessionPlaneBundle.js";
 import { FakeBrowserPlane } from "./fakes/FakeBrowserPlane.js";
 import { FakeNativeControlPlane } from "./fakes/FakeNativeControlPlane.js";
-import { PlaneFaultError, type PlaneFault } from "./fakes/PlaneScenario.js";
+import {
+  PlaneFaultError,
+  type PlaneFault,
+  type PlaneOperation,
+} from "./fakes/PlaneScenario.js";
 
 const binding: DeviceRpcBinding = {
   sessionId: "session-a",
@@ -34,6 +40,59 @@ const receipt = {
   dispatchedCount: 1,
   completedCount: 1,
   acknowledgedAt: "2026-07-13T00:00:00.000Z",
+};
+
+const imageBytes = new Uint8Array([1, 2, 3]);
+const observation = {
+  observationId: "observation-a",
+  sessionGeneration: ref.sessionGeneration,
+  connectionEpoch: binding.connectionEpoch,
+  displayGeneration: 0,
+  frameId: "frame-a",
+  capturedAt: "2026-07-13T00:00:00.000Z",
+  sourceWidth: 1920,
+  sourceHeight: 1080,
+  imageWidth: 1280,
+  imageHeight: 720,
+  rotation: 0 as const,
+  geometry: {
+    contentX: 0,
+    contentY: 0,
+    contentWidth: 1280,
+    contentHeight: 720,
+  },
+  image: {
+    mimeType: "image/png" as const,
+    sha256: createHash("sha256").update(imageBytes).digest("hex"),
+    bytes: imageBytes,
+  },
+};
+const pasteText = "private paste";
+const normalizedPasteText = pasteText.normalize("NFC");
+const pasteReceipt = {
+  ...receipt,
+  dispatchedCount: Buffer.byteLength(normalizedPasteText),
+  completedCount: Buffer.byteLength(normalizedPasteText),
+  originalByteCount: Buffer.byteLength(pasteText),
+  normalizedByteCount: Buffer.byteLength(normalizedPasteText),
+  normalizedSha256: createHash("sha256")
+    .update(normalizedPasteText)
+    .digest("hex"),
+  acceptedAt: "2026-07-13T00:00:00.000Z",
+  completedAt: "2026-07-13T00:00:01.000Z",
+  terminalState: "succeeded" as const,
+  measuredCharsPerSecond: 91,
+};
+const releaseReceipt = {
+  ...receipt,
+  mutationGateClosed: true,
+  deferredProducersJoined: true,
+  pasteTerminal: "inactive" as const,
+  ordinaryLeasesZero: true,
+  keyboardZero: true,
+  pointerZero: true,
+  generationDrained: true,
+  heldKeys: [],
 };
 
 const display: CachedDisplayState = {
@@ -136,6 +195,7 @@ const THROWING_FAULTS: readonly ThrowingPlaneFault[] = [
   "capability_missing",
   "control_busy",
   "takeover",
+  "malformed_response_before_write",
   "stale_generation",
   "partial_multi_event",
   "partial_verification",
@@ -181,6 +241,12 @@ const FAULT_FAILURES = {
     outcome: "unknown",
     safeToRetry: false,
     requiredNextStep: "inspect_device_state_before_retry",
+  },
+  malformed_response_before_write: {
+    code: "DOWNSTREAM_MALFORMED_RESPONSE",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
   },
   permission_denied: {
     code: "PERMISSION_DENIED",
@@ -313,7 +379,6 @@ describe("FakeBrowserPlane", () => {
             connectionEpoch: binding.connectionEpoch,
             browserChannelGeneration: binding.browserChannelGeneration,
             displayGeneration: 1,
-            deviceRpc: new RecordingAdapter(),
           },
         },
       ],
@@ -324,15 +389,185 @@ describe("FakeBrowserPlane", () => {
     expect(connection.deviceRpc).toBe(adapter);
   });
 
+  it("strictly validates and correlates every fake browser result", async () => {
+    const validConnection = {
+      state: "ready" as const,
+      ref,
+      binding,
+      connectionEpoch: binding.connectionEpoch,
+      browserChannelGeneration: binding.browserChannelGeneration,
+      displayGeneration: 0,
+    };
+    const cases: readonly [
+      operation: PlaneOperation,
+      result: unknown,
+      invoke: (plane: FakeBrowserPlane) => Promise<unknown>,
+    ][] = [
+      [
+        "connect",
+        { ...validConnection, ref: { ...ref, sessionId: "session-b" } },
+        (plane) => plane.connect(ref, deadline),
+      ],
+      [
+        "reconnect",
+        {
+          ...validConnection,
+          binding: { ...binding, connectionEpoch: binding.connectionEpoch + 1 },
+        },
+        (plane) => plane.reconnect(ref, deadline),
+      ],
+      [
+        "capture",
+        {
+          ...observation,
+          geometry: { ...observation.geometry, contentWidth: 1281 },
+        },
+        (plane) =>
+          plane.capture(
+            ref,
+            { format: "png", maxWidth: 1280, maxHeight: 720 },
+            deadline,
+          ),
+      ],
+      [
+        "mouse",
+        { ...receipt, requestId: "wrong-request" },
+        (plane) =>
+          plane.mouse(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "request-a",
+              actions: [{ type: "move", x: 1, y: 2 }],
+            },
+            deadline,
+          ),
+      ],
+      [
+        "keyboard",
+        { ...receipt, dispatchedCount: 0, completedCount: 0 },
+        (plane) =>
+          plane.keyboard(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "request-a",
+              actions: [{ type: "key_press", key: "KeyA" }],
+            },
+            deadline,
+          ),
+      ],
+      [
+        "paste",
+        { ...pasteReceipt, originalByteCount: 1 },
+        (plane) =>
+          plane.paste(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "request-a",
+              text: pasteText,
+            },
+            deadline,
+          ),
+      ],
+      [
+        "release",
+        { ...releaseReceipt, generationDrained: false },
+        (plane) => plane.release(ref, { requestId: "request-a" }, deadline),
+      ],
+      ["close", { unexpected: true }, (plane) => plane.close(ref, deadline)],
+    ];
+
+    for (const [operation, result, invoke] of cases) {
+      const plane = new FakeBrowserPlane(new RecordingAdapter());
+      plane.loadScenario({ version: 1, steps: [{ operation, result }] });
+      await expect(invoke(plane), operation).rejects.toThrow(
+        /result|response|receipt|published connection/i,
+      );
+    }
+  });
+
+  it("rejects incoherent fault boundaries and operation-specific partial counts at load", () => {
+    const plane = new FakeBrowserPlane(new RecordingAdapter());
+    for (const step of [
+      {
+        operation: "mouse",
+        fault: "deadline_before_admission",
+        dispatchedCount: 1,
+        completedCount: 0,
+      },
+      {
+        operation: "mouse",
+        fault: "disconnect_after_write_before_ack",
+        dispatchedCount: 0,
+        completedCount: 0,
+      },
+      {
+        operation: "mouse",
+        fault: "partial_multi_event",
+        requestedCount: 2,
+        dispatchedCount: 1,
+        completedCount: 1,
+        failedIndex: 1,
+      },
+      {
+        operation: "paste",
+        fault: "partial_multi_event",
+        requestedCount: 2,
+        dispatchedCount: 3,
+        completedCount: 1,
+        failedIndex: 1,
+      },
+      {
+        operation: "keyboard",
+        fault: "partial_multi_event",
+        requestedCount: 2,
+        dispatchedCount: 2,
+        completedCount: 1,
+        failedIndex: 0,
+      },
+    ] as const) {
+      expect(() => plane.loadScenario({ version: 1, steps: [step] })).toThrow(
+        /invalid fake plane scenario/i,
+      );
+    }
+
+    expect(() =>
+      plane.loadScenario({
+        version: 1,
+        steps: [
+          {
+            operation: "keyboard",
+            fault: "partial_multi_event",
+            requestedCount: 2,
+            dispatchedCount: 2,
+            completedCount: 1,
+            failedIndex: 1,
+          },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
   it.each(THROWING_FAULTS)(
     "forces the %s boundary and consumes it once",
     async (fault) => {
       const plane = new FakeBrowserPlane(new RecordingAdapter());
+      const outcome = FAULT_FAILURES[fault].outcome;
+      const counts =
+        outcome === "not_sent"
+          ? {}
+          : outcome === "applied"
+            ? { dispatchedCount: 1, completedCount: 1 }
+            : { dispatchedCount: 2, completedCount: 1 };
+      const partial =
+        fault === "partial_multi_event"
+          ? { requestedCount: 2, failedIndex: 1 }
+          : {};
       plane.loadScenario({
         version: 1,
-        steps: [
-          { operation: "mouse", fault, dispatchedCount: 2, completedCount: 1 },
-        ],
+        steps: [{ operation: "mouse", fault, ...counts, ...partial }],
       });
 
       const error = await plane
@@ -341,7 +576,10 @@ describe("FakeBrowserPlane", () => {
           {
             observationId: "observation-a",
             requestId: "request-a",
-            actions: [{ type: "move", x: 1, y: 2 }],
+            actions: [
+              { type: "move", x: 1, y: 2 },
+              { type: "move", x: 3, y: 4 },
+            ],
           },
           deadline,
         )
@@ -410,7 +648,7 @@ describe("FakeBrowserPlane", () => {
     const plane = new FakeBrowserPlane(new RecordingAdapter());
     plane.loadScenario({
       version: 1,
-      steps: [{ operation: "paste", result: receipt }],
+      steps: [{ operation: "paste", result: pasteReceipt }],
     });
 
     await plane.paste(
@@ -418,14 +656,14 @@ describe("FakeBrowserPlane", () => {
       {
         observationId: "observation-a",
         requestId: "request-a",
-        text: "private paste",
+        text: pasteText,
       },
       deadline,
     );
 
     const serialized = JSON.stringify(plane.events());
-    expect(serialized).not.toContain("private paste");
-    expect(serialized).toContain("textSha256");
+    expect(serialized).not.toContain(pasteText);
+    expect(serialized).toContain("normalizedSha256");
   });
 
   it("enforces actual deadline cancellation before consuming a scenario step", async () => {
@@ -452,6 +690,26 @@ describe("FakeBrowserPlane", () => {
       outcome: "not_sent",
     });
     expect(() => plane.assertExhausted()).toThrow(/1 unconsumed/i);
+  });
+
+  it("accepts any positive safe internal deadline", async () => {
+    const plane = new FakeBrowserPlane(new RecordingAdapter());
+    plane.loadScenario({
+      version: 1,
+      steps: [{ operation: "mouse", result: receipt }],
+    });
+
+    await expect(
+      plane.mouse(
+        ref,
+        {
+          observationId: "observation-a",
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+        { timeoutMs: 1, signal: new AbortController().signal },
+      ),
+    ).resolves.toEqual(receipt);
   });
 });
 
@@ -513,6 +771,53 @@ describe("FakeNativeControlPlane", () => {
       ),
     ).rejects.toThrow(/ATX result shape is invalid/i);
     expect(adapter.calls).toEqual([]);
+  });
+
+  it("keeps native process state independent and never reports a lost RPC binding as healthy", async () => {
+    const lostDisplay: CachedDisplayState = {
+      ...display,
+      signal: { ...display.signal, freshness: "stale" },
+      resolution: { ...display.resolution, freshness: "stale" },
+      fps: { ...display.fps, freshness: "stale" },
+      qualification: "binding_lost_cached_only",
+    };
+    class LostBindingAdapter extends RecordingAdapter {
+      public override async readDisplayState(): Promise<CachedDisplayState> {
+        this.calls.push("readDisplayState");
+        return lostDisplay;
+      }
+    }
+
+    const derived = new FakeNativeControlPlane(new LostBindingAdapter());
+    derived.loadScenario({
+      version: 1,
+      steps: [{ operation: "sessionStatus" }],
+    });
+    await expect(derived.sessionStatus(ref, deadline)).resolves.toEqual({
+      rpcReachability: "unreachable",
+      nativeProcess: "unknown",
+      display: lostDisplay,
+    });
+
+    const explicit = new FakeNativeControlPlane(new RecordingAdapter());
+    explicit.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "sessionStatus",
+          result: {
+            rpcReachability: "unknown",
+            nativeProcess: "restarting",
+            display: lostDisplay,
+          },
+        },
+      ],
+    });
+    await expect(explicit.sessionStatus(ref, deadline)).resolves.toEqual({
+      rpcReachability: "unknown",
+      nativeProcess: "restarting",
+      display: lostDisplay,
+    });
   });
 
   it("can force a pre-adapter native fault with zero adapter calls", async () => {

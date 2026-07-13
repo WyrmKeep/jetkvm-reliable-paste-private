@@ -344,16 +344,19 @@ function authenticateRequest(
 }
 
 function matchesSecret(candidate: string, secret: DisposableSecret): boolean {
+  let candidateDigest: Buffer | undefined;
+  let secretDigest: Buffer | undefined;
   try {
-    const candidateDigest = createHash("sha256")
-      .update(candidate, "utf8")
-      .digest();
-    const secretDigest = secret.useBytes((bytes) =>
+    candidateDigest = createHash("sha256").update(candidate, "utf8").digest();
+    secretDigest = secret.useBytes((bytes) =>
       createHash("sha256").update(bytes).digest(),
     );
     return timingSafeEqual(candidateDigest, secretDigest);
   } catch {
     return false;
+  } finally {
+    candidateDigest?.fill(0);
+    secretDigest?.fill(0);
   }
 }
 

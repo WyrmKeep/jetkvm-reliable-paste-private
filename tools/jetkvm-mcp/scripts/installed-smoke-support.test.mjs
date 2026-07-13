@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { test } from "node:test";
 
-import { prepareInstalledPackage } from "./installed-smoke-support.mjs";
+import {
+  prepareInstalledPackage,
+  runInstalledModule,
+} from "./installed-smoke-support.mjs";
 
 const PACK_STDOUT = `${JSON.stringify([{ filename: "jetkvm-mcp.tgz" }])}\n`;
 
 function harness() {
   let root;
+  const execCalls = [];
   const dependencies = {
     mkdtempImpl: async (prefix) => {
       root = await mkdtemp(prefix);
@@ -16,14 +20,18 @@ function harness() {
     mkdirImpl: mkdir,
     rmImpl: rm,
     writeFileImpl: writeFile,
-    execFileImpl: async (_command, args) => ({
-      stdout: args[0] === "pack" ? PACK_STDOUT : "",
-      stderr: "",
-    }),
+    execFileImpl: async (command, args, options) => {
+      execCalls.push({ command, args, options });
+      return {
+        stdout: args[0] === "pack" ? PACK_STDOUT : "",
+        stderr: "",
+      };
+    },
   };
 
   return {
     dependencies,
+    execCalls,
     get root() {
       return root;
     },
@@ -50,6 +58,27 @@ async function assertPreparationRejects(h, expected) {
   await assertRootAbsent(h.root);
 }
 
+function assertExecutionPolicy(options, expectedTimeout) {
+  assert.equal(options.timeout, expectedTimeout);
+  assert.equal(options.killSignal, "SIGKILL");
+  assert.equal(options.windowsHide, true);
+  assert.ok(options.signal instanceof AbortSignal);
+  assert.equal(options.signal.aborted, false);
+}
+
+function assertRedactedPhaseError(error, phase, sensitiveText) {
+  assert.equal(error?.name, "InstalledSmokePhaseError");
+  assert.equal(error?.code, "INSTALLED_SMOKE_PHASE_FAILED");
+  assert.equal(error?.phase, phase);
+  assert.equal(error?.message, `Installed smoke phase failed: ${phase}`);
+  assert.equal(Object.hasOwn(error, "cause"), false);
+  assert.doesNotMatch(
+    `${String(error)}\n${JSON.stringify(error)}`,
+    new RegExp(sensitiveText),
+  );
+  return true;
+}
+
 test("removes the temporary root when artifact directory creation fails", async () => {
   const h = harness();
   const failure = new Error("mkdir failed");
@@ -70,25 +99,29 @@ test("removes the temporary root when consumer package writing fails", async () 
   await assertPreparationRejects(h, (error) => error === failure);
 });
 
-test("removes the temporary root when npm pack output cannot be parsed", async () => {
+test("removes the temporary root and redacts malformed npm pack output", async () => {
   const h = harness();
   h.dependencies.execFileImpl = async () => ({
-    stdout: "not json",
+    stdout: "sensitive-pack-output",
     stderr: "",
   });
 
-  await assertPreparationRejects(h, SyntaxError);
+  await assertPreparationRejects(h, (error) =>
+    assertRedactedPhaseError(error, "npm_pack_result", "sensitive-pack-output"),
+  );
 });
 
-test("removes the temporary root when package installation fails", async () => {
+test("removes the temporary root and redacts package installation failures", async () => {
   const h = harness();
-  const failure = new Error("install failed");
+  const sensitiveText = "sensitive-install-output";
   h.dependencies.execFileImpl = async (_command, args) => {
-    if (args[0] === "install") throw failure;
+    if (args[0] === "install") throw new Error(sensitiveText);
     return { stdout: PACK_STDOUT, stderr: "" };
   };
 
-  await assertPreparationRejects(h, (error) => error === failure);
+  await assertPreparationRejects(h, (error) =>
+    assertRedactedPhaseError(error, "npm_install", sensitiveText),
+  );
 });
 
 test("removes the temporary root when deterministic handler writing fails", async () => {
@@ -100,6 +133,79 @@ test("removes the temporary root when deterministic handler writing fails", asyn
   };
 
   await assertPreparationRejects(h, (error) => error === failure);
+});
+
+test("removes the temporary root and redacts npm pack command failures", async () => {
+  const h = harness();
+  const sensitiveText = "sensitive-pack-command-output";
+  h.dependencies.execFileImpl = async () => {
+    throw new Error(sensitiveText);
+  };
+
+  await assertPreparationRejects(h, (error) =>
+    assertRedactedPhaseError(error, "npm_pack", sensitiveText),
+  );
+});
+
+test("bounds npm pack with a finite force-kill policy", async () => {
+  const h = harness();
+  const installed = await prepareInstalledPackage(
+    "cleanup-test",
+    h.dependencies,
+  );
+  try {
+    const call = h.execCalls.find(({ args }) => args[0] === "pack");
+    assert.ok(call);
+    assertExecutionPolicy(call.options, 120_000);
+  } finally {
+    await installed.cleanup();
+  }
+});
+
+test("bounds npm install with a finite force-kill policy", async () => {
+  const h = harness();
+  const installed = await prepareInstalledPackage(
+    "cleanup-test",
+    h.dependencies,
+  );
+  try {
+    const call = h.execCalls.find(({ args }) => args[0] === "install");
+    assert.ok(call);
+    assertExecutionPolicy(call.options, 120_000);
+  } finally {
+    await installed.cleanup();
+  }
+});
+
+test("bounds installed module execution and redacts execution failures", async () => {
+  const h = harness();
+  const sensitiveText = "sensitive-runner-output";
+  const installed = await prepareInstalledPackage(
+    "cleanup-test",
+    h.dependencies,
+  );
+  let capturedOptions;
+  try {
+    await assert.rejects(
+      runInstalledModule(
+        installed.consumer,
+        "timeout-runner.mjs",
+        "setInterval(() => {}, 1_000);",
+        {
+          execFileImpl: async (_command, _args, options) => {
+            capturedOptions = options;
+            throw new Error(sensitiveText);
+          },
+        },
+      ),
+      (error) =>
+        assertRedactedPhaseError(error, "installed_module", sensitiveText),
+    );
+    assertExecutionPolicy(capturedOptions, 30_000);
+  } finally {
+    await installed.cleanup();
+  }
+  await assertRootAbsent(h.root);
 });
 
 test("preserves preparation and cleanup failures in an AggregateError", async () => {

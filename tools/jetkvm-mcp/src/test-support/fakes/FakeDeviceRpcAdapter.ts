@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   DeviceRpcError,
+  OPAQUE_ID_PATTERN,
   mapDeviceRpcBindingToWire,
   type AtxAction,
   type AtxWireReceipt,
@@ -17,6 +18,128 @@ import {
   type PlaneEvent,
   type PlaneScenario,
 } from "./PlaneScenario.js";
+
+const MAX_JSON_INTEGER = Number.MAX_SAFE_INTEGER;
+const opaqueIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
+const nonNegativeIntegerSchema = z.number().int().min(0).max(MAX_JSON_INTEGER);
+const positiveIntegerSchema = z.number().int().min(1).max(MAX_JSON_INTEGER);
+const cachedFactSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
+  value: T,
+  unobservedValue: U,
+) =>
+  z.discriminatedUnion("source", [
+    z
+      .object({
+        value,
+        observedAt: z.string().datetime(),
+        ageMs: nonNegativeIntegerSchema,
+        freshness: z.enum(["fresh", "stale"]),
+        source: z.enum(["cached_snapshot", "cached_event"]),
+      })
+      .strict(),
+    z
+      .object({
+        value: unobservedValue,
+        observedAt: z.null(),
+        ageMs: z.null(),
+        freshness: z.literal("unknown"),
+        source: z.literal("none"),
+      })
+      .strict(),
+  ]);
+const fakeDisplayObjectSchema = z
+  .object({
+    signal: cachedFactSchema(
+      z.enum(["present", "no_signal", "no_lock", "out_of_range", "unknown"]),
+      z.literal("unknown"),
+    ),
+    resolution: cachedFactSchema(
+      z
+        .object({
+          width: positiveIntegerSchema,
+          height: positiveIntegerSchema,
+          refreshHz: z.number().positive().finite().nullable(),
+        })
+        .strict()
+        .nullable(),
+      z.null(),
+    ),
+    fps: cachedFactSchema(
+      z.number().nonnegative().finite().nullable(),
+      z.null(),
+    ),
+    qualification: z.enum(["current_binding", "binding_lost_cached_only"]),
+  })
+  .strict();
+export const fakeDisplayStateSchema = fakeDisplayObjectSchema.superRefine(
+  (state, context) => {
+    if (state.qualification !== "binding_lost_cached_only") return;
+    for (const [name, fact] of [
+      ["signal", state.signal],
+      ["resolution", state.resolution],
+      ["fps", state.fps],
+    ] as const) {
+      if (fact.freshness === "fresh") {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [name, "freshness"],
+          message: "A binding-loss fact cannot be fresh.",
+        });
+      }
+    }
+  },
+);
+export const fakeEdidSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("unsupported"),
+      readCompleted: z.literal(false),
+      reason: z.literal("edid_read_capability_absent"),
+      observedAt: z.null(),
+      data: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("unavailable"),
+      readCompleted: z.literal(true),
+      reason: z.literal("successful_read_reported_no_edid"),
+      observedAt: z.string().datetime(),
+      data: z.null(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("available"),
+      readCompleted: z.literal(true),
+      reason: z.null(),
+      observedAt: z.string().datetime(),
+      data: z
+        .object({
+          sha256: z.string().regex(/^[a-f0-9]{64}$/),
+          manufacturerId: z.string().nullable(),
+          productCode: nonNegativeIntegerSchema.nullable(),
+          serialNumber: z.string().nullable(),
+          displayName: z.string().nullable(),
+          preferredResolution: z
+            .object({
+              width: positiveIntegerSchema,
+              height: positiveIntegerSchema,
+              refreshHz: z.number().positive().finite().nullable(),
+            })
+            .strict()
+            .nullable(),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
+
+const ATX_SEMANTICS = {
+  press_power: { wireAction: "power-short", fixedPressMs: 200 },
+  hold_power: { wireAction: "power-long", fixedPressMs: 5000 },
+  press_reset: { wireAction: "reset", fixedPressMs: 200 },
+} as const;
 
 const atxLedObservationSchema = z.discriminatedUnion("freshness", [
   z
@@ -38,7 +161,7 @@ const atxLedObservationSchema = z.discriminatedUnion("freshness", [
 ]);
 export const fakeAtxReceiptSchema = z
   .object({
-    requestId: z.string().min(1),
+    requestId: opaqueIdSchema,
     action: z.enum(["press_power", "hold_power", "press_reset"]),
     wireAction: z.enum(["power-short", "power-long", "reset"]),
     fixedPressMs: z.union([z.literal(200), z.literal(5000)]),
@@ -51,6 +174,19 @@ export const fakeAtxReceiptSchema = z
       .strict(),
   })
   .strict();
+
+export function fakeAtxReceiptMatchesRequest(
+  request: { readonly requestId: string; readonly action: AtxAction },
+  receipt: AtxWireReceipt,
+): boolean {
+  const expected = ATX_SEMANTICS[request.action];
+  return (
+    receipt.requestId === request.requestId &&
+    receipt.action === request.action &&
+    receipt.wireAction === expected.wireAction &&
+    receipt.fixedPressMs === expected.fixedPressMs
+  );
+}
 
 export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
   private currentBinding: DeviceRpcBinding;
@@ -87,10 +223,20 @@ export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<CachedDisplayState> {
     this.assertCurrent(ref);
-    return this.requiredResult<CachedDisplayState>(
-      "readDisplayState",
-      this.scenarios.consume("readDisplayState", { ref: { ...ref } }, deadline),
+    const parsed = fakeDisplayStateSchema.safeParse(
+      this.requiredResult<unknown>(
+        "readDisplayState",
+        this.scenarios.consume(
+          "readDisplayState",
+          { ref: { ...ref } },
+          deadline,
+        ),
+      ),
     );
+    if (!parsed.success) {
+      throw new Error("Fake DeviceRpcAdapter display result shape is invalid.");
+    }
+    return parsed.data;
   }
 
   public async readEdid(
@@ -98,10 +244,16 @@ export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<QualifiedEdidRead> {
     this.assertCurrent(ref);
-    return this.requiredResult<QualifiedEdidRead>(
-      "readEdid",
-      this.scenarios.consume("readEdid", { ref: { ...ref } }, deadline),
+    const parsed = fakeEdidSchema.safeParse(
+      this.requiredResult<unknown>(
+        "readEdid",
+        this.scenarios.consume("readEdid", { ref: { ...ref } }, deadline),
+      ),
     );
+    if (!parsed.success) {
+      throw new Error("Fake DeviceRpcAdapter EDID result shape is invalid.");
+    }
+    return parsed.data;
   }
 
   public async performAtx(
@@ -124,6 +276,11 @@ export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
     const parsed = fakeAtxReceiptSchema.safeParse(result);
     if (!parsed.success) {
       throw new Error("Fake DeviceRpcAdapter ATX result shape is invalid.");
+    }
+    if (!fakeAtxReceiptMatchesRequest(request, parsed.data)) {
+      throw new Error(
+        "Fake DeviceRpcAdapter ATX result correlation is invalid.",
+      );
     }
     return parsed.data;
   }

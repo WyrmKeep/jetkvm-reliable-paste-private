@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type {
   Deadline,
   DeviceRpcAdapter,
@@ -16,7 +18,46 @@ import {
   type PlaneEvent,
   type PlaneScenario,
 } from "./PlaneScenario.js";
-import { fakeAtxReceiptSchema } from "./FakeDeviceRpcAdapter.js";
+import {
+  fakeAtxReceiptMatchesRequest,
+  fakeAtxReceiptSchema,
+  fakeDisplayStateSchema,
+  fakeEdidSchema,
+} from "./FakeDeviceRpcAdapter.js";
+
+const fakeNativeSessionStatusSchema = z
+  .object({
+    rpcReachability: z.enum(["reachable", "unreachable", "unknown"]),
+    nativeProcess: z.enum([
+      "available",
+      "unavailable",
+      "restarting",
+      "unknown",
+    ]),
+    display: fakeDisplayStateSchema,
+  })
+  .strict()
+  .superRefine((status, context) => {
+    if (
+      status.display.qualification === "binding_lost_cached_only" &&
+      status.rpcReachability === "reachable"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rpcReachability"],
+        message: "A lost RPC binding cannot be reachable.",
+      });
+    }
+  });
+const explicitDisplayStatusShape = z
+  .object({
+    signal: z.unknown(),
+    resolution: z.unknown(),
+    fps: z.unknown(),
+    qualification: z.unknown(),
+    edid: z.unknown(),
+  })
+  .strict();
 
 export class FakeNativeControlPlane implements NativeControlPlane {
   private readonly scenarios = new PlaneScenarioEngine();
@@ -44,14 +85,23 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       { ref: { ...ref } },
       deadline,
     );
-    if (explicit !== undefined) return explicit as NativeSessionStatus;
+    if (explicit !== undefined) {
+      const parsed = fakeNativeSessionStatusSchema.safeParse(explicit);
+      if (!parsed.success) {
+        throw new Error(
+          "Fake NativeControlPlane session result shape is invalid.",
+        );
+      }
+      return parsed.data;
+    }
     const display = await this.deviceRpc.readDisplayState(
       this.bindingFor(ref),
       deadline,
     );
+    const bindingLost = display.qualification === "binding_lost_cached_only";
     return {
-      rpcReachability: "reachable",
-      nativeProcess: "available",
+      rpcReachability: bindingLost ? "unreachable" : "reachable",
+      nativeProcess: bindingLost ? "unknown" : "available",
       display,
     };
   }
@@ -65,7 +115,23 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       { ref: { ...ref } },
       deadline,
     );
-    if (explicit !== undefined) return explicit as NativeDisplayStatus;
+    if (explicit !== undefined) {
+      const structural = explicitDisplayStatusShape.safeParse(explicit);
+      if (!structural.success) {
+        throw new Error(
+          "Fake NativeControlPlane display result shape is invalid.",
+        );
+      }
+      const { edid, ...display } = structural.data;
+      const parsedDisplay = fakeDisplayStateSchema.safeParse(display);
+      const parsedEdid = fakeEdidSchema.safeParse(edid);
+      if (!parsedDisplay.success || !parsedEdid.success) {
+        throw new Error(
+          "Fake NativeControlPlane display result shape is invalid.",
+        );
+      }
+      return { ...parsedDisplay.data, edid: parsedEdid.data };
+    }
     const binding = this.bindingFor(ref);
     const display = await this.deviceRpc.readDisplayState(binding, deadline);
     const edid = await this.deviceRpc.readEdid(binding, deadline);
@@ -95,6 +161,11 @@ export class FakeNativeControlPlane implements NativeControlPlane {
     const parsed = fakeAtxReceiptSchema.safeParse(result);
     if (!parsed.success) {
       throw new Error("Fake NativeControlPlane ATX result shape is invalid.");
+    }
+    if (!fakeAtxReceiptMatchesRequest(request, parsed.data)) {
+      throw new Error(
+        "Fake NativeControlPlane ATX result correlation is invalid.",
+      );
     }
     return parsed.data;
   }

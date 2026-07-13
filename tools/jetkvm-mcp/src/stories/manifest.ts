@@ -772,7 +772,7 @@ const MATRIX_DEFINITIONS = [
       ),
       [T.keyboard]: linked(
         6,
-        "send-physical-keys",
+        "send-partial-physical-keys",
         "interrupt-key-sequence",
         "assertion-2",
       ),
@@ -1757,6 +1757,160 @@ function assertClosedGenerationRecovery(
   }
 }
 
+function assertFixtureRecoveryTransitions(
+  stories: readonly AcceptanceStory[],
+): void {
+  for (const story of stories) {
+    for (const [recoveryIndex, recovery] of story.steps.entries()) {
+      if (recovery.tool !== null) {
+        continue;
+      }
+      const nextTool = recovery.input.next_tool;
+      const nextCase = recovery.input.next_case;
+      if (typeof nextTool !== "string" && typeof nextCase !== "string") {
+        continue;
+      }
+      const nextCall = story.steps.find(
+        (candidate, index) => index > recoveryIndex && candidate.tool !== null,
+      );
+      if (
+        nextCall === undefined ||
+        (typeof nextTool === "string" && nextCall.tool !== nextTool) ||
+        (typeof nextCase === "string" && nextCall.id !== nextCase)
+      ) {
+        throw new Error(
+          `Story ${story.id} fixture recovery ${recovery.id} does not reach its declared next tool call`,
+        );
+      }
+
+      const nextGeneration = recovery.input.next_generation;
+      const closedGeneration =
+        recovery.input.closed_generation ??
+        recovery.input.closed_session_generation;
+      if (
+        (typeof nextGeneration === "number" &&
+          nextCall.input.session_generation !== nextGeneration) ||
+        (typeof closedGeneration === "number" &&
+          typeof nextGeneration === "number" &&
+          nextGeneration <= closedGeneration)
+      ) {
+        throw new Error(
+          `Story ${story.id} fixture recovery ${recovery.id} next tool generation is unreachable`,
+        );
+      }
+      if (
+        typeof recovery.input.next_session_id === "string" &&
+        nextCall.input.session_id !== recovery.input.next_session_id
+      ) {
+        throw new Error(
+          `Story ${story.id} fixture recovery ${recovery.id} next tool session is unreachable`,
+        );
+      }
+      if (
+        typeof recovery.input.next_observation_id === "string" &&
+        nextCall.input.observation_id !== recovery.input.next_observation_id
+      ) {
+        throw new Error(
+          `Story ${story.id} fixture recovery ${recovery.id} next tool observation is unreachable`,
+        );
+      }
+    }
+
+    const requiresReleaseRecovery =
+      story.id === "duplicate-request-id-definitive-replay";
+    const requiresOwnershipRecovery =
+      requiresReleaseRecovery ||
+      story.id === "reconnect-requires-new-channel-observations";
+    if (!requiresOwnershipRecovery) {
+      continue;
+    }
+    for (const [transitionIndex, transition] of story.steps.entries()) {
+      if (
+        story.id === "reconnect-requires-new-channel-observations" &&
+        transition.tool === T.connect
+      ) {
+        continue;
+      }
+      if (
+        transition.tool !== T.connect &&
+        transition.tool !== T.reconnect &&
+        !(requiresReleaseRecovery && transition.tool === T.release)
+      ) {
+        continue;
+      }
+      const nextCaseIndex = story.steps.findIndex(
+        (candidate, index) =>
+          index > transitionIndex &&
+          candidate.tool !== null &&
+          !isSameRequest(transition, candidate),
+      );
+      if (nextCaseIndex < 0) {
+        continue;
+      }
+      const nextCase = story.steps[nextCaseIndex]!;
+      const directReconnectSuccessor =
+        transition.tool === T.reconnect &&
+        typeof transition.input.session_generation === "number" &&
+        nextCase.input.session_generation ===
+          transition.input.session_generation + 1 &&
+        nextCase.input.session_id === transition.input.session_id;
+      const hasFixtureRecovery = story.steps
+        .slice(transitionIndex + 1, nextCaseIndex)
+        .some(
+          (candidate) =>
+            candidate.tool === null &&
+            (typeof candidate.input.next_tool === "string" ||
+              typeof candidate.input.next_case === "string"),
+        );
+      if (!directReconnectSuccessor && !hasFixtureRecovery) {
+        throw new Error(
+          `Story ${story.id} drained or replaced session after ${transition.id} requires explicit fixture recovery before the next tool case`,
+        );
+      }
+    }
+  }
+}
+
+function assertObservationReachability(
+  stories: readonly AcceptanceStory[],
+): void {
+  const reviewedStoryIds: Readonly<Record<string, true>> = Object.freeze({
+    "duplicate-request-id-definitive-replay": true,
+    "reconnect-requires-new-channel-observations": true,
+  });
+  for (const story of stories) {
+    if (reviewedStoryIds[story.id] !== true) {
+      continue;
+    }
+    for (const [stepIndex, step] of story.steps.entries()) {
+      if (
+        step.tool !== T.keyboard &&
+        step.tool !== T.mouse &&
+        step.tool !== T.paste
+      ) {
+        continue;
+      }
+      if (typeof step.input.observation_id !== "string") {
+        continue;
+      }
+      const previous = story.steps[stepIndex - 1];
+      if (previous !== undefined && isSameRequest(previous, step)) {
+        continue;
+      }
+      const followsCapture = previous?.tool === T.capture;
+      const followsFixtureCapture =
+        previous?.tool === null &&
+        previous.input.capture_fresh_observation === true &&
+        previous.input.next_observation_id === step.input.observation_id;
+      if (!followsCapture && !followsFixtureCapture) {
+        throw new Error(
+          `Story ${story.id} observation-consuming call ${step.id} requires an immediate fresh capture`,
+        );
+      }
+    }
+  }
+}
+
 function assertAtxBindingLossCases(stories: readonly AcceptanceStory[]): void {
   for (const story of stories) {
     const stepIndexById = new Map(
@@ -1792,6 +1946,28 @@ function assertAtxBindingLossCases(stories: readonly AcceptanceStory[]): void {
   }
 }
 
+function assertReviewedPowerOutcomes(
+  stories: readonly AcceptanceStory[],
+): void {
+  const story = stories.find(
+    ({ id }) => id === "reconnect-requires-new-channel-observations",
+  );
+  if (story === undefined) {
+    return;
+  }
+  for (const step of story.steps) {
+    if (
+      step.tool === T.power &&
+      (!/\b(?:applied|not_sent|unknown)\b/i.test(step.expect) ||
+        !/\b(?:device_ack_only|verification none)\b/i.test(step.expect))
+    ) {
+      throw new Error(
+        `Story ${story.id} power call ${step.id} requires an exact outcome and verification envelope`,
+      );
+    }
+  }
+}
+
 function assertAtxInterCaseRestoration(
   stories: readonly AcceptanceStory[],
 ): void {
@@ -1819,17 +1995,17 @@ function assertAtxInterCaseRestoration(
         continue;
       }
 
-      const interCaseSteps = story.steps.slice(stepIndex + 1, nextToolIndex);
-      const hasStepProof = interCaseSteps.some((candidate) => {
-        const serialized = JSON.stringify(candidate);
-        return (
-          candidate.tool === null &&
-          (/\/atx\/|restore-atx/i.test(candidate.call) ||
-            candidate.input.restore_atx_baseline === true) &&
-          baselinePattern.test(serialized) &&
-          restoreProofPattern.test(serialized)
-        );
-      });
+      const immediateRecovery = story.steps[stepIndex + 1];
+      const serializedRecovery =
+        immediateRecovery === undefined
+          ? ""
+          : JSON.stringify(immediateRecovery);
+      const hasStepProof =
+        immediateRecovery?.tool === null &&
+        (/\/atx\/|restore-atx/i.test(immediateRecovery.call) ||
+          immediateRecovery.input.restore_atx_baseline === true) &&
+        baselinePattern.test(serializedRecovery) &&
+        restoreProofPattern.test(serializedRecovery);
       const hasCleanupProof = story.fault_script.some((fault) => {
         const serialized = `${fault.action} ${fault.expected_effect}`;
         return (
@@ -2170,6 +2346,45 @@ function assertScrollObservationExecution(
   }
 }
 
+function assertPartialMultiEventFaultExecution(
+  stories: readonly AcceptanceStory[],
+  matrix: ToolBehaviorMatrix,
+): void {
+  const row = matrix.find(
+    ({ requirement }) => requirement === "branch:partial-multi-event-dispatch",
+  );
+  if (row === undefined) {
+    throw new Error("Partial multi-event dispatch matrix row is unavailable");
+  }
+  const storiesById = new Map(stories.map((story) => [story.id, story]));
+  for (const [tool, cell] of Object.entries(row.cells)) {
+    if (cell.applicability !== "applicable") {
+      continue;
+    }
+    const story = storiesById.get(cell.story_id);
+    const callIndex =
+      story?.steps.findIndex(({ id }) => id === cell.step_id) ?? -1;
+    const call = story?.steps[callIndex];
+    const fault = story?.fault_script.find(({ id }) => id === cell.fault_id);
+    const anchorIndex =
+      fault?.after_step === null
+        ? -1
+        : (story?.steps.findIndex(({ id }) => id === fault?.after_step) ?? -2);
+    if (
+      story === undefined ||
+      call === undefined ||
+      call.tool !== tool ||
+      fault === undefined ||
+      fault.boundary !== "after_write" ||
+      anchorIndex !== callIndex - 1
+    ) {
+      throw new Error(
+        `Partial multi-event ${tool} fault must be armed immediately before its linked call`,
+      );
+    }
+  }
+}
+
 function assertBehaviorMatrix(
   stories: readonly AcceptanceStory[],
   matrix: ToolBehaviorMatrix,
@@ -2369,6 +2584,7 @@ export function validateAcceptanceStories(
   }
   assertConnectDeadlineReservationExecution(stories);
   assertScrollObservationExecution(stories);
+  assertPartialMultiEventFaultExecution(stories, matrix);
   assertPerToolFaultExecution(stories, matrix);
   assertBehaviorMatrix(stories, matrix);
   assertDeclaredRequirementCallLinks(stories, matrix);
@@ -2376,6 +2592,9 @@ export function validateAcceptanceStories(
   assertOneShotFaultBrackets(stories, matrix);
   assertAtxBindingLossCases(stories);
   assertClosedGenerationRecovery(stories);
+  assertFixtureRecoveryTransitions(stories);
+  assertObservationReachability(stories);
+  assertReviewedPowerOutcomes(stories);
   assertAtxInterCaseRestoration(stories);
 
   return stories;

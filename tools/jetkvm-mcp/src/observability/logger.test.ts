@@ -64,6 +64,127 @@ describe("structured redacting logger", () => {
     }
   });
 
+  it("redacts exact typed-key fields recursively without hiding safe siblings", () => {
+    const redacted = redactStructuredData({
+      actions: [
+        {
+          type: "key",
+          key: "S",
+          code: "KEY_DOWN",
+          sequence: 1,
+        },
+        {
+          type: "shortcut",
+          keys: ["ControlLeft", "V"],
+          code: "SHORTCUT",
+          sequence: 2,
+        },
+        {
+          nested: {
+            KEY: "Enter",
+            KeYs: ["ShiftLeft", "A"],
+            monkey: "capuchin",
+            keyCount: 2,
+            code: "SAFE_CODE",
+          },
+        },
+      ],
+      error: {
+        code: "E_KEYBOARD",
+        status: "failed",
+      },
+    });
+
+    expect(redacted).toEqual({
+      actions: [
+        {
+          type: "key",
+          key: "[REDACTED]",
+          code: "KEY_DOWN",
+          sequence: 1,
+        },
+        {
+          type: "shortcut",
+          keys: "[REDACTED]",
+          code: "SHORTCUT",
+          sequence: 2,
+        },
+        {
+          nested: {
+            KEY: "[REDACTED]",
+            KeYs: "[REDACTED]",
+            monkey: "capuchin",
+            keyCount: 2,
+            code: "SAFE_CODE",
+          },
+        },
+      ],
+      error: {
+        code: "E_KEYBOARD",
+        status: "failed",
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(/ControlLeft|ShiftLeft|Enter/);
+  });
+
+  it("redacts EDID fingerprints without matching unrelated field substrings", () => {
+    const redacted = redactStructuredData({
+      display: {
+        EDID: {
+          manufacturer_id: "edid-manufacturer-secret",
+          product_code: "edid-product-secret",
+          serial_number: "edid-serial-secret",
+          display_name: "edid-name-secret",
+        },
+        fingerprints: [
+          {
+            Manufacturer_ID: "standalone-manufacturer-secret",
+            "PRODUCT-CODE": "standalone-product-secret",
+          },
+          {
+            nested: {
+              "Serial Number": "standalone-serial-secret",
+              "Display.Name": "standalone-name-secret",
+            },
+          },
+        ],
+        serial_sequence_completed: true,
+        serialNumberFormat: "numeric",
+        productCodeCount: 2,
+        displayNameAvailable: true,
+        code: "EDID_READY",
+        status: "ready",
+      },
+    });
+
+    expect(redacted).toEqual({
+      display: {
+        EDID: "[REDACTED]",
+        fingerprints: [
+          {
+            Manufacturer_ID: "[REDACTED]",
+            "PRODUCT-CODE": "[REDACTED]",
+          },
+          {
+            nested: {
+              "Serial Number": "[REDACTED]",
+              "Display.Name": "[REDACTED]",
+            },
+          },
+        ],
+        serial_sequence_completed: true,
+        serialNumberFormat: "numeric",
+        productCodeCount: 2,
+        displayNameAvailable: true,
+        code: "EDID_READY",
+        status: "ready",
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /edid-(?:manufacturer|product|serial|name)-secret|standalone-(?:manufacturer|product|serial|name)-secret/,
+    );
+  });
+
   it("redacts sensitive strings even under innocent field names and inside errors", () => {
     const redacted = redactStructuredData({
       note: "request failed for https://jetkvm.lan/private",
@@ -210,13 +331,23 @@ describe("structured redacting logger", () => {
       String.raw`{"\u0073dp":"unicode-sdp-secret"`,
       String.raw`{\"creden\u0074ial\":\"unicode-credential-secret\"`,
     ];
+    const prefixedEscapedKeys = [
+      String.raw`downstream failed: {\"im\u0061ge\":\"prefixed-image-secret\"`,
+      String.raw`paste failed: [{\"p\x61stePayload\":\"prefixed-paste-secret\"`,
+      String.raw`proof failed: {\"pro\of\":\"prefixed-proof-secret\"`,
+      String.raw`SDP failed: {\"\u0073dp\":\"prefixed-sdp-secret\"`,
+      String.raw`credential failed: {\"creden\u0074ial\":\"prefixed-credential-secret\"`,
+    ];
+    const safeEscapedProse = String.raw`quoted label \"im\u0061ge\": remains prose`;
     const validEscapedJson = String.raw`{"im\u0061ge":"valid-image-secret","status":"valid-safe-sibling"}`;
     const safeNonJson = String.raw`diagnostic path C:\temp\proof\trace`;
 
     const redacted = redactStructuredData({
       malformedEscapedKeys,
+      prefixedEscapedKeys,
       validEscapedJson,
       safeNonJson,
+      safeEscapedProse,
     });
     requireRecord(redacted);
     if (typeof redacted.validEscapedJson !== "string") {
@@ -225,15 +356,241 @@ describe("structured redacting logger", () => {
 
     expect(redacted).toMatchObject({
       malformedEscapedKeys: malformedEscapedKeys.map(() => "[REDACTED]"),
+      prefixedEscapedKeys: prefixedEscapedKeys.map(() => "[REDACTED]"),
       safeNonJson,
+      safeEscapedProse,
     });
     expect(JSON.parse(redacted.validEscapedJson)).toEqual({
       image: "[REDACTED]",
       status: "valid-safe-sibling",
     });
     expect(JSON.stringify(redacted)).not.toMatch(
-      /unicode-image-secret|hex-paste-secret|backslash-proof-secret|unicode-sdp-secret|unicode-credential-secret|valid-image-secret/,
+      /(?:unicode|prefixed)-(?:image|paste|proof|sdp|credential)-secret|hex-paste-secret|backslash-proof-secret|valid-image-secret/,
     );
+  });
+
+  it("redacts unquoted sensitive assignments without matching safe prose", () => {
+    const malformedAssignments = [
+      "HTTP 500: {pastePayload: 'inspect-paste-secret'",
+      "image=inspect-image-secret",
+      "proof : inspect-proof-secret",
+      "text: inspect-text-secret",
+      "SDP = inspect-sdp-secret",
+      "credential: inspect-credential-secret",
+    ];
+    const safeDiagnostics = [
+      "HTTP 500: {status: 'still-useful'",
+      "proof of completion: recorded",
+      "image rendering completed: ok",
+      "custom://image=public",
+      "ratio=16:9",
+    ];
+
+    expect(
+      redactStructuredData({ malformedAssignments, safeDiagnostics }),
+    ).toEqual({
+      malformedAssignments: malformedAssignments.map(() => "[REDACTED]"),
+      safeDiagnostics,
+    });
+  });
+
+  it("fails closed for non-JSON strings in recursive error contexts", () => {
+    const fields = {
+      status: "top-level-safe-sibling",
+      error: "simple-error-secret",
+      nested: {
+        status: "nested-safe-sibling",
+        err: "nested-err-secret",
+        deeper: {
+          note: "deep-safe-sibling",
+          exception: "nested-exception-secret",
+        },
+      },
+      errorObject: {
+        error: {
+          detail: "nested-detail-secret",
+          child: {
+            detail: "deep-detail-secret",
+          },
+          values: ["array-error-secret"],
+          code: "E_DETAIL",
+          status: "failed",
+          observedAt: "2026-07-13T12:00:02.000Z",
+        },
+      },
+      exception: JSON.stringify({
+        message: "json-error-message-secret",
+        code: "E_JSON_ERROR",
+        status: "json-safe-sibling",
+      }),
+    };
+
+    const redacted = redactStructuredData(fields);
+    requireRecord(redacted);
+    if (typeof redacted.exception !== "string") {
+      throw new TypeError("Expected a serialized exception");
+    }
+
+    expect(redacted).toMatchObject({
+      status: "top-level-safe-sibling",
+      error: "[REDACTED]",
+      nested: {
+        status: "nested-safe-sibling",
+        err: "[REDACTED]",
+        deeper: {
+          note: "deep-safe-sibling",
+          exception: "[REDACTED]",
+        },
+      },
+      errorObject: {
+        error: {
+          detail: "[REDACTED]",
+          child: {
+            detail: "[REDACTED]",
+          },
+          values: ["[REDACTED]"],
+          code: "E_DETAIL",
+          status: "failed",
+          observedAt: "2026-07-13T12:00:02.000Z",
+        },
+      },
+    });
+    expect(JSON.parse(redacted.exception)).toEqual({
+      message: "[REDACTED]",
+      code: "E_JSON_ERROR",
+      status: "json-safe-sibling",
+    });
+
+    const lines: string[] = [];
+    createStructuredLogger({ write: (line) => lines.push(line) }).error(
+      "downstream.failed",
+      fields,
+    );
+    expect(lines.join("")).not.toMatch(
+      /simple-error-secret|nested-err-secret|nested-exception-secret|json-error-message-secret|nested-detail-secret|deep-detail-secret|array-error-secret|deep-safe-sibling/,
+    );
+    expect(lines.join("")).toMatch(
+      /top-level-safe-sibling|nested-safe-sibling|json-safe-sibling/,
+    );
+  });
+
+  it("seeds recursive error context only for error-level log records", () => {
+    const errorLines: string[] = [];
+    const infoLines: string[] = [];
+    createStructuredLogger({ write: (line) => errorLines.push(line) }).error(
+      "downstream.failed",
+      {
+        message: "root-error-message-secret",
+        detail: "root-error-detail-secret",
+        code: "E_ROOT",
+        observedAt: "2026-07-13T12:00:00.000Z",
+        nested: {
+          message: "nested-error-message-secret",
+          detail: "nested-error-detail-secret",
+          code: "E_NESTED",
+          observedAt: "2026-07-13T12:00:01.000Z",
+        },
+        attempts: [
+          {
+            message: "array-error-message-secret",
+            detail: "array-error-detail-secret",
+            code: "E_ARRAY",
+          },
+        ],
+      },
+    );
+    createStructuredLogger({ write: (line) => infoLines.push(line) }).info(
+      "downstream.status",
+      {
+        message: "informational-safe-message",
+        code: "I_READY",
+      },
+    );
+
+    const errorRecord: unknown = JSON.parse(errorLines[0] ?? "");
+    const infoRecord: unknown = JSON.parse(infoLines[0] ?? "");
+    requireRecord(errorRecord);
+    requireRecord(errorRecord.fields);
+    requireRecord(infoRecord);
+    requireRecord(infoRecord.fields);
+
+    expect(errorRecord.fields).toEqual({
+      message: "[REDACTED]",
+      detail: "[REDACTED]",
+      code: "E_ROOT",
+      observedAt: "2026-07-13T12:00:00.000Z",
+      nested: {
+        message: "[REDACTED]",
+        detail: "[REDACTED]",
+        code: "E_NESTED",
+        observedAt: "2026-07-13T12:00:01.000Z",
+      },
+      attempts: [
+        {
+          message: "[REDACTED]",
+          detail: "[REDACTED]",
+          code: "E_ARRAY",
+        },
+      ],
+    });
+    expect(infoRecord.fields).toEqual({
+      message: "informational-safe-message",
+      code: "I_READY",
+    });
+    expect(errorLines.join("")).not.toMatch(
+      /root-error-(?:message|detail)-secret|nested-error-(?:message|detail)-secret|array-error-(?:message|detail)-secret/,
+    );
+  });
+
+  it("keeps prototype-shaped attacker keys as own sanitized data", () => {
+    const fields: unknown = JSON.parse(
+      '{"error":{"__proto__":{"detail":"proto-detail-secret","polluted":"proto-inherited-secret","status":"blocked"},"constructor":{"detail":"constructor-detail-secret","code":"E_CONSTRUCTOR"},"prototype":{"detail":"prototype-detail-secret","observedAt":"2026-07-13T12:00:03.000Z"},"status":"contained"}}',
+    );
+    requireRecord(fields);
+
+    const redacted = redactStructuredData(fields);
+    requireRecord(redacted);
+    const errorRecord = redacted.error;
+    requireRecord(errorRecord);
+    const protoField = errorRecord.__proto__;
+    requireRecord(protoField);
+
+    expect(Object.getPrototypeOf(redacted)).toBeNull();
+    expect(Object.getPrototypeOf(errorRecord)).toBeNull();
+    expect(Object.getPrototypeOf(protoField)).toBeNull();
+    expect(Object.hasOwn(errorRecord, "__proto__")).toBe(true);
+    expect(Object.hasOwn(errorRecord, "constructor")).toBe(true);
+    expect(Object.hasOwn(errorRecord, "prototype")).toBe(true);
+    expect("polluted" in errorRecord).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(errorRecord).toEqual({
+      ["__proto__"]: {
+        detail: "[REDACTED]",
+        polluted: "[REDACTED]",
+        status: "blocked",
+      },
+      constructor: {
+        detail: "[REDACTED]",
+        code: "E_CONSTRUCTOR",
+      },
+      prototype: {
+        detail: "[REDACTED]",
+        observedAt: "2026-07-13T12:00:03.000Z",
+      },
+      status: "contained",
+    });
+
+    const serialized = JSON.stringify(redacted);
+    expect(serialized).toContain('"__proto__"');
+    expect(serialized).not.toMatch(
+      /proto-detail-secret|proto-inherited-secret|constructor-detail-secret|prototype-detail-secret/,
+    );
+    const reparsed: unknown = JSON.parse(serialized);
+    requireRecord(reparsed);
+    requireRecord(reparsed.error);
+    expect(Object.hasOwn(reparsed.error, "__proto__")).toBe(true);
+    expect(Object.hasOwn(reparsed.error, "constructor")).toBe(true);
+    expect(Object.hasOwn(reparsed.error, "prototype")).toBe(true);
   });
 
   it("redacts recursive error records without hiding safe siblings or losing cycle safety", () => {

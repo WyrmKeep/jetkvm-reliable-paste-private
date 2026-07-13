@@ -29,496 +29,588 @@
           "maximum": 9007199254740991
         },
         "result": {
-          "type": "object",
-          "properties": {
-            "state": {
-              "type": "string",
-              "enum": [
-                "connecting",
-                "ready",
-                "degraded",
-                "drained",
-                "taken_over",
-                "closing",
-                "failed"
-              ]
-            },
-            "connection_epoch": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
-            },
-            "display_generation": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
-            },
-            "dispatch_generation": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
-            },
-            "browser_channel_generation": {
-              "anyOf": [
-                {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "ready"
+                },
+                "connection_epoch": {
+                  "$ref": "#/anyOf/0/properties/session_generation"
+                },
+                "browser_channel_generation": {
+                  "$ref": "#/anyOf/0/properties/session_generation"
+                },
+                "display_generation": {
                   "$ref": "#/anyOf/0/properties/duration_ms"
                 },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "device_reachable": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "setup_state": {
-              "type": "string",
-              "enum": [
-                "complete",
-                "required",
-                "unknown"
-              ]
-            },
-            "auth_mode": {
-              "type": "string",
-              "enum": [
-                "password",
-                "no_password",
-                "unknown"
-              ]
-            },
-            "rpc_reachability": {
-              "type": "string",
-              "enum": [
-                "reachable",
-                "unreachable",
-                "unknown"
-              ]
-            },
-            "native_process": {
-              "type": "string",
-              "enum": [
-                "available",
-                "unavailable",
-                "restarting",
-                "unknown"
-              ]
-            },
-            "web_rtc": {
-              "type": "string",
-              "enum": [
-                "connecting",
-                "connected",
-                "disconnected",
-                "failed",
-                "unknown"
-              ]
-            },
-            "hid": {
-              "type": "string",
-              "enum": [
-                "ready",
-                "not_ready",
-                "unknown"
-              ]
-            },
-            "decoded_video": {
-              "type": "string",
-              "enum": [
-                "ready",
-                "stalled",
-                "unavailable",
-                "unknown"
-              ]
-            },
-            "native_capture_facts": {
-              "type": "object",
-              "properties": {
-                "signal": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "value": {
-                          "type": "string",
-                          "enum": [
-                            "present",
-                            "no_signal",
-                            "no_lock",
-                            "out_of_range",
-                            "unknown"
-                          ]
-                        },
-                        "observed_at": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "age_ms": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
-                        },
-                        "freshness": {
-                          "type": "string",
-                          "enum": [
-                            "fresh",
-                            "stale"
-                          ]
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "cached_snapshot",
-                            "cached_event"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "value",
-                        "observed_at",
-                        "age_ms",
-                        "freshness",
-                        "source"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "value": {
-                          "type": "string",
-                          "const": "unknown"
-                        },
-                        "observed_at": {
-                          "type": "null"
-                        },
-                        "age_ms": {
-                          "type": "null"
-                        },
-                        "freshness": {
-                          "type": "string",
-                          "const": "unknown"
-                        },
-                        "source": {
-                          "type": "string",
-                          "const": "none"
-                        }
-                      },
-                      "required": [
-                        "value",
-                        "observed_at",
-                        "age_ms",
-                        "freshness",
-                        "source"
-                      ],
-                      "additionalProperties": false
-                    }
+                "dispatch_generation": {
+                  "$ref": "#/anyOf/0/properties/duration_ms"
+                },
+                "device_reachable": {
+                  "type": [
+                    "boolean",
+                    "null"
                   ]
                 },
-                "resolution": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "value": {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "width": {
-                                  "$ref": "#/anyOf/0/properties/duration_ms"
+                "setup_state": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "required",
+                    "unknown"
+                  ]
+                },
+                "auth_mode": {
+                  "type": "string",
+                  "enum": [
+                    "password",
+                    "no_password",
+                    "unknown"
+                  ]
+                },
+                "rpc_reachability": {
+                  "type": "string",
+                  "enum": [
+                    "reachable",
+                    "unreachable",
+                    "unknown"
+                  ]
+                },
+                "native_process": {
+                  "type": "string",
+                  "enum": [
+                    "available",
+                    "unavailable",
+                    "restarting",
+                    "unknown"
+                  ]
+                },
+                "web_rtc": {
+                  "type": "string",
+                  "enum": [
+                    "connecting",
+                    "connected",
+                    "disconnected",
+                    "failed",
+                    "unknown"
+                  ]
+                },
+                "hid": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "not_ready",
+                    "unknown"
+                  ]
+                },
+                "decoded_video": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "stalled",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "native_capture_facts": {
+                  "type": "object",
+                  "properties": {
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "string",
+                              "enum": [
+                                "present",
+                                "no_signal",
+                                "no_lock",
+                                "out_of_range",
+                                "unknown"
+                              ]
+                            },
+                            "observed_at": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "age_ms": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "enum": [
+                                "fresh",
+                                "stale"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "cached_snapshot",
+                                "cached_event"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "observed_at",
+                            "age_ms",
+                            "freshness",
+                            "source"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "string",
+                              "const": "unknown"
+                            },
+                            "observed_at": {
+                              "type": "null"
+                            },
+                            "age_ms": {
+                              "type": "null"
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "const": "unknown"
+                            },
+                            "source": {
+                              "type": "string",
+                              "const": "none"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "observed_at",
+                            "age_ms",
+                            "freshness",
+                            "source"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "resolution": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "width": {
+                                      "$ref": "#/anyOf/0/properties/duration_ms"
+                                    },
+                                    "height": {
+                                      "$ref": "#/anyOf/0/properties/duration_ms"
+                                    }
+                                  },
+                                  "required": [
+                                    "width",
+                                    "height"
+                                  ],
+                                  "additionalProperties": false
                                 },
-                                "height": {
-                                  "$ref": "#/anyOf/0/properties/duration_ms"
+                                {
+                                  "type": "null"
                                 }
-                              },
-                              "required": [
-                                "width",
-                                "height"
-                              ],
-                              "additionalProperties": false
+                              ]
                             },
-                            {
-                              "type": "null"
+                            "observed_at": {
+                              "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/native_capture_facts/properties/signal/anyOf/0/properties/observed_at"
+                            },
+                            "age_ms": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "enum": [
+                                "fresh",
+                                "stale"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "cached_snapshot",
+                                "cached_event"
+                              ]
                             }
-                          ]
+                          },
+                          "required": [
+                            "value",
+                            "observed_at",
+                            "age_ms",
+                            "freshness",
+                            "source"
+                          ],
+                          "additionalProperties": false
                         },
-                        "observed_at": {
-                          "$ref": "#/anyOf/0/properties/result/properties/native_capture_facts/properties/signal/anyOf/0/properties/observed_at"
-                        },
-                        "age_ms": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
-                        },
-                        "freshness": {
-                          "type": "string",
-                          "enum": [
-                            "fresh",
-                            "stale"
-                          ]
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "cached_snapshot",
-                            "cached_event"
-                          ]
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "null"
+                            },
+                            "observed_at": {
+                              "type": "null"
+                            },
+                            "age_ms": {
+                              "type": "null"
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "const": "unknown"
+                            },
+                            "source": {
+                              "type": "string",
+                              "const": "none"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "observed_at",
+                            "age_ms",
+                            "freshness",
+                            "source"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "value",
-                        "observed_at",
-                        "age_ms",
-                        "freshness",
-                        "source"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "value": {
-                          "type": "null"
+                    "fps": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "observed_at": {
+                              "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/native_capture_facts/properties/signal/anyOf/0/properties/observed_at"
+                            },
+                            "age_ms": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "enum": [
+                                "fresh",
+                                "stale"
+                              ]
+                            },
+                            "source": {
+                              "type": "string",
+                              "enum": [
+                                "cached_snapshot",
+                                "cached_event"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "observed_at",
+                            "age_ms",
+                            "freshness",
+                            "source"
+                          ],
+                          "additionalProperties": false
                         },
-                        "observed_at": {
-                          "type": "null"
-                        },
-                        "age_ms": {
-                          "type": "null"
-                        },
-                        "freshness": {
-                          "type": "string",
-                          "const": "unknown"
-                        },
-                        "source": {
-                          "type": "string",
-                          "const": "none"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "null"
+                            },
+                            "observed_at": {
+                              "type": "null"
+                            },
+                            "age_ms": {
+                              "type": "null"
+                            },
+                            "freshness": {
+                              "type": "string",
+                              "const": "unknown"
+                            },
+                            "source": {
+                              "type": "string",
+                              "const": "none"
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "observed_at",
+                            "age_ms",
+                            "freshness",
+                            "source"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "value",
-                        "observed_at",
-                        "age_ms",
-                        "freshness",
-                        "source"
-                      ],
-                      "additionalProperties": false
+                      ]
                     }
+                  },
+                  "required": [
+                    "signal",
+                    "resolution",
+                    "fps"
+                  ],
+                  "additionalProperties": false
+                },
+                "active_mutation": {
+                  "type": "boolean"
+                },
+                "fresh_capture_required": {
+                  "type": "boolean"
+                },
+                "permissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "session.connect",
+                      "session.status",
+                      "session.reconnect",
+                      "session.takeover",
+                      "display.capture",
+                      "display.status",
+                      "input.mouse",
+                      "input.keyboard",
+                      "input.paste",
+                      "input.release",
+                      "power.control"
+                    ]
+                  }
+                },
+                "capabilities": {
+                  "type": "object",
+                  "properties": {
+                    "session_status": {
+                      "type": "boolean"
+                    },
+                    "display_capture": {
+                      "type": "boolean"
+                    },
+                    "display_status": {
+                      "type": "boolean"
+                    },
+                    "mouse": {
+                      "type": "boolean"
+                    },
+                    "absolute_pointer": {
+                      "type": "boolean"
+                    },
+                    "keyboard": {
+                      "type": "boolean"
+                    },
+                    "reliable_paste": {
+                      "type": "boolean"
+                    },
+                    "input_release": {
+                      "type": "boolean"
+                    },
+                    "power_control": {
+                      "type": "boolean"
+                    },
+                    "edid_read": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "session_status",
+                    "display_capture",
+                    "display_status",
+                    "mouse",
+                    "absolute_pointer",
+                    "keyboard",
+                    "reliable_paste",
+                    "input_release",
+                    "power_control",
+                    "edid_read"
+                  ],
+                  "additionalProperties": false
+                },
+                "blocked_reason": {
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
-                "fps": {
+                "versions": {
+                  "type": "object",
+                  "properties": {
+                    "server": {
+                      "type": "string"
+                    },
+                    "protocol": {
+                      "type": "string"
+                    },
+                    "ui_contract": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "firmware": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "server",
+                    "protocol",
+                    "ui_contract",
+                    "firmware"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "state",
+                "connection_epoch",
+                "browser_channel_generation",
+                "display_generation",
+                "dispatch_generation",
+                "device_reachable",
+                "setup_state",
+                "auth_mode",
+                "rpc_reachability",
+                "native_process",
+                "web_rtc",
+                "hid",
+                "decoded_video",
+                "native_capture_facts",
+                "active_mutation",
+                "fresh_capture_required",
+                "permissions",
+                "capabilities",
+                "blocked_reason",
+                "versions"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "connecting",
+                    "degraded",
+                    "drained",
+                    "taken_over",
+                    "closing",
+                    "failed"
+                  ]
+                },
+                "connection_epoch": {
+                  "$ref": "#/anyOf/0/properties/duration_ms"
+                },
+                "browser_channel_generation": {
                   "anyOf": [
                     {
-                      "type": "object",
-                      "properties": {
-                        "value": {
-                          "anyOf": [
-                            {
-                              "type": "number",
-                              "minimum": 0
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "observed_at": {
-                          "$ref": "#/anyOf/0/properties/result/properties/native_capture_facts/properties/signal/anyOf/0/properties/observed_at"
-                        },
-                        "age_ms": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
-                        },
-                        "freshness": {
-                          "type": "string",
-                          "enum": [
-                            "fresh",
-                            "stale"
-                          ]
-                        },
-                        "source": {
-                          "type": "string",
-                          "enum": [
-                            "cached_snapshot",
-                            "cached_event"
-                          ]
-                        }
-                      },
-                      "required": [
-                        "value",
-                        "observed_at",
-                        "age_ms",
-                        "freshness",
-                        "source"
-                      ],
-                      "additionalProperties": false
+                      "$ref": "#/anyOf/0/properties/duration_ms"
                     },
                     {
-                      "type": "object",
-                      "properties": {
-                        "value": {
-                          "type": "null"
-                        },
-                        "observed_at": {
-                          "type": "null"
-                        },
-                        "age_ms": {
-                          "type": "null"
-                        },
-                        "freshness": {
-                          "type": "string",
-                          "const": "unknown"
-                        },
-                        "source": {
-                          "type": "string",
-                          "const": "none"
-                        }
-                      },
-                      "required": [
-                        "value",
-                        "observed_at",
-                        "age_ms",
-                        "freshness",
-                        "source"
-                      ],
-                      "additionalProperties": false
+                      "type": "null"
                     }
                   ]
+                },
+                "display_generation": {
+                  "$ref": "#/anyOf/0/properties/duration_ms"
+                },
+                "dispatch_generation": {
+                  "$ref": "#/anyOf/0/properties/duration_ms"
+                },
+                "device_reachable": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/device_reachable"
+                },
+                "setup_state": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/setup_state"
+                },
+                "auth_mode": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/auth_mode"
+                },
+                "rpc_reachability": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/rpc_reachability"
+                },
+                "native_process": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/native_process"
+                },
+                "web_rtc": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/web_rtc"
+                },
+                "hid": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/hid"
+                },
+                "decoded_video": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/decoded_video"
+                },
+                "native_capture_facts": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/native_capture_facts"
+                },
+                "active_mutation": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/active_mutation"
+                },
+                "fresh_capture_required": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/fresh_capture_required"
+                },
+                "permissions": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/permissions"
+                },
+                "capabilities": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/capabilities"
+                },
+                "blocked_reason": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/blocked_reason"
+                },
+                "versions": {
+                  "$ref": "#/anyOf/0/properties/result/anyOf/0/properties/versions"
                 }
               },
               "required": [
-                "signal",
-                "resolution",
-                "fps"
-              ],
-              "additionalProperties": false
-            },
-            "active_mutation": {
-              "type": "boolean"
-            },
-            "fresh_capture_required": {
-              "type": "boolean"
-            },
-            "permissions": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "enum": [
-                  "session.connect",
-                  "session.status",
-                  "session.reconnect",
-                  "session.takeover",
-                  "display.capture",
-                  "display.status",
-                  "input.mouse",
-                  "input.keyboard",
-                  "input.paste",
-                  "input.release",
-                  "power.control"
-                ]
-              }
-            },
-            "capabilities": {
-              "type": "object",
-              "properties": {
-                "session_status": {
-                  "type": "boolean"
-                },
-                "display_capture": {
-                  "type": "boolean"
-                },
-                "display_status": {
-                  "type": "boolean"
-                },
-                "mouse": {
-                  "type": "boolean"
-                },
-                "absolute_pointer": {
-                  "type": "boolean"
-                },
-                "keyboard": {
-                  "type": "boolean"
-                },
-                "reliable_paste": {
-                  "type": "boolean"
-                },
-                "input_release": {
-                  "type": "boolean"
-                },
-                "power_control": {
-                  "type": "boolean"
-                },
-                "edid_read": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "session_status",
-                "display_capture",
-                "display_status",
-                "mouse",
-                "absolute_pointer",
-                "keyboard",
-                "reliable_paste",
-                "input_release",
-                "power_control",
-                "edid_read"
-              ],
-              "additionalProperties": false
-            },
-            "blocked_reason": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "versions": {
-              "type": "object",
-              "properties": {
-                "server": {
-                  "type": "string"
-                },
-                "protocol": {
-                  "type": "string"
-                },
-                "ui_contract": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "firmware": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "server",
-                "protocol",
-                "ui_contract",
-                "firmware"
+                "state",
+                "connection_epoch",
+                "browser_channel_generation",
+                "display_generation",
+                "dispatch_generation",
+                "device_reachable",
+                "setup_state",
+                "auth_mode",
+                "rpc_reachability",
+                "native_process",
+                "web_rtc",
+                "hid",
+                "decoded_video",
+                "native_capture_facts",
+                "active_mutation",
+                "fresh_capture_required",
+                "permissions",
+                "capabilities",
+                "blocked_reason",
+                "versions"
               ],
               "additionalProperties": false
             }
-          },
-          "required": [
-            "state",
-            "connection_epoch",
-            "display_generation",
-            "dispatch_generation",
-            "browser_channel_generation",
-            "device_reachable",
-            "setup_state",
-            "auth_mode",
-            "rpc_reachability",
-            "native_process",
-            "web_rtc",
-            "hid",
-            "decoded_video",
-            "native_capture_facts",
-            "active_mutation",
-            "fresh_capture_required",
-            "permissions",
-            "capabilities",
-            "blocked_reason",
-            "versions"
-          ],
-          "additionalProperties": false
+          ]
         }
       },
       "required": [

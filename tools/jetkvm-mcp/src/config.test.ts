@@ -2,10 +2,30 @@ import { describe, expect, it, vi } from "vitest";
 import { TOOL_INPUT_SCHEMAS, TOOL_RESULT_SCHEMAS } from "./mcp/schemas.js";
 import {
   assertPublicContractContainsNoOperatorSecrets,
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES,
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL,
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION,
+  LEGACY_SSE_QUEUED_RESPONSE_BUDGET_BYTES,
+  LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_PRINCIPAL,
+  LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_STREAM,
+  LEGACY_SSE_MAX_HEADER_BYTES,
+  LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
+  MCP_TRANSPORT_MAX_REQUEST_BYTES,
   parseOperatorConfig,
 } from "./config.js";
 
 describe("OperatorConfig", () => {
+  it("fixes the v0.1 legacy SSE request-body allocation bound at 2 MiB", () => {
+    expect(MCP_TRANSPORT_MAX_REQUEST_BYTES).toBe(2_097_152);
+    expect(LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES).toBe(67_108_864);
+    expect(LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_PRINCIPAL).toBe(16_777_216);
+    expect(LEGACY_SSE_ACTIVE_REQUEST_BODY_BYTES_PER_SESSION).toBe(4_194_304);
+    expect(LEGACY_SSE_QUEUED_RESPONSE_BUDGET_BYTES).toBe(67_108_864);
+    expect(LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_PRINCIPAL).toBe(16_777_216);
+    expect(LEGACY_SSE_QUEUED_RESPONSE_BYTES_PER_STREAM).toBe(16_777_216);
+    expect(LEGACY_SSE_MAX_HEADER_BYTES).toBe(16_384);
+  });
+
   it.each([
     ["public HTTPS", "https://kvm.example.com"],
     ["LAN hostname", "https://jetkvm.lan:8443/ui"],
@@ -219,25 +239,34 @@ describe("OperatorConfig", () => {
       keepAliveTimeoutMs: 5_000,
       requestBodyIdleTimeoutMs: 5_000,
       requestBodyTotalTimeoutMs: 30_000,
-      maxResponseMessageBytes: 12_582_912,
+      maxResponseMessageBytes: 14_680_064,
       maxResponseBufferedBytes: 16_777_216,
       responseBackpressureTimeoutMs: 5_000,
     });
   });
 
   it.each([
-    ["image/jpeg", 2_097_152, 2_796_204, 382],
-    ["image/png", 8_388_608, 11_184_812, 380],
+    ["image/jpeg", 2_097_152],
+    ["image/png", 8_388_608],
   ] as const)(
-    "accepts a maximum legal %s result plus JSON and SSE framing",
-    (mimeType, rawImageBytes, expectedBase64Bytes, expectedOverhead) => {
-      const base64 = Buffer.alloc(rawImageBytes).toString("base64");
-      expect(Buffer.byteLength(base64)).toBe(expectedBase64Bytes);
-      expect(expectedBase64Bytes).toBe(4 * Math.ceil(rawImageBytes / 3));
+    "accepts a maximum legal %s result with a near-maximum request id",
+    (mimeType, rawImageBytes) => {
+      const requestPrefix = '{"jsonrpc":"2.0","id":"';
+      const requestSuffix =
+        '","method":"tools/call","params":{"name":"jetkvm_display_capture","arguments":{}}}';
+      const id = "i".repeat(
+        MCP_TRANSPORT_MAX_REQUEST_BYTES -
+          Buffer.byteLength(requestPrefix) -
+          Buffer.byteLength(requestSuffix),
+      );
+      expect(Buffer.byteLength(requestPrefix + id + requestSuffix)).toBe(
+        MCP_TRANSPORT_MAX_REQUEST_BYTES,
+      );
 
+      const base64 = Buffer.alloc(rawImageBytes).toString("base64");
       const frame = `event: message\ndata: ${JSON.stringify({
         jsonrpc: "2.0",
-        id: "capture-boundary",
+        id,
         result: {
           content: [
             { type: "text", text: JSON.stringify({ outcome: "applied" }) },
@@ -258,14 +287,15 @@ describe("OperatorConfig", () => {
         targetUrl: "https://jetkvm.lan",
       }).legacySse;
       const serializedBytes = Buffer.byteLength(frame);
-      const framingAndJsonBytes = serializedBytes - expectedBase64Bytes;
 
-      expect(framingAndJsonBytes).toBe(expectedOverhead);
-      expect(serializedBytes).toBe(expectedBase64Bytes + expectedOverhead);
+      expect(serializedBytes).toBeGreaterThan(4 * Math.ceil(rawImageBytes / 3));
       expect(serializedBytes).toBeLessThanOrEqual(
         policy.maxResponseMessageBytes,
       );
-      expect(policy.maxResponseMessageBytes).toBeLessThanOrEqual(
+      expect(policy.maxResponseMessageBytes).toBe(
+        LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
+      );
+      expect(policy.maxResponseMessageBytes).toBeLessThan(
         policy.maxResponseBufferedBytes,
       );
     },
@@ -356,6 +386,9 @@ describe("OperatorConfig", () => {
       { postRateWindowMs: 3_600_001 },
       { requestBodyIdleTimeoutMs: 100, requestBodyTotalTimeoutMs: 99 },
       { maxResponseMessageBytes: Number.POSITIVE_INFINITY },
+      {
+        maxResponseMessageBytes: LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES - 1,
+      },
       {
         maxResponseMessageBytes: 2_000_000,
         maxResponseBufferedBytes: 1_999_999,

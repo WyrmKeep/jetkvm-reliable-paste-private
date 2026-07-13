@@ -12,19 +12,27 @@ import { connect as connectTls, type TLSSocket } from "node:tls";
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   activateIndependentLegacySseBearerCredential,
   DisposableSecret,
   type IndependentLegacySseBearerCredential,
 } from "../browser/auth.js";
-import { parseLegacySsePolicy, type LegacySseConfigInput } from "../config.js";
+import {
+  LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES,
+  LEGACY_SSE_MAX_HEADER_BYTES,
+  LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
+  MCP_TRANSPORT_MAX_REQUEST_BYTES,
+  parseLegacySsePolicy,
+  type LegacySseConfigInput,
+} from "../config.js";
 import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
-import type {
-  HandlerRegistry,
-  JetKvmHandlerContext,
-  JetKvmToolHandler,
+import {
+  MCP_SERVER_BUSY_ERROR_CODE,
+  type HandlerRegistry,
+  type JetKvmHandlerContext,
+  type JetKvmToolHandler,
 } from "./server.js";
 import {
   installBoundedSseWriter,
@@ -247,6 +255,7 @@ async function openSse(
 
 interface TestHttpResponse {
   readonly status: number;
+  readonly headers: IncomingMessage["headers"];
   text(): Promise<string>;
 }
 
@@ -265,7 +274,9 @@ async function testFetch(
   const body = init.body ?? "";
   const headers = {
     ...init.headers,
-    ...(body.length === 0 || init.headers?.["Content-Length"] !== undefined
+    ...(body.length === 0 ||
+    init.headers?.["Content-Length"] !== undefined ||
+    init.headers?.["Transfer-Encoding"] !== undefined
       ? {}
       : { "Content-Length": String(Buffer.byteLength(body)) }),
   };
@@ -285,6 +296,7 @@ async function testFetch(
   for await (const chunk of response) responseBody += chunk;
   return {
     status: response.statusCode ?? 0,
+    headers: response.headers,
     text: async () => responseBody,
   };
 }
@@ -330,6 +342,7 @@ function beginPendingPost(
     for await (const chunk of incoming) body += chunk;
     return {
       status: incoming.statusCode ?? 0,
+      headers: incoming.headers,
       text: async () => body,
     };
   });
@@ -379,12 +392,67 @@ async function waitForSocketClose(
   });
   return completed.promise;
 }
+beforeEach(() => {
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+});
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(running.splice(0).map(closeRunning));
 });
 
 describe("legacy SSE adapter", () => {
+  it.each([
+    [
+      "partial",
+      {
+        jetkvm_session_connect: vi.fn(async () =>
+          businessError("jetkvm_session_connect"),
+        ),
+      },
+    ],
+    ["unknown", { unknown_tool: vi.fn() }],
+  ] as const)(
+    "rejects a %s handler registry synchronously before transport state",
+    (_case, handlerRegistry) => {
+      const targetSecret = DisposableSecret.fromUtf8("registry-target");
+      const credential = activateIndependentLegacySseBearerCredential(
+        targetSecret,
+        {
+          principalId: PRINCIPAL,
+          secret: DisposableSecret.fromUtf8("registry-bearer"),
+        },
+      );
+      const transportFactory = vi.fn(
+        (
+          endpoint: string,
+          response: ConstructorParameters<typeof SSEServerTransport>[1],
+        ) => new SSEServerTransport(endpoint, response),
+      );
+      try {
+        expect(
+          () =>
+            new LegacySseAdapter({
+              handlerRegistry: handlerRegistry as HandlerRegistry,
+              securityPolicy: parseLegacySsePolicy({
+                enabled: true,
+                scheme: "http",
+                bindHost: "127.0.0.1",
+                allowPlaintextHttp: true,
+                hostAuthorities: [AUTHORITY],
+                bearerEnvironmentVariable: "JETKVM_TEST_SSE_BEARER",
+              }),
+              bearerCredential: credential,
+              transportFactory,
+            }),
+        ).toThrowError(/handler registry/i);
+        expect(transportFactory).not.toHaveBeenCalled();
+      } finally {
+        credential.secret.dispose();
+        targetSecret.dispose();
+      }
+    },
+  );
   it.each([
     ["GET", "/sse", undefined, "missing"],
     ["GET", "/sse", "Bearer invalid", "invalid"],
@@ -782,6 +850,310 @@ describe("legacy SSE adapter", () => {
     stream.response.destroy();
   });
 
+  it("fail-closes a duplicate pending request ID and releases its slots", async () => {
+    const entered = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    let callIndex = 0;
+    const handler = vi.fn(
+      async (_input: unknown, context: { signal: AbortSignal }) => {
+        const index = callIndex++;
+        if (index !== 0) {
+          return businessError("jetkvm_session_connect", "sequential-id-reuse");
+        }
+        entered.resolve();
+        if (!context.signal.aborted) {
+          const signalAborted = Promise.withResolvers<void>();
+          context.signal.addEventListener(
+            "abort",
+            () => signalAborted.resolve(),
+            { once: true },
+          );
+          await signalAborted.promise;
+        }
+        aborted.resolve();
+        return businessError("jetkvm_session_connect");
+      },
+    );
+    const streamClosed = Promise.withResolvers<void>();
+    const { baseUrl } = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 1,
+        maxConcurrentStreamsPerPrincipal: 1,
+        maxConcurrentPosts: 2,
+        maxConcurrentPostsPerPrincipal: 2,
+        maxConcurrentPostsPerSession: 2,
+      },
+      handlerRegistry: completeRegistry({ jetkvm_session_connect: handler }),
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
+    });
+    const stream = await openSse(baseUrl);
+    const initialized = await post(
+      baseUrl,
+      stream.endpoint,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "sse-duplicate-id", version: "1.0.0" },
+        },
+      }),
+    );
+    expect(initialized.status).toBe(202);
+    await stream.nextFrame();
+    const call = (requestId: string) =>
+      post(
+        baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: {
+            name: "jetkvm_session_connect",
+            arguments: { request_id: requestId, timeout_ms: 60_000 },
+          },
+        }),
+      );
+
+    expect((await call("request-duplicate-first")).status).toBe(202);
+    await entered.promise;
+    expect((await call("request-duplicate-second")).status).toBe(202);
+    await aborted.promise;
+    const duplicateFrames = [
+      await stream.nextFrame(),
+      await stream.nextFrame(),
+    ];
+    expect(
+      duplicateFrames.some((frame) =>
+        frame.includes(`"code":${MCP_SERVER_BUSY_ERROR_CODE}`),
+      ),
+    ).toBe(true);
+    expect(handler).toHaveBeenCalledOnce();
+
+    expect((await call("request-sequential-reuse")).status).toBe(202);
+    expect(await stream.nextFrame()).toContain(
+      '"operation_id":"sequential-id-reuse"',
+    );
+    expect(handler).toHaveBeenCalledTimes(2);
+
+    stream.response.destroy();
+    await streamClosed.promise;
+    const replacement = await openSse(baseUrl);
+    replacement.response.destroy();
+  });
+
+  it("shares global and principal handler admission across SSE streams", async () => {
+    let abortedCount = 0;
+    const handler = vi.fn(
+      async (_input: unknown, context: { signal: AbortSignal }) => {
+        if (!context.signal.aborted) {
+          const aborted = Promise.withResolvers<void>();
+          context.signal.addEventListener("abort", () => aborted.resolve(), {
+            once: true,
+          });
+          await aborted.promise;
+        }
+        abortedCount += 1;
+        return businessError("jetkvm_display_status");
+      },
+    );
+    const { baseUrl } = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 12,
+        maxConcurrentStreamsPerPrincipal: 6,
+        streamOpenRateLimit: 30,
+        streamOpenRateLimitPerPrincipal: 10,
+      },
+      handlerRegistry: completeRegistry({ jetkvm_display_status: handler }),
+      authenticateBearer: (authorization) => ({
+        principalId: authorization?.slice("Bearer ".length) ?? "missing",
+      }),
+    });
+    const streams: OpenSse[] = [];
+    const open = async (token: string): Promise<OpenSse> => {
+      const stream = await openSse(baseUrl, authorizedHeaders(token));
+      streams.push(stream);
+      const initialized = await post(
+        baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 100 + streams.length,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "sse-admission", version: "1.0.0" },
+          },
+        }),
+        authorizedHeaders(token),
+      );
+      expect(initialized.status).toBe(202);
+      await stream.nextFrame();
+      return stream;
+    };
+    const call = async (
+      stream: OpenSse,
+      token: string,
+      id: number,
+      sessionId: string,
+    ): Promise<void> => {
+      const accepted = await post(
+        baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: {
+            name: "jetkvm_display_status",
+            arguments: {
+              session_id: sessionId,
+              session_generation: 1,
+              timeout_ms: 1_000,
+            },
+          },
+        }),
+        authorizedHeaders(token),
+      );
+      expect(accepted.status).toBe(202);
+    };
+
+    try {
+      const principalA = await Promise.all(
+        Array.from({ length: 5 }, () => open("handler-a")),
+      );
+      for (let index = 0; index < 4; index += 1) {
+        await call(
+          principalA[index]!,
+          "handler-a",
+          index + 1,
+          `session-a-${index}`,
+        );
+      }
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(4));
+      await call(principalA[4]!, "handler-a", 5, "session-a-overload");
+      expect(await principalA[4]!.nextFrame()).toContain(
+        `"code":${MCP_SERVER_BUSY_ERROR_CODE}`,
+      );
+      expect(handler).toHaveBeenCalledTimes(4);
+
+      const principalB = await Promise.all(
+        Array.from({ length: 4 }, () => open("handler-b")),
+      );
+      for (let index = 0; index < principalB.length; index += 1) {
+        await call(
+          principalB[index]!,
+          "handler-b",
+          index + 10,
+          `session-b-${index}`,
+        );
+      }
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(8));
+
+      const principalC = await open("handler-c");
+      await call(principalC, "handler-c", 20, "session-c-overload");
+      expect(await principalC.nextFrame()).toContain(
+        `"code":${MCP_SERVER_BUSY_ERROR_CODE}`,
+      );
+      expect(handler).toHaveBeenCalledTimes(8);
+
+      principalA[0]!.response.destroy();
+      await vi.waitFor(() => expect(abortedCount).toBe(1));
+      await call(principalC, "handler-c", 21, "session-c-retry");
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(9));
+    } finally {
+      for (const stream of streams) stream.response.destroy();
+    }
+  }, 10_000);
+
+  it("shares session handler admission and releases it on stream close", async () => {
+    let abortedCount = 0;
+    const handler = vi.fn(
+      async (_input: unknown, context: { signal: AbortSignal }) => {
+        if (!context.signal.aborted) {
+          const aborted = Promise.withResolvers<void>();
+          context.signal.addEventListener("abort", () => aborted.resolve(), {
+            once: true,
+          });
+          await aborted.promise;
+        }
+        abortedCount += 1;
+        return businessError("jetkvm_display_status");
+      },
+    );
+    const { baseUrl } = await startAdapter({
+      handlerRegistry: completeRegistry({ jetkvm_display_status: handler }),
+    });
+    const streams = await Promise.all(
+      Array.from({ length: 3 }, () => openSse(baseUrl)),
+    );
+    for (let index = 0; index < streams.length; index += 1) {
+      const initialized = await post(
+        baseUrl,
+        streams[index]!.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 100 + index,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "sse-session-admission", version: "1.0.0" },
+          },
+        }),
+      );
+      expect(initialized.status).toBe(202);
+      await streams[index]!.nextFrame();
+    }
+    const call = async (stream: OpenSse, id: number): Promise<void> => {
+      expect(
+        (
+          await post(
+            baseUrl,
+            stream.endpoint,
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              method: "tools/call",
+              params: {
+                name: "jetkvm_display_status",
+                arguments: {
+                  session_id: "shared-application-session",
+                  session_generation: 1,
+                  timeout_ms: 1_000,
+                },
+              },
+            }),
+          )
+        ).status,
+      ).toBe(202);
+    };
+
+    try {
+      await call(streams[0]!, 1);
+      await call(streams[1]!, 2);
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
+      await call(streams[2]!, 3);
+      expect(await streams[2]!.nextFrame()).toContain(
+        `"code":${MCP_SERVER_BUSY_ERROR_CODE}`,
+      );
+      expect(handler).toHaveBeenCalledTimes(2);
+
+      streams[0]!.response.destroy();
+      await vi.waitFor(() => expect(abortedCount).toBe(1));
+      await call(streams[2]!, 4);
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(3));
+    } finally {
+      for (const stream of streams) stream.response.destroy();
+    }
+  }, 10_000);
+
   it.each([
     ["disabled policy", { enabled: false }, authorizedHeaders()],
     ["Host", {}, { ...authorizedHeaders(), Host: "attacker.example.test" }],
@@ -859,6 +1231,49 @@ describe("legacy SSE adapter", () => {
     );
   });
 
+  it("emits one fixed plaintext warning when the listener starts", async () => {
+    await startAdapter();
+
+    expect(vi.mocked(process.stderr.write).mock.calls).toEqual([
+      ["legacy SSE plaintext transport enabled\n"],
+    ]);
+  });
+
+  it("does not emit the plaintext warning for HTTPS", async () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({ enabled: true }),
+    });
+    const server = adapter.createHttpsServer({
+      key: TEST_TLS_KEY,
+      cert: TEST_TLS_CERT,
+    });
+    await listenOnLoopback(server);
+    try {
+      expect(process.stderr.write).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
+  });
+
+  it("does not emit the plaintext warning for a disabled policy", async () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: false,
+        scheme: "http",
+        allowPlaintextHttp: true,
+      }),
+    });
+    const server = adapter.createHttpServer();
+    await listenOnLoopback(server);
+    try {
+      expect(process.stderr.write).not.toHaveBeenCalled();
+    } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
+  });
+
   it("makes attached listener deadlines immutable", async () => {
     const value = await startAdapter();
 
@@ -874,10 +1289,32 @@ describe("legacy SSE adapter", () => {
     expect(() => {
       value.server.keepAliveTimeoutBuffer = 1_000;
     }).toThrow(TypeError);
+    const parserBoundServer = value.server as typeof value.server & {
+      maxHeaderSize: number;
+      insecureHTTPParser: boolean;
+    };
+    expect(() => {
+      parserBoundServer.maxHeaderSize = 1_048_576;
+    }).toThrow(TypeError);
+    expect(() => {
+      parserBoundServer.insecureHTTPParser = true;
+    }).toThrow(TypeError);
+    expect(() => {
+      Object.defineProperty(parserBoundServer, "maxHeaderSize", {
+        value: 1_048_576,
+      });
+    }).toThrow(TypeError);
+    expect(() => {
+      Object.defineProperty(parserBoundServer, "insecureHTTPParser", {
+        value: true,
+      });
+    }).toThrow(TypeError);
     expect(value.server.headersTimeout).toBe(10_000);
     expect(value.server.requestTimeout).toBe(30_000);
     expect(value.server.keepAliveTimeout).toBe(5_000);
     expect(value.server.keepAliveTimeoutBuffer).toBe(0);
+    expect(parserBoundServer.maxHeaderSize).toBe(LEGACY_SSE_MAX_HEADER_BYTES);
+    expect(parserBoundServer.insecureHTTPParser).toBe(false);
   });
 
   it("rejects servers without project-owned construction proof", () => {
@@ -896,6 +1333,30 @@ describe("legacy SSE adapter", () => {
     expect(server.maxConnections).toBeUndefined();
   });
 
+  it("ignores HTTPS parser-bound overrides at construction", () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({ enabled: true }),
+    });
+    const server = adapter.createHttpsServer({
+      key: TEST_TLS_KEY,
+      cert: TEST_TLS_CERT,
+      maxHeaderSize: 1_048_576,
+      insecureHTTPParser: true,
+    }) as HttpsServer & {
+      maxHeaderSize: number;
+      insecureHTTPParser: boolean;
+    };
+
+    expect(server.maxHeaderSize).toBe(LEGACY_SSE_MAX_HEADER_BYTES);
+    expect(server.insecureHTTPParser).toBe(false);
+    expect(() => {
+      server.maxHeaderSize = 1_048_576;
+    }).toThrow(TypeError);
+    expect(() => {
+      server.insecureHTTPParser = true;
+    }).toThrow(TypeError);
+  });
+
   it("expires incomplete HTTP headers at the configured construction bound", async () => {
     const adapter = new LegacySseAdapter({
       securityPolicy: parseLegacySsePolicy({
@@ -912,6 +1373,74 @@ describe("legacy SSE adapter", () => {
       const socket = await connectRaw(port);
       socket.write("GET /sse HTTP/1.1\r\nHost: 127.0.0.1\r\n");
       await waitForSocketClose(socket, 500);
+    } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
+  });
+
+  it("accepts exactly 16 KiB of headers and rejects one byte more", async () => {
+    const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: true,
+        scheme: "http",
+        bindHost: "127.0.0.1",
+        allowPlaintextHttp: true,
+        hostAuthorities: ["127.0.0.1"],
+        bearerEnvironmentVariable: "JETKVM_TEST_SSE_BEARER",
+      }),
+      authenticateBearer,
+    });
+    const server = adapter.createHttpServer();
+    const port = await listenOnLoopback(server);
+    const headerPrefix = [
+      "Host: 127.0.0.1",
+      `Authorization: Bearer ${TOKEN}`,
+      "X-Fill: ",
+    ].join("\r\n");
+    const headerSuffix = "\r\nConnection: close\r\n\r\n";
+    // Node 22 excludes these fixed delimiter bytes from maxHeaderSize.
+    const uncountedHeaderDelimiterBytes = 9;
+    const requestWithHeaderBytes = (byteLength: number): string => {
+      const fillBytes =
+        byteLength +
+        uncountedHeaderDelimiterBytes -
+        Buffer.byteLength(headerPrefix) -
+        Buffer.byteLength(headerSuffix);
+      return `GET /unknown HTTP/1.1\r\n${headerPrefix}${"x".repeat(
+        fillBytes,
+      )}${headerSuffix}`;
+    };
+
+    try {
+      const exact = await connectRaw(port);
+      exact.write(requestWithHeaderBytes(LEGACY_SSE_MAX_HEADER_BYTES));
+      expect(await waitForSocketClose(exact, 500)).toMatch(
+        /^HTTP\/1\.1 404 Not Found\r\n/,
+      );
+
+      const oversized = await connectRaw(port);
+      oversized.write(requestWithHeaderBytes(LEGACY_SSE_MAX_HEADER_BYTES + 1));
+      expect(await waitForSocketClose(oversized, 500)).toMatch(
+        /^HTTP\/1\.1 431 Request Header Fields Too Large\r\n/,
+      );
+
+      const malformed = await connectRaw(port);
+      malformed.write(
+        [
+          "GET /sse HTTP/1.1",
+          "Host: 127.0.0.1",
+          `Authorization: Bearer ${TOKEN}`,
+          "Malformed Header",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      expect(await waitForSocketClose(malformed, 500)).toMatch(
+        /^HTTP\/1\.1 400 Bad Request\r\n/,
+      );
+      expect(authenticateBearer).not.toHaveBeenCalled();
     } finally {
       await adapter.close();
       await closeServer(server);
@@ -1827,14 +2356,16 @@ describe("legacy SSE adapter", () => {
 
   it("closes a slow SSE reader before response buffering can grow past its cap", async () => {
     let transport: SSEServerTransport | undefined;
+    let serverResponse: ConstructorParameters<typeof SSEServerTransport>[1];
     const streamClosed = Promise.withResolvers<void>();
     const { baseUrl } = await startAdapter({
       policy: {
-        maxResponseMessageBytes: 262_144,
-        maxResponseBufferedBytes: 262_144,
+        maxResponseMessageBytes: LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
+        maxResponseBufferedBytes: LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
         responseBackpressureTimeoutMs: 20,
       },
       transportFactory: (endpoint, response) => {
+        serverResponse = response;
         transport = new SSEServerTransport(endpoint, response);
         return transport;
       },
@@ -1844,12 +2375,15 @@ describe("legacy SSE adapter", () => {
     });
     const stream = await openSse(baseUrl);
     stream.response.pause();
+    serverResponse!.cork();
 
-    await transport!.send({
-      jsonrpc: "2.0",
+    const queuedMessage = {
+      jsonrpc: "2.0" as const,
       method: "notifications/message",
-      params: { data: "x".repeat(300_000) },
-    });
+      params: { data: "x".repeat(8 * 1024 * 1024) },
+    };
+    await transport!.send(queuedMessage);
+    await transport!.send(queuedMessage);
     await streamClosed.promise;
 
     await expect(
@@ -1897,6 +2431,35 @@ describe("legacy SSE adapter", () => {
       }) as unknown as Parameters<typeof installBoundedSseWriter>[0];
       return { destroy, response, write };
     };
+    const exactBoundary = fakeResponse(0);
+    installBoundedSseWriter(
+      exactBoundary.response,
+      LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
+      16_777_216,
+      20,
+    );
+    expect(
+      exactBoundary.response.write(
+        Buffer.alloc(LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES),
+      ),
+    ).toBe(true);
+    expect(exactBoundary.write).toHaveBeenCalledOnce();
+    expect(exactBoundary.destroy).not.toHaveBeenCalled();
+
+    const boundaryPlusOne = fakeResponse(0);
+    installBoundedSseWriter(
+      boundaryPlusOne.response,
+      LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES,
+      16_777_216,
+      20,
+    );
+    expect(
+      boundaryPlusOne.response.write(
+        Buffer.alloc(LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES + 1),
+      ),
+    ).toBe(false);
+    expect(boundaryPlusOne.write).not.toHaveBeenCalled();
+    expect(boundaryPlusOne.destroy).toHaveBeenCalledOnce();
 
     const oversizedMessage = fakeResponse(0);
     installBoundedSseWriter(oversizedMessage.response, 4, 100, 20);
@@ -1910,6 +2473,150 @@ describe("legacy SSE adapter", () => {
     expect(overflowingQueue.write).not.toHaveBeenCalled();
     expect(overflowingQueue.destroy).toHaveBeenCalledTimes(1);
   });
+
+  it.each(["callback", "drain", "close", "error"] as const)(
+    "releases hierarchical response bytes exactly on %s",
+    (releaseEvent) => {
+      let writeCallback: ((error?: Error | null) => void) | undefined;
+      const originalCallback = vi.fn();
+      const write = vi.fn(
+        (_chunk: unknown, encodingOrCallback?: unknown, callback?: unknown) => {
+          writeCallback =
+            typeof encodingOrCallback === "function"
+              ? (encodingOrCallback as (error?: Error | null) => void)
+              : (callback as (error?: Error | null) => void);
+          return true;
+        },
+      );
+      const response = Object.assign(new EventEmitter(), {
+        destroy: vi.fn(),
+        writableLength: 0,
+        write,
+      }) as unknown as Parameters<typeof installBoundedSseWriter>[0];
+      const release = vi.fn();
+      const reserve = vi.fn(() => release);
+      const cleanup = installBoundedSseWriter(response, 100, 100, 20, reserve);
+
+      expect(response.write("queued", originalCallback)).toBe(true);
+      expect(reserve).toHaveBeenCalledWith(6);
+      expect(release).not.toHaveBeenCalled();
+      if (releaseEvent === "callback") {
+        writeCallback?.();
+      } else if (releaseEvent === "error") {
+        response.emit("error", new Error("closed"));
+      } else {
+        response.emit(releaseEvent);
+      }
+      expect(release).toHaveBeenCalledOnce();
+      if (releaseEvent !== "callback") writeCallback?.();
+      expect(release).toHaveBeenCalledOnce();
+      expect(originalCallback).toHaveBeenCalledOnce();
+      cleanup();
+      expect(response.write).toBe(write);
+      expect(response.listenerCount("drain")).toBe(0);
+      expect(response.listenerCount("close")).toBe(0);
+      expect(response.listenerCount("error")).toBe(0);
+    },
+  );
+
+  it("bounds queued SSE bytes globally and per principal with fair recovery", async () => {
+    const transports: SSEServerTransport[] = [];
+    const serverResponses: ConstructorParameters<
+      typeof SSEServerTransport
+    >[1][] = [];
+    const diagnostics: string[] = [];
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 8,
+        maxConcurrentStreamsPerPrincipal: 2,
+        streamOpenRateLimit: 20,
+        streamOpenRateLimitPerPrincipal: 4,
+        responseBackpressureTimeoutMs: 60_000,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId: authorization?.slice("Bearer ".length) ?? "missing",
+      }),
+      transportFactory: (endpoint, response) => {
+        serverResponses.push(response);
+        const transport = new SSEServerTransport(endpoint, response);
+        transports.push(transport);
+        return transport;
+      },
+      onDiagnostic: (event) => diagnostics.push(event.code),
+    });
+    const emptyMessage = {
+      jsonrpc: "2.0" as const,
+      method: "notifications/message",
+      params: { data: "" },
+    };
+    const emptyFrame = `event: message\ndata: ${JSON.stringify(
+      emptyMessage,
+    )}\n\n`;
+    const message = {
+      ...emptyMessage,
+      params: {
+        data: "x".repeat(
+          LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES - Buffer.byteLength(emptyFrame),
+        ),
+      },
+    };
+    expect(
+      Buffer.byteLength(`event: message\ndata: ${JSON.stringify(message)}\n\n`),
+    ).toBe(LEGACY_SSE_MIN_RESPONSE_MESSAGE_BYTES);
+    const streams: OpenSse[] = [];
+    const openPaused = async (token: string): Promise<OpenSse> => {
+      const stream = await openSse(value.baseUrl, authorizedHeaders(token));
+      stream.response.pause();
+      serverResponses[serverResponses.length - 1]!.cork();
+      streams.push(stream);
+      return stream;
+    };
+    const sendAndWaitForClose = async (
+      index: number,
+      stream: OpenSse,
+    ): Promise<void> => {
+      const closed = Promise.withResolvers<void>();
+      stream.response.once("close", closed.resolve);
+      await transports[index]!.send(message).catch(() => undefined);
+      await closed.promise;
+    };
+
+    try {
+      const firstA = await openPaused("response-a");
+      await transports[0]!.send(message);
+      expect(serverResponses[0]!.destroyed).toBe(false);
+
+      const secondA = await openPaused("response-a");
+      await sendAndWaitForClose(1, secondA);
+      expect(diagnostics).toContain("response_capacity_exceeded");
+      expect(serverResponses[0]!.destroyed).toBe(false);
+
+      for (const token of ["response-b", "response-c", "response-d"]) {
+        await openPaused(token);
+        const index = transports.length - 1;
+        await transports[index]!.send(message);
+        expect(serverResponses[index]!.destroyed).toBe(false);
+      }
+
+      const firstE = await openPaused("response-e");
+      await sendAndWaitForClose(transports.length - 1, firstE);
+      expect(
+        diagnostics.filter((code) => code === "response_capacity_exceeded"),
+      ).toHaveLength(2);
+
+      const firstServerResponseClosed = Promise.withResolvers<void>();
+      serverResponses[0]!.once("close", firstServerResponseClosed.resolve);
+      firstA.response.destroy();
+      await firstServerResponseClosed.promise;
+
+      await openPaused("response-e");
+      const replacementIndex = transports.length - 1;
+      await transports[replacementIndex]!.send(message);
+      expect(serverResponses[replacementIndex]!.destroyed).toBe(false);
+    } finally {
+      for (const stream of streams) stream.response.destroy();
+    }
+  }, 20_000);
 
   it("routes two independent streams and closing one leaves the other working", async () => {
     const { baseUrl } = await startAdapter();
@@ -2025,7 +2732,546 @@ describe("legacy SSE adapter", () => {
     stream.response.destroy();
   });
 
-  it("rejects a body larger than 1 MiB without dispatch", async () => {
+  it("accepts a maximum worst-escaped paste request above 1 MiB", async () => {
+    const observedInput = Promise.withResolvers<unknown>();
+    const handler = vi.fn(async (input: unknown) => {
+      observedInput.resolve(input);
+      return businessError("jetkvm_input_paste");
+    });
+    const { baseUrl } = await startAdapter({
+      handlerRegistry: completeRegistry({ jetkvm_input_paste: handler }),
+    });
+    const stream = await openSse(baseUrl);
+    const initialized = await post(
+      baseUrl,
+      stream.endpoint,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "max-paste-test", version: "1.0.0" },
+        },
+      }),
+    );
+    expect(initialized.status).toBe(202);
+    await stream.nextFrame();
+
+    const text = "\u0000".repeat(262_144);
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "jetkvm_input_paste",
+        arguments: {
+          session_id: "session-1",
+          session_generation: 1,
+          observation_id: "observation-1",
+          request_id: "request-max-paste",
+          text,
+          timeout_ms: 100,
+        },
+      },
+    });
+    expect(Buffer.byteLength(body)).toBeGreaterThan(1_048_576);
+    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(
+      MCP_TRANSPORT_MAX_REQUEST_BYTES,
+    );
+
+    const called = await post(baseUrl, stream.endpoint, body);
+    expect(called.status).toBe(202);
+    const input = (await observedInput.promise) as { readonly text: string };
+    expect(input.text.length).toBe(262_144);
+    expect(input.text.charCodeAt(0)).toBe(0);
+    expect(handler).toHaveBeenCalledOnce();
+    await stream.nextFrame();
+    stream.response.destroy();
+  });
+
+  it("coalesces many one-byte chunked writes into one bounded allocation", async () => {
+    const { baseUrl } = await startAdapter();
+    const stream = await openSse(baseUrl);
+    const notification = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    const body = notification + " ".repeat(4_096 - notification.length);
+    const url = new URL(`${baseUrl}${stream.endpoint}`);
+    const responseReady = Promise.withResolvers<IncomingMessage>();
+    const request = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: "POST",
+      headers: {
+        ...authorizedHeaders(),
+        "Content-Type": "application/json",
+        "Transfer-Encoding": "chunked",
+      },
+    });
+    request.once("response", responseReady.resolve);
+    request.once("error", responseReady.reject);
+    const allocateUnsafe = vi.spyOn(Buffer, "allocUnsafe");
+    try {
+      for (let index = 0; index < body.length; index += 1) {
+        request.write(body[index]!);
+      }
+      request.end();
+      const response = await responseReady.promise;
+      response.resume();
+      expect(response.statusCode).toBe(202);
+      expect(
+        allocateUnsafe.mock.calls.filter(([size]) => size === 8_192),
+      ).toHaveLength(1);
+      expect(
+        allocateUnsafe.mock.calls.some(
+          ([size]) => size === MCP_TRANSPORT_MAX_REQUEST_BYTES,
+        ),
+      ).toBe(false);
+    } finally {
+      allocateUnsafe.mockRestore();
+    }
+    stream.response.destroy();
+  });
+
+  it("zeroes the coalesced request buffer before releasing capacity", async () => {
+    const { baseUrl } = await startAdapter();
+    const stream = await openSse(baseUrl);
+    const notification = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    const body = notification + " ".repeat(1_023 - notification.length);
+    const originalAllocateUnsafe = Buffer.allocUnsafe;
+    let captured: Buffer | undefined;
+    const allocateUnsafe = vi
+      .spyOn(Buffer, "allocUnsafe")
+      .mockImplementation((size) => {
+        const allocated = originalAllocateUnsafe(size);
+        if (size === body.length) captured = allocated;
+        return allocated;
+      });
+    try {
+      const response = await post(baseUrl, stream.endpoint, body);
+      expect(response.status).toBe(202);
+      expect(captured).toBeDefined();
+      expect(captured!.every((byte) => byte === 0)).toBe(true);
+    } finally {
+      allocateUnsafe.mockRestore();
+      stream.response.destroy();
+    }
+  });
+
+  it("keeps 1,024 declared-max one-byte trickles within the global budget", async () => {
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 2,
+        maxConcurrentStreamsPerPrincipal: 2,
+        maxConcurrentPosts: 1_024,
+        maxConcurrentPostsPerPrincipal: 1_024,
+        maxConcurrentPostsPerSession: 512,
+        postRateLimit: 10_000,
+        postRateLimitPerPrincipal: 10_000,
+        postRateLimitPerSession: 10_000,
+        routeAttemptRateLimit: 10_000,
+      },
+    });
+    const streams = [
+      await openSse(value.baseUrl),
+      await openSse(value.baseUrl),
+    ];
+    const port = Number(new URL(value.baseUrl).port);
+    const requestHeads = streams.map((stream) =>
+      [
+        `POST ${stream.endpoint} HTTP/1.1`,
+        ...Object.entries(authorizedHeaders()).map(
+          ([name, headerValue]) => `${name}: ${headerValue}`,
+        ),
+        "Content-Type: application/json",
+        `Content-Length: ${MCP_TRANSPORT_MAX_REQUEST_BYTES}`,
+        "Connection: keep-alive",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    const sockets: Socket[] = [];
+    const allocateUnsafe = vi.spyOn(Buffer, "allocUnsafe");
+    try {
+      for (let index = 0; index < 1_024; index += 1) {
+        const socket = await connectRaw(port);
+        sockets.push(socket);
+        socket.write(requestHeads[index % requestHeads.length]!);
+        socket.write(" ");
+        if ((index + 1) % 128 === 0) {
+          await vi.waitFor(
+            () => {
+              expect(
+                allocateUnsafe.mock.calls.filter(([size]) => size === 8_192),
+              ).toHaveLength(index + 1);
+            },
+            { interval: 5, timeout: 2_000 },
+          );
+        }
+      }
+      await vi.waitFor(
+        () => {
+          expect(
+            allocateUnsafe.mock.calls.filter(([size]) => size === 8_192),
+          ).toHaveLength(1_024);
+        },
+        { interval: 5, timeout: 5_000 },
+      );
+      expect(
+        allocateUnsafe.mock.calls.some(
+          ([size]) => size === MCP_TRANSPORT_MAX_REQUEST_BYTES,
+        ),
+      ).toBe(false);
+      expect(1_024 * 8_192).toBeLessThanOrEqual(
+        LEGACY_SSE_ACTIVE_REQUEST_BODY_BUDGET_BYTES,
+      );
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      allocateUnsafe.mockRestore();
+      for (const stream of streams) stream.response.destroy();
+    }
+  }, 20_000);
+
+  it("accepts the exact 2 MiB cap and closes on streamed cap plus one", async () => {
+    const { baseUrl } = await startAdapter();
+    const stream = await openSse(baseUrl);
+    const notification = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    const exactBody =
+      notification +
+      " ".repeat(
+        MCP_TRANSPORT_MAX_REQUEST_BYTES - Buffer.byteLength(notification),
+      );
+    expect(Buffer.byteLength(exactBody)).toBe(MCP_TRANSPORT_MAX_REQUEST_BYTES);
+
+    const declared = await post(baseUrl, stream.endpoint, exactBody);
+    expect(declared.status).toBe(202);
+    const streamed = await testFetch(`${baseUrl}${stream.endpoint}`, {
+      method: "POST",
+      headers: {
+        ...authorizedHeaders(),
+        "Content-Type": "application/json",
+        "Transfer-Encoding": "chunked",
+      },
+      body: exactBody,
+    });
+    expect(streamed.status).toBe(202);
+
+    const allocateUnsafe = vi.spyOn(Buffer, "allocUnsafe");
+    let rejected = "";
+    let bodyAllocationCount = 0;
+    try {
+      const socket = await connectRaw(Number(new URL(baseUrl).port));
+      socket.write(
+        [
+          `POST ${stream.endpoint} HTTP/1.1`,
+          ...Object.entries(authorizedHeaders()).map(
+            ([name, value]) => `${name}: ${value}`,
+          ),
+          "Content-Type: application/json",
+          "Transfer-Encoding: chunked",
+          "Connection: keep-alive",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      socket.write(`${MCP_TRANSPORT_MAX_REQUEST_BYTES.toString(16)}\r\n`);
+      socket.write(exactBody);
+      socket.write("\r\n1\r\n \r\n");
+      rejected = await waitForSocketClose(socket, 1_000);
+      bodyAllocationCount = allocateUnsafe.mock.calls.filter(
+        ([size]) => size === MCP_TRANSPORT_MAX_REQUEST_BYTES,
+      ).length;
+    } finally {
+      allocateUnsafe.mockRestore();
+    }
+    expect(bodyAllocationCount).toBe(1);
+    expect(rejected).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+    expect(rejected.toLowerCase()).toContain("\r\nconnection: close\r\n");
+    expect(rejected.endsWith("Request body too large")).toBe(true);
+    stream.response.destroy();
+  });
+
+  it("reserves the global body budget atomically and releases capacity", async () => {
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 32,
+        maxConcurrentStreamsPerPrincipal: 7,
+        streamOpenRateLimit: 100,
+        streamOpenRateLimitPerPrincipal: 20,
+        maxConcurrentPosts: 40,
+        maxConcurrentPostsPerPrincipal: 7,
+        maxConcurrentPostsPerSession: 2,
+        postRateLimit: 100,
+        postRateLimitPerPrincipal: 100,
+        postRateLimitPerSession: 100,
+        routeAttemptRateLimit: 100,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId: authorization?.slice("Bearer ".length) ?? "missing",
+      }),
+    });
+    const port = Number(new URL(value.baseUrl).port);
+    const chunk = Buffer.alloc(MCP_TRANSPORT_MAX_REQUEST_BYTES / 2 + 1, 0x20);
+    const streams: OpenSse[] = [];
+    const held: Socket[] = [];
+    const allocateUnsafe = vi.spyOn(Buffer, "allocUnsafe");
+    const countMaximumAllocations = (): number =>
+      allocateUnsafe.mock.calls.filter(
+        ([size]) => size === MCP_TRANSPORT_MAX_REQUEST_BYTES,
+      ).length;
+    const startTrickle = async (
+      stream: OpenSse,
+      token: string,
+    ): Promise<Socket> => {
+      const socket = await connectRaw(port);
+      socket.write(
+        [
+          `POST ${stream.endpoint} HTTP/1.1`,
+          ...Object.entries(authorizedHeaders(token)).map(
+            ([name, headerValue]) => `${name}: ${headerValue}`,
+          ),
+          "Content-Type: application/json",
+          "Transfer-Encoding: chunked",
+          "Connection: keep-alive",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      socket.write(`${chunk.byteLength.toString(16)}\r\n`);
+      socket.write(chunk);
+      socket.write("\r\n");
+      return socket;
+    };
+
+    try {
+      let deniedStream: OpenSse | undefined;
+      let deniedToken = "";
+      for (let index = 0; index < 32; index += 1) {
+        const token = `body-principal-${Math.floor(index / 7)}`;
+        const stream = await openSse(value.baseUrl, authorizedHeaders(token));
+        streams.push(stream);
+        const socket = await startTrickle(stream, token);
+        if (index === 31) {
+          deniedStream = stream;
+          deniedToken = token;
+          const deniedResponse = await waitForSocketClose(socket, 2_000);
+          expect(deniedResponse).toMatch(
+            /^HTTP\/1\.1 429 Too Many Requests\r\n/,
+          );
+          continue;
+        }
+        held.push(socket);
+        await vi.waitFor(
+          () => {
+            expect(countMaximumAllocations()).toBe(index + 1);
+          },
+          { interval: 5, timeout: 2_000 },
+        );
+      }
+
+      const released = Promise.withResolvers<void>();
+      held[0]!.once("close", released.resolve);
+      held[0]!.destroy();
+      await released.promise;
+      const nextTurn = Promise.withResolvers<void>();
+      setImmediate(nextTurn.resolve);
+      await nextTurn.promise;
+
+      const replacement = await startTrickle(deniedStream!, deniedToken);
+      held.push(replacement);
+      await vi.waitFor(
+        () => {
+          expect(countMaximumAllocations()).toBe(32);
+        },
+        { interval: 5, timeout: 2_000 },
+      );
+    } finally {
+      const closed = held
+        .filter((socket) => !socket.destroyed)
+        .map((socket) => {
+          const completion = Promise.withResolvers<void>();
+          socket.once("close", completion.resolve);
+          socket.destroy();
+          return completion.promise;
+        });
+      await Promise.all(closed);
+      for (const stream of streams) stream.response.destroy();
+      allocateUnsafe.mockRestore();
+    }
+  }, 20_000);
+
+  it("isolates per-session and per-principal body capacity and recovers", async () => {
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 12,
+        maxConcurrentStreamsPerPrincipal: 10,
+        streamOpenRateLimit: 100,
+        streamOpenRateLimitPerPrincipal: 20,
+        maxConcurrentPosts: 20,
+        maxConcurrentPostsPerPrincipal: 12,
+        maxConcurrentPostsPerSession: 4,
+        postRateLimit: 100,
+        postRateLimitPerPrincipal: 100,
+        postRateLimitPerSession: 100,
+        routeAttemptRateLimit: 100,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId: authorization?.slice("Bearer ".length) ?? "missing",
+      }),
+    });
+    const port = Number(new URL(value.baseUrl).port);
+    const chunk = Buffer.alloc(MCP_TRANSPORT_MAX_REQUEST_BYTES / 2 + 1, 0x20);
+    const streams: OpenSse[] = [];
+    const held: Socket[] = [];
+    const allocateUnsafe = vi.spyOn(Buffer, "allocUnsafe");
+    const countMaximumAllocations = (): number =>
+      allocateUnsafe.mock.calls.filter(
+        ([size]) => size === MCP_TRANSPORT_MAX_REQUEST_BYTES,
+      ).length;
+    const open = async (token: string): Promise<OpenSse> => {
+      const stream = await openSse(value.baseUrl, authorizedHeaders(token));
+      streams.push(stream);
+      return stream;
+    };
+    const startTrickle = async (
+      stream: OpenSse,
+      token: string,
+    ): Promise<Socket> => {
+      const socket = await connectRaw(port);
+      socket.write(
+        [
+          `POST ${stream.endpoint} HTTP/1.1`,
+          ...Object.entries(authorizedHeaders(token)).map(
+            ([name, headerValue]) => `${name}: ${headerValue}`,
+          ),
+          "Content-Type: application/json",
+          "Transfer-Encoding: chunked",
+          "Connection: keep-alive",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      socket.write(`${chunk.byteLength.toString(16)}\r\n`);
+      socket.write(chunk);
+      socket.write("\r\n");
+      return socket;
+    };
+    const hold = async (
+      stream: OpenSse,
+      token: string,
+      expectedAllocations: number,
+    ): Promise<Socket> => {
+      const socket = await startTrickle(stream, token);
+      held.push(socket);
+      await vi.waitFor(
+        () => {
+          expect(countMaximumAllocations()).toBe(expectedAllocations);
+        },
+        { interval: 5, timeout: 2_000 },
+      );
+      return socket;
+    };
+
+    try {
+      const first = await open("body-a");
+      const firstSocket = await hold(first, "body-a", 1);
+      const sameSessionDenied = await startTrickle(first, "body-a");
+      expect(await waitForSocketClose(sameSessionDenied, 2_000)).toMatch(
+        /^HTTP\/1\.1 429 Too Many Requests\r\n/,
+      );
+
+      for (let index = 1; index < 7; index += 1) {
+        await hold(await open("body-a"), "body-a", index + 1);
+      }
+      const principalDeniedStream = await open("body-a");
+      const principalDenied = await startTrickle(
+        principalDeniedStream,
+        "body-a",
+      );
+      expect(await waitForSocketClose(principalDenied, 2_000)).toMatch(
+        /^HTTP\/1\.1 429 Too Many Requests\r\n/,
+      );
+
+      await hold(await open("body-b"), "body-b", 8);
+
+      const released = Promise.withResolvers<void>();
+      firstSocket.once("close", released.resolve);
+      firstSocket.destroy();
+      await released.promise;
+      const nextTurn = Promise.withResolvers<void>();
+      setImmediate(nextTurn.resolve);
+      await nextTurn.promise;
+      await hold(first, "body-a", 9);
+    } finally {
+      const closed = held
+        .filter((socket) => !socket.destroyed)
+        .map((socket) => {
+          const completion = Promise.withResolvers<void>();
+          socket.once("close", completion.resolve);
+          socket.destroy();
+          return completion.promise;
+        });
+      await Promise.all(closed);
+      for (const stream of streams) stream.response.destroy();
+      allocateUnsafe.mockRestore();
+    }
+  }, 20_000);
+
+  it("closes a trickled active body and awaits all lifecycle cleanup", async () => {
+    const handler = vi.fn(async (_input: unknown) =>
+      businessError("jetkvm_session_connect"),
+    );
+    const routed = Promise.withResolvers<void>();
+    const value = await startAdapter({
+      handlerRegistry: completeRegistry({ jetkvm_session_connect: handler }),
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") routed.resolve();
+      },
+    });
+    const stream = await openSse(value.baseUrl);
+    const port = Number(new URL(value.baseUrl).port);
+    const socket = await connectRaw(port);
+    socket.write(
+      [
+        `POST ${stream.endpoint} HTTP/1.1`,
+        ...Object.entries(authorizedHeaders()).map(
+          ([name, headerValue]) => `${name}: ${headerValue}`,
+        ),
+        "Content-Type: application/json",
+        `Content-Length: ${MCP_TRANSPORT_MAX_REQUEST_BYTES}`,
+        "Connection: keep-alive",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    socket.write(" ");
+    await routed.promise;
+
+    const socketClosed = waitForSocketClose(socket, 500);
+    const firstClose = value.adapter.close();
+    const secondClose = value.adapter.close();
+    expect(secondClose).toBe(firstClose);
+    await firstClose;
+    await socketClosed;
+    expect(socket.destroyed).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+    expect(() => value.adapter.createHttpServer()).toThrowError(
+      /closed legacy SSE adapter/i,
+    );
+    stream.response.destroy();
+  });
+
+  it("rejects a declared body larger than 2 MiB without dispatch", async () => {
     const handler = vi.fn(async (_input: unknown) =>
       businessError("jetkvm_session_connect"),
     );
@@ -2039,13 +3285,14 @@ describe("legacy SSE adapter", () => {
       headers: {
         ...authorizedHeaders(),
         "Content-Type": "application/json",
-        "Content-Length": String(1_048_577),
+        "Content-Length": String(MCP_TRANSPORT_MAX_REQUEST_BYTES + 1),
       },
       body: "{",
     });
 
     expect(response.status).toBe(400);
     expect(await response.text()).toBe("Request body too large");
+    expect(response.headers.connection).toBe("close");
     expect(handler).not.toHaveBeenCalled();
     stream.response.destroy();
   });

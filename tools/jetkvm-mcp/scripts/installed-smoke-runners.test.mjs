@@ -1,0 +1,455 @@
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { test } from "node:test";
+
+import * as installedSmokeSupport from "./installed-smoke-support.mjs";
+
+class FakeStream extends EventEmitter {
+  constructor() {
+    super();
+    this.destroyCount = 0;
+    this.pauseCount = 0;
+  }
+
+  setEncoding() {}
+
+  pause() {
+    this.pauseCount += 1;
+  }
+
+  destroy() {
+    this.destroyCount += 1;
+  }
+}
+
+class FakeChild extends EventEmitter {
+  constructor() {
+    super();
+    this.stdout = new FakeStream();
+    this.stderr = new FakeStream();
+    this.stdinWriteCount = 0;
+    this.stdin = {
+      write: () => {
+        this.stdinWriteCount += 1;
+        this.onStdinWrite?.();
+      },
+      end() {},
+    };
+    this.killSignals = [];
+  }
+
+  kill(signal) {
+    this.killSignals.push(signal);
+    return true;
+  }
+}
+
+function installedFixture(cleanupImpl) {
+  return {
+    root: "/temporary/installed-smoke",
+    consumer: "/temporary/installed-smoke/consumer",
+    cleanup: cleanupImpl,
+  };
+}
+
+function assertDualFailure(error, operationFailure, cleanupFailure) {
+  assert.ok(error instanceof AggregateError);
+  assert.deepEqual(error.errors, [operationFailure, cleanupFailure]);
+  assert.equal(error.cause, operationFailure);
+  return true;
+}
+
+for (const label of ["contracts", "stdio", "sse"]) {
+  test(`${label} runner preserves operation and cleanup failures`, async () => {
+    const operationFailure = new Error(`${label} operation failed`);
+    const cleanupFailure = new Error(`${label} cleanup failed`);
+
+    await assert.rejects(
+      installedSmokeSupport.withInstalledPackage(
+        label,
+        async () => {
+          throw operationFailure;
+        },
+        {
+          prepareInstalledPackageImpl: async (actualLabel) => {
+            assert.equal(actualLabel, label);
+            return installedFixture(async () => {
+              throw cleanupFailure;
+            });
+          },
+        },
+      ),
+      (error) => assertDualFailure(error, operationFailure, cleanupFailure),
+    );
+  });
+}
+
+test("installed runner surfaces a cleanup-only failure directly", async () => {
+  const cleanupFailure = new Error("cleanup only failed");
+
+  await assert.rejects(
+    installedSmokeSupport.withInstalledPackage(
+      "contracts",
+      async () => "completed",
+      {
+        prepareInstalledPackageImpl: async () =>
+          installedFixture(async () => {
+            throw cleanupFailure;
+          }),
+      },
+    ),
+    (error) => error === cleanupFailure,
+  );
+});
+
+for (const [modulePath, exportName] of [
+  ["./installed-contracts-smoke.mjs", "runInstalledContractsSmoke"],
+  ["./installed-sse-protocol-smoke.mjs", "runInstalledSseProtocolSmoke"],
+]) {
+  test(`${exportName} uses dual-failure-safe installed cleanup`, async () => {
+    const operationFailure = new Error("protocol assertion failed");
+    const cleanupFailure = new Error("runner cleanup failed");
+    const runnerModule = await import(modulePath);
+
+    await assert.rejects(
+      runnerModule[exportName]({
+        prepareInstalledPackageImpl: async () =>
+          installedFixture(async () => {
+            throw cleanupFailure;
+          }),
+        runInstalledModuleImpl: async () => {
+          throw operationFailure;
+        },
+      }),
+      (error) => assertDualFailure(error, operationFailure, cleanupFailure),
+    );
+  });
+}
+
+test("stdio runner rejects deterministic early exit and force-kills the child", async () => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  let cleanupCount = 0;
+
+  await assert.rejects(
+    runInstalledStdioProtocolSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          cleanupCount += 1;
+        }),
+      spawnImpl: () => {
+        queueMicrotask(() => child.emit("exit", 1, null));
+        return child;
+      },
+      writeFileImpl: async () => {},
+      responseDeadlineMs: 20,
+    }),
+    (error) => {
+      assert.equal(error?.code, "INSTALLED_STDIO_EARLY_TERMINATION");
+      assert.equal(
+        error?.message,
+        "Installed stdio child terminated before the expected protocol response",
+      );
+      return true;
+    },
+  );
+
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+  assert.equal(cleanupCount, 1);
+});
+
+test("stdio runner rejects a hung child at its deadline and force-kills it", async () => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  let cleanupCount = 0;
+
+  await assert.rejects(
+    runInstalledStdioProtocolSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          cleanupCount += 1;
+        }),
+      spawnImpl: () => child,
+      writeFileImpl: async () => {},
+      responseDeadlineMs: 5,
+    }),
+    (error) => {
+      assert.equal(error?.code, "INSTALLED_STDIO_RESPONSE_TIMEOUT");
+      assert.equal(
+        error?.message,
+        "Installed stdio protocol response deadline exceeded",
+      );
+      return true;
+    },
+  );
+
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+  assert.equal(cleanupCount, 1);
+});
+
+test("stdio runner aggregates early exit with cleanup failure", async () => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  const cleanupFailure = new Error("stdio cleanup failed");
+
+  await assert.rejects(
+    runInstalledStdioProtocolSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          throw cleanupFailure;
+        }),
+      spawnImpl: () => {
+        queueMicrotask(() => child.stdout.emit("end"));
+        return child;
+      },
+      writeFileImpl: async () => {},
+      responseDeadlineMs: 20,
+    }),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors[0]?.code, "INSTALLED_STDIO_EARLY_TERMINATION");
+      assert.equal(error.errors[1], cleanupFailure);
+      return true;
+    },
+  );
+
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+});
+
+function assertRunnerReleased(child) {
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+  assert.equal(child.listenerCount("exit"), 0);
+  assert.equal(child.listenerCount("error"), 0);
+  for (const stream of [child.stdout, child.stderr]) {
+    assert.equal(stream.listenerCount("data"), 0);
+    assert.equal(stream.listenerCount("end"), 0);
+    assert.equal(stream.listenerCount("error"), 0);
+    assert.equal(stream.destroyCount, 1);
+  }
+}
+
+async function expectBoundedStdioFailure({
+  emitFailure,
+  expectedCode,
+  expectedMessage,
+  collectorLimits = {
+    frameBytes: 64,
+    cumulativeBytes: 128,
+    messageCount: 8,
+  },
+  stderrByteLimit = 64,
+  sensitiveText,
+}) {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  let cleanupCount = 0;
+
+  await assert.rejects(
+    runInstalledStdioProtocolSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          cleanupCount += 1;
+        }),
+      spawnImpl: () => {
+        queueMicrotask(() => emitFailure(child));
+        return child;
+      },
+      writeFileImpl: async () => {},
+      responseDeadlineMs: 50,
+      collectorLimits,
+      stderrByteLimit,
+    }),
+    (error) => {
+      assert.equal(error?.code, expectedCode);
+      assert.equal(error?.message, expectedMessage);
+      if (sensitiveText !== undefined) {
+        assert.doesNotMatch(
+          `${String(error)}\n${JSON.stringify(error)}`,
+          new RegExp(sensitiveText),
+        );
+      }
+      return true;
+    },
+  );
+
+  assert.equal(cleanupCount, 1);
+  assertRunnerReleased(child);
+}
+
+test("stdio runner bounds oversized stdout frames without listener or child leaks", async () => {
+  await expectBoundedStdioFailure({
+    emitFailure: (child) =>
+      child.stdout.emit("data", '{"sensitive-frame":"too-large"}\n'),
+    expectedCode: "INSTALLED_STDIO_FRAME_TOO_LARGE",
+    expectedMessage: "Installed stdio protocol frame exceeds the byte limit",
+    collectorLimits: {
+      frameBytes: 8,
+      cumulativeBytes: 128,
+      messageCount: 8,
+    },
+    sensitiveText: "sensitive-frame",
+  });
+});
+
+test("stdio runner catches incomplete stdout frames inside the shared failure race", async () => {
+  await expectBoundedStdioFailure({
+    emitFailure: (child) => {
+      child.stdout.emit("data", '{"sensitive-incomplete":');
+      child.stdout.emit("end");
+    },
+    expectedCode: "INSTALLED_STDIO_INCOMPLETE_FRAME",
+    expectedMessage:
+      "Installed stdio child output ended with an incomplete frame",
+    sensitiveText: "sensitive-incomplete",
+  });
+});
+
+test("stdio runner catches malformed stdout JSON inside the shared failure race", async () => {
+  await expectBoundedStdioFailure({
+    emitFailure: (child) =>
+      child.stdout.emit("data", "sensitive-malformed-json\n"),
+    expectedCode: "INSTALLED_STDIO_MALFORMED_JSON",
+    expectedMessage: "Installed stdio child emitted malformed JSON",
+    sensitiveText: "sensitive-malformed-json",
+  });
+});
+
+test("stdio runner bounds the number of parsed stdout messages", async () => {
+  await expectBoundedStdioFailure({
+    emitFailure: (child) => child.stdout.emit("data", "{}\n{}\n{}\n"),
+    expectedCode: "INSTALLED_STDIO_MESSAGE_LIMIT",
+    expectedMessage: "Installed stdio protocol message limit exceeded",
+    collectorLimits: {
+      frameBytes: 16,
+      cumulativeBytes: 128,
+      messageCount: 2,
+    },
+  });
+});
+
+test("stdio runner bounds cumulative stdout bytes", async () => {
+  await expectBoundedStdioFailure({
+    emitFailure: (child) => child.stdout.emit("data", "{}\n{}\n"),
+    expectedCode: "INSTALLED_STDIO_CUMULATIVE_LIMIT",
+    expectedMessage:
+      "Installed stdio protocol output exceeds the cumulative byte limit",
+    collectorLimits: {
+      frameBytes: 16,
+      cumulativeBytes: 5,
+      messageCount: 8,
+    },
+  });
+});
+
+test("stdio runner bounds stderr without exposing or retaining its flood", async () => {
+  await expectBoundedStdioFailure({
+    emitFailure: (child) =>
+      child.stderr.emit("data", "sensitive-diagnostic-flood"),
+    expectedCode: "INSTALLED_STDIO_STDERR_LIMIT",
+    expectedMessage: "Installed stdio diagnostics exceeded the byte limit",
+    stderrByteLimit: 8,
+    sensitiveText: "sensitive-diagnostic-flood",
+  });
+});
+
+test("no-reader stdio runner exits from bounded output failure without consuming stdout", async () => {
+  const { runInstalledStdioNoReaderSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  let cleanupCount = 0;
+  child.onStdinWrite = () => {
+    if (child.stdinWriteCount === 1) {
+      queueMicrotask(() =>
+        child.stdout.emit(
+          "data",
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: "2025-11-25" },
+          })}\n`,
+        ),
+      );
+      return;
+    }
+    assert.equal(child.stdout.listenerCount("data"), 0);
+    assert.equal(child.stdout.listenerCount("readable"), 0);
+    assert.equal(child.stdout.pauseCount, 1);
+    if (child.stdinWriteCount === 14) {
+      queueMicrotask(() => {
+        child.stderr.emit("data", "jetkvm-mcp: stdio output queue overflow\n");
+        child.emit("exit", 1, null);
+      });
+    }
+  };
+
+  await runInstalledStdioNoReaderSmoke({
+    prepareInstalledPackageImpl: async () =>
+      installedFixture(async () => {
+        cleanupCount += 1;
+      }),
+    spawnImpl: () => child,
+    writeFileImpl: async () => {},
+    exitDeadlineMs: 20,
+    largeIdSuffixBytes: 32,
+  });
+
+  assert.ok(child.stdinWriteCount >= 1);
+  assert.deepEqual(child.killSignals, []);
+  assert.equal(cleanupCount, 1);
+  assert.equal(child.stdout.listenerCount("data"), 0);
+  assert.equal(child.listenerCount("exit"), 0);
+  assert.equal(child.listenerCount("error"), 0);
+  for (const stream of [child.stdout, child.stderr]) {
+    assert.equal(stream.listenerCount("data"), 0);
+    assert.equal(stream.listenerCount("error"), 0);
+    assert.equal(stream.destroyCount, 1);
+  }
+});
+
+test("no-reader stdio runner force-kills a child that misses its finite exit deadline", async () => {
+  const { runInstalledStdioNoReaderSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = new FakeChild();
+  let cleanupCount = 0;
+  child.onStdinWrite = () => {
+    if (child.stdinWriteCount === 1) {
+      queueMicrotask(() =>
+        child.stdout.emit(
+          "data",
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: "2025-11-25" },
+          })}\n`,
+        ),
+      );
+      return;
+    }
+    if (child.stdinWriteCount === 14) {
+      queueMicrotask(() =>
+        child.stderr.emit("data", "jetkvm-mcp: stdio output queue overflow\n"),
+      );
+    }
+  };
+
+  await assert.rejects(
+    runInstalledStdioNoReaderSmoke({
+      prepareInstalledPackageImpl: async () =>
+        installedFixture(async () => {
+          cleanupCount += 1;
+        }),
+      spawnImpl: () => child,
+      writeFileImpl: async () => {},
+      exitDeadlineMs: 5,
+      largeIdSuffixBytes: 32,
+    }),
+    (error) => error?.code === "INSTALLED_STDIO_EXIT_TIMEOUT",
+  );
+
+  assert.equal(cleanupCount, 1);
+  assertRunnerReleased(child);
+});

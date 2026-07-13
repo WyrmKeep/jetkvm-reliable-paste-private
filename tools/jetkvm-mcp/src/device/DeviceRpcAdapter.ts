@@ -9,6 +9,11 @@ export interface Deadline {
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
 }
+export const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+export function isCanonicalOpaqueId(value: unknown): value is string {
+  return typeof value === "string" && OPAQUE_ID_PATTERN.test(value);
+}
 
 /** The sole internal device/RPC ownership tuple. */
 export interface DeviceRpcBinding extends SessionRef {
@@ -202,10 +207,22 @@ export class DeviceRpcError extends Error {
   }
 }
 
+const opaqueIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
+const nonNegativeSafeIntegerSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER);
+const positiveSafeIntegerSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(Number.MAX_SAFE_INTEGER);
+
 const cachedWireFactMetadataSchema = z
   .object({
     observed_at: z.string().datetime(),
-    age_ms: z.number().int().nonnegative(),
+    age_ms: nonNegativeSafeIntegerSchema,
     freshness: z.enum(["fresh", "stale"]),
     source: z.enum(["cached_snapshot", "cached_event"]),
   })
@@ -234,8 +251,8 @@ const signalFactSchema = wireFactSchema(
 );
 const resolutionValueSchema = z
   .object({
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
+    width: positiveSafeIntegerSchema,
+    height: positiveSafeIntegerSchema,
     refresh_hz: z.number().positive().nullable(),
   })
   .strict()
@@ -282,13 +299,13 @@ const edidResultSchema = z.discriminatedUnion("status", [
         .object({
           sha256: z.string().regex(/^[a-f0-9]{64}$/),
           manufacturer_id: z.string().nullable(),
-          product_code: z.number().int().nonnegative().nullable(),
+          product_code: nonNegativeSafeIntegerSchema.nullable(),
           serial_number: z.string().nullable(),
           display_name: z.string().nullable(),
           preferred_resolution: z
             .object({
-              width: z.number().int().positive(),
-              height: z.number().int().positive(),
+              width: positiveSafeIntegerSchema,
+              height: positiveSafeIntegerSchema,
               refresh_hz: z.number().positive().nullable(),
             })
             .strict()
@@ -320,7 +337,7 @@ const atxLedObservationResultSchema = z.discriminatedUnion("freshness", [
 
 const atxResultSchema = z
   .object({
-    request_id: z.string().min(1),
+    request_id: opaqueIdSchema,
     action: z.enum(["press_power", "hold_power", "press_reset"]),
     wire_action: z.enum(["power-short", "power-long", "reset"]),
     fixed_press_ms: z.union([z.literal(200), z.literal(5000)]),
@@ -347,7 +364,14 @@ const responseEnvelopeSchema = z.union([
       jsonrpc: z.literal("2.0"),
       id: z.string().min(1),
       error: z
-        .object({ code: z.number().int(), message: z.string() })
+        .object({
+          code: z
+            .number()
+            .int()
+            .min(Number.MIN_SAFE_INTEGER)
+            .max(Number.MAX_SAFE_INTEGER),
+          message: z.string(),
+        })
         .passthrough(),
     })
     .strict(),
@@ -379,8 +403,7 @@ export function mapDeviceRpcBindingToWire(
 function assertValidBinding(binding: DeviceRpcBinding): void {
   if (
     typeof binding.sessionId !== "string" ||
-    binding.sessionId.trim().length === 0 ||
-    binding.sessionId.length > 256 ||
+    !isCanonicalOpaqueId(binding.sessionId) ||
     !Number.isSafeInteger(binding.sessionGeneration) ||
     binding.sessionGeneration < 1 ||
     !Number.isSafeInteger(binding.connectionEpoch) ||
@@ -498,6 +521,8 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         qualification: "binding_lost_cached_only",
       };
     }
+    const expectedRevision = this.revision;
+    const expectedChannel = this.channel;
     const result = await this.enqueue(
       ref,
       deadline,
@@ -507,6 +532,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     );
     const parsed = displayStateResultSchema.safeParse(result);
     if (!parsed.success) throw this.protocolError("MALFORMED_RESPONSE", true);
+    this.validateReadContinuation(ref, expectedRevision, expectedChannel);
     const mapped: CachedDisplayState = {
       signal: this.mapFact(parsed.data.signal),
       resolution: {
@@ -533,9 +559,12 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<QualifiedEdidRead> {
     this.validateAdmission(ref, deadline, 30_000);
+    const expectedRevision = this.revision;
+    const expectedChannel = this.channel;
     const result = await this.enqueue(ref, deadline, "getEDID", {}, 30_000);
     const parsed = edidResultSchema.safeParse(result);
     if (!parsed.success) throw this.protocolError("MALFORMED_RESPONSE", true);
+    this.validateReadContinuation(ref, expectedRevision, expectedChannel);
     if (parsed.data.status !== "available") {
       return {
         status: parsed.data.status,
@@ -575,9 +604,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
   ): Promise<AtxWireReceipt> {
     this.validateAdmission(ref, deadline, 60_000);
     if (
-      typeof request.requestId !== "string" ||
-      request.requestId.trim().length === 0 ||
-      request.requestId.length > 256 ||
+      !isCanonicalOpaqueId(request.requestId) ||
       !Object.hasOwn(ATX_WIRE_BY_ACTION, request.action)
     ) {
       throw new DeviceRpcError(
@@ -669,7 +696,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     }
     if (
       !Number.isSafeInteger(deadline.timeoutMs) ||
-      deadline.timeoutMs < 100 ||
+      deadline.timeoutMs < 1 ||
       deadline.timeoutMs > maximumMs
     ) {
       throw new DeviceRpcError(
@@ -910,6 +937,26 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         finishError(this.cancellationError(kind, "ack", true));
       });
     });
+  }
+
+  private validateReadContinuation(
+    ref: DeviceRpcBinding,
+    expectedRevision: number,
+    expectedChannel: BrowserOwnedRpcChannel,
+  ): void {
+    if (
+      this.revision !== expectedRevision ||
+      this.channel !== expectedChannel ||
+      !bindingsEqual(ref, this.currentBinding)
+    ) {
+      throw new DeviceRpcError(
+        "BINDING_REPLACED",
+        "ack",
+        "unknown",
+        true,
+        false,
+      );
+    }
   }
 
   private validateCurrent(

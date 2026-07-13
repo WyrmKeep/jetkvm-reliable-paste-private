@@ -1,14 +1,22 @@
+import { isUtf8 } from "node:buffer";
 import process from "node:process";
 import { PassThrough, Writable, type Readable } from "node:stream";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
-import { createMcpServer, type HandlerRegistry } from "./server.js";
+import { MCP_TRANSPORT_MAX_REQUEST_BYTES } from "../config.js";
+import {
+  assertHandlerRegistry,
+  createMcpServer,
+  type HandlerRegistry,
+} from "./server.js";
 
-const MAXIMUM_FRAME_BYTES = 1_048_576;
+const MAXIMUM_FRAME_BYTES = MCP_TRANSPORT_MAX_REQUEST_BYTES;
 const MAXIMUM_OUTPUT_QUEUE_BYTES = 16 * 1024 * 1024;
 const OUTPUT_WRITE_TIMEOUT_MS = 10_000;
+const DIAGNOSTIC_FLUSH_TIMEOUT_MS = 1_000;
+const MAXIMUM_MALFORMED_FRAMES = 32;
 
 class StdioFrameBoundaryError extends Error {}
 class StdioOutputBoundaryError extends Error {}
@@ -23,7 +31,9 @@ class BoundedStdioFrameGate {
   constructor(
     readonly input: Readable,
     readonly onFailure: (error: Error) => void,
+    readonly onMalformed: (error: Error) => void,
     readonly onEnd: () => void,
+    readonly allocatePendingBuffer: (size: number) => Buffer,
   ) {}
 
   start(): void {
@@ -42,8 +52,25 @@ class BoundedStdioFrameGate {
     this.input.off("error", this.#onInputError);
     this.input.off("end", this.#onEnd);
     this.input.off("close", this.#onEnd);
-    this.#pendingBytes = 0;
+    if (this.input.listenerCount("data") === 0) this.input.pause();
+    this.#zeroPending();
     this.output.end();
+  }
+
+  abortInput(): void {
+    this.close();
+    if (this.input.listenerCount("data") !== 0) return;
+    try {
+      this.input.destroy();
+    } catch {
+      // The output boundary remains the only public failure.
+    }
+    const unref = (this.input as Readable & { unref?: () => void }).unref;
+    try {
+      unref?.call(this.input);
+    } catch {
+      // The output boundary remains the only public failure.
+    }
   }
 
   readonly #onData = (chunk: Buffer | Uint8Array | string): void => {
@@ -76,8 +103,9 @@ class BoundedStdioFrameGate {
         return;
       }
 
+      let frame: Buffer;
       if (this.#pendingBytes === 0) {
-        this.output.write(segment);
+        frame = Buffer.from(segment);
       } else {
         const pending = this.#pending;
         if (pending === undefined) {
@@ -86,14 +114,25 @@ class BoundedStdioFrameGate {
           );
           return;
         }
-        this.output.write(
-          Buffer.concat(
-            [pending.subarray(0, this.#pendingBytes), segment],
-            this.#pendingBytes + segment.byteLength,
-          ),
+        frame = Buffer.concat(
+          [pending.subarray(0, this.#pendingBytes), segment],
+          this.#pendingBytes + segment.byteLength,
         );
       }
-      this.#pendingBytes = 0;
+      this.#zeroPending();
+      if (!isUtf8(frame)) {
+        frame.fill(0);
+        this.onMalformed(new Error("Invalid UTF-8 stdio protocol frame"));
+        if (this.#closed) return;
+        offset = newline + 1;
+        continue;
+      }
+      try {
+        this.output.write(frame);
+      } finally {
+        frame.fill(0);
+      }
+      if (this.#closed) return;
       offset = newline + 1;
     }
   };
@@ -127,7 +166,21 @@ class BoundedStdioFrameGate {
       return;
     }
 
-    this.#pending ??= Buffer.allocUnsafe(MAXIMUM_FRAME_BYTES + 1);
+    if (this.#pending === undefined) {
+      const allocated = this.allocatePendingBuffer(MAXIMUM_FRAME_BYTES + 1);
+      if (
+        !Buffer.isBuffer(allocated) ||
+        allocated.byteLength < MAXIMUM_FRAME_BYTES + 1
+      ) {
+        this.#fail(
+          new StdioFrameBoundaryError(
+            "Stdio frame gate received an invalid pending buffer",
+          ),
+        );
+        return;
+      }
+      this.#pending = allocated;
+    }
     bytes.copy(this.#pending, this.#pendingBytes);
     this.#pendingBytes = nextTotal;
   }
@@ -136,6 +189,13 @@ class BoundedStdioFrameGate {
     return this.#pendingBytes === 0
       ? undefined
       : this.#pending?.[this.#pendingBytes - 1];
+  }
+
+  #zeroPending(): void {
+    if (this.#pending !== undefined && this.#pendingBytes !== 0) {
+      this.#pending.fill(0, 0, this.#pendingBytes);
+    }
+    this.#pendingBytes = 0;
   }
 
   #fail(error: Error): void {
@@ -150,6 +210,9 @@ class BoundedStdioOutputGate extends Writable {
   #activeBytes = 0;
   #activeCallback: ((error?: Error | null) => void) | undefined;
   #writeTimer: NodeJS.Timeout | undefined;
+  #awaitingOutputError = false;
+  #listenerCleanupImmediate: NodeJS.Immediate | undefined;
+  #underlyingWriteActive = false;
   #closed = false;
 
   constructor(
@@ -219,6 +282,7 @@ class BoundedStdioOutputGate extends Writable {
   ): void {
     this.#activeBytes = chunk.byteLength;
     this.#activeCallback = callback;
+    this.#underlyingWriteActive = true;
     this.#writeTimer = setTimeout(() => {
       this.#fail(
         new StdioOutputBoundaryError(
@@ -230,15 +294,24 @@ class BoundedStdioOutputGate extends Writable {
 
     try {
       this.output.write(chunk, (error) => {
+        this.#underlyingWriteActive = false;
         if (error) {
-          this.#fail(
-            new StdioOutputBoundaryError("Outbound stdio stream failed"),
-          );
+          this.#expectOutputError();
+          if (!this.#closed) {
+            this.#fail(
+              new StdioOutputBoundaryError("Outbound stdio stream failed"),
+            );
+          }
+          return;
+        }
+        if (this.#closed) {
+          this.#removeOutputErrorListener();
           return;
         }
         this.#finishActiveWrite();
       });
     } catch {
+      this.#underlyingWriteActive = false;
       this.#fail(new StdioOutputBoundaryError("Outbound stdio stream failed"));
     }
   }
@@ -246,7 +319,9 @@ class BoundedStdioOutputGate extends Writable {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.output.off("error", this.#onOutputError);
+    if (!this.#awaitingOutputError && !this.#underlyingWriteActive) {
+      this.#removeOutputErrorListener();
+    }
     clearTimeout(this.#writeTimer);
     this.#writeTimer = undefined;
     const callback = this.#activeCallback;
@@ -258,6 +333,16 @@ class BoundedStdioOutputGate extends Writable {
   }
 
   readonly #onOutputError = (): void => {
+    if (this.#awaitingOutputError) {
+      this.#awaitingOutputError = false;
+      this.#removeOutputErrorListener();
+      return;
+    }
+    this.#underlyingWriteActive = false;
+    if (this.#closed) {
+      this.#removeOutputErrorListener();
+      return;
+    }
     this.#fail(new StdioOutputBoundaryError("Outbound stdio stream failed"));
   };
 
@@ -273,17 +358,174 @@ class BoundedStdioOutputGate extends Writable {
     callback();
   }
 
+  #expectOutputError(): void {
+    this.#awaitingOutputError = true;
+    if (!this.output.listeners("error").includes(this.#onOutputError)) {
+      this.output.on("error", this.#onOutputError);
+    }
+    clearImmediate(this.#listenerCleanupImmediate);
+    this.#listenerCleanupImmediate = setImmediate(() => {
+      this.#awaitingOutputError = false;
+      this.#removeOutputErrorListener();
+    });
+    this.#listenerCleanupImmediate.unref();
+  }
+
+  #removeOutputErrorListener(): void {
+    clearImmediate(this.#listenerCleanupImmediate);
+    this.#listenerCleanupImmediate = undefined;
+    this.output.off("error", this.#onOutputError);
+  }
+
   #fail(error: Error): void {
     if (this.#closed) return;
     this.close();
+    try {
+      this.output.destroy();
+    } catch {
+      // The boundary failure below remains the only public diagnostic.
+    }
+    const unref = (this.output as Writable & { unref?: () => void }).unref;
+    try {
+      unref?.call(this.output);
+    } catch {
+      // The output boundary remains the only public failure.
+    }
     this.onFailure(error);
+  }
+}
+
+class BoundedDiagnosticSink {
+  #backpressured = false;
+  #drainListening = false;
+  #writeActive = false;
+  #awaitingError = false;
+  #listenerCleanupImmediate: NodeJS.Immediate | undefined;
+  #activeWriteSettled:
+    | { readonly promise: Promise<void>; readonly resolve: () => void }
+    | undefined;
+  #closed = false;
+
+  constructor(readonly output: Writable) {
+    this.output.on("error", this.#onError);
+  }
+
+  write(message: string): void {
+    if (this.#closed || this.#backpressured) return;
+    this.#writeActive = true;
+    this.#activeWriteSettled = Promise.withResolvers<void>();
+    let accepted: boolean;
+    try {
+      accepted = this.output.write(message, (error) => {
+        this.#settleActiveWrite();
+        if (error) {
+          this.#expectErrorEvent();
+          this.#disable();
+          return;
+        }
+        if (this.#closed) this.#removeErrorListener();
+      });
+    } catch {
+      this.#settleActiveWrite();
+      this.#disable();
+      return;
+    }
+    if (!accepted && !this.#closed) {
+      this.#backpressured = true;
+      if (!this.#drainListening) {
+        this.#drainListening = true;
+        this.output.once("drain", this.#onDrain);
+      }
+    }
+  }
+
+  async flush(timeoutMs: number): Promise<void> {
+    const pending = this.#activeWriteSettled?.promise;
+    if (pending === undefined) return;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        pending,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#detachDrain();
+    if (!this.#writeActive && !this.#awaitingError) {
+      this.#removeErrorListener();
+    }
+  }
+
+  readonly #onDrain = (): void => {
+    this.#drainListening = false;
+    this.#backpressured = false;
+  };
+
+  readonly #onError = (): void => {
+    this.#settleActiveWrite();
+    if (this.#awaitingError) {
+      this.#awaitingError = false;
+      this.#removeErrorListener();
+      return;
+    }
+    this.#disable();
+  };
+
+  #disable(): void {
+    this.#closed = true;
+    this.#detachDrain();
+    if (!this.#writeActive && !this.#awaitingError) {
+      this.#removeErrorListener();
+    }
+  }
+
+  #detachDrain(): void {
+    if (!this.#drainListening) return;
+    this.#drainListening = false;
+    this.output.off("drain", this.#onDrain);
+  }
+
+  #expectErrorEvent(): void {
+    this.#awaitingError = true;
+    if (!this.output.listeners("error").includes(this.#onError)) {
+      this.output.on("error", this.#onError);
+    }
+    clearImmediate(this.#listenerCleanupImmediate);
+    this.#listenerCleanupImmediate = setImmediate(() => {
+      this.#awaitingError = false;
+      this.#removeErrorListener();
+    });
+    this.#listenerCleanupImmediate.unref();
+  }
+
+  #settleActiveWrite(): void {
+    this.#writeActive = false;
+    this.#activeWriteSettled?.resolve();
+    this.#activeWriteSettled = undefined;
+  }
+
+  #removeErrorListener(): void {
+    clearImmediate(this.#listenerCleanupImmediate);
+    this.#listenerCleanupImmediate = undefined;
+    this.output.off("error", this.#onError);
   }
 }
 
 export interface StdioServerOptions {
   readonly stdin?: Readable;
   readonly stdout?: Writable;
+  readonly stderr?: Writable;
   readonly onError?: (error: Error) => void;
+  readonly allocatePendingBuffer?: (size: number) => Buffer;
+  readonly exitProcess?: (code: number) => void;
 }
 
 export interface StdioServerHandle {
@@ -294,7 +536,7 @@ export interface StdioServerHandle {
   isClosed(): boolean;
 }
 
-function reportProtocolError(error: Error): void {
+function protocolDiagnostic(error: Error): string {
   let diagnostic: string;
   if (error instanceof StdioOutputBoundaryError) {
     diagnostic = error.message.includes("queue")
@@ -311,23 +553,38 @@ function reportProtocolError(error: Error): void {
   } else {
     diagnostic = "malformed stdio protocol frame";
   }
-  process.stderr.write(`jetkvm-mcp: ${diagnostic}\n`);
+  return `jetkvm-mcp: ${diagnostic}\n`;
 }
 
 export async function startStdioServer(
   handlerRegistry: HandlerRegistry = {},
   options: StdioServerOptions = {},
 ): Promise<StdioServerHandle> {
+  assertHandlerRegistry(handlerRegistry);
+  const server = createMcpServer(handlerRegistry);
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
-  const reportError = options.onError ?? reportProtocolError;
-  const server = createMcpServer(handlerRegistry);
+  const ownsDefaultProcessStdio =
+    stdin === process.stdin && stdout === process.stdout;
+  const exitProcess =
+    options.exitProcess ?? ((code: number): void => process.exit(code));
+  const diagnosticSink =
+    options.onError === undefined
+      ? new BoundedDiagnosticSink(options.stderr ?? process.stderr)
+      : undefined;
+  const reportError =
+    options.onError ??
+    ((error: Error) => {
+      diagnosticSink?.write(protocolDiagnostic(error));
+    });
   const closedState = Promise.withResolvers<void>();
   let closePromise: Promise<void> | undefined;
   let closed = false;
 
   let gate: BoundedStdioFrameGate;
   let outputGate: BoundedStdioOutputGate;
+  let malformedFrames = 0;
+  let fatalClosePromise: Promise<void> | undefined;
 
   const close = (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
@@ -340,6 +597,7 @@ export async function startStdioServer(
     closed = true;
     gate.close();
     outputGate.close();
+    diagnosticSink?.close();
     try {
       await server.close();
     } finally {
@@ -347,9 +605,26 @@ export async function startStdioServer(
     }
   };
 
-  outputGate = new BoundedStdioOutputGate(stdout, (error) => {
+  const reportMalformedFrame = (error: Error): void => {
     reportError(error);
-    void close();
+    malformedFrames += 1;
+    if (malformedFrames >= MAXIMUM_MALFORMED_FRAMES) void close();
+  };
+
+  const closeForFatalOutput = (error: Error): Promise<void> => {
+    if (fatalClosePromise !== undefined) return fatalClosePromise;
+    gate.abortInput();
+    reportError(error);
+    fatalClosePromise = (async () => {
+      await close();
+      await diagnosticSink?.flush(DIAGNOSTIC_FLUSH_TIMEOUT_MS);
+      if (ownsDefaultProcessStdio) exitProcess(1);
+    })();
+    return fatalClosePromise;
+  };
+
+  outputGate = new BoundedStdioOutputGate(stdout, (error) => {
+    void closeForFatalOutput(error);
   });
   gate = new BoundedStdioFrameGate(
     stdin,
@@ -357,12 +632,14 @@ export async function startStdioServer(
       reportError(error);
       void close();
     },
+    reportMalformedFrame,
     () => {
       void close();
     },
+    options.allocatePendingBuffer ?? ((size) => Buffer.allocUnsafe(size)),
   );
   const transport = new StdioServerTransport(gate.output, outputGate);
-  transport.onerror = reportError;
+  transport.onerror = reportMalformedFrame;
 
   try {
     await server.connect(transport);
