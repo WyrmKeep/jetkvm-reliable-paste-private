@@ -66,5 +66,7 @@ jobs:
           go-version: "1.25.1"
           cache: true
           cache-dependency-path: "go.sum"
+      - name: Create empty resource directory
+        run: mkdir -p static && touch static/.gitkeep
       - name: Run host-safe race tests
         run: go test -race -tags=hosttest . ./internal/controlsession ./internal/usbgadget
