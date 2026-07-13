@@ -27,6 +27,8 @@ import {
   type DeviceLease,
   type DeviceLeaseSupervisor,
 } from "./deviceLease.js";
+import { runDeviceLeaseGroup } from "./deviceLeaseGroup.js";
+import { runDeviceLeaseSupervisor } from "./deviceLeaseSupervisor.js";
 
 const wrapperPath = fileURLToPath(
   new URL("../scripts/with-device-lease.mjs", import.meta.url),
@@ -45,6 +47,80 @@ class FakeSupervisorChild extends EventEmitter {
     callback?.(null);
     return true;
   }
+}
+
+class FakeIpcProcess extends EventEmitter {
+  readonly pid = 303;
+  readonly env: NodeJS.ProcessEnv = {};
+  connected = true;
+  exitCode: number | undefined;
+  readonly sent: object[] = [];
+  readonly signals: Array<[number, NodeJS.Signals | number]> = [];
+  readonly disconnected = Promise.withResolvers<void>();
+  readonly disconnect = vi.fn(() => {
+    this.connected = false;
+    this.disconnected.resolve();
+  });
+
+  send(message: object, callback?: (error: Error | null) => void): boolean {
+    this.sent.push(message);
+    callback?.(null);
+    return true;
+  }
+
+  kill(pid: number, signal: NodeJS.Signals | number = "SIGTERM"): boolean {
+    this.signals.push([pid, signal]);
+    return true;
+  }
+}
+
+class FakeGroupChild extends EventEmitter {
+  readonly pid = 404;
+  connected = true;
+  sendError: Error | null = null;
+  readonly sent: object[] = [];
+  readonly disconnect = vi.fn(() => {
+    this.connected = false;
+  });
+
+  constructor() {
+    super();
+    this.once("close", () => {
+      this.connected = false;
+    });
+  }
+
+  send(message: object, callback?: (error: Error | null) => void): boolean {
+    this.sent.push(message);
+    callback?.(this.sendError);
+    return this.sendError === null;
+  }
+}
+
+class FakeCommandChild extends EventEmitter {}
+
+async function bindFakeSupervisor(group = new FakeGroupChild()) {
+  const runtime = new FakeIpcProcess();
+  const unlink = vi.fn(async () => undefined);
+  const rmdir = vi.fn(async () => undefined);
+  runDeviceLeaseSupervisor({
+    runtime,
+    group,
+    readFile: vi.fn(async () => "proof-id"),
+    unlink,
+    rmdir,
+    writeFile: vi.fn(async () => undefined),
+    cleanupTimeoutMs: 100,
+  });
+  runtime.emit("message", {
+    type: "bind",
+    livenessPath: "/proof/liveness",
+    livenessId: "proof-id",
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  group.emit("message", { type: "ready", pid: group.pid, pgid: group.pid });
+  return { runtime, group, unlink, rmdir };
 }
 
 function fakeLease(release = vi.fn(async () => undefined)): DeviceLease {
@@ -180,6 +256,150 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe("device lease runner", () => {
+  it("keeps the group leader live until acknowledged cleanup closes it", async () => {
+    const { runtime, group, unlink, rmdir } = await bindFakeSupervisor();
+    runtime.emit("message", {
+      type: "start",
+      command: ["/command"],
+      environment: {},
+    });
+    group.emit("message", { type: "result", code: 0, signal: null });
+    await Promise.resolve();
+
+    expect(group.sent).toEqual([
+      { type: "start", command: ["/command"], environment: {} },
+      { type: "stop", signal: "SIGTERM" },
+    ]);
+    expect(runtime.sent).not.toContainEqual({
+      type: "result",
+      code: 0,
+      signal: null,
+    });
+    expect(unlink).not.toHaveBeenCalled();
+
+    group.emit("message", { type: "stopping" });
+    await Promise.resolve();
+    expect(unlink).not.toHaveBeenCalled();
+    group.emit("close", null, "SIGKILL");
+    await runtime.disconnected.promise;
+
+    expect(unlink).toHaveBeenCalledWith("/proof/liveness");
+    expect(rmdir).toHaveBeenCalledWith("/proof");
+    expect(runtime.sent).toContainEqual({
+      type: "result",
+      code: 0,
+      signal: null,
+    });
+    expect(runtime.signals).toEqual([]);
+    expect(runtime.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when a result leader closes before acknowledging stop", async () => {
+    const { runtime, group, unlink } = await bindFakeSupervisor();
+    runtime.emit("message", {
+      type: "start",
+      command: ["/command"],
+      environment: {},
+    });
+    group.emit("message", { type: "result", code: 0, signal: null });
+    group.emit("close", null, "SIGKILL");
+    await runtime.disconnected.promise;
+
+    // The recorded PGID may now identify an unrelated replacement group.
+    expect(runtime.signals).toEqual([]);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(runtime.sent).not.toContainEqual({
+      type: "result",
+      code: 0,
+      signal: null,
+    });
+    expect(runtime.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("preserves liveness when stop IPC delivery fails", async () => {
+    const group = new FakeGroupChild();
+    group.sendError = new Error("closed");
+    const { runtime, unlink } = await bindFakeSupervisor(group);
+    runtime.emit("message", { type: "stop", signal: "SIGINT" });
+    await runtime.disconnected.promise;
+
+    expect(group.sent).toContainEqual({ type: "stop", signal: "SIGINT" });
+    expect(runtime.signals).toEqual([]);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(runtime.sent).not.toContainEqual({
+      type: "result",
+      code: 1,
+      signal: "SIGINT",
+    });
+    expect(runtime.disconnect).toHaveBeenCalledOnce();
+    expect(group.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("preserves liveness when acknowledged cleanup does not close in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runtime, group, unlink } = await bindFakeSupervisor();
+      runtime.emit("message", { type: "stop", signal: "SIGTERM" });
+      group.emit("message", { type: "stopping" });
+      await vi.advanceTimersByTimeAsync(100);
+      await runtime.disconnected.promise;
+
+      expect(runtime.signals).toEqual([]);
+      expect(unlink).not.toHaveBeenCalled();
+      expect(runtime.sent).not.toContainEqual({
+        type: "result",
+        code: 1,
+        signal: "SIGTERM",
+      });
+      expect(runtime.disconnect).toHaveBeenCalledOnce();
+      expect(group.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a settled command group connected through bounded self-cleanup", async () => {
+    vi.useFakeTimers();
+    const runtime = new FakeIpcProcess();
+    const command = new FakeCommandChild();
+    try {
+      runDeviceLeaseGroup({
+        runtime,
+        signalGroup: (signal) => {
+          runtime.kill(-runtime.pid, signal);
+        },
+        spawnCommand: vi.fn(() => command),
+        cleanupGraceMs: 100,
+      });
+      runtime.emit("message", {
+        type: "start",
+        command: ["/command"],
+        environment: {},
+      });
+      command.emit("close", 0, null);
+      await Promise.resolve();
+
+      expect(runtime.sent).toContainEqual({
+        type: "result",
+        code: 0,
+        signal: null,
+      });
+      expect(runtime.disconnect).not.toHaveBeenCalled();
+
+      runtime.emit("message", { type: "stop", signal: "SIGTERM" });
+      runtime.emit("SIGTERM");
+      expect(runtime.sent).toContainEqual({ type: "stopping" });
+      expect(runtime.signals).toEqual([[-runtime.pid, "SIGTERM"]]);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(runtime.signals).toEqual([
+        [-runtime.pid, "SIGTERM"],
+        [-runtime.pid, "SIGKILL"],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects an unsupported runtime before reading arguments or environment", async () => {
     let observableEffects = 0;
     const args = new Proxy([] as string[], {

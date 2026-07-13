@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile, rmdir, unlink, writeFile } from "node:fs/promises";
+import type { EventEmitter } from "node:events";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,26 +21,319 @@ type SupervisorMessage =
   | StartMessage
   | { type: "stop"; signal?: NodeJS.Signals };
 
-type GroupMessage = {
-  type: "ready" | "result";
-  pgid?: number;
-  code?: number;
-  signal?: NodeJS.Signals | null;
-};
+type GroupMessage =
+  | {
+      type: "ready";
+      pgid?: number;
+    }
+  | {
+      type: "result";
+      code?: number;
+      signal?: NodeJS.Signals | null;
+    }
+  | { type: "stopping" };
 
-let bound: BindMessage | undefined;
-let groupPgid: number | undefined;
-let groupReady = false;
-let readyScheduled = false;
-let terminal = false;
+interface LeaseSupervisorRuntime {
+  readonly pid: number;
+  readonly env: NodeJS.ProcessEnv;
+  connected: boolean;
+  exitCode: number | undefined;
+  send?: (message: object, callback?: (error: Error | null) => void) => boolean;
+  disconnect?: () => void;
+  on: EventEmitter["on"];
+}
 
-function send(message: object): void {
-  if (!process.connected) return;
-  try {
-    process.send?.(message, () => undefined);
-  } catch {
-    // IPC disconnect handling performs fail-closed group cleanup.
+interface LeaseGroupChild {
+  readonly pid?: number;
+  connected: boolean;
+  send?: (message: object, callback?: (error: Error | null) => void) => boolean;
+  disconnect?: () => void;
+  on: EventEmitter["on"];
+  once: EventEmitter["once"];
+}
+
+interface DeviceLeaseSupervisorDependencies {
+  runtime: LeaseSupervisorRuntime;
+  group: LeaseGroupChild;
+  readFile(path: string): Promise<string>;
+  unlink(path: string): Promise<unknown>;
+  rmdir(path: string): Promise<unknown>;
+  writeFile(
+    path: string,
+    data: string,
+    options: { flag: "wx"; mode: number },
+  ): Promise<unknown>;
+  cleanupTimeoutMs?: number;
+}
+
+const DEFAULT_CLEANUP_TIMEOUT_MS = 2_000;
+
+function cleanupSignal(
+  signal: NodeJS.Signals | null | undefined,
+): NodeJS.Signals {
+  return signal === "SIGINT" || signal === "SIGTERM" || signal === "SIGHUP"
+    ? signal
+    : "SIGTERM";
+}
+
+export function runDeviceLeaseSupervisor({
+  runtime,
+  group,
+  readFile: readLiveness,
+  unlink: unlinkLiveness,
+  rmdir: removeLivenessDirectory,
+  writeFile: writeBootMarker,
+  cleanupTimeoutMs = DEFAULT_CLEANUP_TIMEOUT_MS,
+}: DeviceLeaseSupervisorDependencies): void {
+  let bound: BindMessage | undefined;
+  const groupPgid = group.pid;
+  let groupReady = false;
+  let groupStarted = false;
+  let readyScheduled = false;
+  let terminal = false;
+  let stopRequested = false;
+  let stopAcknowledged = false;
+  let reportResult = false;
+  let pendingResult:
+    | { code: number; signal: NodeJS.Signals | null }
+    | undefined;
+  let cleanupTimer: NodeJS.Timeout | undefined;
+
+  function send(message: object): void {
+    if (!runtime.connected || runtime.send === undefined) return;
+    try {
+      runtime.send(message, () => undefined);
+    } catch {
+      // The parent disconnect path still asks the live group leader to clean up.
+    }
   }
+
+  function clearCleanupTimer(): void {
+    if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
+    cleanupTimer = undefined;
+  }
+
+  function failClosed(code = 1): void {
+    if (terminal) return;
+    terminal = true;
+    clearCleanupTimer();
+    runtime.exitCode = code;
+    runtime.disconnect?.();
+    if (group.connected) {
+      try {
+        group.disconnect?.();
+      } catch {
+        // The live group leader will also observe supervisor process exit.
+      }
+    }
+  }
+
+  async function removeLiveness(): Promise<void> {
+    if (bound === undefined) return;
+    await unlinkLiveness(bound.livenessPath).catch(() => undefined);
+    await removeLivenessDirectory(dirname(bound.livenessPath)).catch(
+      () => undefined,
+    );
+  }
+
+  async function completeExpectedClose(): Promise<void> {
+    if (
+      terminal ||
+      !stopRequested ||
+      !stopAcknowledged ||
+      pendingResult === undefined
+    ) {
+      failClosed();
+      return;
+    }
+    terminal = true;
+    clearCleanupTimer();
+    await removeLiveness();
+    if (reportResult) {
+      send({
+        type: "result",
+        code: pendingResult.code,
+        signal: pendingResult.signal,
+      });
+    }
+    runtime.exitCode = pendingResult.code;
+    runtime.disconnect?.();
+  }
+
+  function requestGroupStop(
+    signal: NodeJS.Signals,
+    result: { code: number; signal: NodeJS.Signals | null },
+    shouldReportResult: boolean,
+  ): void {
+    if (terminal || stopRequested) return;
+    stopRequested = true;
+    pendingResult = result;
+    reportResult = shouldReportResult;
+    cleanupTimer = setTimeout(failClosed, cleanupTimeoutMs);
+    cleanupTimer.unref?.();
+    if (!group.connected || group.send === undefined) {
+      failClosed();
+      return;
+    }
+    try {
+      group.send({ type: "stop", signal }, (error) => {
+        if (error !== null) failClosed();
+      });
+    } catch {
+      failClosed();
+    }
+  }
+
+  async function reportReady(): Promise<void> {
+    if (
+      terminal ||
+      bound === undefined ||
+      !groupReady ||
+      readyScheduled ||
+      groupPgid === undefined
+    ) {
+      return;
+    }
+    readyScheduled = true;
+    const bootMarkerPath = runtime.env.JETKVM_TEST_SUPERVISOR_BOOT_MARKER_PATH;
+    if (bootMarkerPath !== undefined) {
+      try {
+        await writeBootMarker(
+          bootMarkerPath,
+          JSON.stringify({
+            supervisorPid: runtime.pid,
+            commandPgid: groupPgid,
+          }),
+          { flag: "wx", mode: 0o600 },
+        );
+      } catch {
+        failClosed();
+        return;
+      }
+    }
+    const readyDelay = Number(
+      runtime.env.JETKVM_TEST_SUPERVISOR_READY_DELAY_MS ?? "0",
+    );
+    setTimeout(() => {
+      if (!terminal) send({ type: "ready", pid: runtime.pid, pgid: groupPgid });
+    }, readyDelay).unref();
+  }
+
+  if (groupPgid !== undefined) {
+    send({ type: "booted", pid: runtime.pid, pgid: groupPgid });
+  }
+
+  group.once("error", () => {
+    failClosed();
+  });
+  group.once("close", (_code: number | null, signal: NodeJS.Signals | null) => {
+    if (terminal) return;
+    if (stopRequested && stopAcknowledged && signal === "SIGKILL") {
+      void completeExpectedClose();
+    } else {
+      failClosed();
+    }
+  });
+  group.on("message", (rawMessage: GroupMessage) => {
+    if (terminal) return;
+    if (rawMessage.type === "ready") {
+      if (
+        groupReady ||
+        !Number.isSafeInteger(rawMessage.pgid) ||
+        rawMessage.pgid !== groupPgid
+      ) {
+        failClosed();
+        return;
+      }
+      groupReady = true;
+      void reportReady();
+      return;
+    }
+    if (rawMessage.type === "result") {
+      if (
+        !groupReady ||
+        !groupStarted ||
+        bound === undefined ||
+        stopRequested
+      ) {
+        if (!stopRequested) failClosed();
+        return;
+      }
+      const result = {
+        code: rawMessage.code ?? 1,
+        signal: rawMessage.signal ?? null,
+      };
+      requestGroupStop(cleanupSignal(result.signal), result, true);
+      return;
+    }
+    if (rawMessage.type === "stopping") {
+      if (!stopRequested || stopAcknowledged) {
+        failClosed();
+        return;
+      }
+      stopAcknowledged = true;
+      return;
+    }
+    failClosed();
+  });
+
+  runtime.on("disconnect", () => {
+    requestGroupStop("SIGTERM", { code: 1, signal: "SIGTERM" }, false);
+  });
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    runtime.on(signal, () => {
+      requestGroupStop(signal, { code: 1, signal }, false);
+    });
+  }
+
+  runtime.on("message", (rawMessage: SupervisorMessage) => {
+    void (async () => {
+      if (terminal) return;
+      if (rawMessage.type === "bind") {
+        let livenessMatches = false;
+        try {
+          livenessMatches =
+            (await readLiveness(rawMessage.livenessPath)) ===
+            rawMessage.livenessId;
+        } catch {
+          livenessMatches = false;
+        }
+        if (terminal) return;
+        if (bound !== undefined || !livenessMatches) {
+          failClosed();
+          return;
+        }
+        bound = rawMessage;
+        send({ type: "bound" });
+        await reportReady();
+        return;
+      }
+      if (rawMessage.type === "stop") {
+        const signal = cleanupSignal(rawMessage.signal);
+        requestGroupStop(signal, { code: 1, signal }, true);
+        return;
+      }
+      if (
+        rawMessage.type !== "start" ||
+        bound === undefined ||
+        !groupReady ||
+        groupStarted ||
+        !group.connected ||
+        group.send === undefined
+      ) {
+        failClosed();
+        return;
+      }
+      groupStarted = true;
+      try {
+        group.send(rawMessage, (error) => {
+          if (error !== null) failClosed();
+        });
+      } catch {
+        failClosed();
+      }
+    })();
+  });
 }
 
 function groupModulePath(): string {
@@ -53,169 +347,22 @@ function groupModulePath(): string {
   );
 }
 
-function groupAlive(): boolean {
-  if (groupPgid === undefined) return false;
-  try {
-    process.kill(-groupPgid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
-async function waitForGroupExit(attempts: number): Promise<boolean> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (!groupAlive()) return true;
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 20));
-  }
-  return !groupAlive();
-}
-
-async function terminateGroup(signal: NodeJS.Signals): Promise<void> {
-  if (groupPgid === undefined || !groupAlive()) return;
-  try {
-    process.kill(-groupPgid, signal);
-  } catch {
-    // Group liveness is checked below.
-  }
-  if (await waitForGroupExit(50)) return;
-  try {
-    process.kill(-groupPgid, "SIGKILL");
-  } catch {
-    // Group liveness is checked below.
-  }
-  while (groupAlive()) {
-    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 20));
-  }
-}
-
-async function removeLiveness(): Promise<void> {
-  if (bound === undefined) return;
-  await unlink(bound.livenessPath).catch(() => undefined);
-  await rmdir(dirname(bound.livenessPath)).catch(() => undefined);
-}
-
-async function finish(
-  code: number,
-  signal: NodeJS.Signals | null,
-  reportResult: boolean,
-): Promise<void> {
-  if (terminal) return;
-  terminal = true;
-  await terminateGroup(signal ?? "SIGTERM");
-  await removeLiveness();
-  if (reportResult) send({ type: "result", code, signal });
-  process.exitCode = code;
-  process.disconnect?.();
-}
-
-async function reportReady(): Promise<void> {
-  if (
-    terminal ||
-    bound === undefined ||
-    !groupReady ||
-    readyScheduled ||
-    groupPgid === undefined
-  ) {
-    return;
-  }
-  readyScheduled = true;
-  const bootMarkerPath = process.env.JETKVM_TEST_SUPERVISOR_BOOT_MARKER_PATH;
-  if (bootMarkerPath !== undefined) {
-    try {
-      await writeFile(
-        bootMarkerPath,
-        JSON.stringify({ supervisorPid: process.pid, commandPgid: groupPgid }),
-        {
-          flag: "wx",
-          mode: 0o600,
-        },
-      );
-    } catch {
-      await finish(1, null, false);
-      return;
-    }
-  }
-  const readyDelay = Number(
-    process.env.JETKVM_TEST_SUPERVISOR_READY_DELAY_MS ?? "0",
-  );
-  setTimeout(
-    () => send({ type: "ready", pid: process.pid, pgid: groupPgid }),
-    readyDelay,
-  ).unref();
-}
-
-const group = spawn(process.execPath, [groupModulePath()], {
-  detached: true,
-  env: process.env,
-  stdio: ["ignore", "inherit", "inherit", "ipc"],
-});
-groupPgid = group.pid;
-if (groupPgid !== undefined) {
-  send({ type: "booted", pid: process.pid, pgid: groupPgid });
-}
-
-group.once("error", () => {
-  void finish(1, null, false);
-});
-group.once("close", (code, signal) => {
-  if (!terminal) void finish(code ?? 1, signal, false);
-});
-group.on("message", async (message: GroupMessage) => {
-  if (message.type === "ready") {
-    if (!Number.isSafeInteger(message.pgid) || message.pgid !== groupPgid) {
-      await finish(1, null, false);
-      return;
-    }
-    groupReady = true;
-    await reportReady();
-    return;
-  }
-  if (message.type === "result") {
-    await finish(message.code ?? 1, message.signal ?? null, true);
-  }
-});
-
-process.on("disconnect", () => {
-  void finish(1, "SIGTERM", false);
-});
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.on(signal, () => {
-    void finish(1, signal, false);
+function runDefaultSupervisor(): void {
+  const group = spawn(process.execPath, [groupModulePath()], {
+    detached: true,
+    env: process.env,
+    stdio: ["ignore", "inherit", "inherit", "ipc"],
+  });
+  runDeviceLeaseSupervisor({
+    runtime: process as unknown as LeaseSupervisorRuntime,
+    group: group as unknown as LeaseGroupChild,
+    readFile: (path) => readFile(path, "utf8"),
+    unlink,
+    rmdir,
+    writeFile,
   });
 }
 
-process.on("message", async (message: SupervisorMessage) => {
-  if (message.type === "bind") {
-    let livenessMatches = false;
-    try {
-      livenessMatches =
-        (await readFile(message.livenessPath, "utf8")) === message.livenessId;
-    } catch {
-      livenessMatches = false;
-    }
-    if (bound !== undefined || !livenessMatches) {
-      await finish(1, null, false);
-      return;
-    }
-    bound = message;
-    send({ type: "bound" });
-    await reportReady();
-    return;
-  }
-  if (message.type === "stop") {
-    await finish(1, message.signal ?? "SIGTERM", true);
-    return;
-  }
-  if (message.type !== "start" || bound === undefined) {
-    await finish(1, null, false);
-    return;
-  }
-  try {
-    group.send?.(message, (error) => {
-      if (error !== null) void finish(1, null, false);
-    });
-  } catch {
-    await finish(1, null, false);
-  }
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  runDefaultSupervisor();
+}
