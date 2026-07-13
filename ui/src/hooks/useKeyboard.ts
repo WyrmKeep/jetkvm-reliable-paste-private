@@ -27,6 +27,7 @@ import {
   type KeyboardLayoutLike,
   type PasteChunkPlan,
 } from "@/utils/pasteMacro";
+export type { KeyboardLayoutLike };
 
 const MACRO_RESET_KEYBOARD_STATE = {
   keys: new Array(hidKeyBufferSize).fill(0),

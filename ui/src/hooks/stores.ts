@@ -121,13 +121,13 @@ export interface RTCState {
   setRpcHidProtocolVersion: (version: number | null) => void;
 
   rpcHidChannel: RTCDataChannel | null;
-  setRpcHidChannel: (channel: RTCDataChannel) => void;
+  setRpcHidChannel: (channel: RTCDataChannel | null) => void;
 
   rpcHidUnreliableChannel: RTCDataChannel | null;
-  setRpcHidUnreliableChannel: (channel: RTCDataChannel) => void;
+  setRpcHidUnreliableChannel: (channel: RTCDataChannel | null) => void;
 
   rpcHidUnreliableNonOrderedChannel: RTCDataChannel | null;
-  setRpcHidUnreliableNonOrderedChannel: (channel: RTCDataChannel) => void;
+  setRpcHidUnreliableNonOrderedChannel: (channel: RTCDataChannel | null) => void;
 
   peerConnectionState: RTCPeerConnectionState | null;
   setPeerConnectionState: (state: RTCPeerConnectionState) => void;
@@ -292,6 +292,8 @@ export interface VideoState {
   setHdmiState: (state: { ready: boolean; error?: HdmiErrorStates }) => void;
   videoElement: HTMLVideoElement | null;
   setVideoElement: (element: HTMLVideoElement | null) => void;
+  displayRevision: number;
+  bumpDisplayRevision: () => void;
 }
 
 export const useVideoStore = create<VideoState>(set => ({
@@ -323,6 +325,8 @@ export const useVideoStore = create<VideoState>(set => ({
 
   videoElement: null,
   setVideoElement: (element: HTMLVideoElement | null) => set({ videoElement: element }),
+  displayRevision: 0,
+  bumpDisplayRevision: () => set(state => ({ displayRevision: state.displayRevision + 1 })),
 }));
 
 export interface BacklightSettings {

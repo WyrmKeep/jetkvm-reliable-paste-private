@@ -1,12 +1,12 @@
 import type { MacroStep } from "@/hooks/useKeyboard";
 
 interface KeyboardCharMapping {
-  key?: string;
+  key?: string | number;
   shift?: boolean;
   altRight?: boolean;
   deadKey?: boolean;
   accentKey?: {
-    key: string;
+    key: string | number;
     shift?: boolean;
     altRight?: boolean;
   };

@@ -810,7 +810,6 @@ export default function PasteModal() {
                 setTextareaCharCount(value.length);
                 const invalidChars = [
                   ...new Set(
-                    // @ts-expect-error TS doesn't recognize Intl.Segmenter in some environments
                     [...new Intl.Segmenter().segment(value)]
                       .map(x => x.segment.normalize("NFC"))
                       .filter(char => !selectedKeyboard.chars[char]),
@@ -849,7 +848,6 @@ export default function PasteModal() {
                       setFileText(text);
                       const invalidChars = [
                         ...new Set(
-                          // @ts-expect-error TS doesn't recognize Intl.Segmenter in some environments
                           [...new Intl.Segmenter().segment(text)]
                             .map(x => x.segment.normalize("NFC"))
                             .filter(char => !selectedKeyboard.chars[char]),

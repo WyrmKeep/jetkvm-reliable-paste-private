@@ -50,6 +50,7 @@ export default function WebRTCVideo({ hasConnectionIssues }: { hasConnectionIssu
     clientHeight: videoClientHeight,
     hdmiState,
     setVideoElement,
+    bumpDisplayRevision,
   } = useVideoStore();
 
   // Video enhancement settings
@@ -96,6 +97,11 @@ export default function WebRTCVideo({ hasConnectionIssues }: { hasConnectionIssu
     setIsPlaying(true);
     if (videoElm.current) updateVideoSizeStore(videoElm.current);
   }, [updateVideoSizeStore]);
+
+  const onVideoMetadata = useCallback(() => {
+    if (videoElm.current) updateVideoSizeStore(videoElm.current);
+    bumpDisplayRevision();
+  }, [bumpDisplayRevision, updateVideoSizeStore]);
 
   // On mount, get the video size
   useEffect(
@@ -432,6 +438,19 @@ export default function WebRTCVideo({ hasConnectionIssues }: { hasConnectionIssu
     [addStreamToVideoElm, peerConnection],
   );
 
+  useEffect(() => {
+    if (!mediaStream) return;
+    const abortController = new AbortController();
+    const bumpRevision = () => bumpDisplayRevision();
+    for (const track of mediaStream.getVideoTracks()) {
+      track.addEventListener("ended", bumpRevision, { signal: abortController.signal });
+      track.addEventListener("mute", bumpRevision, { signal: abortController.signal });
+      track.addEventListener("unmute", bumpRevision, { signal: abortController.signal });
+    }
+    bumpDisplayRevision();
+    return () => abortController.abort();
+  }, [bumpDisplayRevision, mediaStream]);
+
   useEffect(
     function updateVideoStream() {
       if (!mediaStream) return;
@@ -613,6 +632,8 @@ export default function WebRTCVideo({ hasConnectionIssues }: { hasConnectionIssu
                         controls={false}
                         onPlaying={onVideoPlaying}
                         onPlay={onVideoPlaying}
+                        onLoadedMetadata={onVideoMetadata}
+                        onEmptied={bumpDisplayRevision}
                         muted
                         playsInline
                         disablePictureInPicture
