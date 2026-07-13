@@ -156,7 +156,7 @@
     },
     {
       "id": "expire-before-admission-jetkvm-power-control",
-      "after_step": "retry-deadline-before-admission-jetkvm-input-release",
+      "after_step": "recover-after-applied-deadline-release",
       "boundary": "before_admission",
       "action": "Arm the jetkvm_power_control-only injector and advance the fake monotonic clock beyond the call's 1000ms deadline before controller admission.",
       "expected_effect": "The 1000ms request expires deterministically before admission as DEADLINE_EXCEEDED/not_sent with zero controller, adapter, or ATX writes; its request reservation is released."
@@ -582,15 +582,32 @@
         "timeout_ms": 100
       },
       "timeout_ms": 100,
-      "expect": "applied through ordinary admission after the deadline fault is cleared, proving the release request reservation was released."
+      "expect": "The exact result-produced assertion is outcome applied with generation_drained true; ordinary admission after the deadline fault is cleared also proves the release request reservation was released."
+    },
+    {
+      "id": "recover-after-applied-deadline-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session",
+        "closed_generation": 7,
+        "next_session_id": "opaque-session-08",
+        "next_generation": 8,
+        "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
+        "restore_atx_baseline": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect and bind the generation 8 successor, then re-prove ready session state and the recorded ATX baseline before the next power call."
     },
     {
       "id": "deadline-before-admission-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "request_id": "opaque-deadline-before-admission-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -603,8 +620,8 @@
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "request_id": "opaque-deadline-before-admission-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -617,8 +634,8 @@
       "tool": null,
       "call": "acceptance-fixture/atx/restore-and-reprove",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "restore_serial": true,
         "restore_extension": true,
         "restore_observable_baseline": true
@@ -655,8 +672,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "request_id": "opaque-deadline-before-admission-session-reconnect",
         "takeover": false,
         "timeout_ms": 100
@@ -669,8 +686,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "request_id": "opaque-deadline-before-admission-session-reconnect",
         "takeover": false,
         "timeout_ms": 100
@@ -683,8 +700,8 @@
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "timeout_ms": 100
       },
       "timeout_ms": 100,
@@ -695,8 +712,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "request_id": "opaque-reconnect-busy-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000

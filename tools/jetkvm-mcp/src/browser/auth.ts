@@ -6,11 +6,14 @@ import {
   lstatSync,
   openSync,
   readFileSync,
+  type Stats,
 } from "node:fs";
 import { inspect } from "node:util";
 import type { LegacySseSecurityPolicy } from "../config.js";
 
 const REDACTED = "[REDACTED]";
+const PROTECTED_CREDENTIAL_FILE_MESSAGE =
+  "Credential source must be a protected regular file";
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
@@ -274,9 +277,7 @@ export function validateCredentialFileMetadata(
   currentUid: number,
 ): void {
   if (!metadata.isFile || metadata.isSymbolicLink) {
-    throw new CredentialConfigurationError(
-      "Credential source must be a protected regular file",
-    );
+    throw new CredentialConfigurationError(PROTECTED_CREDENTIAL_FILE_MESSAGE);
   }
   if (metadata.uid !== currentUid) {
     throw new CredentialConfigurationError(
@@ -412,7 +413,12 @@ function readProtectedCredentialFile(path: string): Uint8Array {
     );
   }
 
-  const before = lstatSync(path);
+  let before: Stats;
+  try {
+    before = lstatSync(path);
+  } catch {
+    throw new CredentialConfigurationError(PROTECTED_CREDENTIAL_FILE_MESSAGE);
+  }
   validateCredentialFileMetadata(
     {
       uid: before.uid,
@@ -427,9 +433,7 @@ function readProtectedCredentialFile(path: string): Uint8Array {
   try {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   } catch {
-    throw new CredentialConfigurationError(
-      "Credential source must be a protected regular file",
-    );
+    throw new CredentialConfigurationError(PROTECTED_CREDENTIAL_FILE_MESSAGE);
   }
 
   try {

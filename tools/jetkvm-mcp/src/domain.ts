@@ -224,7 +224,7 @@ export type DisplayCaptureResult = {
     content_height: number;
   };
   image: {
-    content_index: number;
+    content_index: 1;
     mime_type: "image/jpeg" | "image/png";
     sha256: string;
     byte_length: number;

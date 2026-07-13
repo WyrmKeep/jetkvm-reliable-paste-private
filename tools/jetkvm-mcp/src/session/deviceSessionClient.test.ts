@@ -199,6 +199,7 @@ function makeClient(
     browser?: FakeBrowserPlane;
     scheduler?: FakeScheduler;
     requestLedger?: RequestLedger;
+    createSessionId?: () => string;
   } = {},
 ) {
   const browser = options.browser ?? new FakeBrowserPlane();
@@ -215,7 +216,8 @@ function makeClient(
         now: scheduler.now,
       }),
     scheduler,
-    createSessionId: () => `app-session-${nextSessionId++}`,
+    createSessionId:
+      options.createSessionId ?? (() => `app-session-${nextSessionId++}`),
     permissionsForPrincipal:
       options.permissionsForPrincipal ??
       (() => options.permissions ?? BASE_PERMISSIONS),
@@ -1205,6 +1207,15 @@ describe("DeviceSessionClient", () => {
     );
     expect(cleanupFailure.outcome).toBe("unknown");
     await expectClientError(
+      Promise.resolve().then(() =>
+        client.resolveSession("principal-a", {
+          sessionId: "app-session-1",
+          sessionGeneration: 1,
+        }),
+      ),
+      "SESSION_DRAINED",
+    );
+    await expectClientError(
       client.connect("principal-a", connectInput()),
       "MUTATION_OUTCOME_UNKNOWN",
     );
@@ -1268,7 +1279,7 @@ describe("DeviceSessionClient", () => {
           sessionGeneration: 1,
         }),
       ),
-      "SESSION_DRAINED",
+      "SESSION_NOT_FOUND",
     );
   });
 
@@ -1350,6 +1361,163 @@ describe("DeviceSessionClient", () => {
     expect(
       browser.events.filter((event) => event.kind === "connect"),
     ).toHaveLength(2);
+  });
+
+  it("bounds retained state across repeated safe not_sent connects and eventual success", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.connectFailure = new DeviceSessionPlaneError(
+      "DEVICE_UNREACHABLE",
+      "not_sent",
+    );
+    const { client } = makeClient({ browser });
+    const failedRefs: SessionRef[] = [];
+
+    for (let attempt = 1; attempt <= 64; attempt += 1) {
+      const failure = await expectClientError(
+        client.connect("principal-a", connectInput()),
+        "DEVICE_UNREACHABLE",
+      );
+      expect(failure.outcome).toBe("not_sent");
+      failedRefs.push({
+        sessionId: `app-session-${attempt}`,
+        sessionGeneration: 1,
+      });
+    }
+
+    browser.connectFailure = null;
+    const connected = await client.connect("principal-a", connectInput());
+    const retained = failedRefs.filter((ref) => {
+      try {
+        client.resolveSession("principal-a", ref);
+        return true;
+      } catch (error) {
+        expect(error).toBeInstanceOf(DeviceSessionClientError);
+        const code = (error as DeviceSessionClientError).code;
+        if (code === "SESSION_NOT_FOUND") {
+          return false;
+        }
+        if (code === "SESSION_DRAINED") {
+          return true;
+        }
+        throw error;
+      }
+    });
+
+    expect(retained).toEqual([]);
+    expect(connected.ref).toEqual({
+      sessionId: "app-session-65",
+      sessionGeneration: 1,
+    });
+    expect(connected.result.outcome).toBe("applied");
+  });
+
+  it("removes an opened not_sent attempt after successful cleanup", async () => {
+    let failQualification = true;
+    const { client, browser } = makeClient({
+      createSessionId: () => "app-session-reused",
+      capabilitiesForConnection: async () => {
+        if (failQualification) {
+          failQualification = false;
+          throw new DeviceSessionPlaneError("DEVICE_UNREACHABLE", "not_sent");
+        }
+        return ALL_CAPABILITIES;
+      },
+    });
+
+    const failure = await expectClientError(
+      client.connect("principal-a", connectInput()),
+      "DEVICE_UNREACHABLE",
+    );
+    expect(failure.outcome).toBe("not_sent");
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+    ]);
+
+    const connected = await client.connect("principal-a", connectInput());
+    expect(client.resolveSession("principal-a", connected.ref).state).toBe(
+      "ready",
+    );
+  });
+
+  it("removes an unknown attempt only after successful cleanup", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.connectFailure = new DeviceSessionPlaneError(
+      "DEVICE_UNREACHABLE",
+      "unknown",
+    );
+    const { client } = makeClient({
+      browser,
+      createSessionId: () => "app-session-reused",
+    });
+
+    const failure = await expectClientError(
+      client.connect("principal-a", connectInput()),
+      "DEVICE_UNREACHABLE",
+    );
+    expect(failure.outcome).toBe("unknown");
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+    ]);
+    browser.connectFailure = null;
+
+    const connected = await client.connect(
+      "principal-a",
+      connectInput({ request_id: "connect-request-2" }),
+    );
+    expect(client.resolveSession("principal-a", connected.ref).state).toBe(
+      "ready",
+    );
+  });
+
+  it("does not let delayed cleanup from an old attempt erase its successor", async () => {
+    const browser = new FakeBrowserPlane();
+    const cleanup = Promise.withResolvers<void>();
+    const originalClose = browser.close.bind(browser);
+    browser.close = async (ref, deadline) => {
+      await originalClose(ref, deadline);
+      await cleanup.promise;
+    };
+    let failQualification = true;
+    const { client } = makeClient({
+      browser,
+      createSessionId: () => "app-session-reused",
+      capabilitiesForConnection: async () => {
+        if (failQualification) {
+          failQualification = false;
+          throw new Error("qualification failed");
+        }
+        return ALL_CAPABILITIES;
+      },
+    });
+
+    const oldAttempt = client.connect("principal-a", connectInput());
+    for (
+      let attempt = 0;
+      attempt < 10 && !browser.events.some((event) => event.kind === "close");
+      attempt += 1
+    ) {
+      await Promise.resolve();
+    }
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+    ]);
+    const successor = client.connect(
+      "principal-a",
+      connectInput({ request_id: "connect-request-2" }),
+    );
+
+    cleanup.resolve();
+    const oldFailure = await expectClientError(oldAttempt, "CONNECTION_LOST");
+    expect(oldFailure.outcome).toBe("unknown");
+    const connected = await successor;
+
+    expect(client.resolveSession("principal-a", connected.ref)).toMatchObject({
+      ref: connected.ref,
+      state: "ready",
+    });
   });
 
   it("rejects an already-aborted caller promptly while another session call owns the lock", async () => {

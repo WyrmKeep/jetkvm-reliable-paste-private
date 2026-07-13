@@ -313,6 +313,24 @@ function bindingsEqual(
   );
 }
 
+function assertMonotonicBindingTransition(
+  current: DeviceRpcBinding,
+  next: DeviceRpcBinding,
+): void {
+  if (current.sessionId !== next.sessionId) return;
+  const componentsDoNotRegress =
+    next.sessionGeneration >= current.sessionGeneration &&
+    next.connectionEpoch >= current.connectionEpoch &&
+    next.browserChannelGeneration >= current.browserChannelGeneration;
+  const atLeastOneComponentAdvances =
+    next.sessionGeneration > current.sessionGeneration ||
+    next.connectionEpoch > current.connectionEpoch ||
+    next.browserChannelGeneration > current.browserChannelGeneration;
+  if (!componentsDoNotRegress || !atLeastOneComponentAdvances) {
+    throw new Error("Replacement binding must advance monotonically.");
+  }
+}
+
 function freezeBinding(binding: DeviceRpcBinding): DeviceRpcBinding {
   return Object.freeze({
     sessionId: binding.sessionId,
@@ -390,6 +408,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     publish?: () => void,
   ): void {
     assertValidBinding(next);
+    assertMonotonicBindingTransition(this.currentBinding, next);
     if (nextChannel.readyState !== "open") {
       throw new Error("Replacement channel is closed.");
     }

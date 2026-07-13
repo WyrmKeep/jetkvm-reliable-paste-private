@@ -1798,6 +1798,110 @@ function assertClosedGenerationRecovery(
   }
 }
 
+const APPLIED_RELEASE_OUTCOME_PATTERN = /\b(?:outcome\s+)?applied\b/i;
+const GENERATION_DRAINED_TRUE_PATTERN =
+  /\bgeneration_drained\s*(?::|=|\bis\b)?\s*true\b/i;
+
+function isAppliedGenerationDrainingRelease(
+  step: AcceptanceStory["steps"][number],
+): boolean {
+  return (
+    step.tool === T.release &&
+    APPLIED_RELEASE_OUTCOME_PATTERN.test(step.expect) &&
+    GENERATION_DRAINED_TRUE_PATTERN.test(step.expect)
+  );
+}
+
+function assertAppliedReleaseGenerationRecovery(
+  stories: readonly AcceptanceStory[],
+): void {
+  for (const story of stories) {
+    for (const [releaseIndex, release] of story.steps.entries()) {
+      if (!isAppliedGenerationDrainingRelease(release)) {
+        continue;
+      }
+
+      const closedSessionId = release.input.session_id;
+      const closedGeneration = release.input.session_generation;
+      if (
+        typeof closedSessionId !== "string" ||
+        closedSessionId.length === 0 ||
+        typeof closedGeneration !== "number" ||
+        !Number.isInteger(closedGeneration)
+      ) {
+        throw new Error(
+          `Story ${story.id} applied generation-draining release ${release.id} must identify its exact closed session and generation`,
+        );
+      }
+
+      let recovery: AcceptanceStory["steps"][number] | undefined;
+      let verifiedRecoverySuccessor = false;
+      for (const later of story.steps.slice(releaseIndex + 1)) {
+        if (
+          later.tool === null &&
+          later.input.closed_session_id === closedSessionId &&
+          later.input.closed_generation === closedGeneration &&
+          typeof later.input.next_session_id === "string" &&
+          typeof later.input.next_generation === "number" &&
+          Number.isInteger(later.input.next_generation) &&
+          later.input.next_generation > closedGeneration &&
+          later.input.reprove_session_ready === true &&
+          /\b(?:recover|reconnect|bind)\b/i.test(
+            `${later.call} ${later.expect}`,
+          )
+        ) {
+          recovery = later;
+          continue;
+        }
+        if (
+          later.tool === null ||
+          MUTATION_TOOL_LOOKUP[later.tool] !== true ||
+          isSameRequest(release, later)
+        ) {
+          continue;
+        }
+
+        const reusesClosedGeneration =
+          later.input.session_id === closedSessionId &&
+          later.input.session_generation === closedGeneration;
+        if (recovery === undefined || reusesClosedGeneration) {
+          throw new Error(
+            `Story ${story.id} applied generation-draining release ${release.id} closes ${closedSessionId} generation ${closedGeneration}; explicit recovery is required before later mutation ${later.id}`,
+          );
+        }
+
+        if (!verifiedRecoverySuccessor) {
+          const nextTool = recovery.input.next_tool;
+          const nextSessionId = recovery.input.next_session_id;
+          const nextGeneration = recovery.input.next_generation;
+          const consumesObservation =
+            later.tool === T.keyboard ||
+            later.tool === T.mouse ||
+            later.tool === T.paste;
+          if (
+            (typeof nextTool === "string" && later.tool !== nextTool) ||
+            (later.tool !== T.connect &&
+              (later.input.session_id !== nextSessionId ||
+                later.input.session_generation !== nextGeneration)) ||
+            (later.tool === T.power &&
+              recovery.input.restore_atx_baseline !== true) ||
+            (consumesObservation &&
+              (recovery.input.capture_fresh_observation !== true ||
+                typeof recovery.input.next_observation_id !== "string" ||
+                later.input.observation_id !==
+                  recovery.input.next_observation_id))
+          ) {
+            throw new Error(
+              `Story ${story.id} applied generation-draining release ${release.id} requires explicit recovery to re-prove the exact later mutation ${later.id} successor state`,
+            );
+          }
+          verifiedRecoverySuccessor = true;
+        }
+      }
+    }
+  }
+}
+
 function assertFixtureRecoveryTransitions(
   stories: readonly AcceptanceStory[],
 ): void {
@@ -2843,6 +2947,7 @@ export function validateAcceptanceStories(
   assertPartialVerificationFaultBrackets(stories);
   assertAtxBindingLossCases(stories);
   assertClosedGenerationRecovery(stories);
+  assertAppliedReleaseGenerationRecovery(stories);
   assertFixtureRecoveryTransitions(stories);
   assertStorySessionLifecycle(stories);
   assertObservationReachability(stories);

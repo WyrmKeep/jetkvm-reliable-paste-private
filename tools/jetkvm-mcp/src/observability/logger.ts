@@ -14,6 +14,8 @@ const SAFE_ERROR_NAMES: Readonly<Record<string, true>> = {
   TypeError: true,
   URIError: true,
 };
+const MAX_REDACTED_ARRAY_LENGTH = 10_000;
+const MAX_PROTOTYPE_DEPTH = 16;
 const EXACT_SENSITIVE_FIELDS: Readonly<Record<string, true>> = {
   displayname: true,
   edid: true,
@@ -30,6 +32,14 @@ const EXACT_SENSITIVE_FIELDS: Readonly<Record<string, true>> = {
   serialnumber: true,
   typedkey: true,
   typedkeys: true,
+};
+const ENCODED_BINARY_ENCODINGS: Readonly<Record<string, true>> = {
+  base64: true,
+  base64url: true,
+  binary: true,
+  hex: true,
+  latin1: true,
+  raw: true,
 };
 const SENSITIVE_FIELD =
   /(?:address|authorization|authority|base64|bearer|bytes|clipboard|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
@@ -145,15 +155,27 @@ function redactValue(
   ) {
     return REDACTED;
   }
+  try {
+    return redactObjectValue(value, ancestors, errorContext);
+  } catch {
+    return REDACTED;
+  }
+}
+
+function redactObjectValue(
+  value: object,
+  ancestors: Set<object>,
+  errorContext: boolean,
+): unknown {
   if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     return REDACTED;
   }
   if (value instanceof Date) {
-    return value.toISOString();
+    return Date.prototype.toISOString.call(value);
   }
   if (value instanceof Error) {
     return {
-      name: redactErrorName(value.name),
+      name: redactErrorName(readDataProperty(value, "name")),
       message: REDACTED,
     };
   }
@@ -189,7 +211,9 @@ function redactValue(
       return REDACTED;
     }
   }
-  if (!Array.isArray(value) && !isPlainObject(value)) {
+
+  const isArray = Array.isArray(value);
+  if (!isArray && !isPlainObject(value)) {
     return REDACTED;
   }
   if (ancestors.has(value)) {
@@ -198,10 +222,26 @@ function redactValue(
 
   ancestors.add(value);
   try {
-    if (Array.isArray(value)) {
-      const redactedArray = new Array<unknown>(value.length);
-      for (let index = 0; index < value.length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, index);
+    if (isArray) {
+      const descriptors: Record<string, PropertyDescriptor> =
+        Object.getOwnPropertyDescriptors(value);
+      const lengthDescriptor = descriptors.length;
+      const arrayLength: unknown =
+        lengthDescriptor !== undefined && "value" in lengthDescriptor
+          ? lengthDescriptor.value
+          : undefined;
+      if (
+        typeof arrayLength !== "number" ||
+        !Number.isSafeInteger(arrayLength) ||
+        arrayLength < 0 ||
+        arrayLength > MAX_REDACTED_ARRAY_LENGTH
+      ) {
+        return REDACTED;
+      }
+
+      const redactedArray = new Array<unknown>(arrayLength);
+      for (let index = 0; index < arrayLength; index += 1) {
+        const descriptor = descriptors[index];
         if (descriptor === undefined) {
           continue;
         }
@@ -213,12 +253,7 @@ function redactValue(
       return redactedArray;
     }
 
-    let descriptors: Record<string, PropertyDescriptor>;
-    try {
-      descriptors = Object.getOwnPropertyDescriptors(value);
-    } catch {
-      return REDACTED;
-    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
     const redactData = isEncodedBinaryDataContainer(descriptors);
     const errorRecord = isErrorRecord(descriptors, errorContext);
     const effectiveErrorContext = errorContext || errorRecord;
@@ -278,6 +313,22 @@ function redactString(
       : value;
   }
 }
+function readDataProperty(value: object, key: string): unknown {
+  let current: object | null = value;
+  for (
+    let depth = 0;
+    current !== null && depth < MAX_PROTOTYPE_DEPTH;
+    depth += 1
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, key);
+    if (descriptor !== undefined) {
+      return "value" in descriptor ? descriptor.value : undefined;
+    }
+    current = Object.getPrototypeOf(current);
+  }
+  return undefined;
+}
+
 function redactErrorName(value: unknown): string {
   return typeof value === "string" && Object.hasOwn(SAFE_ERROR_NAMES, value)
     ? value
@@ -385,26 +436,35 @@ function isEncodedBinaryDataContainer(
   }
   const typeDescriptor = descriptors.type;
   const mimeTypeDescriptor = descriptors.mimeType;
+  const encodingDescriptor = descriptors.encoding;
   if (
     (typeDescriptor !== undefined && !("value" in typeDescriptor)) ||
-    (mimeTypeDescriptor !== undefined && !("value" in mimeTypeDescriptor))
+    (mimeTypeDescriptor !== undefined && !("value" in mimeTypeDescriptor)) ||
+    (encodingDescriptor !== undefined && !("value" in encodingDescriptor))
   ) {
     return true;
   }
   const type: unknown = typeDescriptor?.value;
   const mimeType: unknown = mimeTypeDescriptor?.value;
+  const encoding: unknown = encodingDescriptor?.value;
   return (
     type === "image" ||
     type === "Buffer" ||
-    (typeof mimeType === "string" && /^image\/(?:jpeg|png)$/iu.test(mimeType))
+    (typeof mimeType === "string" &&
+      /^image\/(?:jpeg|png)$/iu.test(mimeType)) ||
+    (typeof encoding === "string" &&
+      Object.hasOwn(ENCODED_BINARY_ENCODINGS, normalizeFieldName(encoding)))
   );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (value === null || typeof value !== "object") {
     return false;
   }
   try {
+    if (Array.isArray(value)) {
+      return false;
+    }
     const prototype: object | null = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
   } catch {

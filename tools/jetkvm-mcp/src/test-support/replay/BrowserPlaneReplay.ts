@@ -159,19 +159,29 @@ export type BrowserReplayImageResolver = (
   observation: Observation,
 ) => BrowserCaptureImage | Promise<BrowserCaptureImage>;
 
+type PublishedConnection = {
+  readonly binding: DeviceRpcBinding;
+  readonly displayGeneration: number;
+};
+
 type ObservationLedgerEntry = {
   readonly observation: Observation;
   readonly registeredAtMs: number;
   state: "available" | "reserved" | "consumed";
 };
+type CaptureReservation = {
+  readonly ref: SessionRef;
+  readonly request: CaptureRequest;
+  readonly publication: PublishedConnection;
+  readonly binding: DeviceRpcBinding;
+  readonly deviceRpc: DeviceRpcAdapter;
+  readonly entry: ObservationLedgerEntry;
+};
 
 export class BrowserPlaneReplay implements BrowserPlane {
   private readonly replay: SanitizedReplayCursor;
   private currentDeviceRpc: DeviceRpcAdapter;
-  private publishedConnection?: {
-    readonly binding: DeviceRpcBinding;
-    readonly displayGeneration: number;
-  };
+  private publishedConnection?: PublishedConnection;
   private readonly observations = new Map<string, ObservationLedgerEntry>();
   private lastPublishedBinding?: DeviceRpcBinding;
   private closed = true;
@@ -251,6 +261,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
     if (this.replaceDeviceRpc === undefined) {
       throw new Error("Replay reconnect requires an adapter replacement.");
     }
+    this.observations.clear();
     await this.replaceDeviceRpc.invalidate(previous);
     const replacement = await this.replaceDeviceRpc.createReplacement(
       parsed.data.binding,
@@ -264,7 +275,6 @@ export class BrowserPlaneReplay implements BrowserPlane {
       );
     }
     this.currentDeviceRpc = replacement;
-    this.observations.clear();
     this.closed = false;
     this.lastPublishedBinding = parsed.data.binding;
     this.publishedConnection = {
@@ -280,64 +290,75 @@ export class BrowserPlaneReplay implements BrowserPlane {
     deadline: Deadline,
   ): Promise<BrowserCaptureArtifact> {
     this.validateDeadline(deadline);
-    this.assertPublishedRef(ref);
+    const admittedRef = { ...ref };
+    const admittedRequest = { ...request };
+    this.assertPublishedRef(admittedRef);
     if (
-      !Number.isSafeInteger(request.maxWidth) ||
-      request.maxWidth <= 0 ||
-      !Number.isSafeInteger(request.maxHeight) ||
-      request.maxHeight <= 0
+      !Number.isSafeInteger(admittedRequest.maxWidth) ||
+      admittedRequest.maxWidth <= 0 ||
+      !Number.isSafeInteger(admittedRequest.maxHeight) ||
+      admittedRequest.maxHeight <= 0
     ) {
       throw new Error("Replay capture request bounds are invalid.");
     }
+    const publication = this.publishedConnection;
+    if (publication === undefined) {
+      throw new Error("Replay BrowserPlane has no published connection.");
+    }
+    const deviceRpc = this.deviceRpc;
+    const publishedBinding = { ...publication.binding };
+    if (!this.bindingMatches(deviceRpc.binding, publishedBinding)) {
+      throw new Error(
+        "Replay capture adapter does not match the published binding.",
+      );
+    }
     const response = this.replay.consume("capture", {
-      ref: { ...ref },
-      request: { ...request },
+      ref: admittedRef,
+      request: admittedRequest,
     });
     const parsed = observationSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay capture response shape is invalid.");
-    const publication = this.publishedConnection;
-    const rotated = parsed.data.rotation === 90 || parsed.data.rotation === 270;
-    const sourceWidth = rotated
-      ? parsed.data.sourceHeight
-      : parsed.data.sourceWidth;
-    const sourceHeight = rotated
-      ? parsed.data.sourceWidth
-      : parsed.data.sourceHeight;
-    if (
-      publication === undefined ||
-      parsed.data.sessionId !== publication.binding.sessionId ||
-      parsed.data.sessionGeneration !== publication.binding.sessionGeneration ||
-      parsed.data.connectionEpoch !== publication.binding.connectionEpoch ||
-      parsed.data.displayGeneration !== publication.displayGeneration ||
-      parsed.data.format !== request.format ||
-      parsed.data.imageWidth > request.maxWidth ||
-      parsed.data.imageHeight > request.maxHeight ||
-      parsed.data.imageWidth > sourceWidth ||
-      parsed.data.imageHeight > sourceHeight ||
-      parsed.data.imageWidth * sourceHeight !==
-        parsed.data.imageHeight * sourceWidth ||
-      parsed.data.geometry.contentX + parsed.data.geometry.contentWidth >
-        parsed.data.imageWidth ||
-      parsed.data.geometry.contentY + parsed.data.geometry.contentHeight >
-        parsed.data.imageHeight ||
-      this.observations.has(parsed.data.observationId)
-    ) {
+    this.assertCaptureResponseMatches(
+      parsed.data,
+      admittedRequest,
+      publication,
+    );
+    if (this.observations.has(parsed.data.observationId)) {
       throw new Error(
         "Replay capture response does not match the published connection, geometry, or format.",
       );
     }
-    const artifact: BrowserCaptureArtifact = {
-      observation: parsed.data,
-      image: await this.resolveCaptureImage(parsed.data),
-    };
-    assertBrowserCaptureArtifact(artifact);
-    this.observations.set(parsed.data.observationId, {
+
+    const entry: ObservationLedgerEntry = {
       observation: parsed.data,
       registeredAtMs: this.readMonotonicTick(),
-      state: "available",
-    });
-    return artifact;
+      state: "reserved",
+    };
+    const reservation: CaptureReservation = {
+      ref: admittedRef,
+      request: admittedRequest,
+      publication,
+      binding: publishedBinding,
+      deviceRpc,
+      entry,
+    };
+    this.observations.set(parsed.data.observationId, entry);
+    try {
+      const artifact: BrowserCaptureArtifact = {
+        observation: parsed.data,
+        image: await this.resolveCaptureImage(parsed.data),
+      };
+      this.assertCaptureReservationIsCurrent(reservation);
+      assertBrowserCaptureArtifact(artifact);
+      entry.state = "available";
+      return artifact;
+    } catch (error) {
+      if (this.observations.get(parsed.data.observationId) === entry) {
+        this.observations.delete(parsed.data.observationId);
+      }
+      throw error;
+    }
   }
 
   public async mouse(
@@ -446,6 +467,64 @@ export class BrowserPlaneReplay implements BrowserPlane {
     this.closed = true;
     delete this.publishedConnection;
     this.observations.clear();
+  }
+
+  private assertCaptureResponseMatches(
+    observation: Observation,
+    request: CaptureRequest,
+    publication: PublishedConnection,
+  ): void {
+    const rotated = observation.rotation === 90 || observation.rotation === 270;
+    const sourceWidth = rotated
+      ? observation.sourceHeight
+      : observation.sourceWidth;
+    const sourceHeight = rotated
+      ? observation.sourceWidth
+      : observation.sourceHeight;
+    if (
+      observation.sessionId !== publication.binding.sessionId ||
+      observation.sessionGeneration !== publication.binding.sessionGeneration ||
+      observation.connectionEpoch !== publication.binding.connectionEpoch ||
+      observation.displayGeneration !== publication.displayGeneration ||
+      observation.format !== request.format ||
+      observation.imageWidth > request.maxWidth ||
+      observation.imageHeight > request.maxHeight ||
+      observation.imageWidth > sourceWidth ||
+      observation.imageHeight > sourceHeight ||
+      observation.imageWidth * sourceHeight !==
+        observation.imageHeight * sourceWidth ||
+      observation.geometry.contentX + observation.geometry.contentWidth >
+        observation.imageWidth ||
+      observation.geometry.contentY + observation.geometry.contentHeight >
+        observation.imageHeight
+    ) {
+      throw new Error(
+        "Replay capture response does not match the published connection, geometry, or format.",
+      );
+    }
+  }
+
+  private assertCaptureReservationIsCurrent(
+    reservation: CaptureReservation,
+  ): void {
+    const { binding, deviceRpc, entry, publication, ref, request } =
+      reservation;
+    if (
+      this.closed ||
+      this.publishedConnection !== publication ||
+      this.deviceRpc !== deviceRpc ||
+      this.observations.get(entry.observation.observationId) !== entry ||
+      entry.state !== "reserved" ||
+      ref.sessionId !== binding.sessionId ||
+      ref.sessionGeneration !== binding.sessionGeneration ||
+      !this.bindingMatches(publication.binding, binding) ||
+      !this.bindingMatches(deviceRpc.binding, binding)
+    ) {
+      throw new Error(
+        "Replay capture observation reservation is stale or foreign.",
+      );
+    }
+    this.assertCaptureResponseMatches(entry.observation, request, publication);
   }
 
   private async consumeReceipt<

@@ -437,8 +437,11 @@ export class DeviceSessionClient {
             planeInvoked,
             irreversibleTransition,
           );
+          let connectionAbsent =
+            failure.outcome === "not_sent" && !connectionOpened;
           if (connectionOpened || failure.outcome === "unknown") {
             const cleanupSucceeded = await this.#closeForCleanup(ref);
+            connectionAbsent = cleanupSucceeded;
             if (!cleanupSucceeded) {
               this.#activeSessionId = record.sessionId;
               if (failure.outcome === "not_sent") {
@@ -450,6 +453,12 @@ export class DeviceSessionClient {
                 );
               }
             }
+          }
+          if (
+            connectionAbsent &&
+            this.#sessions.get(record.sessionId) === record
+          ) {
+            this.#sessions.delete(record.sessionId);
           }
           throw failure;
         }

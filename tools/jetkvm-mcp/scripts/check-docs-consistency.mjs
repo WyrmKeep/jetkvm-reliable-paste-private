@@ -114,12 +114,173 @@ function extractDesignPhaseRow(designText, phase) {
   return { branch: row[1], deliverable: row[2] };
 }
 
+const BROWSER_CONNECTION_CONTRACT = `interface BrowserConnection {
+  readonly state: "ready";
+  readonly ref: SessionRef;
+  readonly binding: DeviceRpcBinding;
+  readonly connectionEpoch: number;
+  readonly browserChannelGeneration: number;
+  readonly displayGeneration: number;
+  readonly deviceRpc: DeviceRpcAdapter;
+}`;
+
+const OBSERVATION_CONTRACT = `interface Observation {
+  readonly observationId: string;
+  readonly sessionId: string;
+  readonly sessionGeneration: number;
+  readonly connectionEpoch: number;
+  readonly displayGeneration: number;
+  readonly frameId: string;
+  readonly capturedAt: string;
+  readonly monotonicAgeMs: number;
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
+  readonly imageWidth: number;
+  readonly imageHeight: number;
+  readonly rotation: 0 | 90 | 180 | 270;
+  readonly geometry: ObservationGeometry;
+  readonly format: "jpeg" | "png";
+  readonly sha256: string;
+  readonly byteLength: number;
+}`;
+
+const BROWSER_CAPTURE_IMAGE_CONTRACT = `interface BrowserCaptureImage {
+  readonly mimeType: BrowserCaptureMimeType;
+  readonly bytes: Uint8Array;
+}`;
+
+const BROWSER_CAPTURE_ARTIFACT_CONTRACT = `interface BrowserCaptureArtifact {
+  readonly observation: Observation;
+  readonly image: BrowserCaptureImage;
+}`;
+
+const BROWSER_PLANE_CONTRACT = `interface BrowserPlane {
+  readonly deviceRpc: DeviceRpcAdapter;
+  connect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
+  reconnect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
+  capture(
+    ref: SessionRef,
+    request: CaptureRequest,
+    deadline: Deadline,
+  ): Promise<BrowserCaptureArtifact>;
+  mouse(
+    ref: SessionRef,
+    request: MouseRequest,
+    deadline: Deadline,
+  ): Promise<MutationReceipt>;
+  keyboard(
+    ref: SessionRef,
+    request: KeyboardRequest,
+    deadline: Deadline,
+  ): Promise<MutationReceipt>;
+  paste(
+    ref: SessionRef,
+    request: PasteRequest,
+    deadline: Deadline,
+  ): Promise<PasteReceipt>;
+  release(
+    ref: SessionRef,
+    request: ReleaseRequest,
+    deadline: Deadline,
+  ): Promise<ReleaseReceipt>;
+  close(ref: SessionRef, deadline: Deadline): Promise<void>;
+}`;
+
+const STATUS_POLL_CONTRACT =
+  "`getVideoState` validates state only and never creates `cached_snapshot`.";
+const STATUS_EVENT_PRECEDENCE_CONTRACT =
+  "A valid `videoInputState` event wins every concurrent or later poll, and fact age derives from that event's recorded timestamp.";
+
+function assertCanonicalBrowserPlaneContract(text, label) {
+  if (countOccurrences(text, "  readonly deviceRpc: DeviceRpcAdapter;") !== 2) {
+    throw new Error(
+      `Canonical ${label} shared deviceRpc contract must match BrowserConnection and BrowserPlane`,
+    );
+  }
+  if (
+    countOccurrences(text, "interface BrowserConnection {") !== 1 ||
+    !text.includes(BROWSER_CONNECTION_CONTRACT)
+  ) {
+    throw new Error(
+      `Canonical ${label} BrowserConnection binding contract drifted`,
+    );
+  }
+  if (
+    countOccurrences(text, "interface Observation {") !== 1 ||
+    !text.includes(OBSERVATION_CONTRACT)
+  ) {
+    throw new Error(`Canonical ${label} must define byte-free Observation`);
+  }
+  if (
+    countOccurrences(text, "interface BrowserCaptureImage {") !== 1 ||
+    !text.includes(BROWSER_CAPTURE_IMAGE_CONTRACT)
+  ) {
+    throw new Error(`Canonical ${label} BrowserCaptureImage contract drifted`);
+  }
+  if (
+    countOccurrences(text, "interface BrowserCaptureArtifact {") !== 1 ||
+    !text.includes(BROWSER_CAPTURE_ARTIFACT_CONTRACT)
+  ) {
+    throw new Error(
+      `Canonical ${label} BrowserCaptureArtifact contract drifted`,
+    );
+  }
+  if (
+    countOccurrences(text, "interface BrowserPlane {") !== 1 ||
+    !text.includes(BROWSER_PLANE_CONTRACT)
+  ) {
+    throw new Error(`Canonical ${label} BrowserPlane capture contract drifted`);
+  }
+}
+
+function assertCanonicalStatusProvenance(text, label) {
+  if (
+    !text.includes(STATUS_POLL_CONTRACT) ||
+    !text.includes(STATUS_EVENT_PRECEDENCE_CONTRACT) ||
+    !/before any valid `videoInputState`[^\n.]*(?:`none`\/unknown\/null|source:"none")/i.test(
+      text,
+    )
+  ) {
+    throw new Error(`Canonical ${label} status provenance contract drifted`);
+  }
+  for (const statement of text.split(/[.\n]/)) {
+    if (
+      statement.includes("getVideoState") &&
+      statement.includes("cached_snapshot") &&
+      !/(?:never|cannot|validation-only|validation only|no `cached_snapshot` fabrication)/i.test(
+        statement,
+      )
+    ) {
+      throw new Error(
+        `Canonical ${label} status provenance fabricates cached_snapshot`,
+      );
+    }
+  }
+}
+
 export function checkDocsConsistency({
   designText,
   planText,
   packageJson,
   storyIds,
 }) {
+  for (const [label, text] of [
+    ["design", designText],
+    ["plan", planText],
+  ]) {
+    assertCanonicalBrowserPlaneContract(text, label);
+    assertCanonicalStatusProvenance(text, label);
+  }
+  if (
+    countOccurrences(designText, "    content_index: 1;") !== 1 ||
+    !planText.includes(
+      "public `DisplayCaptureResult.image.content_index` is the literal `1`",
+    )
+  ) {
+    throw new Error(
+      "Canonical content_index declaration must remain literal 1",
+    );
+  }
   if (
     countOccurrences(
       designText,

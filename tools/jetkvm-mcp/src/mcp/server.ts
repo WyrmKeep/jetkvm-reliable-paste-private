@@ -44,6 +44,15 @@ class RequestCancelledError extends Error {
   }
 }
 
+class UnknownToolError extends Error {
+  readonly code = ErrorCode.InvalidParams;
+
+  constructor() {
+    super("Unknown tool");
+    this.name = "UnknownToolError";
+  }
+}
+
 export type JetKvmToolHandler = (
   input: unknown,
   context: JetKvmHandlerContext,
@@ -261,7 +270,7 @@ export function createMcpServer(
     }
     const name = request.params.name;
     if (!Object.hasOwn(TOOL_CATALOGUE_BY_NAME, name)) {
-      throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
+      throw new UnknownToolError();
     }
     if (registeredEntries.length === 0) {
       throw new McpError(

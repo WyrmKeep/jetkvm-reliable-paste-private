@@ -201,6 +201,95 @@ describe("createMcpServer", () => {
     expect(JSON.stringify(pasteSchema)).toContain('"x-utf8-byte-max":262144');
   });
 
+  it("returns one fixed secret-free protocol error for an unknown initialized tool", async () => {
+    const sentinels = [
+      "Bearer unknown-tool-credential-sentinel",
+      "https://unknown-tool-url.invalid/private?credential=url-sentinel",
+      "paste-unknown-tool-sentinel",
+      "cGFzdGUtdW5rbm93bi10b29sLWJhc2U2NC1zZW50aW5lbA==",
+    ] as const;
+    const unknownName = `unknown-tool ${sentinels.join(" ")}`;
+    const logLines: string[] = [];
+    const logger = createStructuredLogger({
+      write: (line) => logLines.push(line),
+      now: () => new Date("2026-07-13T00:00:00.000Z"),
+    });
+    const server = createMcpServer(completeRegistry());
+    server.onerror = (error) => logger.error("mcp.server.error", { error });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const messages: JSONRPCMessage[] = [];
+    const serializedMessages: string[] = [];
+    clientTransport.onmessage = (message) => {
+      messages.push(message);
+      serializedMessages.push(JSON.stringify(message));
+      logger.info("mcp.transport.response", { response: message });
+    };
+    await server.connect(serverTransport);
+    await clientTransport.start();
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: {
+          name: "unknown-tool-error-test",
+          version: "1.0.0",
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        messages.some((message) => "id" in message && message.id === 1),
+      ).toBe(true),
+    );
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    messages.length = 0;
+    serializedMessages.length = 0;
+    logLines.length = 0;
+
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: unknownName,
+        arguments: {},
+      },
+    });
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+
+    const expectedResponse = {
+      jsonrpc: "2.0",
+      id: 2,
+      error: {
+        code: ErrorCode.InvalidParams,
+        message: "Unknown tool",
+      },
+    };
+    expect(messages).toEqual([expectedResponse]);
+    expect(serializedMessages).toEqual([JSON.stringify(expectedResponse)]);
+    expect(logLines).toHaveLength(1);
+    const leakSurfaces = [
+      JSON.stringify(messages[0]),
+      serializedMessages.join(""),
+      logLines.join(""),
+    ];
+    for (const surface of leakSurfaces) {
+      expect(surface).not.toContain("cause");
+      expect(surface).not.toContain("stack");
+      for (const sentinel of sentinels) {
+        expect(surface).not.toContain(sentinel);
+      }
+    }
+    await server.close();
+  });
+
   it("publishes the exact shared generated and tracked result documents", async () => {
     const client = await connectedClient(completeRegistry());
     const listed = await client.listTools();

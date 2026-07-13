@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
@@ -19,6 +21,7 @@ import {
   type Success,
   type ToolError,
 } from "./domain.js";
+import { TOOL_RESULT_PAYLOAD_SCHEMAS } from "./mcp/schemas.js";
 
 const exactToolNames = [
   "jetkvm_display_capture",
@@ -147,9 +150,54 @@ describe("canonical domain contracts", () => {
         byte_length: 4,
       },
     };
+    expect(capture.image.content_index).toBe(1);
+    expectTypeOf<
+      DisplayCaptureResult["image"]["content_index"]
+    >().toEqualTypeOf<1>();
     expect(capture.image).not.toHaveProperty("data");
     expect(capture.image).not.toHaveProperty("bytes");
     expect(capture.image).not.toHaveProperty("base64");
+    expect(
+      TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse(capture)
+        .success,
+    ).toBe(true);
+    expect(
+      TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse({
+        ...capture,
+        image: { ...capture.image, content_index: 2 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps every generated display-capture content index schema at exact const 1", async () => {
+    const schema = JSON.parse(
+      await readFile(
+        new URL(
+          "../schemas/jetkvm_display_capture.result.schema.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as unknown;
+    const contentIndexSchemas: unknown[] = [];
+    const visit = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (typeof value !== "object" || value === null) return;
+      const record = value as Record<string, unknown>;
+      if (Object.hasOwn(record, "content_index")) {
+        contentIndexSchemas.push(record.content_index);
+      }
+      Object.values(record).forEach(visit);
+    };
+
+    visit(schema);
+    expect(contentIndexSchemas.length).toBeGreaterThan(0);
+    expect(contentIndexSchemas).toEqual(
+      contentIndexSchemas.map(() => ({ type: "number", const: 1 })),
+    );
   });
 
   it("narrows successful paste to the correlated succeeded lifecycle", () => {

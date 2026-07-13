@@ -97,6 +97,47 @@ describe("credential source selection", () => {
     secret.dispose();
   });
 
+  it.each([
+    {
+      lookup: "absent",
+      createPath: () => {
+        const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-absent-"));
+        return join(
+          directory,
+          "Bearer_PRIVATE_BEARER_SENTINEL_https%3A%2F%2Fprivate-url-sentinel.invalid_PRIVATE_PASTE_SENTINEL",
+        );
+      },
+    },
+    {
+      lookup: "inaccessible",
+      createPath: () => {
+        const directory = mkdtempSync(
+          join(tmpdir(), "jetkvm-auth-inaccessible-"),
+        );
+        const nonDirectory = join(directory, "blocked-parent");
+        writeFileSync(nonDirectory, "not a directory", { mode: 0o600 });
+        return join(
+          nonDirectory,
+          "Bearer_PRIVATE_BEARER_SENTINEL_https%3A%2F%2Fprivate-url-sentinel.invalid_PRIVATE_PASTE_SENTINEL",
+        );
+      },
+    },
+  ])(
+    "uses one sanitized error for an $lookup credential-file metadata lookup",
+    ({ createPath }) => {
+      const path = createPath();
+      expectProtectedCredentialFileLookupError(() =>
+        loadCredentialSecret(
+          { environmentVariable: "UNSET", filePath: path },
+          {
+            readEnvironment: () => undefined,
+            deleteEnvironment: () => undefined,
+          },
+        ),
+      );
+    },
+  );
+
   it("zeroes the exact Buffer returned by the protected file reader", () => {
     const source = Buffer.from("file-secret\r\n");
     const secret = loadCredentialSecret(
@@ -525,5 +566,29 @@ function expectBoundaryStatus(
     expect((error as Error).message).not.toMatch(
       /bearer|credential|target|url/i,
     );
+  }
+}
+
+function expectProtectedCredentialFileLookupError(action: () => unknown): void {
+  try {
+    action();
+    throw new Error("Expected protected credential-file lookup rejection");
+  } catch (error) {
+    expect(error).toBeInstanceOf(CredentialConfigurationError);
+    expect((error as Error).message).toBe(
+      "Credential source must be a protected regular file",
+    );
+    expect(error).not.toHaveProperty("code");
+    expect(error).not.toHaveProperty("cause");
+
+    for (const surface of [
+      (error as Error).message,
+      (error as Error).stack ?? "",
+      JSON.stringify(error),
+    ]) {
+      expect(surface).not.toMatch(
+        /PRIVATE_BEARER_SENTINEL|private-url-sentinel|PRIVATE_PASTE_SENTINEL|ENOENT|ENOTDIR/,
+      );
+    }
   }
 }

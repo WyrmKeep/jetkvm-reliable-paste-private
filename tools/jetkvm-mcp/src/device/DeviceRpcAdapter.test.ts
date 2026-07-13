@@ -166,6 +166,115 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
     expect(published).toBe(false);
   });
 
+  it.each([
+    ["equal", BINDING],
+    [
+      "session generation rollback",
+      { ...BINDING, sessionGeneration: BINDING.sessionGeneration - 1 },
+    ],
+    [
+      "connection epoch rollback",
+      { ...BINDING, connectionEpoch: BINDING.connectionEpoch - 1 },
+    ],
+    [
+      "browser channel generation rollback",
+      {
+        ...BINDING,
+        browserChannelGeneration: BINDING.browserChannelGeneration - 1,
+      },
+    ],
+    [
+      "mixed advance and connection epoch rollback",
+      {
+        ...BINDING,
+        sessionGeneration: BINDING.sessionGeneration + 1,
+        connectionEpoch: BINDING.connectionEpoch - 1,
+      },
+    ],
+    [
+      "mixed advance and browser channel generation rollback",
+      {
+        ...BINDING,
+        connectionEpoch: BINDING.connectionEpoch + 1,
+        browserChannelGeneration: BINDING.browserChannelGeneration - 1,
+      },
+    ],
+  ] as const)(
+    "rejects a same-session %s tuple before invalidation or publication and keeps the old channel usable",
+    async (_case, nextBinding) => {
+      const oldChannel = new FakeDeviceRpcChannel();
+      const nextChannel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+      let published = false;
+
+      expect(() =>
+        adapter.replaceBinding(nextBinding, nextChannel, () => {
+          published = true;
+        }),
+      ).toThrow(/advance monotonically/i);
+
+      expect(adapter.binding).toEqual(BINDING);
+      expect(oldChannel.isClosed()).toBe(false);
+      expect(nextChannel.isClosed()).toBe(false);
+      expect(published).toBe(false);
+      expect(nextChannel.writes()).toHaveLength(0);
+
+      const stillCurrent = adapter.readDisplayState(BINDING, deadline());
+      await oldChannel.waitForWrites(1);
+      oldChannel.respondToWrite(0, displayWireResult());
+      await expect(stillCurrent).resolves.toMatchObject({
+        signal: { source: "none", freshness: "unknown" },
+      });
+      expect(oldChannel.writes()).toHaveLength(1);
+      expect(nextChannel.writes()).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    [
+      "session generation",
+      { ...BINDING, sessionGeneration: BINDING.sessionGeneration + 1 },
+    ],
+    [
+      "connection epoch",
+      { ...BINDING, connectionEpoch: BINDING.connectionEpoch + 1 },
+    ],
+    [
+      "browser channel generation",
+      {
+        ...BINDING,
+        browserChannelGeneration: BINDING.browserChannelGeneration + 1,
+      },
+    ],
+    [
+      "all generation components",
+      {
+        ...BINDING,
+        sessionGeneration: BINDING.sessionGeneration + 1,
+        connectionEpoch: BINDING.connectionEpoch + 1,
+        browserChannelGeneration: BINDING.browserChannelGeneration + 1,
+      },
+    ],
+  ] as const)(
+    "accepts a same-session monotonic %s advance and routes only to the replacement channel",
+    async (_case, nextBinding) => {
+      const oldChannel = new FakeDeviceRpcChannel();
+      const nextChannel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel);
+
+      adapter.replaceBinding(nextBinding, nextChannel);
+      const current = adapter.readDisplayState(nextBinding, deadline());
+      await nextChannel.waitForWrites(1);
+      nextChannel.respondToWrite(0, displayWireResult());
+
+      await expect(current).resolves.toMatchObject({
+        signal: { source: "none", freshness: "unknown" },
+      });
+      expect(oldChannel.writes()).toHaveLength(0);
+      expect(nextChannel.writes()).toHaveLength(1);
+    },
+  );
+
   it("rechecks replacement readiness after old invalidation and before publish", () => {
     const nextChannel = new FakeDeviceRpcChannel();
     const oldChannel = new FakeDeviceRpcChannel({

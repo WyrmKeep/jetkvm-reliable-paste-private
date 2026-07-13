@@ -64,6 +64,108 @@ test("accepts the canonical docs, package hooks, tools, branches, phases, and 24
   assert.equal(result.storyCount, 24);
 });
 
+test("rejects BrowserPlane byte, artifact, capture-return, and shared-binding drift", () => {
+  for (const [label, textKey, text] of [
+    ["design", "designText", designText],
+    ["plan", "planText", planText],
+  ]) {
+    const observationWithBytes = text.replace(
+      "  readonly byteLength: number;\n}",
+      "  readonly byteLength: number;\n  readonly bytes: Uint8Array;\n}",
+    );
+    assert.throws(
+      () => check({ [textKey]: observationWithBytes }),
+      /byte-free Observation/i,
+      `${label} must keep Observation byte-free`,
+    );
+
+    const missingArtifactBytes = text.replace(
+      "  readonly bytes: Uint8Array;",
+      "  readonly data: string;",
+    );
+    assert.throws(
+      () => check({ [textKey]: missingArtifactBytes }),
+      /BrowserCaptureImage/i,
+      `${label} must define the authorized capture image`,
+    );
+
+    const wrongCaptureReturn = text.replace(
+      "  ): Promise<BrowserCaptureArtifact>;",
+      "  ): Promise<Observation>;",
+    );
+    assert.throws(
+      () => check({ [textKey]: wrongCaptureReturn }),
+      /BrowserPlane capture contract/i,
+      `${label} must return the capture artifact`,
+    );
+
+    const optionalBinding = text.replace(
+      "  readonly binding: DeviceRpcBinding;",
+      "  readonly binding?: DeviceRpcBinding;",
+    );
+    assert.throws(
+      () => check({ [textKey]: optionalBinding }),
+      /BrowserConnection binding contract/i,
+      `${label} must require the exact BrowserConnection binding fields`,
+    );
+
+    const optionalSharedAdapter = text.replaceAll(
+      "  readonly deviceRpc: DeviceRpcAdapter;",
+      "  readonly deviceRpc?: DeviceRpcAdapter;",
+    );
+    assert.throws(
+      () => check({ [textKey]: optionalSharedAdapter }),
+      /shared deviceRpc contract/i,
+      `${label} must require the shared adapter`,
+    );
+  }
+});
+
+test("rejects native video status provenance drift in either canonical document", () => {
+  for (const [textKey, text] of [
+    ["designText", designText],
+    ["planText", planText],
+  ]) {
+    const fabricatedSnapshot = text.replace(
+      "`getVideoState` validates state only and never creates `cached_snapshot`.",
+      "`getVideoState` creates `cached_snapshot`.",
+    );
+    assert.throws(
+      () => check({ [textKey]: fabricatedSnapshot }),
+      /status provenance/i,
+    );
+
+    const eventLosesToPoll = text.replace(
+      "A valid `videoInputState` event wins every concurrent or later poll, and fact age derives from that event's recorded timestamp.",
+      "A later poll replaces any prior event and resets fact age.",
+    );
+    assert.throws(
+      () => check({ [textKey]: eventLosesToPoll }),
+      /status provenance/i,
+    );
+  }
+});
+
+test("rejects public capture content-index drift from literal 1", () => {
+  const driftedDesign = designText.replace(
+    "    content_index: 1;",
+    "    content_index: number;",
+  );
+  assert.throws(
+    () => check({ designText: driftedDesign }),
+    /content_index.*literal 1/i,
+  );
+
+  const driftedPlan = planText.replace(
+    "public `DisplayCaptureResult.image.content_index` is the literal `1`",
+    "public `DisplayCaptureResult.image.content_index` is a number",
+  );
+  assert.throws(
+    () => check({ planText: driftedPlan }),
+    /content_index.*literal 1/i,
+  );
+});
+
 test("rejects drift in each of the exact ten tool inventories", () => {
   const driftedDesign = designText.replace(
     "jetkvm_power_control",

@@ -370,6 +370,99 @@ describe("structured redacting logger", () => {
     );
   });
 
+  it("fails closed for nested throwing and revoked object and array proxies", () => {
+    let accessorCalls = 0;
+    const objectTarget: Record<string, unknown> = {};
+    Object.defineProperty(objectTarget, "memo", {
+      enumerable: true,
+      get(): string {
+        accessorCalls += 1;
+        return "object-accessor-secret";
+      },
+    });
+    const throwingObject = new Proxy(objectTarget, {
+      getPrototypeOf(): never {
+        throw new Error("object prototype trap");
+      },
+    });
+    const descriptorObject = new Proxy(objectTarget, {
+      ownKeys(): never {
+        throw new Error("object descriptor trap");
+      },
+    });
+
+    const arrayTarget: unknown[] = [];
+    Object.defineProperty(arrayTarget, 0, {
+      configurable: true,
+      enumerable: true,
+      get(): string {
+        accessorCalls += 1;
+        return "array-accessor-secret";
+      },
+    });
+    const throwingLengthArray = new Proxy(arrayTarget, {
+      get(target, key, receiver): unknown {
+        if (key === "length") {
+          throw new Error("array length trap");
+        }
+        return Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key): PropertyDescriptor | undefined {
+        if (key === "length") {
+          throw new Error("array length descriptor trap");
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    const throwingDescriptorArray = new Proxy(arrayTarget, {
+      getOwnPropertyDescriptor(): never {
+        throw new Error("array descriptor trap");
+      },
+    });
+
+    const revokedObjectHandle = Proxy.revocable({ status: "private" }, {});
+    const revokedArrayHandle = Proxy.revocable(["private"], {});
+    revokedObjectHandle.revoke();
+    revokedArrayHandle.revoke();
+
+    const lines: string[] = [];
+    const logger = createStructuredLogger({
+      write: (line) => lines.push(line),
+      now: () => new Date("2026-07-13T12:00:00.000Z"),
+    });
+
+    expect(() =>
+      logger.info("proxy.received", {
+        throwingObject,
+        descriptorObject,
+        throwingLengthArray,
+        throwingDescriptorArray,
+        revokedObject: revokedObjectHandle.proxy,
+        revokedArray: revokedArrayHandle.proxy,
+        oversizedArray: new Array(10_001),
+        status: "ready",
+      }),
+    ).not.toThrow();
+    expect(accessorCalls).toBe(0);
+    expect(lines).toHaveLength(1);
+    const parsed: unknown = JSON.parse(lines[0] ?? "");
+    requireRecord(parsed);
+    requireRecord(parsed.fields);
+    expect(parsed.fields).toEqual({
+      throwingObject: "[REDACTED]",
+      descriptorObject: "[REDACTED]",
+      throwingLengthArray: "[REDACTED]",
+      throwingDescriptorArray: "[REDACTED]",
+      revokedObject: "[REDACTED]",
+      revokedArray: "[REDACTED]",
+      oversizedArray: "[REDACTED]",
+      status: "ready",
+    });
+    expect(lines.join("")).not.toMatch(
+      /object-accessor-secret|array-accessor-secret|private/,
+    );
+  });
+
   it("escapes every physical and Unicode line separator before sink output", () => {
     const lines: string[] = [];
     const note = "safe\u2028logical\u2029record\ncarriage\rreturn";
@@ -1010,6 +1103,56 @@ describe("structured redacting logger", () => {
       expect(output).not.toContain(jpeg);
       expect(output).not.toContain("binary-secret");
     }
+  });
+
+  it("redacts own data for encoded-binary encoding descriptors", () => {
+    let encodingAccessorCalls = 0;
+    const accessorMarker: Record<string, unknown> = {
+      data: "accessor-marker-data-secret",
+      status: "ready",
+    };
+    Object.defineProperty(accessorMarker, "encoding", {
+      enumerable: true,
+      get(): string {
+        encodingAccessorCalls += 1;
+        return "base64";
+      },
+    });
+    const fields = {
+      nested: [
+        { data: "base64-data-secret", encoding: "BaSe64" },
+        [{ data: "base64url-data-secret", encoding: "BASE64_URL" }],
+        { data: "binary-data-secret", encoding: "Binary" },
+      ],
+      accessorMarker,
+      business: {
+        data: "quarterly-business-data",
+        status: "ready",
+      },
+    };
+
+    const redacted = redactStructuredData(fields);
+
+    expect(encodingAccessorCalls).toBe(0);
+    expect(redacted).toEqual({
+      nested: [
+        { data: "[REDACTED]", encoding: "BaSe64" },
+        [{ data: "[REDACTED]", encoding: "BASE64_URL" }],
+        { data: "[REDACTED]", encoding: "Binary" },
+      ],
+      accessorMarker: {
+        data: "[REDACTED]",
+        status: "ready",
+        encoding: "[REDACTED]",
+      },
+      business: {
+        data: "quarterly-business-data",
+        status: "ready",
+      },
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /base64-data-secret|base64url-data-secret|binary-data-secret|accessor-marker-data-secret/,
+    );
   });
 
   it("preserves allowlisted operational metadata without mutating the input", () => {

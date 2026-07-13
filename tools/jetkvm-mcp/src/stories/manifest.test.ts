@@ -939,6 +939,64 @@ describe("reviewed story branch execution", () => {
     );
   });
 
+  for (const { storyId, releaseId, recoveryId, laterMutationId } of [
+    {
+      storyId: "session-connect-without-takeover-busy",
+      releaseId: "retry-deadline-before-admission-jetkvm-input-release",
+      recoveryId: "recover-after-applied-deadline-release",
+      laterMutationId: "retry-deadline-before-admission-jetkvm-power-control",
+    },
+    {
+      storyId: "mouse-observation-fence-and-single-use",
+      releaseId: "retry-cancel-before-write-jetkvm-input-release",
+      recoveryId: "recover-after-applied-cancellation-release",
+      laterMutationId: "retry-cancel-before-write-jetkvm-power-control",
+    },
+  ] as const) {
+    it(`rejects ${storyId} reusing an applied generation-draining release identity`, async () => {
+      const stories = await loadAcceptanceStories(storiesDirectory);
+      const story = stories.find(({ id }) => id === storyId)!;
+      const release = story.steps.find(({ id }) => id === releaseId)!;
+      const laterMutation = story.steps.find(
+        ({ id }) => id === laterMutationId,
+      )!;
+      release.expect +=
+        " The exact result-produced assertion is outcome applied with generation_drained true.";
+      story.steps = story.steps.filter(({ id }) => id !== recoveryId);
+      story.fault_script.find(
+        ({ after_step }) => after_step === recoveryId,
+      )!.after_step = releaseId;
+      for (const mutation of story.steps.filter(
+        (candidate) =>
+          candidate.tool === laterMutation.tool &&
+          candidate.input.request_id === laterMutation.input.request_id,
+      )) {
+        mutation.input.session_id = release.input.session_id;
+        mutation.input.session_generation = release.input.session_generation;
+      }
+
+      expect(() => validateAcceptanceStories(stories)).toThrow(
+        /applied generation-draining release.*explicit recovery.*later mutation/i,
+      );
+    });
+
+    it(`rejects ${storyId} missing recovery proof for its release successor`, async () => {
+      const stories = await loadAcceptanceStories(storiesDirectory);
+      const story = stories.find(({ id }) => id === storyId)!;
+      const release = story.steps.find(({ id }) => id === releaseId)!;
+      release.expect +=
+        " The exact result-produced assertion is outcome applied with generation_drained true.";
+      story.steps = story.steps.filter(({ id }) => id !== recoveryId);
+      story.fault_script.find(
+        ({ after_step }) => after_step === recoveryId,
+      )!.after_step = releaseId;
+
+      expect(() => validateAcceptanceStories(stories)).toThrow(
+        /applied generation-draining release.*explicit recovery.*later mutation/i,
+      );
+    });
+  }
+
   it("rejects fixture recovery state that cannot reach the next tool call", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     const staleGeneration = structuredClone(stories);

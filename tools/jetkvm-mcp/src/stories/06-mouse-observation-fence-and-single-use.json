@@ -192,7 +192,7 @@
     },
     {
       "id": "cancel-before-write-jetkvm-power-control",
-      "after_step": "retry-cancel-before-write-jetkvm-input-release",
+      "after_step": "recover-after-applied-cancellation-release",
       "boundary": "before_write",
       "action": "Arm pre-write cancellation for jetkvm_power_control only.",
       "expected_effect": "The next jetkvm_power_control call is cancelled before its first downstream write."
@@ -884,15 +884,32 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the release request reservation was released."
+      "expect": "The exact result-produced assertion is outcome applied with generation_drained true; ordinary admission after the cancellation fault is cleared also proves the release request reservation was released."
+    },
+    {
+      "id": "recover-after-applied-cancellation-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-09",
+        "closed_generation": 9,
+        "next_session_id": "opaque-session-10",
+        "next_generation": 10,
+        "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
+        "restore_atx_baseline": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect and bind the generation 10 successor, then re-prove ready session state and the recorded ATX baseline before the next power call."
     },
     {
       "id": "cancel-before-write-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session-09",
-        "session_generation": 9,
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
         "request_id": "opaque-cancel-before-write-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -905,8 +922,8 @@
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session-09",
-        "session_generation": 9,
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
         "request_id": "opaque-cancel-before-write-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -919,8 +936,8 @@
       "tool": null,
       "call": "acceptance-fixture/atx/restore-and-reprove",
       "input": {
-        "session_id": "opaque-session-09",
-        "session_generation": 9,
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
         "restore_serial": true,
         "restore_extension": true,
         "restore_observable_baseline": true
@@ -957,8 +974,8 @@
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session-09",
-        "session_generation": 9,
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -969,8 +986,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session-09",
-        "session_generation": 9,
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
         "request_id": "opaque-cancel-before-write-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -983,8 +1000,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session-09",
-        "session_generation": 9,
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
         "request_id": "opaque-cancel-before-write-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000

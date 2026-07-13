@@ -2066,6 +2066,220 @@ describe("BrowserPlaneReplay", () => {
     },
   );
 
+  it("rejects a deferred capture after close invalidates its reservation", async () => {
+    const resolver = Promise.withResolvers<BrowserCaptureImage>();
+    let resolverCalls = 0;
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        { operation: "close", request: { ref }, response: null },
+      ]),
+      () => {
+        resolverCalls += 1;
+        return resolver.promise;
+      },
+    );
+    await replay.connect(ref, deadline);
+
+    const capturing = replay.capture(
+      ref,
+      { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      deadline,
+    );
+    void capturing.catch(() => undefined);
+    expect(resolverCalls).toBe(1);
+    await replay.close(ref, deadline);
+    resolver.resolve(replayImage);
+
+    await expect(capturing).rejects.toThrow(
+      /capture|observation|published connection|reservation/i,
+    );
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("rejects a deferred capture after reconnect replaces its exact binding", async () => {
+    class BoundReplayAdapter extends ReplayAdapter {
+      public constructor(public override readonly binding: DeviceRpcBinding) {
+        super();
+      }
+    }
+
+    const resolver = Promise.withResolvers<BrowserCaptureImage>();
+    const invalidating = Promise.withResolvers<void>();
+    const nextBinding = {
+      ...binding,
+      connectionEpoch: binding.connectionEpoch + 1,
+      browserChannelGeneration: binding.browserChannelGeneration + 1,
+    };
+    const nextAdapter = new BoundReplayAdapter(nextBinding);
+    const replay = new BrowserPlaneReplay(
+      new BoundReplayAdapter(binding),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        {
+          operation: "reconnect",
+          request: { ref },
+          response: jsonValue({
+            state: "ready",
+            ref,
+            binding: nextBinding,
+            connectionEpoch: nextBinding.connectionEpoch,
+            browserChannelGeneration: nextBinding.browserChannelGeneration,
+            displayGeneration: 2,
+          }),
+        },
+      ]),
+      () => resolver.promise,
+      {
+        invalidate: () => invalidating.promise,
+        createReplacement: () => nextAdapter,
+      },
+    );
+    await replay.connect(ref, deadline);
+
+    const capturing = replay.capture(
+      ref,
+      { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      deadline,
+    );
+    void capturing.catch(() => undefined);
+    const reconnecting = replay.reconnect(ref, deadline);
+    await Promise.resolve();
+    resolver.resolve(replayImage);
+
+    await expect(capturing).rejects.toThrow(
+      /capture|observation|published connection|reservation|binding/i,
+    );
+    invalidating.resolve();
+    await reconnecting;
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("reserves a capture observation ID before invoking a second resolver", async () => {
+    const firstResolver = Promise.withResolvers<BrowserCaptureImage>();
+    let resolverCalls = 0;
+    const duplicateCapture = runtimeBrowserPrelude()[1];
+    if (duplicateCapture === undefined) {
+      throw new Error("Replay fixture is missing its capture exchange.");
+    }
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([...runtimeBrowserPrelude(), duplicateCapture]),
+      () => {
+        resolverCalls += 1;
+        return resolverCalls === 1 ? firstResolver.promise : replayImage;
+      },
+    );
+    await replay.connect(ref, deadline);
+
+    const firstCapture = replay.capture(
+      ref,
+      { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      deadline,
+    );
+    expect(resolverCalls).toBe(1);
+    await expect(
+      replay.capture(
+        ref,
+        { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+        deadline,
+      ),
+    ).rejects.toThrow(/capture|observation|reservation|published connection/i);
+    expect(resolverCalls).toBe(1);
+    firstResolver.resolve(replayImage);
+    await expect(firstCapture).resolves.toMatchObject({
+      observation: { observationId: "observation-a" },
+    });
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("rolls back an owned capture reservation after resolver failure so retry can proceed", async () => {
+    const firstResolver = Promise.withResolvers<BrowserCaptureImage>();
+    let resolverCalls = 0;
+    const retryCapture = runtimeBrowserPrelude()[1];
+    if (retryCapture === undefined) {
+      throw new Error("Replay fixture is missing its capture exchange.");
+    }
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([...runtimeBrowserPrelude(), retryCapture]),
+      () => {
+        resolverCalls += 1;
+        return resolverCalls === 1 ? firstResolver.promise : replayImage;
+      },
+    );
+    await replay.connect(ref, deadline);
+
+    const firstCapture = replay.capture(
+      ref,
+      { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      deadline,
+    );
+    void firstCapture.catch(() => undefined);
+    firstResolver.reject(new Error("fixture resolution failed"));
+    await expect(firstCapture).rejects.toThrow("fixture resolution failed");
+
+    await expect(
+      replay.capture(
+        ref,
+        { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+        deadline,
+      ),
+    ).resolves.toMatchObject({
+      observation: { observationId: "observation-a" },
+    });
+    expect(resolverCalls).toBe(2);
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("does not roll back a foreign reservation installed after lifecycle invalidation", async () => {
+    const firstResolver = Promise.withResolvers<BrowserCaptureImage>();
+    const secondResolver = Promise.withResolvers<BrowserCaptureImage>();
+    let resolverCalls = 0;
+    const laterPrelude = runtimeBrowserPrelude();
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        { operation: "close", request: { ref }, response: null },
+        ...laterPrelude,
+      ]),
+      () => {
+        resolverCalls += 1;
+        return resolverCalls === 1
+          ? firstResolver.promise
+          : secondResolver.promise;
+      },
+    );
+    await replay.connect(ref, deadline);
+
+    const firstCapture = replay.capture(
+      ref,
+      { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      deadline,
+    );
+    void firstCapture.catch(() => undefined);
+    await replay.close(ref, deadline);
+    await replay.connect(ref, deadline);
+    const secondCapture = replay.capture(
+      ref,
+      { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+      deadline,
+    );
+
+    firstResolver.resolve(replayImage);
+    await expect(firstCapture).rejects.toThrow(
+      /capture|observation|published connection|reservation/i,
+    );
+    secondResolver.resolve(replayImage);
+    await expect(secondCapture).resolves.toMatchObject({
+      observation: { observationId: "observation-a" },
+    });
+    expect(resolverCalls).toBe(2);
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
   it("consumes calls in exact order and rejects an unexpected operation", async () => {
     const replay = new BrowserPlaneReplay(
       new ReplayAdapter(),
