@@ -19,6 +19,14 @@ export function isCanonicalOpaqueId(value: unknown): value is string {
   return typeof value === "string" && OPAQUE_ID_PATTERN.test(value);
 }
 
+const CORRELATION_NAMESPACE_PATTERN = new RegExp(
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,${CANONICAL_OPAQUE_ID_MAX_CODE_UNITS - 1}}$`,
+);
+
+function isCanonicalCorrelationNamespace(value: unknown): value is string {
+  return typeof value === "string" && CORRELATION_NAMESPACE_PATTERN.test(value);
+}
+
 /** The sole internal device/RPC ownership tuple. */
 export interface DeviceRpcBinding extends SessionRef {
   readonly connectionEpoch: number;
@@ -668,6 +676,8 @@ interface PendingExchange {
   settled: boolean;
   responseSeen: boolean;
   writeBegan: boolean;
+  writeState: "pending" | "written" | "rejected";
+  deferredError: DeviceRpcError | undefined;
   receivedResult: unknown;
 }
 
@@ -695,7 +705,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
   ) {
     assertValidBinding(binding);
     const correlationNamespace = options.idNamespace ?? crypto.randomUUID();
-    if (!isCanonicalOpaqueId(correlationNamespace)) {
+    if (!isCanonicalCorrelationNamespace(correlationNamespace)) {
       throw new DeviceRpcError(
         "INVALID_REQUEST",
         "admission",
@@ -729,6 +739,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       throw new Error("Replacement channel is closed.");
     }
     this.revision += 1;
+    this.sequence = 0;
     this.revisionAbort.abort();
     this.stopChannelListening();
     this.stopChannelListening = () => {};
@@ -948,7 +959,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     params: Readonly<Record<string, unknown>>,
     cancellation: CallCancellation,
   ): Promise<ExchangeResult> {
-    const correlationSequence = ++this.sequence;
+    const correlationSequence = this.sequence + 1;
     const correlationPrefix = `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:${expectedRevision}`;
     const correlationId = `${correlationPrefix}:${correlationSequence}`;
     const payload = JSON.stringify({
@@ -974,13 +985,21 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         settled: false,
         responseSeen: false,
         writeBegan: false,
+        writeState: "pending",
+        deferredError: undefined,
         receivedResult: undefined,
       };
       this.pendingExchange = exchange;
 
-      const writeResult = expectedChannel.write(payload);
-      exchange.writeBegan = writeResult.written;
+      let writeResult: DeviceRpcChannelWriteResult;
+      try {
+        writeResult = expectedChannel.write(payload);
+      } catch {
+        writeResult = { written: false };
+      }
       if (!writeResult.written) {
+        exchange.writeState = "rejected";
+        exchange.deferredError = undefined;
         const replaced =
           this.revision !== expectedRevision ||
           this.channel !== expectedChannel ||
@@ -997,6 +1016,8 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         );
         return;
       }
+      exchange.writeState = "written";
+      exchange.writeBegan = true;
       if (
         this.revision !== expectedRevision ||
         this.channel !== expectedChannel ||
@@ -1006,6 +1027,13 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
           exchange,
           new DeviceRpcError("BINDING_REPLACED", "ack", "unknown", true, false),
         );
+        return;
+      }
+      this.sequence = correlationSequence;
+      const deferredError = exchange.deferredError;
+      exchange.deferredError = undefined;
+      if (deferredError !== undefined) {
+        this.finishExchangeError(exchange, deferredError);
         return;
       }
       void cancellation.promise.then((kind) => {
@@ -1046,11 +1074,31 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
           pending.correlationPrefix,
           pending.correlationSequence,
         );
-        if (classification === "current" || classification === "owned_other") {
-          this.finishExchangeError(
-            pending,
-            this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
-          );
+        if (classification !== "other") {
+          const replaced =
+            pending.expectedRevision !== this.revision ||
+            pending.expectedChannel !== this.channel ||
+            !bindingsEqual(pending.ref, this.currentBinding);
+          if (replaced) {
+            this.finishExchangeError(
+              pending,
+              new DeviceRpcError(
+                "BINDING_REPLACED",
+                pending.writeBegan ? "ack" : "send",
+                pending.writeBegan ? "unknown" : "not_sent",
+                pending.writeBegan,
+                false,
+              ),
+            );
+          } else if (
+            classification === "current" ||
+            classification === "owned_other"
+          ) {
+            this.finishExchangeError(
+              pending,
+              this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+            );
+          }
         }
       }
       return;
@@ -1169,13 +1217,29 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     error: DeviceRpcError,
   ): void {
     if (exchange.settled) return;
+    if (exchange.writeState === "pending") {
+      exchange.deferredError ??= new DeviceRpcError(
+        error.code,
+        "ack",
+        "unknown",
+        true,
+        error.acknowledged,
+      );
+      return;
+    }
     exchange.settled = true;
     if (this.pendingExchange === exchange) this.pendingExchange = undefined;
     exchange.reject(error);
   }
 
   private finishExchangeSuccess(exchange: PendingExchange): void {
-    if (exchange.settled || !exchange.responseSeen) return;
+    if (
+      exchange.settled ||
+      exchange.writeState !== "written" ||
+      !exchange.responseSeen
+    ) {
+      return;
+    }
     exchange.settled = true;
     if (this.pendingExchange === exchange) this.pendingExchange = undefined;
     exchange.resolve({ result: exchange.receivedResult, writeBegan: true });

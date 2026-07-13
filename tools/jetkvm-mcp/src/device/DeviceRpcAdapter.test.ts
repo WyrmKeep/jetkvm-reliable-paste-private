@@ -267,18 +267,20 @@ describe("DeviceRpcAdapter binding and wire contract", () => {
     ["empty", ""],
     ["leading punctuation", "-unsafe"],
     ["whitespace", "unsafe namespace"],
+    ["colon delimiter", "unsafe:namespace"],
+    ["slash", "unsafe/namespace"],
+    ["control character", "unsafe\u0000namespace"],
     ["overlong", `n${"a".repeat(128)}`],
   ])("rejects the %s injected correlation namespace", (_case, idNamespace) => {
+    const channel = new FakeDeviceRpcChannel();
+    const listen = vi.spyOn(channel, "listen");
     let error: unknown;
     try {
-      new GenerationFencedDeviceRpcAdapter(
-        BINDING,
-        new FakeDeviceRpcChannel(),
-        { idNamespace },
-      );
+      new GenerationFencedDeviceRpcAdapter(BINDING, channel, { idNamespace });
     } catch (caught) {
       error = caught;
     }
+    expect(listen).not.toHaveBeenCalled();
 
     expectDeviceError(error, {
       code: "INVALID_REQUEST",
@@ -614,6 +616,185 @@ describe("DeviceRpcAdapter timing and replacement fences", () => {
     expect(oldChannel.acceptedWrites()).toHaveLength(0);
   });
 
+  it("accepts a valid response delivered reentrantly by a successful write", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: (payload) => {
+        const request = JSON.parse(payload) as { id: string };
+        channel.emitRaw(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: displayWireResult(),
+          }),
+        );
+      },
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+
+    await expect(
+      adapter.readDisplayState(BINDING, deadline()),
+    ).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+  });
+
+  it("settles the first reentrant downstream error after a successful write as ack", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: (payload) => {
+        const request = JSON.parse(payload) as { id: string };
+        channel.emitRaw(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: { code: -32_000, message: "downstream" },
+          }),
+        );
+        channel.emitRaw(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: displayWireResult(),
+          }),
+        );
+      },
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const error = await adapter
+      .readDisplayState(BINDING, deadline())
+      .catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "DOWNSTREAM_ERROR",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+    });
+  });
+
+  it("settles a malformed response delivered reentrantly by a successful write as ack", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: (payload) => {
+        const request = JSON.parse(payload) as { id: string };
+        channel.emitRaw(JSON.stringify({ jsonrpc: "2.0", id: request.id }));
+      },
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const error = await adapter
+      .readDisplayState(BINDING, deadline())
+      .catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+    });
+  });
+
+  it("gives a reentrant duplicate precedence over success after a successful write", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: (payload) => {
+        const request = JSON.parse(payload) as { id: string };
+        const response = JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: displayWireResult(),
+        });
+        channel.emitRaw(response);
+        channel.emitRaw(response);
+      },
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const error = await adapter
+      .readDisplayState(BINDING, deadline())
+      .catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "DUPLICATE_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+    });
+  });
+
+  it.each(["valid", "error", "malformed", "duplicate"] as const)(
+    "discards a reentrant %s response when the write is rejected",
+    async (responseKind) => {
+      let channel!: FakeDeviceRpcChannel;
+      channel = new FakeDeviceRpcChannel({
+        rejectWrite: true,
+        beforeWrite: (payload) => {
+          const request = JSON.parse(payload) as { id: string };
+          const valid = JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: displayWireResult(),
+          });
+          if (responseKind === "valid") channel.emitRaw(valid);
+          if (responseKind === "error") {
+            channel.emitRaw(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: request.id,
+                error: { code: -32_000, message: "downstream" },
+              }),
+            );
+          }
+          if (responseKind === "malformed") {
+            channel.emitRaw(JSON.stringify({ jsonrpc: "2.0", id: request.id }));
+          }
+          if (responseKind === "duplicate") {
+            channel.emitRaw(valid);
+            channel.emitRaw(valid);
+          }
+        },
+      });
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+      const error = await adapter
+        .readDisplayState(BINDING, deadline())
+        .catch((caught) => caught);
+
+      expectDeviceError(error, {
+        code: "WRITE_REJECTED",
+        boundary: "send",
+        outcome: "not_sent",
+        writeBegan: false,
+      });
+    },
+  );
+
+  it("discards a reentrant response and reports WRITE_REJECTED when write throws", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: (payload) => {
+        const request = JSON.parse(payload) as { id: string };
+        channel.emitRaw(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: displayWireResult(),
+          }),
+        );
+        throw new Error("write failed");
+      },
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const error = await adapter
+      .readDisplayState(BINDING, deadline())
+      .catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "WRITE_REJECTED",
+      boundary: "send",
+      outcome: "not_sent",
+      writeBegan: false,
+    });
+  });
+
   it("classifies replacement after write and before acknowledgement as unknown", async () => {
     const oldChannel = new FakeDeviceRpcChannel();
     const nextChannel = new FakeDeviceRpcChannel();
@@ -821,6 +1002,36 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
       signal: { source: "none", freshness: "unknown" },
       qualification: "current_binding",
     });
+  });
+
+  it("ignores ordinary and oversized IDs from a delimiter-safe prefix-related namespace", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const result = expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+    await channel.waitForWrites(1);
+    const foreignId = "device-rpc:adapter-other:1:1";
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: foreignId,
+        result: displayWireResult(),
+      }),
+    );
+    const oversized = JSON.stringify({
+      jsonrpc: "2.0",
+      id: foreignId,
+      result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+    });
+
+    channel.emitRaw(oversized);
+    channel.respondToWrite(0, displayWireResult());
+
+    await result;
   });
 
   it("ignores oversized foreign UTF-8 traffic without parsing or disturbing the pending call", async () => {
@@ -1251,6 +1462,146 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
       outcome: "unknown",
     });
   });
+
+  it("resets issued sequence per revision and rejects zero and future aliases", async () => {
+    const oldChannel = new FakeDeviceRpcChannel();
+    const nextChannel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, oldChannel, {
+      idNamespace: "adapter-a",
+    });
+    const oldCall = adapter.readDisplayState(BINDING, deadline());
+    await oldChannel.waitForWrites(1);
+    expect(correlationIdForWrite(oldChannel, 0)).toBe(
+      "device-rpc:adapter-a:1:1",
+    );
+    oldChannel.respondToWrite(0, displayWireResult());
+    await oldCall;
+
+    const nextBinding = { ...BINDING, browserChannelGeneration: 14 };
+    adapter.replaceBinding(nextBinding, nextChannel);
+    const first = adapter.readDisplayState(nextBinding, deadline());
+    await nextChannel.waitForWrites(1);
+    expect(correlationIdForWrite(nextChannel, 0)).toBe(
+      "device-rpc:adapter-a:2:1",
+    );
+    nextChannel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "device-rpc:adapter-a:2:0",
+        result: displayWireResult(),
+      }),
+    );
+    await expect(first).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+
+    const second = adapter.readDisplayState(nextBinding, deadline());
+    await nextChannel.waitForWrites(2);
+    expect(correlationIdForWrite(nextChannel, 1)).toBe(
+      "device-rpc:adapter-a:2:2",
+    );
+    nextChannel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "device-rpc:adapter-a:2:3",
+        result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+      }),
+    );
+    await expect(second).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
+
+  it("reuses a rejected tentative sequence and retires only the later issued ID", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const write = vi
+      .spyOn(channel, "write")
+      .mockImplementationOnce(() => ({ written: false }));
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const rejected = adapter.readDisplayState(BINDING, deadline());
+    await expect(rejected).rejects.toMatchObject({
+      code: "WRITE_REJECTED",
+      boundary: "send",
+      outcome: "not_sent",
+    });
+    const rejectedPayload = write.mock.calls[0]?.[0];
+    if (rejectedPayload === undefined) {
+      throw new Error("Rejected write payload was not captured.");
+    }
+    const rejectedRequest = JSON.parse(rejectedPayload) as { id: string };
+    expect(rejectedRequest.id).toBe("device-rpc:adapter-a:1:1");
+
+    const firstIssued = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    expect(correlationIdForWrite(channel, 0)).toBe(rejectedRequest.id);
+    channel.respondToWrite(0, displayWireResult());
+    await firstIssued;
+
+    const current = adapter.readDisplayState(BINDING, deadline());
+    const result = expect(current).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+    await channel.waitForWrites(2);
+    expect(correlationIdForWrite(channel, 1)).toBe("device-rpc:adapter-a:1:2");
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: rejectedRequest.id,
+        result: displayWireResult(),
+      }),
+    );
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: rejectedRequest.id,
+        result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+      }),
+    );
+    channel.respondToWrite(1, displayWireResult());
+
+    await result;
+    write.mockRestore();
+  });
+
+  it.each(["current", "owned-invalid"] as const)(
+    "fences a same-turn oversized %s old-pending frame after takeover",
+    async (frameKind) => {
+      const oldChannel = new FakeDeviceRpcChannel();
+      const nextChannel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(
+        BINDING,
+        oldChannel,
+        { idNamespace: "adapter-a" },
+      );
+      const pending = adapter.readDisplayState(BINDING, deadline());
+      const rejected = expect(pending).rejects.toMatchObject({
+        code: "BINDING_REPLACED",
+        boundary: "ack",
+        outcome: "unknown",
+      });
+      await oldChannel.waitForWrites(1);
+      const currentId = correlationIdForWrite(oldChannel, 0);
+      adapter.replaceBinding(
+        { ...BINDING, browserChannelGeneration: 14 },
+        nextChannel,
+      );
+      nextChannel.emitRaw(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: frameKind === "current" ? currentId : "device-rpc:adapter-a:1:2",
+          result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+        }),
+      );
+
+      await rejected;
+    },
+  );
 
   it("rejects a display read continuation from repopulating cache after binding replacement", async () => {
     const oldChannel = new FakeDeviceRpcChannel();
