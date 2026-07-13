@@ -25,20 +25,100 @@
     },
     {
       "id": "scenario-ready",
-      "description": "An incumbent session is ready; one principal has session.takeover and a second principal does not.",
+      "description": "An incumbent session is ready; one principal has session.takeover and two distinct request identities are bound to principals that do not.",
+      "required": true
+    },
+    {
+      "id": "unauthorized-takeover-plane-baseline",
+      "description": "BrowserPlane, NativeControlPlane, and DeviceRpcAdapter call counters are zero before each unauthorized takeover request, and the incumbent session, generation, connection epoch, and browser-channel generation are recorded.",
       "required": true
     }
   ],
   "fault_script": [
     {
-      "id": "alternate-takeover-permission",
+      "id": "permission-denied-unauthorized-takeover",
       "after_step": null,
       "boundary": "before_admission",
-      "action": "Run the denied takeover first, then grant only the authorized principal the takeover permission.",
-      "expected_effect": "The denied request preserves the incumbent; the authorized request drains it before new publication."
+      "action": "Bind only permission-denied-unauthorized-takeover to its distinct principal without session.takeover and arm permission denial for that one connect call.",
+      "expected_effect": "The call returns PERMISSION_DENIED and not_sent before any BrowserPlane, NativeControlPlane, DeviceRpcAdapter, or downstream write; the incumbent binding is unchanged."
+    },
+    {
+      "id": "clear-permission-denied-unauthorized-takeover",
+      "after_step": "permission-denied-unauthorized-takeover",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the first permission-denial injector while preserving the incumbent and zero plane-call counters.",
+      "expected_effect": "No permission fault or request identity reaches the next independent denied takeover call."
+    },
+    {
+      "id": "alternate-takeover-permission",
+      "after_step": "permission-denied-unauthorized-takeover",
+      "boundary": "before_admission",
+      "action": "Bind only denied-takeover to the second distinct principal without session.takeover and arm permission denial for that one connect call.",
+      "expected_effect": "The denied request is not_sent with zero plane calls and preserves the incumbent."
+    },
+    {
+      "id": "clear-alternate-takeover-permission",
+      "after_step": "denied-takeover",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the second permission-denial injector while preserving the unchanged incumbent.",
+      "expected_effect": "No denial fault or unauthorized request identity reaches the authorized connect case."
+    },
+    {
+      "id": "arm-authorized-takeover-permission",
+      "after_step": "denied-takeover",
+      "boundary": "before_admission",
+      "action": "Bind only authorized-takeover to the principal with session.takeover and arm that permission grant for the one linked connect call.",
+      "expected_effect": "The authorized request reaches ordinary takeover admission, quiesces the incumbent, and publishes its successor only after acknowledgement."
+    },
+    {
+      "id": "clear-authorized-takeover-permission",
+      "after_step": "authorized-takeover",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the authorized-connect permission fixture after its one linked call while retaining takeover evidence.",
+      "expected_effect": "No connect permission fixture reaches old-generation inspection or the reconnect cases."
+    },
+    {
+      "id": "deny-reconnect-takeover-permission",
+      "after_step": "inspect-old-generation",
+      "boundary": "before_admission",
+      "action": "Bind only denied-reconnect-takeover to its principal without session.takeover and arm permission denial for that one reconnect call.",
+      "expected_effect": "The reconnect request is not_sent before any plane call or ownership change, leaving generation 7 unchanged."
+    },
+    {
+      "id": "clear-reconnect-takeover-permission",
+      "after_step": "denied-reconnect-takeover",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the reconnect permission-denial injector while preserving generation 7.",
+      "expected_effect": "No reconnect denial fault or unauthorized request identity reaches the authorized reconnect case."
+    },
+    {
+      "id": "arm-authorized-reconnect-takeover-permission",
+      "after_step": "denied-reconnect-takeover",
+      "boundary": "before_admission",
+      "action": "Bind only authorized-reconnect-takeover to the principal with session.takeover and arm that permission grant for the one linked reconnect call.",
+      "expected_effect": "The authorized reconnect reaches ordinary takeover admission, quiesces generation 7, and publishes its successor only after acknowledgement."
+    },
+    {
+      "id": "clear-authorized-reconnect-takeover-permission",
+      "after_step": "authorized-reconnect-takeover",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the authorized-reconnect permission fixture after its one linked call while retaining takeover evidence.",
+      "expected_effect": "No permission fixture, request identity, or story-owned session state survives into unconditional restore."
     }
   ],
   "steps": [
+    {
+      "id": "permission-denied-unauthorized-takeover",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-permission-denied-unauthorized-takeover-connect",
+        "takeover": true,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED with outcome not_sent, no capability disclosure, zero BrowserPlane, NativeControlPlane, DeviceRpcAdapter, or downstream calls, and the incumbent session, generation, connection epoch, and browser-channel generation unchanged."
+    },
     {
       "id": "denied-takeover",
       "tool": "jetkvm_session_connect",
@@ -49,7 +129,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "PERMISSION_DENIED with no capability disclosure and no write."
+      "expect": "PERMISSION_DENIED with outcome not_sent, no capability disclosure, zero BrowserPlane, NativeControlPlane, DeviceRpcAdapter, or downstream calls, and the incumbent binding unchanged."
     },
     {
       "id": "authorized-takeover",
@@ -87,7 +167,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "PERMISSION_DENIED before ownership change with the incumbent generation unchanged."
+      "expect": "PERMISSION_DENIED with outcome not_sent before any BrowserPlane, NativeControlPlane, DeviceRpcAdapter, or ownership call, with incumbent generation 7 unchanged."
     },
     {
       "id": "authorized-reconnect-takeover",
@@ -108,7 +188,7 @@
     {
       "id": "assertion-1",
       "requirement": "branch:permission-denied",
-      "assertion": "The response is actionable PERMISSION_DENIED, reveals no capability details, and records zero downstream writes."
+      "assertion": "The dedicated unauthorized connect response is actionable PERMISSION_DENIED and not_sent, reveals no capability details, records zero plane and downstream calls, and preserves the complete incumbent binding."
     },
     {
       "id": "assertion-2",
@@ -118,7 +198,7 @@
     {
       "id": "assertion-3",
       "requirement": "branch:unauthorized-takeover",
-      "assertion": "Unauthorized takeover returns a permission error and leaves the incumbent generation unchanged."
+      "assertion": "Each unauthorized connect or reconnect takeover uses a unique request identity, returns PERMISSION_DENIED and not_sent before every plane, and leaves the incumbent generation unchanged; each fault is unconditionally cleared before the authorized path."
     }
   ],
   "evidence": [

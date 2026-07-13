@@ -102,6 +102,19 @@ export type QualifiedEdidRead =
 
 export type AtxAction = "press_power" | "hold_power" | "press_reset";
 export type AtxWireAction = "power-short" | "power-long" | "reset";
+export type AtxLedObservation =
+  | {
+      readonly power: boolean | null;
+      readonly hdd: boolean | null;
+      readonly observedAt: string;
+      readonly freshness: "fresh" | "stale";
+    }
+  | {
+      readonly power: null;
+      readonly hdd: null;
+      readonly observedAt: null;
+      readonly freshness: "unknown";
+    };
 
 export interface AtxWireReceipt {
   readonly requestId: string;
@@ -110,12 +123,7 @@ export interface AtxWireReceipt {
   readonly fixedPressMs: 200 | 5000;
   readonly serialSequenceCompleted: true;
   readonly acknowledgedAt: string;
-  readonly atxLedObservation: {
-    readonly power: boolean | null;
-    readonly hdd: boolean | null;
-    readonly observedAt: string | null;
-    readonly freshness: FactFreshness;
-  };
+  readonly atxLedObservation: AtxLedObservation;
   readonly verification: "device_ack_only";
   readonly postRead: { readonly status: "available" | "unavailable" };
 }
@@ -291,6 +299,25 @@ const edidResultSchema = z.discriminatedUnion("status", [
     .strict(),
 ]);
 
+const atxLedObservationResultSchema = z.discriminatedUnion("freshness", [
+  z
+    .object({
+      power: z.boolean().nullable(),
+      hdd: z.boolean().nullable(),
+      observed_at: z.string().datetime(),
+      freshness: z.enum(["fresh", "stale"]),
+    })
+    .strict(),
+  z
+    .object({
+      power: z.null(),
+      hdd: z.null(),
+      observed_at: z.null(),
+      freshness: z.literal("unknown"),
+    })
+    .strict(),
+]);
+
 const atxResultSchema = z
   .object({
     request_id: z.string().min(1),
@@ -299,14 +326,7 @@ const atxResultSchema = z
     fixed_press_ms: z.union([z.literal(200), z.literal(5000)]),
     serial_sequence_completed: z.literal(true),
     acknowledged_at: z.string().datetime(),
-    atx_led_observation: z
-      .object({
-        power: z.boolean().nullable(),
-        hdd: z.boolean().nullable(),
-        observed_at: z.string().datetime().nullable(),
-        freshness: z.enum(["fresh", "stale", "unknown"]),
-      })
-      .strict(),
+    atx_led_observation: atxLedObservationResultSchema,
     post_read_error: z
       .object({ code: z.string().min(1).max(128) })
       .strict()
@@ -598,12 +618,20 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       fixedPressMs: parsed.data.fixed_press_ms,
       serialSequenceCompleted: true,
       acknowledgedAt: parsed.data.acknowledged_at,
-      atxLedObservation: {
-        power: parsed.data.atx_led_observation.power,
-        hdd: parsed.data.atx_led_observation.hdd,
-        observedAt: parsed.data.atx_led_observation.observed_at,
-        freshness: parsed.data.atx_led_observation.freshness,
-      },
+      atxLedObservation:
+        parsed.data.atx_led_observation.freshness === "unknown"
+          ? {
+              power: null,
+              hdd: null,
+              observedAt: null,
+              freshness: "unknown",
+            }
+          : {
+              power: parsed.data.atx_led_observation.power,
+              hdd: parsed.data.atx_led_observation.hdd,
+              observedAt: parsed.data.atx_led_observation.observed_at,
+              freshness: parsed.data.atx_led_observation.freshness,
+            },
       verification: "device_ack_only",
       postRead: {
         status:

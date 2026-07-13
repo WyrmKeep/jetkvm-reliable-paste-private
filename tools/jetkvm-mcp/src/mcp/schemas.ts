@@ -23,6 +23,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const opaqueIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
 const nonNegativeIntegerSchema = z.number().int().min(0).max(MAX_JSON_INTEGER);
 const positiveIntegerSchema = z.number().int().min(1).max(MAX_JSON_INTEGER);
+const positiveDimensionSchema = positiveIntegerSchema;
 const nonNegativeDimensionSchema = nonNegativeIntegerSchema;
 const timestampSchema = z.string().min(1);
 const sha256Schema = z.string().regex(SHA256_PATTERN);
@@ -796,6 +797,13 @@ const mutationErrorDetailsObject = (
     })
     .strict();
 
+const PASTE_PROGRESS_ERROR_CODES = [
+  "MUTATION_OUTCOME_UNKNOWN",
+  "PASTE_FAILED",
+  "PASTE_CANCELLED",
+  "EVENT_GAP",
+] as const satisfies readonly ErrorCode[];
+
 const mutationErrorDetails = (
   tool: JetKvmToolName,
   permission: z.ZodTypeAny,
@@ -811,6 +819,36 @@ const mutationErrorDetails = (
       zeroActionCountSchema,
       zeroActionCountSchema,
     );
+  }
+  if (
+    tool === "jetkvm_input_paste" &&
+    policy.outcome === "unknown" &&
+    policy.codes.some((code) =>
+      PASTE_PROGRESS_ERROR_CODES.some((candidate) => candidate === code),
+    )
+  ) {
+    return mutationErrorDetailsObject(
+      permission,
+      capability,
+      policy,
+      nonNegativeIntegerSchema.max(262_143).nullable(),
+      nonNegativeIntegerSchema.max(262_144),
+      nonNegativeIntegerSchema.max(262_144),
+    )
+      .superRefine((details, context) => {
+        if (details.completed_action_count <= details.dispatched_action_count) {
+          return;
+        }
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["completed_action_count"],
+          message:
+            "completed_action_count must not exceed dispatched_action_count.",
+        });
+      })
+      .describe(
+        "Paste progress counts are exact and completed_action_count must not exceed dispatched_action_count.",
+      );
   }
 
   const countTuple =
@@ -1318,14 +1356,14 @@ const imageMetadataSchema = z.discriminatedUnion("mime_type", [
 
 const displayCaptureResultShape = {
   observation_id: opaqueIdSchema,
-  connection_epoch: nonNegativeIntegerSchema,
+  connection_epoch: positiveIntegerSchema,
   display_generation: nonNegativeIntegerSchema,
   frame_id: opaqueIdSchema,
   captured_at: timestampSchema,
-  source_width: nonNegativeDimensionSchema,
-  source_height: nonNegativeDimensionSchema,
-  image_width: nonNegativeDimensionSchema,
-  image_height: nonNegativeDimensionSchema,
+  source_width: positiveDimensionSchema,
+  source_height: positiveDimensionSchema,
+  image_width: positiveDimensionSchema,
+  image_height: positiveDimensionSchema,
   rotation: z.union([
     z.literal(0),
     z.literal(90),
@@ -1336,8 +1374,8 @@ const displayCaptureResultShape = {
     .object({
       content_x: nonNegativeIntegerSchema,
       content_y: nonNegativeIntegerSchema,
-      content_width: nonNegativeDimensionSchema,
-      content_height: nonNegativeDimensionSchema,
+      content_width: positiveDimensionSchema,
+      content_height: positiveDimensionSchema,
     })
     .strict(),
   image: imageMetadataSchema,
@@ -1373,7 +1411,7 @@ const mutationResult = (extraShape: z.ZodRawShape) =>
 
 export const sessionConnectResultSchema = mutationResult({
   state: z.literal("ready"),
-  connection_epoch: nonNegativeIntegerSchema,
+  connection_epoch: positiveIntegerSchema,
   display_generation: nonNegativeIntegerSchema,
   takeover_performed: z.boolean(),
   fresh_capture_required: z.literal(true),
@@ -1441,7 +1479,7 @@ export const sessionReconnectResultSchema = z
     ...definitiveMutationShape,
     previous_session_generation: nonNegativeIntegerSchema,
     new_session_generation: positiveIntegerSchema,
-    connection_epoch: nonNegativeIntegerSchema,
+    connection_epoch: positiveIntegerSchema,
     state: z.literal("ready"),
     takeover_performed: z.boolean(),
     fresh_capture_required: z.literal(true),
@@ -1530,8 +1568,8 @@ export const inputKeyboardResultSchema = mutationResult({
   post_capture: displayCaptureResultSchema.nullable(),
 }).and(keyboardSuccessCountTuple);
 export const inputPasteResultSchema = mutationResult({
-  original_byte_count: nonNegativeIntegerSchema,
-  normalized_byte_count: nonNegativeIntegerSchema,
+  original_byte_count: positiveIntegerSchema,
+  normalized_byte_count: positiveIntegerSchema.max(262_144),
   normalized_sha256: sha256Schema,
   accepted_at: timestampSchema,
   completed_at: timestampSchema,

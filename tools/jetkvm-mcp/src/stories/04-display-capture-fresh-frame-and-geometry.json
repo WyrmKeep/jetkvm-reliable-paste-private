@@ -27,6 +27,13 @@
   ],
   "fault_script": [
     {
+      "id": "remove-display-capture-capability",
+      "after_step": "capture-fresh-frame",
+      "boundary": "before_admission",
+      "action": "Set display_capture=false for the next jetkvm_display_capture call while preserving the owned session and its generation.",
+      "expected_effect": "The read ToolError is CAPABILITY_MISSING at phase validate with outcome null, verification none, safe_to_retry false, required_next_step enable_capability, details.capability display_capture, details.downstream_stage none, and zero BrowserPlane capture calls."
+    },
+    {
       "id": "post-capture-cleanup-failure",
       "after_step": "capture-fresh-frame",
       "boundary": "during_cleanup",
@@ -49,13 +56,28 @@
       },
       "timeout_ms": 1000,
       "expect": "A newly decoded frame, opaque observation identifier, immutable source geometry, and one authorized image block."
+    },
+    {
+      "id": "capture-without-display-capability",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING read ToolError with phase validate, outcome null, verification none, safe_to_retry false, required_next_step enable_capability, details.permission null, details.capability display_capture, details.failed_action_index null, details.dispatched_action_count null, details.completed_action_count null, and details.downstream_stage none. Separately, ordered harness evidence records exactly zero BrowserPlane capture calls."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:capability-missing",
-      "assertion": "The response is actionable CAPABILITY_MISSING and records zero mutation writes."
+      "assertion": "With display_capture=false, the explicit capture call returns CAPABILITY_MISSING at phase validate with outcome null, verification none, safe_to_retry false, required_next_step enable_capability, details.capability display_capture, details.downstream_stage none, and exactly zero BrowserPlane capture calls."
     },
     {
       "id": "assertion-2",

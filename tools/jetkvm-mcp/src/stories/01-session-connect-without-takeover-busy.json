@@ -75,7 +75,7 @@
       "after_step": "reject-strict-schema-jetkvm-session-status",
       "boundary": "before_admission",
       "action": "Arm the deterministic deadline-before-admission injector for jetkvm_display_capture only.",
-      "expected_effect": "The next jetkvm_display_capture call expires before admission with zero downstream calls."
+      "expected_effect": "The read call returns DEADLINE_EXCEEDED at phase queue with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage none; internal evidence records zero admissions and zero downstream writes."
     },
     {
       "id": "clear-expired-deadline-jetkvm-display-capture",
@@ -89,7 +89,7 @@
       "after_step": "deadline-before-admission-jetkvm-display-capture",
       "boundary": "before_admission",
       "action": "Arm the deterministic deadline-before-admission injector for jetkvm_display_status only.",
-      "expected_effect": "The next jetkvm_display_status call expires before admission with zero downstream calls."
+      "expected_effect": "The read call returns DEADLINE_EXCEEDED at phase queue with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage none; internal evidence records zero admissions and zero downstream writes."
     },
     {
       "id": "clear-expired-deadline-jetkvm-display-status",
@@ -170,7 +170,7 @@
     },
     {
       "id": "expire-before-admission-jetkvm-session-connect",
-      "after_step": "retry-deadline-before-admission-jetkvm-power-control",
+      "after_step": "restore-reprove-atx-after-deadline-power-retry",
       "boundary": "before_admission",
       "action": "Arm the deterministic deadline-before-admission injector for jetkvm_session_connect only.",
       "expected_effect": "The next jetkvm_session_connect call expires before admission with zero downstream calls."
@@ -201,7 +201,7 @@
       "after_step": "retry-deadline-before-admission-jetkvm-session-reconnect",
       "boundary": "before_admission",
       "action": "Arm the deterministic deadline-before-admission injector for jetkvm_session_status only.",
-      "expected_effect": "The next jetkvm_session_status call expires before admission with zero downstream calls."
+      "expected_effect": "The read call returns DEADLINE_EXCEEDED at phase queue with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage none; internal evidence records zero admissions and zero downstream writes."
     },
     {
       "id": "clear-expired-deadline-jetkvm-session-status",
@@ -432,7 +432,7 @@
         "timeout_ms": 100
       },
       "timeout_ms": 100,
-      "expect": "not_sent for jetkvm_display_capture before admission with zero downstream calls and its queue admission state released."
+      "expect": "DEADLINE_EXCEEDED read ToolError with phase queue, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage none. Separately, ordered harness evidence records admission count 0, accepted downstream write count 0, no BrowserPlane call, and no image block."
     },
     {
       "id": "deadline-before-admission-jetkvm-display-status",
@@ -444,7 +444,7 @@
         "timeout_ms": 100
       },
       "timeout_ms": 100,
-      "expect": "not_sent for jetkvm_display_status before admission with zero downstream calls and its queue admission state released."
+      "expect": "DEADLINE_EXCEEDED read ToolError with phase queue, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage none. Separately, ordered harness evidence records admission count 0, accepted downstream write count 0, and no BrowserPlane call."
     },
     {
       "id": "deadline-before-admission-jetkvm-input-keyboard",
@@ -613,6 +613,20 @@
       "expect": "applied through ordinary admission after the deadline fault is cleared, proving the power request reservation was released."
     },
     {
+      "id": "restore-reprove-atx-after-deadline-power-retry",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-reprove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "restore_serial": true,
+        "restore_extension": true,
+        "restore_observable_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Restore and re-prove the ATX serial binding, extension state, and recorded observable baseline before arming the session-connect deadline cell."
+    },
+    {
       "id": "deadline-before-admission-jetkvm-session-connect",
       "tool": "jetkvm_session_connect",
       "call": "tools/call",
@@ -674,7 +688,7 @@
         "timeout_ms": 100
       },
       "timeout_ms": 100,
-      "expect": "not_sent for jetkvm_session_status before admission with zero downstream calls and its queue admission state released."
+      "expect": "DEADLINE_EXCEEDED read ToolError with phase queue, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage none. Separately, ordered harness evidence records admission count 0, accepted downstream write count 0, and no BrowserPlane call."
     },
     {
       "id": "reconnect-without-takeover",
@@ -700,7 +714,7 @@
     {
       "id": "assertion-2",
       "requirement": "branch:deadline-before-admission",
-      "assertion": "Each linked tool call runs under its compatible deadline-before-admission fault and returns not_sent with zero downstream calls. Clearing each fault releases admission state; every mutation retries the same normalized input under its tool-unique request identifier and reaches ordinary applied or CONTROL_BUSY handling."
+      "assertion": "Each linked mutation call runs under its compatible deadline-before-admission fault and returns not_sent; the three read calls return DEADLINE_EXCEEDED with outcome null and verification none. Separate harness evidence proves zero admissions and zero downstream writes, each one-shot fault is cleared, and every mutation retries the same normalized input to ordinary applied or CONTROL_BUSY handling."
     },
     {
       "id": "assertion-3",

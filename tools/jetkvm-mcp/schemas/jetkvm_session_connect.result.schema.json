@@ -61,7 +61,7 @@
               "const": "ready"
             },
             "connection_epoch": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
+              "$ref": "#/anyOf/0/properties/session_generation"
             },
             "display_generation": {
               "$ref": "#/anyOf/0/properties/duration_ms"

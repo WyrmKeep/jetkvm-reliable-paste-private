@@ -202,6 +202,40 @@ describe("structured redacting logger", () => {
     });
   });
 
+  it("redacts malformed JSON-like strings with escaped key material", () => {
+    const malformedEscapedKeys = [
+      String.raw`{"im\u0061ge":"unicode-image-secret"`,
+      String.raw`{"p\x61stePayload":"hex-paste-secret"`,
+      String.raw`{"pro\of":"backslash-proof-secret"`,
+      String.raw`{"\u0073dp":"unicode-sdp-secret"`,
+      String.raw`{\"creden\u0074ial\":\"unicode-credential-secret\"`,
+    ];
+    const validEscapedJson = String.raw`{"im\u0061ge":"valid-image-secret","status":"valid-safe-sibling"}`;
+    const safeNonJson = String.raw`diagnostic path C:\temp\proof\trace`;
+
+    const redacted = redactStructuredData({
+      malformedEscapedKeys,
+      validEscapedJson,
+      safeNonJson,
+    });
+    requireRecord(redacted);
+    if (typeof redacted.validEscapedJson !== "string") {
+      throw new TypeError("Expected valid serialized JSON");
+    }
+
+    expect(redacted).toMatchObject({
+      malformedEscapedKeys: malformedEscapedKeys.map(() => "[REDACTED]"),
+      safeNonJson,
+    });
+    expect(JSON.parse(redacted.validEscapedJson)).toEqual({
+      image: "[REDACTED]",
+      status: "valid-safe-sibling",
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /unicode-image-secret|hex-paste-secret|backslash-proof-secret|unicode-sdp-secret|unicode-credential-secret|valid-image-secret/,
+    );
+  });
+
   it("redacts recursive error records without hiding safe siblings or losing cycle safety", () => {
     const cyclicError: Record<string, unknown> = {
       name: "RangeError",

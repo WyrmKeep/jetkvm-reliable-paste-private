@@ -5,12 +5,15 @@ import {
   JETKVM_TOOL_NAMES,
   PERMISSION_NAMES,
   type CapabilitySnapshot,
+  type AtxLedObservation,
   type DisplayCaptureResult,
   type KeyboardAction,
   type MutationState,
+  type InputPasteResult,
   type PhysicalKey,
   type SessionConnectInput,
   type SessionConnectResult,
+  type PowerControlResult,
   type Success,
   type ToolError,
 } from "./domain.js";
@@ -145,6 +148,80 @@ describe("canonical domain contracts", () => {
     expect(capture.image).not.toHaveProperty("data");
     expect(capture.image).not.toHaveProperty("bytes");
     expect(capture.image).not.toHaveProperty("base64");
+  });
+
+  it("narrows successful paste to the correlated succeeded lifecycle", () => {
+    const result: InputPasteResult = {
+      request_id: "request-1",
+      outcome: "applied",
+      verification: "device_ack_only",
+      safe_to_retry: false,
+      required_next_step: "none",
+      original_byte_count: 5,
+      normalized_byte_count: 5,
+      normalized_sha256: "b".repeat(64),
+      accepted_at: "2026-07-13T00:00:00.000Z",
+      completed_at: "2026-07-13T00:00:01.000Z",
+      terminal_state: "succeeded",
+      measured_chars_per_second: 91,
+      post_capture: null,
+    };
+    expect(result).toMatchObject({
+      accepted_at: expect.any(String),
+      completed_at: expect.any(String),
+      terminal_state: "succeeded",
+    });
+    expectTypeOf<InputPasteResult["accepted_at"]>().toEqualTypeOf<string>();
+    expectTypeOf<InputPasteResult["completed_at"]>().toEqualTypeOf<string>();
+    expectTypeOf<
+      InputPasteResult["terminal_state"]
+    >().toEqualTypeOf<"succeeded">();
+  });
+
+  it("discriminates observed and unknown ATX LED facts", () => {
+    const observed: AtxLedObservation = {
+      power: true,
+      hdd: null,
+      observed_at: "2026-07-13T00:00:00.000Z",
+      freshness: "fresh",
+    };
+    const unknown: AtxLedObservation = {
+      power: null,
+      hdd: null,
+      observed_at: null,
+      freshness: "unknown",
+    };
+    const result: PowerControlResult = {
+      request_id: "request-2",
+      outcome: "applied",
+      verification: "device_ack_only",
+      safe_to_retry: false,
+      required_next_step: "none",
+      action: "press_power",
+      wire_action: "power-short",
+      fixed_press_ms: 200,
+      serial_sequence_completed: true,
+      atx_led_observation: unknown,
+    };
+    expect(observed).toMatchObject({
+      observed_at: expect.any(String),
+      freshness: "fresh",
+    });
+    expect(result.atx_led_observation).toEqual({
+      power: null,
+      hdd: null,
+      observed_at: null,
+      freshness: "unknown",
+    });
+    expectTypeOf<
+      Extract<AtxLedObservation, { freshness: "unknown" }>["observed_at"]
+    >().toEqualTypeOf<null>();
+    expectTypeOf<
+      Extract<
+        AtxLedObservation,
+        { freshness: "fresh" | "stale" }
+      >["observed_at"]
+    >().toEqualTypeOf<string>();
   });
 
   it("types exact common mutation, success, and error envelopes", () => {

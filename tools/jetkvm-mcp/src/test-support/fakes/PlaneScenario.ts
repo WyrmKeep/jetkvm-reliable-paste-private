@@ -1,4 +1,5 @@
 import type { Deadline } from "../../device/DeviceRpcAdapter.js";
+import type { ErrorCode, RequiredNextStep } from "../../errors.js";
 
 export type PlaneOperation =
   | "connect"
@@ -58,8 +59,10 @@ export interface PlaneEvent {
 }
 
 interface FaultClassification {
-  readonly code: string;
-  readonly outcome: "not_sent" | "unknown" | "applied" | "already_applied";
+  readonly code: ErrorCode;
+  readonly outcome: "not_sent" | "unknown" | "applied";
+  readonly safeToRetry: boolean;
+  readonly requiredNextStep: RequiredNextStep;
   readonly boundary:
     | "admission"
     | "queue"
@@ -75,6 +78,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   deadline_before_admission: {
     code: "DEADLINE_EXCEEDED",
     outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "none",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
@@ -82,6 +87,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   cancellation_before_admission: {
     code: "CANCELLED",
     outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "none",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
@@ -89,6 +96,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   disconnect_before_write: {
     code: "CONNECTION_LOST",
     outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "reconnect_then_capture",
     boundary: "send",
     acknowledged: false,
     suffixSuppressed: false,
@@ -96,27 +105,35 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   disconnect_after_write_before_ack: {
     code: "CONNECTION_LOST",
     outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
     boundary: "ack",
     acknowledged: false,
     suffixSuppressed: false,
   },
   disconnect_after_ack_before_post_read: {
-    code: "POST_ACK_READ_FAILED",
+    code: "PARTIAL_VERIFICATION",
     outcome: "applied",
+    safeToRetry: false,
+    requiredNextStep: "none",
     boundary: "post_ack",
     acknowledged: true,
     suffixSuppressed: false,
   },
   disconnect_after_persisted_terminal: {
-    code: "TERMINAL_RESULT_PRESERVED",
+    code: "PARTIAL_VERIFICATION",
     outcome: "applied",
+    safeToRetry: false,
+    requiredNextStep: "none",
     boundary: "persisted",
     acknowledged: true,
     suffixSuppressed: false,
   },
   malformed_response: {
-    code: "MALFORMED_RESPONSE",
+    code: "DOWNSTREAM_MALFORMED_RESPONSE",
     outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
     boundary: "ack",
     acknowledged: false,
     suffixSuppressed: false,
@@ -124,6 +141,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   permission_denied: {
     code: "PERMISSION_DENIED",
     outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "grant_permission",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
@@ -131,6 +150,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   capability_missing: {
     code: "CAPABILITY_MISSING",
     outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "enable_capability",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
@@ -138,6 +159,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   control_busy: {
     code: "CONTROL_BUSY",
     outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "wait_or_request_takeover",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
@@ -145,6 +168,8 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   takeover: {
     code: "SESSION_TAKEN_OVER",
     outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
     boundary: "ack",
     acknowledged: false,
     suffixSuppressed: false,
@@ -152,34 +177,44 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   stale_generation: {
     code: "STALE_SESSION_GENERATION",
     outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
   },
   partial_multi_event: {
-    code: "PARTIAL_DISPATCH",
+    code: "MUTATION_OUTCOME_UNKNOWN",
     outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
     boundary: "ack",
     acknowledged: false,
     suffixSuppressed: true,
   },
   partial_verification: {
-    code: "POST_ACK_READ_FAILED",
+    code: "PARTIAL_VERIFICATION",
     outcome: "applied",
+    safeToRetry: false,
+    requiredNextStep: "none",
     boundary: "post_ack",
     acknowledged: true,
     suffixSuppressed: false,
   },
   cleanup_failure: {
-    code: "CLEANUP_FAILED",
+    code: "MUTATION_OUTCOME_UNKNOWN",
     outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
     boundary: "post_ack",
     acknowledged: false,
     suffixSuppressed: true,
   },
   post_reconnect_without_capture: {
-    code: "FRESH_CAPTURE_REQUIRED",
+    code: "STALE_OBSERVATION",
     outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "capture_then_retry",
     boundary: "admission",
     acknowledged: false,
     suffixSuppressed: false,
@@ -187,30 +222,32 @@ const FAULT_CLASSIFICATION: Record<PlaneFault, FaultClassification> = {
   event_gap: {
     code: "EVENT_GAP",
     outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
     boundary: "ack",
     acknowledged: false,
     suffixSuppressed: true,
   },
   duplicate_request_id: {
-    code: "ALREADY_APPLIED",
-    outcome: "already_applied",
+    code: "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "none",
     boundary: "admission",
-    acknowledged: true,
+    acknowledged: false,
     suffixSuppressed: false,
   },
 };
 
 export class PlaneFaultError extends Error {
   public readonly name = "PlaneFaultError";
-  public readonly code: string;
-  public readonly outcome:
-    | "not_sent"
-    | "unknown"
-    | "applied"
-    | "already_applied";
+  public readonly code: ErrorCode;
+  public readonly outcome: "not_sent" | "unknown" | "applied";
   public readonly boundary: FaultClassification["boundary"];
   public readonly acknowledged: boolean;
   public readonly suffixSuppressed: boolean;
+  public readonly safeToRetry: boolean;
+  public readonly requiredNextStep: RequiredNextStep;
 
   public constructor(
     public readonly fault: PlaneFault,
@@ -221,6 +258,8 @@ export class PlaneFaultError extends Error {
     super(`The fake plane forced ${classification.code}.`);
     this.code = classification.code;
     this.outcome = classification.outcome;
+    this.safeToRetry = classification.safeToRetry;
+    this.requiredNextStep = classification.requiredNextStep;
     this.boundary = classification.boundary;
     this.acknowledged = classification.acknowledged;
     this.suffixSuppressed = classification.suffixSuppressed;

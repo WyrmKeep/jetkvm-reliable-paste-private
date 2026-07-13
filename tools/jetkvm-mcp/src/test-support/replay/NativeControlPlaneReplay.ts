@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type {
   Deadline,
   DeviceRpcAdapter,
@@ -16,6 +18,39 @@ import {
   type JsonValue,
   type SanitizedReplayTape,
 } from "./SanitizedReplayTape.js";
+
+const powerReceiptSchema = z
+  .object({
+    requestId: z.string().min(1),
+    action: z.enum(["press_power", "hold_power", "press_reset"]),
+    wireAction: z.enum(["power-short", "power-long", "reset"]),
+    fixedPressMs: z.union([z.literal(200), z.literal(5000)]),
+    serialSequenceCompleted: z.literal(true),
+    acknowledgedAt: z.string().datetime(),
+    atxLedObservation: z.discriminatedUnion("freshness", [
+      z
+        .object({
+          power: z.boolean().nullable(),
+          hdd: z.boolean().nullable(),
+          observedAt: z.string().datetime(),
+          freshness: z.enum(["fresh", "stale"]),
+        })
+        .strict(),
+      z
+        .object({
+          power: z.null(),
+          hdd: z.null(),
+          observedAt: z.null(),
+          freshness: z.literal("unknown"),
+        })
+        .strict(),
+    ]),
+    verification: z.literal("device_ack_only"),
+    postRead: z
+      .object({ status: z.enum(["available", "unavailable"]) })
+      .strict(),
+  })
+  .strict();
 
 export class NativeControlPlaneReplay implements NativeControlPlane {
   private readonly replay: SanitizedReplayCursor;
@@ -79,6 +114,9 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
       request,
       deadline,
     );
+    if (!powerReceiptSchema.safeParse(actual).success) {
+      throw new Error("Native replay ATX receipt shape is invalid.");
+    }
     this.replay.assertResult("powerControl", expected, this.asJson(actual));
     return actual;
   }

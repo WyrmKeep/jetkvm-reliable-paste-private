@@ -7,7 +7,13 @@
     "branch:partial-multi-event-dispatch",
     "contract:reliable-paste-correlated-terminal"
   ],
-  "tools": ["jetkvm_display_capture", "jetkvm_input_paste"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -31,22 +37,43 @@
       "id": "cancel-before-paste-acceptance",
       "after_step": "capture-cancel-observation",
       "boundary": "before_write",
-      "action": "Arm a one-shot cancellation for paste-cancel-before-acceptance before the paste operation is accepted, then clear the fault.",
+      "action": "Arm a one-shot cancellation for paste-cancel-before-acceptance before the paste operation is accepted.",
       "expected_effect": "The call is not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and its request reservation released."
+    },
+    {
+      "id": "clear-cancel-before-paste-acceptance",
+      "after_step": "paste-cancel-before-acceptance",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the paste cancellation injector after its one linked call.",
+      "expected_effect": "No later paste call inherits the cancellation fault; the released request reservation and ready generation 7 remain available."
     },
     {
       "id": "disconnect-after-paste-write",
       "after_step": "capture-disconnect-observation",
       "boundary": "after_write",
-      "action": "Arm a one-shot channel loss for paste-disconnect-after-write immediately after exactly one paste event is dispatched and before any correlated completion, then clear the fault.",
+      "action": "Arm a one-shot channel loss for paste-disconnect-after-write immediately after exactly one paste event is dispatched and before any correlated completion.",
       "expected_effect": "The call is unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
+    },
+    {
+      "id": "clear-disconnect-after-paste-write",
+      "after_step": "paste-disconnect-after-write",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the one-shot channel-loss injector without reopening the closed generation-7 mutation gate.",
+      "expected_effect": "No later call inherits the channel-loss fault; generation 7 remains closed until the explicit inspect, release, and reconnect recovery sequence publishes generation 8."
     },
     {
       "id": "paste-boundary-sequence",
       "after_step": "capture-paste-observation",
       "boundary": "after_write",
-      "action": "Arm a one-shot partial dispatch for submit-reliable-paste after exactly two of fourteen character events are dispatched but only the first completes, then suppress the suffix and clear the fault.",
+      "action": "Arm a one-shot partial dispatch for submit-reliable-paste after exactly two of fourteen character events are dispatched but only the first completes, then suppress the suffix.",
       "expected_effect": "The call is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
+    },
+    {
+      "id": "clear-paste-boundary-sequence",
+      "after_step": "submit-reliable-paste",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the partial-dispatch injector without reopening the closed generation-8 mutation gate.",
+      "expected_effect": "No later call inherits the partial-dispatch fault; generation 8 remains closed until explicit inspect, release, and reconnect recovery publishes generation 9."
     }
   ],
   "steps": [
@@ -105,12 +132,51 @@
       "expect": "unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
     },
     {
+      "id": "inspect-disconnect-after-write-unknown",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Read-only inspection preserves the paste request's unknown outcome and confirms generation 7 has a closed mutation gate without replaying any character event."
+    },
+    {
+      "id": "release-disconnect-after-write-unknown",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request-release-after-paste-disconnect-unknown",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Generation-correlated emergency release drains and joins the ambiguous paste producer, proves zero held input, and does not reopen generation 7 or replay the paste."
+    },
+    {
+      "id": "reconnect-disconnect-after-write-unknown",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request-reconnect-after-paste-disconnect-unknown",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect retires generation 7 and publishes ready generation 8 with a new browser-owned channel, RPC binding, and fresh_capture_required true."
+    },
+    {
       "id": "capture-paste-observation",
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -122,7 +188,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-paste-partial-dispatch",
         "request_id": "opaque-request-paste-partial-dispatch",
         "text": "FixturePaste91",
@@ -132,12 +198,51 @@
       "expect": "unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
     },
     {
+      "id": "inspect-partial-paste-unknown",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Read-only inspection preserves the partial paste's unknown outcome and exact counts while confirming generation 8 has a closed mutation gate and no suffix replay."
+    },
+    {
+      "id": "release-partial-paste-unknown",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-request-release-after-partial-paste-unknown",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Generation-correlated emergency release drains and joins the partial paste producer, proves zero held input, and neither dispatches the suppressed suffix nor reopens generation 8."
+    },
+    {
+      "id": "reconnect-partial-paste-unknown",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-request-reconnect-after-partial-paste-unknown",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect retires generation 8 and publishes ready generation 9 with a new browser-owned channel, RPC binding, and fresh_capture_required true."
+    },
+    {
       "id": "capture-correlated-terminal-observation",
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 9,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -149,7 +254,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 9,
         "observation_id": "opaque-observation-paste-correlated-terminal",
         "request_id": "opaque-request-paste-correlated-terminal",
         "text": "FixturePaste91",
@@ -168,17 +273,17 @@
     {
       "id": "assertion-2",
       "requirement": "branch:disconnect-after-write",
-      "assertion": "Disconnect after exactly one paste event is dispatched is unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
+      "assertion": "Disconnect after exactly one paste event is dispatched is unknown with dispatched_count 1, completed_count 0, a closed generation-7 mutation gate, and zero replay writes; inspection and emergency release precede reconnect to generation 8."
     },
     {
       "id": "assertion-3",
       "requirement": "branch:partial-multi-event-dispatch",
-      "assertion": "Partial paste dispatch is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
+      "assertion": "Partial paste dispatch in fresh generation 8 is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes; inspection and emergency release precede reconnect to generation 9."
     },
     {
       "id": "assertion-4",
       "requirement": "contract:reliable-paste-correlated-terminal",
-      "assertion": "Only the distinct fault-free call's correlated submitted-active-succeeded sequence proves all fourteen characters completed at measured nominal pacing; no error branch claims target-application acceptance."
+      "assertion": "Only the distinct fault-free generation-9 call, using a newly captured generation-9 observation, proves all fourteen correlated submitted-active-succeeded characters completed at measured nominal pacing; no error branch claims target-application acceptance."
     }
   ],
   "evidence": [

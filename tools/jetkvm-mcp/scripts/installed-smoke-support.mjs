@@ -6,42 +6,72 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export async function prepareInstalledPackage(label) {
-  const root = await mkdtemp(join(tmpdir(), `jetkvm-mcp-${label}-`));
-  const artifacts = join(root, "artifacts");
-  const consumer = join(root, "consumer");
-  await mkdir(artifacts);
-  await mkdir(consumer);
-  await writeFile(
-    join(consumer, "package.json"),
-    `${JSON.stringify({ private: true, type: "module" })}\n`,
-  );
-
-  const packed = await execFileAsync(
-    process.env.npm_execpath ?? "npm",
-    ["pack", "--json", "--pack-destination", artifacts],
-    { cwd: process.cwd(), maxBuffer: 4 * 1024 * 1024 },
-  );
-  const packResult = JSON.parse(packed.stdout);
-  if (
-    !Array.isArray(packResult) ||
-    typeof packResult[0]?.filename !== "string"
-  ) {
-    throw new Error("npm pack did not report a tarball");
-  }
-  const tarball = join(artifacts, packResult[0].filename);
-  await execFileAsync(
-    process.env.npm_execpath ?? "npm",
-    ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
-    { cwd: consumer, maxBuffer: 4 * 1024 * 1024 },
-  );
-  await writeDeterministicHandlers(consumer);
-
-  return {
-    root,
-    consumer,
-    cleanup: async () => rm(root, { recursive: true, force: true }),
+export async function prepareInstalledPackage(
+  label,
+  {
+    execFileImpl = execFileAsync,
+    mkdirImpl = mkdir,
+    mkdtempImpl = mkdtemp,
+    rmImpl = rm,
+    writeFileImpl = writeFile,
+  } = {},
+) {
+  const root = await mkdtempImpl(join(tmpdir(), `jetkvm-mcp-${label}-`));
+  let cleanupPromise;
+  const cleanup = () => {
+    cleanupPromise ??= Promise.resolve().then(() =>
+      rmImpl(root, { recursive: true, force: true }),
+    );
+    return cleanupPromise;
   };
+
+  try {
+    const artifacts = join(root, "artifacts");
+    const consumer = join(root, "consumer");
+    await mkdirImpl(artifacts);
+    await mkdirImpl(consumer);
+    await writeFileImpl(
+      join(consumer, "package.json"),
+      `${JSON.stringify({ private: true, type: "module" })}\n`,
+    );
+
+    const packed = await execFileImpl(
+      process.env.npm_execpath ?? "npm",
+      ["pack", "--json", "--pack-destination", artifacts],
+      { cwd: process.cwd(), maxBuffer: 4 * 1024 * 1024 },
+    );
+    const packResult = JSON.parse(packed.stdout);
+    if (
+      !Array.isArray(packResult) ||
+      typeof packResult[0]?.filename !== "string"
+    ) {
+      throw new Error("npm pack did not report a tarball");
+    }
+    const tarball = join(artifacts, packResult[0].filename);
+    await execFileImpl(
+      process.env.npm_execpath ?? "npm",
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+      { cwd: consumer, maxBuffer: 4 * 1024 * 1024 },
+    );
+    await writeDeterministicHandlers(consumer, writeFileImpl);
+
+    return {
+      root,
+      consumer,
+      cleanup,
+    };
+  } catch (preparationError) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [preparationError, cleanupError],
+        "Installed package preparation and temporary-directory cleanup both failed",
+        { cause: preparationError },
+      );
+    }
+    throw preparationError;
+  }
 }
 
 export async function runInstalledModule(consumer, filename, source) {
@@ -53,8 +83,8 @@ export async function runInstalledModule(consumer, filename, source) {
   });
 }
 
-async function writeDeterministicHandlers(consumer) {
-  await writeFile(
+async function writeDeterministicHandlers(consumer, writeFileImpl) {
+  await writeFileImpl(
     join(consumer, "deterministic-handlers.mjs"),
     `import { JETKVM_TOOL_NAMES } from "@wyrmkeep/jetkvm-mcp/dist/domain.js";
 

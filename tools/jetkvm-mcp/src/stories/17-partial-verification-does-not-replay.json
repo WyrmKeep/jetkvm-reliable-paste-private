@@ -1,15 +1,11 @@
 {
   "id": "partial-verification-does-not-replay",
   "title": "Partial verification preserves definitive acknowledgement without replay",
-  "requirements": [
-    "branch:definitive-acknowledgement",
-    "branch:partial-verification"
-  ],
+  "requirements": ["branch:partial-verification"],
   "tools": [
     "jetkvm_input_keyboard",
     "jetkvm_input_mouse",
     "jetkvm_input_paste",
-    "jetkvm_input_release",
     "jetkvm_power_control",
     "jetkvm_session_connect",
     "jetkvm_session_reconnect"
@@ -40,10 +36,10 @@
   "fault_script": [
     {
       "id": "fail-post-ack-read",
-      "after_step": "power-with-post-read-failure",
+      "after_step": "restore-and-prove-after-power-post-read-failure",
       "boundary": "during_verification",
-      "action": "After each linked mutation receives a definitive acknowledgement, fail its optional verification or post-operation read.",
-      "expected_effect": "The applied acknowledgement is preserved as device_ack_only and the mutation is not replayed."
+      "action": "After each linked mutation with a legal partial-verification branch receives a definitive acknowledgement, fail its optional verification or post-operation read.",
+      "expected_effect": "For each applicable linked mutation, the applied acknowledgement is preserved as device_ack_only and the mutation is not replayed. Emergency input release is reviewed as not applicable: legal success requires every correlated drain, producer, paste, lease, keyboard, and pointer proof and is applied/device_state_verified; missing release proof is unknown/none with the gate closed, safe_to_retry false, and required_next_step release_then_reconnect_then_capture."
     }
   ],
   "steps": [
@@ -60,6 +56,22 @@
       },
       "timeout_ms": 1000,
       "expect": "applied with device_ack_only and a separate unavailable or stale LED fact."
+    },
+    {
+      "id": "restore-and-prove-after-power-post-read-failure",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "press_reset",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the acknowledged power call and failed LED post-read, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before arming the next linked partial-verification case."
     },
     {
       "id": "partial-verification-jetkvm-session-connect",
@@ -144,19 +156,6 @@
       "expect": "applied for jetkvm_input_paste with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
     },
     {
-      "id": "partial-verification-jetkvm-input-release",
-      "tool": "jetkvm_input_release",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-partial-verification-input-release",
-        "timeout_ms": 1000
-      },
-      "timeout_ms": 1000,
-      "expect": "applied for jetkvm_input_release with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
-    },
-    {
       "id": "partial-verification-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
@@ -173,24 +172,12 @@
   ],
   "pass": [
     {
-      "id": "assertion-1",
-      "requirement": "branch:definitive-acknowledgement",
-      "assertion": "A correlated definitive acknowledgement is applied with its exact verification strength."
-    },
-    {
       "id": "assertion-2",
       "requirement": "branch:partial-verification",
-      "assertion": "A definitive applied acknowledgement remains device_ack_only when post-read verification fails and is never replayed."
+      "assertion": "For each applicable mutation, a definitive applied acknowledgement remains device_ack_only when its optional post-read verification fails and is never replayed; emergency input release is reviewed as not applicable because its success envelope requires device_state_verified."
     }
   ],
   "evidence": [
-    {
-      "id": "evidence-1",
-      "requirement": "branch:definitive-acknowledgement",
-      "field": "requirement_result",
-      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
-      "retention": "release_manifest"
-    },
     {
       "id": "evidence-2",
       "requirement": "branch:partial-verification",

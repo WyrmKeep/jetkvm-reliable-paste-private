@@ -104,6 +104,8 @@ export interface ReleaseReceipt extends MutationReceipt {
 
 /** Capability-shaped access to the one managed product browser/WebRTC path. */
 export interface BrowserPlane {
+  /** Exact Browser-owned RPC adapter shared with the native plane. */
+  readonly deviceRpc: DeviceRpcAdapter;
   connect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
   reconnect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
   capture(

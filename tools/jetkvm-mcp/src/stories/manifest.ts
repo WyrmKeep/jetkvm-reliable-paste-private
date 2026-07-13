@@ -77,20 +77,6 @@ export const FOCUSED_ASSERTION_OWNER_PHASES = [
 export type FocusedAssertionOwnerPhase =
   (typeof FOCUSED_ASSERTION_OWNER_PHASES)[number];
 
-export const FOCUSED_ASSERTION_GATES = [
-  "phase_2",
-  ...FOCUSED_ASSERTION_OWNER_PHASES,
-  "release",
-] as const;
-export type FocusedAssertionGate = (typeof FOCUSED_ASSERTION_GATES)[number];
-
-export type FocusedAssertionRegistration = {
-  focused_assertion_id: string;
-  owner_phase: FocusedAssertionOwnerPhase;
-  test_file: string;
-  test_name: string;
-};
-
 type ApplicableBehaviorCell = {
   applicability: "applicable";
   coverage_scope: "tool" | "shared_transport";
@@ -259,14 +245,15 @@ function forEveryTool(
   );
 }
 
-function forEveryToolWithPerToolFault(
+function linkedForToolsWithPerToolFault(
+  tools: readonly JetKvmToolName[],
   storyIndex: number,
   stepPrefix: string,
   faultPrefix: string,
   assertionId: string,
 ): MatrixDefinition["applicable"] {
   return Object.fromEntries(
-    JETKVM_TOOL_NAMES.map((tool) => {
+    tools.map((tool) => {
       const slug = toolSlug(tool);
       return [
         tool,
@@ -279,6 +266,21 @@ function forEveryToolWithPerToolFault(
       ];
     }),
   ) as MatrixDefinition["applicable"];
+}
+
+function forEveryToolWithPerToolFault(
+  storyIndex: number,
+  stepPrefix: string,
+  faultPrefix: string,
+  assertionId: string,
+): MatrixDefinition["applicable"] {
+  return linkedForToolsWithPerToolFault(
+    JETKVM_TOOL_NAMES,
+    storyIndex,
+    stepPrefix,
+    faultPrefix,
+    assertionId,
+  );
 }
 
 function sharedTransportForEveryTool(
@@ -305,25 +307,48 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:permission-denied",
-    applicable: forEveryTool(
-      14,
-      "status-without-permission",
-      "deny-then-remove-capability",
-      "assertion-1",
-    ),
+    applicable: {
+      ...forEveryTool(
+        14,
+        "status-without-permission",
+        "deny-then-remove-capability",
+        "assertion-1",
+      ),
+      [T.connect]: linked(
+        1,
+        "permission-denied-unauthorized-takeover",
+        "permission-denied-unauthorized-takeover",
+        "assertion-1",
+      ),
+      [T.reconnect]: linked(
+        1,
+        "denied-reconnect-takeover",
+        "deny-reconnect-takeover-permission",
+        "assertion-1",
+      ),
+    },
     not_applicable: {},
   },
   {
     requirement: "branch:capability-missing",
-    applicable: linkedForTools(
-      JETKVM_TOOL_NAMES.filter(
-        (tool) => tool !== T.connect && tool !== T.reconnect,
+    applicable: {
+      ...linkedForTools(
+        JETKVM_TOOL_NAMES.filter(
+          (tool) =>
+            tool !== T.connect && tool !== T.reconnect && tool !== T.capture,
+        ),
+        14,
+        "keyboard-without-capability",
+        "deny-then-remove-capability",
+        "assertion-2",
       ),
-      14,
-      "keyboard-without-capability",
-      "deny-then-remove-capability",
-      "assertion-2",
-    ),
+      [T.capture]: linked(
+        3,
+        "capture-without-display-capability",
+        "remove-display-capture-capability",
+        "assertion-1",
+      ),
+    },
     not_applicable: {
       [T.connect]: reviewed(
         T.connect,
@@ -347,53 +372,111 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:cancellation-before-write",
-    applicable: forEveryToolWithPerToolFault(
-      5,
-      "cancel-before-write",
-      "cancel-before-write",
-      "assertion-1",
-    ),
+    applicable: {
+      ...forEveryToolWithPerToolFault(
+        5,
+        "cancel-before-write",
+        "cancel-before-write",
+        "assertion-1",
+      ),
+      [T.keyboard]: linked(
+        6,
+        "cancel-physical-key-before-write",
+        "cancel-keyboard-before-write",
+        "assertion-1",
+      ),
+      [T.paste]: linked(
+        7,
+        "paste-cancel-before-acceptance",
+        "cancel-before-paste-acceptance",
+        "assertion-1",
+      ),
+    },
     not_applicable: {},
   },
   {
     requirement: "branch:disconnect-before-write",
-    applicable: forEveryTool(
-      10,
-      "mouse-before-write-loss",
-      "disconnect-at-prewrite",
-      "assertion-1",
-    ),
+    applicable: {
+      ...linkedForToolsWithPerToolFault(
+        JETKVM_TOOL_NAMES.filter(
+          (tool) =>
+            tool !== T.capture &&
+            tool !== T.displayStatus &&
+            tool !== T.sessionStatus,
+        ),
+        10,
+        "disconnect-before-write",
+        "arm-disconnect-before-write",
+        "assertion-1",
+      ),
+      ...linkedForToolsWithPerToolFault(
+        [T.capture, T.displayStatus, T.sessionStatus],
+        10,
+        "disconnect-before-write",
+        "arm-disconnect-before-write",
+        "assertion-2",
+      ),
+    },
     not_applicable: {},
   },
   {
     requirement: "branch:disconnect-after-write",
-    applicable: forEveryTool(
-      11,
-      "power-after-write-loss",
-      "disconnect-at-postwrite",
-      "assertion-1",
-    ),
+    applicable: {
+      ...linkedForToolsWithPerToolFault(
+        JETKVM_TOOL_NAMES.filter(
+          (tool) =>
+            tool !== T.capture &&
+            tool !== T.displayStatus &&
+            tool !== T.sessionStatus,
+        ),
+        11,
+        "disconnect-after-write",
+        "arm-disconnect-after-write",
+        "assertion-1",
+      ),
+      ...linkedForToolsWithPerToolFault(
+        [T.capture, T.displayStatus, T.sessionStatus],
+        11,
+        "disconnect-after-write",
+        "arm-disconnect-after-write",
+        "assertion-2",
+      ),
+      [T.paste]: linked(
+        7,
+        "paste-disconnect-after-write",
+        "disconnect-after-paste-write",
+        "assertion-2",
+      ),
+    },
     not_applicable: {},
   },
   {
     requirement: "branch:malformed-downstream-response",
-    applicable: forEveryTool(
+    applicable: forEveryToolWithPerToolFault(
       13,
-      "malformed-display-status",
-      "malformed-boundary-cases",
+      "malformed-after-write",
+      "arm-malformed-after-write",
       "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:stale-session-generation",
-    applicable: linkedForTools(
-      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.connect),
-      15,
-      "stale-keyboard-generation",
-      "retain-prior-generation",
-      "assertion-1",
-    ),
+    applicable: {
+      ...linkedForTools(
+        JETKVM_TOOL_NAMES.filter((tool) => tool !== T.connect),
+        15,
+        "stale-keyboard-generation",
+        "retain-prior-generation",
+        "assertion-1",
+      ),
+      [T.mouse]: linked(
+        2,
+        "input-with-stale-generation",
+        "publish-new-generation",
+        "assertion-1",
+      ),
+    },
     not_applicable: {
       [T.connect]: reviewed(
         T.connect,
@@ -458,13 +541,13 @@ const MATRIX_DEFINITIONS = [
       [T.connect]: linked(
         1,
         "authorized-takeover",
-        "alternate-takeover-permission",
+        "arm-authorized-takeover-permission",
         "assertion-2",
       ),
       [T.reconnect]: linked(
         1,
         "authorized-reconnect-takeover",
-        "alternate-takeover-permission",
+        "arm-authorized-reconnect-takeover-permission",
         "assertion-2",
       ),
     },
@@ -515,7 +598,7 @@ const MATRIX_DEFINITIONS = [
       [T.reconnect]: linked(
         1,
         "denied-reconnect-takeover",
-        "alternate-takeover-permission",
+        "deny-reconnect-takeover-permission",
         "assertion-3",
       ),
     },
@@ -653,21 +736,17 @@ const MATRIX_DEFINITIONS = [
   {
     requirement: "branch:partial-verification",
     applicable: linkedForTools(
-      [
-        T.connect,
-        T.reconnect,
-        T.keyboard,
-        T.mouse,
-        T.paste,
-        T.release,
-        T.power,
-      ],
+      [T.connect, T.reconnect, T.keyboard, T.mouse, T.paste, T.power],
       16,
       "partial-verification",
       "fail-post-ack-read",
       "assertion-2",
     ),
     not_applicable: {
+      [T.release]: reviewed(
+        T.release,
+        "release success requires device_state_verified, while acknowledgement or state-proof loss is unknown with no verified device state.",
+      ),
       [T.capture]: reviewed(
         T.capture,
         "capture is a single read result and has no applied mutation acknowledgement to preserve during later verification.",
@@ -797,7 +876,7 @@ const MATRIX_DEFINITIONS = [
         "post-capture-cleanup-failure",
         "assertion-2",
       ),
-      ...linkedForTools(
+      ...linkedForToolsWithPerToolFault(
         [
           T.keyboard,
           T.mouse,
@@ -809,7 +888,7 @@ const MATRIX_DEFINITIONS = [
         ],
         8,
         "cleanup-failure",
-        "race-release-producers",
+        "arm-cleanup-failure",
         "assertion-1",
       ),
     },
@@ -830,7 +909,7 @@ const MATRIX_DEFINITIONS = [
       [T.displayStatus]: linked(
         18,
         "status-with-unequal-facts",
-        "lose-binding-during-read",
+        "arm-unequal-display-fact-provenance",
         "assertion-1",
       ),
       [T.sessionStatus]: linked(
@@ -1004,7 +1083,12 @@ const MATRIX_DEFINITIONS = [
   {
     requirement: "branch:sse-route-security",
     applicable: sharedTransportForEveryTool(
-      linked(22, "secure-sse-get", "deny-routes-before-state", "assertion-1"),
+      linked(
+        22,
+        "secure-sse-get",
+        "allow-valid-routes",
+        "assert-valid-routes-share-boundary",
+      ),
     ),
     not_applicable: {},
   },
@@ -1013,9 +1097,9 @@ const MATRIX_DEFINITIONS = [
     applicable: sharedTransportForEveryTool(
       linked(
         23,
-        "post-accepted-message",
-        "exercise-routing-statuses",
-        "assertion-1",
+        "post-inactive-sdk-stream",
+        "disconnect-inactive-stream-after-routing",
+        "assert-inactive-sdk-stream-500",
       ),
     ),
     not_applicable: {},
@@ -1042,12 +1126,21 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:device-rpc-adapter-mid-flight-loss",
-    applicable: forEveryTool(
-      18,
-      "device-rpc-adapter-mid-flight-loss",
-      "lose-binding-during-read",
-      "assertion-2",
-    ),
+    applicable: {
+      ...linkedForToolsWithPerToolFault(
+        JETKVM_TOOL_NAMES.filter((tool) => tool !== T.power),
+        18,
+        "device-rpc-adapter-mid-flight-loss",
+        "arm-device-rpc-adapter-mid-flight-loss",
+        "assertion-2",
+      ),
+      [T.power]: linked(
+        21,
+        "power-after-on-binding-loss",
+        "atx-midflight-binding-loss",
+        "assertion-3",
+      ),
+    },
     not_applicable: {},
   },
   {
@@ -1112,87 +1205,6 @@ function buildToolBehaviorMatrix(): ToolBehaviorMatrix {
 }
 
 export const TOOL_BEHAVIOR_MATRIX = buildToolBehaviorMatrix();
-
-const FOCUSED_ASSERTION_REQUIRED_PHASES_BY_GATE: Readonly<
-  Record<FocusedAssertionGate, readonly FocusedAssertionOwnerPhase[]>
-> = Object.freeze({
-  phase_2: [],
-  phase_3: ["phase_3"],
-  phase_4: ["phase_3", "phase_4"],
-  phase_5: FOCUSED_ASSERTION_OWNER_PHASES,
-  release: FOCUSED_ASSERTION_OWNER_PHASES,
-});
-
-export function validateFocusedAssertionRegistrations(
-  registrations: readonly FocusedAssertionRegistration[],
-  gate: FocusedAssertionGate,
-  matrix: ToolBehaviorMatrix = TOOL_BEHAVIOR_MATRIX,
-): void {
-  const expectedById = new Map<
-    string,
-    { ownerPhase: FocusedAssertionOwnerPhase }
-  >();
-  for (const row of matrix) {
-    for (const cell of Object.values(row.cells)) {
-      if (cell.applicability !== "applicable") {
-        continue;
-      }
-      if (expectedById.has(cell.focused_assertion_id)) {
-        throw new Error(
-          `Focused assertion ID ${cell.focused_assertion_id} is reserved by more than one matrix cell`,
-        );
-      }
-      expectedById.set(cell.focused_assertion_id, {
-        ownerPhase: cell.focused_assertion_owner_phase,
-      });
-    }
-  }
-
-  const registeredIds = new Set<string>();
-  for (const registration of registrations) {
-    if (registeredIds.has(registration.focused_assertion_id)) {
-      throw new Error(
-        `Duplicate focused assertion registration ${registration.focused_assertion_id}`,
-      );
-    }
-    registeredIds.add(registration.focused_assertion_id);
-
-    const expected = expectedById.get(registration.focused_assertion_id);
-    if (expected === undefined) {
-      throw new Error(
-        `Unknown focused assertion registration ${registration.focused_assertion_id}`,
-      );
-    }
-    if (registration.owner_phase !== expected.ownerPhase) {
-      throw new Error(
-        `Focused assertion registration ${registration.focused_assertion_id} has owner phase ${registration.owner_phase}; expected ${expected.ownerPhase}`,
-      );
-    }
-    if (
-      !/(?:\.(?:test|spec)\.[cm]?[jt]sx?|_test\.go)$/.test(
-        registration.test_file,
-      ) ||
-      registration.test_name.trim().length === 0
-    ) {
-      throw new Error(
-        `Focused assertion registration ${registration.focused_assertion_id} must cite an actual focused test file and assertion name`,
-      );
-    }
-  }
-
-  const requiredOwnerPhases = FOCUSED_ASSERTION_REQUIRED_PHASES_BY_GATE[gate];
-  const unresolved = [...expectedById.entries()]
-    .filter(
-      ([id, { ownerPhase }]) =>
-        requiredOwnerPhases.includes(ownerPhase) && !registeredIds.has(id),
-    )
-    .map(([id]) => id);
-  if (unresolved.length > 0) {
-    throw new Error(
-      `Unresolved focused assertion registrations required through ${gate}: ${unresolved.join(", ")}`,
-    );
-  }
-}
 
 const storyConditionSchema = z
   .object({
@@ -1504,6 +1516,69 @@ function assertSafetyPolicy(story: AcceptanceStory): void {
   }
 }
 
+const READ_TOOL_LOOKUP: Readonly<Partial<Record<JetKvmToolName, true>>> =
+  Object.freeze({
+    jetkvm_display_capture: true,
+    jetkvm_display_status: true,
+    jetkvm_session_status: true,
+  });
+const READ_MUTATION_OUTCOME_PATTERN =
+  /\b(?:not_sent|applied|device_ack_only)\b|\bunknown\b(?=\s+(?:after|at|for|with)\b)/i;
+
+function assertReadResponseEnvelopes(
+  stories: readonly AcceptanceStory[],
+): void {
+  for (const story of stories) {
+    for (const step of story.steps) {
+      if (
+        step.tool !== null &&
+        READ_TOOL_LOOKUP[step.tool] === true &&
+        READ_MUTATION_OUTCOME_PATTERN.test(step.expect)
+      ) {
+        throw new Error(
+          `Story ${story.id} read tool ${step.tool} step ${step.id} uses a mutation outcome in its response envelope`,
+        );
+      }
+    }
+  }
+}
+
+function assertDeclaredRequirementCallLinks(
+  stories: readonly AcceptanceStory[],
+  matrix: ToolBehaviorMatrix,
+): void {
+  const storiesById = new Map(stories.map((story) => [story.id, story]));
+  const linkedRequirements = new Set<string>();
+  for (const row of matrix) {
+    for (const cell of Object.values(row.cells)) {
+      if (cell.applicability !== "applicable") {
+        continue;
+      }
+      const story = storiesById.get(cell.story_id);
+      const step = story?.steps.find(({ id }) => id === cell.step_id);
+      if (
+        story?.requirements.includes(row.requirement) === true &&
+        step !== undefined
+      ) {
+        linkedRequirements.add(`${story.id}\0${row.requirement}`);
+      }
+    }
+  }
+
+  for (const story of stories) {
+    for (const requirement of story.requirements) {
+      if (
+        requirement.startsWith("branch:") &&
+        !linkedRequirements.has(`${story.id}\0${requirement}`)
+      ) {
+        throw new Error(
+          `Story ${story.id} declared requirement ${requirement} has no linked executable call`,
+        );
+      }
+    }
+  }
+}
+
 const MUTATION_TOOL_LOOKUP: Readonly<Partial<Record<JetKvmToolName, true>>> =
   Object.freeze({
     jetkvm_input_keyboard: true,
@@ -1515,8 +1590,267 @@ const MUTATION_TOOL_LOOKUP: Readonly<Partial<Record<JetKvmToolName, true>>> =
     jetkvm_session_reconnect: true,
   });
 
+function assertOneShotFaultBrackets(
+  stories: readonly AcceptanceStory[],
+  matrix: ToolBehaviorMatrix,
+): void {
+  const linkedStepsByFault = new Map<string, Set<string>>();
+  for (const row of matrix) {
+    for (const cell of Object.values(row.cells)) {
+      if (cell.applicability !== "applicable") {
+        continue;
+      }
+      const key = `${cell.story_id}\0${cell.fault_id}`;
+      const linkedSteps = linkedStepsByFault.get(key) ?? new Set<string>();
+      linkedSteps.add(cell.step_id);
+      linkedStepsByFault.set(key, linkedSteps);
+    }
+  }
+
+  for (const story of stories) {
+    const stepIndexById = new Map(
+      story.steps.map((step, index) => [step.id, index]),
+    );
+    for (const [faultIndex, fault] of story.fault_script.entries()) {
+      if (fault.id.startsWith("clear-")) {
+        continue;
+      }
+      const clear = story.fault_script[faultIndex + 1];
+      const isOneShot =
+        fault.id.startsWith("arm-") ||
+        /\bone-shot\b/i.test(fault.action) ||
+        clear?.id.startsWith("clear-") === true;
+      if (!isOneShot) {
+        continue;
+      }
+
+      const anchorIndex =
+        fault.after_step === null
+          ? -1
+          : (stepIndexById.get(fault.after_step) ?? -2);
+      const call = story.steps[anchorIndex + 1];
+      const linkedSteps = linkedStepsByFault.get(`${story.id}\0${fault.id}`);
+      if (
+        anchorIndex < -1 ||
+        call === undefined ||
+        clear === undefined ||
+        !clear.id.startsWith("clear-") ||
+        clear.boundary !== "during_cleanup" ||
+        clear.after_step !== call.id ||
+        (linkedSteps !== undefined &&
+          (linkedSteps.size !== 1 || !linkedSteps.has(call.id)))
+      ) {
+        throw new Error(
+          `Story ${story.id} one-shot fault ${fault.id} must bracket exactly one linked call with an immediate ordered clear`,
+        );
+      }
+    }
+  }
+}
+
+function isSameRequest(
+  first: AcceptanceStory["steps"][number],
+  second: AcceptanceStory["steps"][number],
+): boolean {
+  return (
+    typeof first.input.request_id === "string" &&
+    first.input.request_id === second.input.request_id &&
+    first.tool === second.tool
+  );
+}
+
+function assertClosedGenerationRecovery(
+  stories: readonly AcceptanceStory[],
+): void {
+  const unknownClosedPattern =
+    /\boutcome unknown\b|\bunknown\b.*\b(?:closed|retained)\b.*\bgate\b|\bclosed\b.*\b(?:mutation|ATX)\b.*\bgate\b/i;
+  const recoveryPattern =
+    /\b(?:recover|reconnect|rebind|restore|inspect|provision)\b/i;
+
+  for (const story of stories) {
+    for (const [stepIndex, step] of story.steps.entries()) {
+      if (
+        step.tool === null ||
+        MUTATION_TOOL_LOOKUP[step.tool] !== true ||
+        !unknownClosedPattern.test(step.expect)
+      ) {
+        continue;
+      }
+
+      let recoveryIndex = stepIndex + 1;
+      const duplicate = story.steps[recoveryIndex];
+      if (duplicate !== undefined && isSameRequest(step, duplicate)) {
+        recoveryIndex += 1;
+      }
+      const recovery = story.steps[recoveryIndex];
+      if (recovery === undefined) {
+        continue;
+      }
+
+      const currentGeneration = step.input.session_generation;
+      if (recovery.tool === null) {
+        const serialized = JSON.stringify(recovery);
+        const nextGeneration =
+          recovery.input.next_generation ??
+          recovery.input.replacement_session_generation;
+        const following = story.steps[recoveryIndex + 1];
+        const followingGeneration = following?.input.session_generation;
+        if (
+          !recoveryPattern.test(serialized) ||
+          (typeof currentGeneration === "number" &&
+            typeof nextGeneration === "number" &&
+            nextGeneration <= currentGeneration) ||
+          (typeof nextGeneration === "number" &&
+            typeof followingGeneration === "number" &&
+            followingGeneration !== nextGeneration)
+        ) {
+          throw new Error(
+            `Story ${story.id} unknown or closed generation after ${step.id} must recover before a later call`,
+          );
+        }
+        continue;
+      }
+
+      const inspection = recovery;
+      const release = story.steps[recoveryIndex + 1];
+      const reconnect = story.steps[recoveryIndex + 2];
+      if (
+        inspection.tool === T.sessionStatus &&
+        release?.tool === T.release &&
+        reconnect?.tool === T.reconnect
+      ) {
+        const next = story.steps[recoveryIndex + 3];
+        const nextGeneration = next?.input.session_generation;
+        if (
+          inspection.input.session_generation !== currentGeneration ||
+          release.input.session_generation !== currentGeneration ||
+          reconnect.input.session_generation !== currentGeneration ||
+          (typeof currentGeneration === "number" &&
+            typeof nextGeneration === "number" &&
+            nextGeneration <= currentGeneration)
+        ) {
+          throw new Error(
+            `Story ${story.id} unknown or closed generation after ${step.id} must recover before a later call`,
+          );
+        }
+        continue;
+      }
+
+      const cleanup = story.fault_script.find(
+        (fault) =>
+          fault.boundary === "during_cleanup" &&
+          fault.after_step === step.id &&
+          recoveryPattern.test(`${fault.action} ${fault.expected_effect}`),
+      );
+      const nextGeneration = recovery.input.session_generation;
+      if (
+        cleanup === undefined ||
+        (typeof currentGeneration === "number" &&
+          typeof nextGeneration === "number" &&
+          nextGeneration <= currentGeneration)
+      ) {
+        throw new Error(
+          `Story ${story.id} unknown or closed generation after ${step.id} must recover before a later call`,
+        );
+      }
+    }
+  }
+}
+
+function assertAtxBindingLossCases(stories: readonly AcceptanceStory[]): void {
+  for (const story of stories) {
+    const stepIndexById = new Map(
+      story.steps.map((step, index) => [step.id, index]),
+    );
+    for (const fault of story.fault_script) {
+      if (!/^atx-(?:prewrite|midflight)-binding-loss$/.test(fault.id)) {
+        continue;
+      }
+      const anchorIndex =
+        fault.after_step === null
+          ? -1
+          : (stepIndexById.get(fault.after_step) ?? -2);
+      const call = story.steps[anchorIndex + 1];
+      const duplicate = story.steps[anchorIndex + 2];
+      const recovery = story.steps[anchorIndex + 3];
+      const recoveryEvidence =
+        recovery === undefined ? "" : JSON.stringify(recovery);
+      if (
+        anchorIndex < -1 ||
+        call?.tool !== T.power ||
+        duplicate === undefined ||
+        !isSameRequest(call, duplicate) ||
+        recovery?.tool !== null ||
+        !/\b(?:recover|reconnect|restore)\b/i.test(recoveryEvidence) ||
+        !/\bbaseline\b/i.test(recoveryEvidence)
+      ) {
+        throw new Error(
+          `Story ${story.id} ATX binding-loss fault ${fault.id} must bracket one call, its exact duplicate proof, and ordered recovery`,
+        );
+      }
+    }
+  }
+}
+
+function assertAtxInterCaseRestoration(
+  stories: readonly AcceptanceStory[],
+): void {
+  const baselinePattern = /\bbaseline\b/i;
+  const restoreProofPattern = /\b(?:restore|prove|reproof)\w*\b/i;
+  const mayHaveWrittenAtxPattern =
+    /\b(?:applied|already_applied|unknown)\b|\b(?:serial|ATX)\b.*\b(?:write|receipt|sequence)\b/i;
+
+  for (const story of stories) {
+    for (const [stepIndex, step] of story.steps.entries()) {
+      if (
+        step.tool !== T.power ||
+        !mayHaveWrittenAtxPattern.test(step.expect)
+      ) {
+        continue;
+      }
+      const nextToolIndex = story.steps.findIndex(
+        (candidate, index) => index > stepIndex && candidate.tool !== null,
+      );
+      if (nextToolIndex < 0) {
+        continue;
+      }
+      const nextToolStep = story.steps[nextToolIndex]!;
+      if (isSameRequest(step, nextToolStep)) {
+        continue;
+      }
+
+      const interCaseSteps = story.steps.slice(stepIndex + 1, nextToolIndex);
+      const hasStepProof = interCaseSteps.some((candidate) => {
+        const serialized = JSON.stringify(candidate);
+        return (
+          candidate.tool === null &&
+          (/\/atx\/|restore-atx/i.test(candidate.call) ||
+            candidate.input.restore_atx_baseline === true) &&
+          baselinePattern.test(serialized) &&
+          restoreProofPattern.test(serialized)
+        );
+      });
+      const hasCleanupProof = story.fault_script.some((fault) => {
+        const serialized = `${fault.action} ${fault.expected_effect}`;
+        return (
+          fault.boundary === "during_cleanup" &&
+          fault.after_step === step.id &&
+          baselinePattern.test(serialized) &&
+          restoreProofPattern.test(serialized)
+        );
+      });
+      if (!hasStepProof && !hasCleanupProof) {
+        throw new Error(
+          `Story ${story.id} ATX inter-case transition after ${step.id} must restore and reproof the baseline before the later call`,
+        );
+      }
+    }
+  }
+}
+
 const PER_TOOL_FAULT_EXECUTIONS = [
   {
+    tools: JETKVM_TOOL_NAMES,
     storyIndex: 0,
     requirement: "branch:deadline-before-admission",
     stepPrefix: "deadline-before-admission",
@@ -1526,6 +1860,9 @@ const PER_TOOL_FAULT_EXECUTIONS = [
     boundary: "before_admission",
   },
   {
+    tools: JETKVM_TOOL_NAMES.filter(
+      (tool) => tool !== T.keyboard && tool !== T.paste,
+    ),
     storyIndex: 5,
     requirement: "branch:cancellation-before-write",
     stepPrefix: "cancel-before-write",
@@ -1552,7 +1889,7 @@ function assertPerToolFaultExecution(
     }
 
     const requestIds = new Set<string>();
-    for (const tool of JETKVM_TOOL_NAMES) {
+    for (const tool of execution.tools) {
       const slug = toolSlug(tool);
       const expectedStepId = `${execution.stepPrefix}-${slug}`;
       const expectedFaultId = `${execution.faultPrefix}-${slug}`;
@@ -1777,7 +2114,8 @@ function assertScrollObservationExecution(
       captureId: "capture-display-after-observation",
       stepId: "display-change-after-first-dispatch",
       observationId: "opaque-observation-display-after",
-      expected: /unknown.*one downstream write.*suffix/i,
+      expected:
+        /outcome unknown.*dispatched_action_count 2.*completed_action_count 1.*suppressed/i,
     },
   ] as const;
   const observationIds = new Set<string>();
@@ -2033,6 +2371,12 @@ export function validateAcceptanceStories(
   assertScrollObservationExecution(stories);
   assertPerToolFaultExecution(stories, matrix);
   assertBehaviorMatrix(stories, matrix);
+  assertDeclaredRequirementCallLinks(stories, matrix);
+  assertReadResponseEnvelopes(stories);
+  assertOneShotFaultBrackets(stories, matrix);
+  assertAtxBindingLossCases(stories);
+  assertClosedGenerationRecovery(stories);
+  assertAtxInterCaseRestoration(stories);
 
   return stories;
 }

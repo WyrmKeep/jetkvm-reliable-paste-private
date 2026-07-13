@@ -78,6 +78,14 @@ type BrowserEvent = {
 };
 
 class FakeBrowserPlane implements BrowserPlane {
+  deviceRpc = {
+    binding: {
+      sessionId: "unbound",
+      sessionGeneration: 1,
+      connectionEpoch: 1,
+      browserChannelGeneration: 1,
+    },
+  } as DeviceRpcAdapter;
   readonly events: BrowserEvent[] = [];
   connectionEpoch = 10;
   displayGeneration = 20;
@@ -159,6 +167,7 @@ class FakeBrowserPlane implements BrowserPlane {
       connectionEpoch: this.connectionEpoch,
       browserChannelGeneration: this.channelGeneration,
     };
+    this.deviceRpc = { binding } as DeviceRpcAdapter;
     return {
       ref,
       binding,
@@ -166,7 +175,7 @@ class FakeBrowserPlane implements BrowserPlane {
       browserChannelGeneration: this.channelGeneration,
       displayGeneration: this.displayGeneration,
       state: "ready",
-      deviceRpc: { binding } as DeviceRpcAdapter,
+      deviceRpc: this.deviceRpc,
     };
   }
 
@@ -1091,6 +1100,8 @@ describe("DeviceSessionClient", () => {
       writeBegan: false,
       acknowledged: false,
       verification: "none",
+      safeToRetry: true,
+      requiredNextStep: "reconnect_then_capture",
     });
     const { client } = makeClient({ browser });
 
@@ -1136,6 +1147,78 @@ describe("DeviceSessionClient", () => {
     const retried = await client.connect("principal-a", connectInput());
 
     expect(retried.result.outcome).toBe("applied");
+    expect(
+      browser.events.filter((event) => event.kind === "connect"),
+    ).toHaveLength(2);
+  });
+
+  it("rejects an already-aborted caller promptly while another session call owns the lock", async () => {
+    const scheduler = new FakeScheduler();
+    const requestLedger = new RequestLedger({
+      ttlMs: 60_000,
+      maxEntries: 10,
+      now: scheduler.now,
+    });
+    const browser = new FakeBrowserPlane();
+    browser.holdConnect = true;
+    const { client } = makeClient({ browser, scheduler, requestLedger });
+    const firstController = new AbortController();
+    const first = client.connect(
+      "principal-a",
+      connectInput(),
+      firstController.signal,
+    );
+    await waitForBrowserAdmission(browser);
+
+    const secondController = new AbortController();
+    secondController.abort(new Error("cancelled before lock admission"));
+    let secondSettled = false;
+    const second = client
+      .connect(
+        "principal-b",
+        connectInput({ request_id: "connect-request-2" }),
+        secondController.signal,
+      )
+      .then(
+        () => {
+          secondSettled = true;
+          return null;
+        },
+        (error: unknown) => {
+          secondSettled = true;
+          return error;
+        },
+      );
+    for (let attempt = 0; attempt < 5 && !secondSettled; attempt += 1) {
+      await Promise.resolve();
+    }
+    const settledWhileLocked = secondSettled;
+    const ledgerSizeWhileLocked = requestLedger.size;
+
+    firstController.abort(new Error("release first lock owner"));
+    const firstError = await expectClientError(first, "CANCELLED");
+    const secondError = await second;
+
+    expect(settledWhileLocked).toBe(true);
+    expect(ledgerSizeWhileLocked).toBe(1);
+    expect(firstError.outcome).toBe("unknown");
+    expect(secondError).toBeInstanceOf(DeviceSessionClientError);
+    expect(secondError).toMatchObject({
+      code: "CANCELLED",
+      outcome: "not_sent",
+      safeToRetry: true,
+      requiredNextStep: "none",
+    });
+    expect(
+      browser.events.filter((event) => event.kind === "connect"),
+    ).toHaveLength(1);
+    expect(requestLedger.size).toBe(1);
+    browser.holdConnect = false;
+    const recovered = await client.connect(
+      "principal-c",
+      connectInput({ request_id: "connect-request-3" }),
+    );
+    expect(recovered.result.outcome).toBe("applied");
     expect(
       browser.events.filter((event) => event.kind === "connect"),
     ).toHaveLength(2);

@@ -57,10 +57,12 @@
               "const": "none"
             },
             "original_byte_count": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
+              "$ref": "#/anyOf/0/properties/session_generation"
             },
             "normalized_byte_count": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 262144
             },
             "normalized_sha256": {
               "type": "string",
@@ -97,7 +99,7 @@
                       "$ref": "#/anyOf/0/properties/operation_id"
                     },
                     "connection_epoch": {
-                      "$ref": "#/anyOf/0/properties/duration_ms"
+                      "$ref": "#/anyOf/0/properties/session_generation"
                     },
                     "display_generation": {
                       "$ref": "#/anyOf/0/properties/duration_ms"
@@ -109,16 +111,16 @@
                       "$ref": "#/anyOf/0/properties/result/properties/accepted_at"
                     },
                     "source_width": {
-                      "$ref": "#/anyOf/0/properties/duration_ms"
+                      "$ref": "#/anyOf/0/properties/session_generation"
                     },
                     "source_height": {
-                      "$ref": "#/anyOf/0/properties/duration_ms"
+                      "$ref": "#/anyOf/0/properties/session_generation"
                     },
                     "image_width": {
-                      "$ref": "#/anyOf/0/properties/duration_ms"
+                      "$ref": "#/anyOf/0/properties/session_generation"
                     },
                     "image_height": {
-                      "$ref": "#/anyOf/0/properties/duration_ms"
+                      "$ref": "#/anyOf/0/properties/session_generation"
                     },
                     "rotation": {
                       "type": "number",
@@ -139,10 +141,10 @@
                           "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         "content_width": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         },
                         "content_height": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         }
                       },
                       "required": [
@@ -2173,13 +2175,26 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/failed_action_index"
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 262143
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 262144
                     },
                     "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 262144
                     },
                     "downstream_stage": {
                       "type": "string",
@@ -2210,7 +2225,8 @@
                     "actual_generation",
                     "observation_id"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "Paste progress counts are exact and completed_action_count must not exceed dispatched_action_count."
                 }
               },
               "required": [
@@ -2733,13 +2749,26 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/failed_action_index"
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 262143
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 262144
                     },
                     "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 262144
                     },
                     "downstream_stage": {
                       "type": "string",
@@ -2770,7 +2799,8 @@
                     "actual_generation",
                     "observation_id"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "Paste progress counts are exact and completed_action_count must not exceed dispatched_action_count."
                 }
               },
               "required": [

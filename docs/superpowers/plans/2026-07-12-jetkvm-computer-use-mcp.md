@@ -462,7 +462,7 @@ Acceptance: no test/fixture/debug file in production output; no secret or lease 
 - [ ] Commit all 24 lowercase canonical IDs from §0.5 with complete requirements, tools, environments, preconditions, fault scripts, steps, pass assertions, evidence, restore, and privacy. No placeholder, uppercase alias, phase-local rename, or deferred fields are permitted.
 - [ ] Test unique exact IDs, complete tool/requirement references, unconditional restoration, privacy, no topology, and no unmapped matrix row. Link final rows only into the existing 24 stories: per-fact provenance and DeviceRpc replacement in story 19/21 as specified; EDID capability-absent and successful-empty in story 5; EDID lower failure in story 20; ATX mid-flight fencing in story 22; scroll validation in story 6. Never create story 25.
 - [ ] Materialize all deadline-before-admission and cancellation-before-write cells as serialized per-tool arm → linked call → clear sequences. Validate exact call/fault tool compatibility and ordering from machine fields/IDs, never fault prose. A mutation cell that claims reservation release immediately retries the same normalized input after clear with a request ID unique to that tool's pair.
-- [ ] In Phase 2, reserve every stable `focused_assertion_id` with machine-readable `focused_assertion_phase_2_status: "reserved"` and `focused_assertion_owner_phase`; validate unique IDs, story links, and phase ownership only. Do not register invented assertions or claim unimplemented handlers exist. The cumulative registration validator must require actual test file/assertion registrations when Phase 3 input/display, Phase 4 session/power, and Phase 5 shared-transport/system owners land; Phase 5 and release require every applicable cell resolved.
+- [ ] In Phase 2, reserve every stable `focused_assertion_id` with machine-readable `focused_assertion_phase_2_status: "reserved"` and `focused_assertion_owner_phase`; validate unique IDs, story links, and phase ownership only. Do not expose an owning-phase or release registration gate, register invented assertions, or claim unimplemented handlers exist. Each owning phase may add its validator only after the gate has an execution-produced result set keyed by exact assertion ID and can cross-check each result against an existing focused test file, exact test identity, and owner phase; file existence alone is insufficient. Until then that validator and gate remain explicitly deferred.
 
 ## Task 2.7: Implement stdio and legacy HTTP/SSE protocol adapters only
 
@@ -602,7 +602,7 @@ npm run stories:validate
 npm run docs:check
 ```
 
-The Phase 3 gate runs the focused-assertion registration validator at `phase_3`. Every applicable input/display cell must resolve its Phase 2 reservation to the actual focused test file and assertion name that ran; Phase 4 and Phase 5 reservations remain explicitly unresolved and do not fail this gate.
+The Phase 3 implementation must add a focused-assertion registration validator only after its input/display tests exist and the gate consumes an execution-produced result set keyed by exact assertion ID, exact test identity, and result. Phase 2 reservations and file existence alone do not satisfy this gate; filename regexes, path-shaped strings, reserved IDs, named-but-unexecuted tests, skips, or fabricated assertions are not evidence. Phase 4 and Phase 5 reservations remain unresolved and do not fail Phase 3.
 
 Run the equivalent committed-file gate in a clean checkout, including the real Playwright adapter fixture and package artifact scan. No physical hardware is used in this phase.
 
@@ -793,7 +793,7 @@ npm test
 npm run typecheck
 ```
 
-The Phase 5 gate runs the focused-assertion registration validator at `phase_5` and again with the `release` policy. All applicable cells must resolve uniquely to actual focused test files and assertion names with matching owner phases; a reserved-only cell, duplicate registration, unknown ID, wrong owner, skip, or fabricated no-op assertion fails the complete matrix and release gate.
+The Phase 5 implementation must add the complete owning-phase/release validator only after all owning focused tests exist and the gate consumes and verifies their execution-produced results keyed by exact assertion ID and test identity. Release requires every applicable cell to resolve uniquely to that grounded result with matching owner phase; a reserved-only cell, duplicate or unknown ID, wrong owner, nonexistent file, filename-regex match, named-but-unexecuted test, skip, or fabricated no-op assertion fails. Until that validator is grounded, the release gate remains unsatisfied rather than being simulated by Phase 2.
 
 Repeat from a separate clean checkout using a freshly created tarball and empty install directory. Run every README/example command in that environment. Required result: zero skips, exact ten tools, only stdio/SSE, deterministic package/checksum, no secrets/payloads, complete matrix.
 

@@ -96,6 +96,10 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
         `Invalid arguments for ${name}`,
       );
     }
+    const correlationSnapshot = createCallCorrelationSnapshot(
+      toolName,
+      input.data,
+    );
     const handler = handlerRegistry[toolName];
     if (typeof handler !== "function") {
       throw new McpError(
@@ -120,7 +124,7 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
     }
     try {
       const mapped = validateAndMapMcpResult(toolName, result);
-      validateCallResultCorrelation(toolName, input.data, mapped);
+      validateCallResultCorrelation(toolName, correlationSnapshot, mapped);
       return mapped;
     } catch {
       throw new McpError(
@@ -146,13 +150,110 @@ function sanitizedPrincipalId(principalId: string | undefined): string | null {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+type CallCorrelationSnapshot = Readonly<{
+  sessionId: string | null;
+  sessionGeneration: number | null;
+  requestId: string | null;
+  takeover: boolean | null;
+  actionCount: number | null;
+  captureFormat: "jpeg" | "png" | null;
+  captureMaxWidth: number | null;
+  captureMaxHeight: number | null;
+  powerAction: "press_power" | "hold_power" | "press_reset" | null;
+  pasteOriginalCodePointCount: number | null;
+  pasteOriginalByteCount: number | null;
+  pasteNormalizedCodePointCount: number | null;
+  pasteNormalizedByteCount: number | null;
+  pasteNormalizedSha256: string | null;
+}>;
+
+const PASTE_PROGRESS_ERROR_CODES: Readonly<Record<string, true>> =
+  Object.freeze({
+    MUTATION_OUTCOME_UNKNOWN: true,
+    PASTE_FAILED: true,
+    PASTE_CANCELLED: true,
+    EVENT_GAP: true,
+  });
+
+function createCallCorrelationSnapshot(
+  tool: JetKvmToolName,
+  input: unknown,
+): CallCorrelationSnapshot {
+  if (!isRecord(input)) {
+    throw new Error("Invalid parsed call correlation input.");
+  }
+  let pasteOriginalCodePointCount: number | null = null;
+  let pasteOriginalByteCount: number | null = null;
+  let pasteNormalizedCodePointCount: number | null = null;
+  let pasteNormalizedByteCount: number | null = null;
+  let pasteNormalizedSha256: string | null = null;
+  if (tool === "jetkvm_input_paste") {
+    if (typeof input.text !== "string") {
+      throw new Error("Invalid parsed paste correlation input.");
+    }
+    const normalizedText = (
+      input.text.startsWith("\uFEFF") ? input.text.slice(1) : input.text
+    )
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .normalize("NFC");
+    pasteOriginalCodePointCount = 0;
+    for (const _character of input.text) pasteOriginalCodePointCount += 1;
+    pasteNormalizedCodePointCount = 0;
+    for (const _character of normalizedText) {
+      pasteNormalizedCodePointCount += 1;
+    }
+    pasteOriginalByteCount = Buffer.byteLength(input.text, "utf8");
+    pasteNormalizedByteCount = Buffer.byteLength(normalizedText, "utf8");
+    pasteNormalizedSha256 = createHash("sha256")
+      .update(normalizedText, "utf8")
+      .digest("hex");
+    if (
+      pasteOriginalCodePointCount < 1 ||
+      pasteOriginalByteCount < 1 ||
+      pasteNormalizedCodePointCount < 1 ||
+      pasteNormalizedByteCount < 1 ||
+      pasteNormalizedByteCount > 262_144
+    ) {
+      throw new Error("Invalid parsed paste correlation bounds.");
+    }
+  }
+
+  return Object.freeze({
+    sessionId: typeof input.session_id === "string" ? input.session_id : null,
+    sessionGeneration:
+      typeof input.session_generation === "number"
+        ? input.session_generation
+        : null,
+    requestId: typeof input.request_id === "string" ? input.request_id : null,
+    takeover: typeof input.takeover === "boolean" ? input.takeover : null,
+    actionCount: Array.isArray(input.actions) ? input.actions.length : null,
+    captureFormat:
+      input.format === "jpeg" || input.format === "png" ? input.format : null,
+    captureMaxWidth:
+      typeof input.max_width === "number" ? input.max_width : null,
+    captureMaxHeight:
+      typeof input.max_height === "number" ? input.max_height : null,
+    powerAction:
+      input.action === "press_power" ||
+      input.action === "hold_power" ||
+      input.action === "press_reset"
+        ? input.action
+        : null,
+    pasteOriginalCodePointCount,
+    pasteOriginalByteCount,
+    pasteNormalizedCodePointCount,
+    pasteNormalizedByteCount,
+    pasteNormalizedSha256,
+  });
+}
 
 function validateCallResultCorrelation(
   tool: JetKvmToolName,
-  input: unknown,
+  snapshot: CallCorrelationSnapshot,
   mapped: CallToolResult,
 ): void {
-  if (!isRecord(input) || !isRecord(mapped.structuredContent)) {
+  if (!isRecord(mapped.structuredContent)) {
     throw new Error("Invalid handler result correlation.");
   }
   const envelope = mapped.structuredContent;
@@ -162,48 +263,123 @@ function validateCallResultCorrelation(
     }
     const result = envelope.result;
     if (
-      typeof input.request_id === "string" &&
-      result.request_id !== input.request_id
+      snapshot.requestId !== null &&
+      result.request_id !== snapshot.requestId
     ) {
       throw new Error("Invalid handler result correlation.");
     }
     if (tool === "jetkvm_session_reconnect") {
       if (
-        envelope.session_id !== input.session_id ||
-        result.previous_session_generation !== input.session_generation ||
+        envelope.session_id !== snapshot.sessionId ||
+        result.previous_session_generation !== snapshot.sessionGeneration ||
+        typeof result.previous_session_generation !== "number" ||
         typeof result.new_session_generation !== "number" ||
-        result.new_session_generation <=
-          (result.previous_session_generation as number) ||
+        result.new_session_generation <= result.previous_session_generation ||
         envelope.session_generation !== result.new_session_generation
       ) {
         throw new Error("Invalid handler result correlation.");
       }
     } else if (
       tool !== "jetkvm_session_connect" &&
-      (envelope.session_id !== input.session_id ||
-        envelope.session_generation !== input.session_generation)
+      (envelope.session_id !== snapshot.sessionId ||
+        envelope.session_generation !== snapshot.sessionGeneration)
     ) {
       throw new Error("Invalid handler result correlation.");
     }
+    if (
+      (tool === "jetkvm_session_connect" ||
+        tool === "jetkvm_session_reconnect") &&
+      result.takeover_performed === true &&
+      snapshot.takeover !== true
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+
+    if (tool === "jetkvm_input_paste") {
+      if (
+        snapshot.pasteOriginalByteCount === null ||
+        snapshot.pasteNormalizedByteCount === null ||
+        snapshot.pasteNormalizedSha256 === null ||
+        result.original_byte_count !== snapshot.pasteOriginalByteCount ||
+        result.normalized_byte_count !== snapshot.pasteNormalizedByteCount ||
+        result.normalized_sha256 !== snapshot.pasteNormalizedSha256
+      ) {
+        throw new Error("Invalid handler result correlation.");
+      }
+    }
+    if (
+      tool === "jetkvm_power_control" &&
+      result.action !== snapshot.powerAction
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    if (tool === "jetkvm_display_capture") {
+      const image = result.image;
+      const geometry = result.geometry;
+      if (
+        snapshot.captureFormat === null ||
+        snapshot.captureMaxWidth === null ||
+        snapshot.captureMaxHeight === null ||
+        !isRecord(image) ||
+        !isRecord(geometry)
+      ) {
+        throw new Error("Invalid handler result correlation.");
+      }
+      const sourceWidth = result.source_width;
+      const sourceHeight = result.source_height;
+      const imageWidth = result.image_width;
+      const imageHeight = result.image_height;
+      const rotation = result.rotation;
+      const contentX = geometry.content_x;
+      const contentY = geometry.content_y;
+      const contentWidth = geometry.content_width;
+      const contentHeight = geometry.content_height;
+      if (
+        typeof sourceWidth !== "number" ||
+        typeof sourceHeight !== "number" ||
+        typeof imageWidth !== "number" ||
+        typeof imageHeight !== "number" ||
+        typeof rotation !== "number" ||
+        typeof contentX !== "number" ||
+        typeof contentY !== "number" ||
+        typeof contentWidth !== "number" ||
+        typeof contentHeight !== "number"
+      ) {
+        throw new Error("Invalid handler result correlation.");
+      }
+      const expectedMimeType =
+        snapshot.captureFormat === "png" ? "image/png" : "image/jpeg";
+      const rotatedSourceWidth =
+        rotation === 90 || rotation === 270 ? sourceHeight : sourceWidth;
+      const rotatedSourceHeight =
+        rotation === 90 || rotation === 270 ? sourceWidth : sourceHeight;
+      if (
+        image.mime_type !== expectedMimeType ||
+        imageWidth > snapshot.captureMaxWidth ||
+        imageHeight > snapshot.captureMaxHeight ||
+        contentWidth > imageWidth ||
+        contentHeight > imageHeight ||
+        contentX > imageWidth - contentWidth ||
+        contentY > imageHeight - contentHeight ||
+        contentWidth > rotatedSourceWidth ||
+        contentHeight > rotatedSourceHeight ||
+        BigInt(contentWidth) * BigInt(rotatedSourceHeight) !==
+          BigInt(contentHeight) * BigInt(rotatedSourceWidth)
+      ) {
+        throw new Error("Invalid handler result correlation.");
+      }
+    }
+    if (
+      (tool === "jetkvm_input_keyboard" || tool === "jetkvm_input_mouse") &&
+      (snapshot.actionCount === null ||
+        result.dispatched_action_count !== snapshot.actionCount ||
+        result.completed_action_count !== snapshot.actionCount)
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    return;
   }
 
-  if (tool !== "jetkvm_input_keyboard" && tool !== "jetkvm_input_mouse") {
-    return;
-  }
-  if (!Array.isArray(input.actions)) {
-    throw new Error("Invalid handler result correlation.");
-  }
-  const expectedActionCount = input.actions.length;
-  if (envelope.ok === true) {
-    const result = envelope.result as Record<string, unknown>;
-    if (
-      result.dispatched_action_count !== expectedActionCount ||
-      result.completed_action_count !== expectedActionCount
-    ) {
-      throw new Error("Invalid handler result correlation.");
-    }
-    return;
-  }
   if (!isRecord(envelope.error)) {
     throw new Error("Invalid handler result correlation.");
   }
@@ -213,6 +389,36 @@ function validateCallResultCorrelation(
     throw new Error("Invalid handler result correlation.");
   }
   const details = errorDetails;
+  if (
+    tool === "jetkvm_input_paste" &&
+    typeof error.code === "string" &&
+    Object.hasOwn(PASTE_PROGRESS_ERROR_CODES, error.code)
+  ) {
+    const requestedCount = snapshot.pasteNormalizedCodePointCount;
+    if (
+      requestedCount === null ||
+      typeof details.dispatched_action_count !== "number" ||
+      typeof details.completed_action_count !== "number" ||
+      details.completed_action_count < 0 ||
+      details.dispatched_action_count < details.completed_action_count ||
+      details.dispatched_action_count > requestedCount ||
+      details.failed_action_index !==
+        (details.completed_action_count < requestedCount
+          ? details.completed_action_count
+          : null)
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    return;
+  }
+
+  if (tool !== "jetkvm_input_keyboard" && tool !== "jetkvm_input_mouse") {
+    return;
+  }
+  const expectedActionCount = snapshot.actionCount;
+  if (expectedActionCount === null) {
+    throw new Error("Invalid handler result correlation.");
+  }
   if (error.outcome === "unknown") {
     if (
       typeof details.failed_action_index !== "number" ||

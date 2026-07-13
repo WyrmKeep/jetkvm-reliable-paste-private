@@ -42,11 +42,26 @@
       "id": "fixed-atx-sequence",
       "after_step": null,
       "boundary": "before_write",
-      "action": "Drive each mutation tool through its definitive acknowledgement boundary using its tool-specific fixture.",
-      "expected_effect": "Every linked mutation returns applied with the exact acknowledgement and verification strength."
+      "action": "Drive each applicable mutation through its definitive acknowledgement boundary; before every ATX call, execute the fixture proof for the recorded baseline, active atx-power extension, serial readiness, and current Browser-owned binding.",
+      "expected_effect": "Every linked mutation returns applied with the exact acknowledgement and verification strength; press_power, hold_power, and press_reset use exact 200 ms, 5000 ms, and 200 ms sequencing with restoration and renewed readiness proof between cases."
     }
   ],
   "steps": [
+    {
+      "id": "prove-press-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/prove-ready-baseline",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 1000,
+      "expect": "The recorded ATX-observable baseline, active atx-power extension, serial readiness, and current Browser-owned binding are proven immediately before press_power."
+    },
     {
       "id": "press-power",
       "tool": "jetkvm_power_control",
@@ -60,6 +75,22 @@
       },
       "timeout_ms": 1000,
       "expect": "power-short uses exactly 200 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "restore-and-prove-hold-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After press_power, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before hold_power."
     },
     {
       "id": "hold-power",
@@ -76,6 +107,22 @@
       "expect": "power-long holds for exactly 5000 ms and returns a correlated serial receipt within the bounded 10000 ms deadline."
     },
     {
+      "id": "restore-and-prove-reset-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "hold_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the exact 5000 ms hold completes within its 10000 ms tool deadline, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before press_reset."
+    },
+    {
       "id": "press-reset",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
@@ -88,6 +135,22 @@
       },
       "timeout_ms": 1000,
       "expect": "reset uses exactly 200 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "restore-and-prove-post-reset-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "press_reset",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After press_reset, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding."
     },
     {
       "id": "definitive-acknowledgement-jetkvm-session-connect",
@@ -185,6 +248,21 @@
       "expect": "applied for jetkvm_input_release with its exact acknowledgement and verification strength."
     },
     {
+      "id": "prove-definitive-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/prove-ready-baseline",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 1000,
+      "expect": "The restored ATX-observable baseline, active extension, serial readiness, and current binding remain proven immediately before the matrix definitive-acknowledgement power call."
+    },
+    {
       "id": "definitive-acknowledgement-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
@@ -208,7 +286,7 @@
     {
       "id": "assertion-2",
       "requirement": "contract:three-semantic-atx-actions",
-      "assertion": "No fourth action, duration, delay, repeat, pin, level, GPIO operation, or arbitrary sequence is accepted."
+      "assertion": "The ordered press_power, hold_power, and press_reset cases each start only after the recorded ATX baseline, active extension, serial readiness, and current binding are proven; the harness restores and re-proves those facts after every case, exact timings remain 200 ms, 5000 ms, and 200 ms, and no fourth action, caller-supplied duration, delay, repeat, pin, level, GPIO operation, or arbitrary sequence is accepted."
     }
   ],
   "evidence": [

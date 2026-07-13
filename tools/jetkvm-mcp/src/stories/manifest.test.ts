@@ -6,6 +6,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { describe, expect, it } from "vitest";
 
 import { JETKVM_TOOL_NAMES } from "../domain.js";
+import * as storyManifest from "./manifest.js";
 
 import {
   ACCEPTANCE_STORY_SCHEMA_NAME,
@@ -15,10 +16,8 @@ import {
   acceptanceStorySchema,
   loadAcceptanceStories,
   validateAcceptanceStories,
-  validateFocusedAssertionRegistrations,
   type AcceptanceStory,
   type FocusedAssertionOwnerPhase,
-  type FocusedAssertionRegistration,
 } from "./manifest.js";
 
 const packageRoot = resolve(import.meta.dirname, "../..");
@@ -28,27 +27,6 @@ const generatedSchemaPath = resolve(
   "schemas/story-manifest.schema.json",
 );
 
-function makeFocusedAssertionRegistrations(
-  phases: readonly FocusedAssertionOwnerPhase[],
-): FocusedAssertionRegistration[] {
-  const registrations: FocusedAssertionRegistration[] = [];
-  for (const row of TOOL_BEHAVIOR_MATRIX) {
-    for (const cell of Object.values(row.cells)) {
-      if (
-        cell.applicability === "applicable" &&
-        phases.includes(cell.focused_assertion_owner_phase)
-      ) {
-        registrations.push({
-          focused_assertion_id: cell.focused_assertion_id,
-          owner_phase: cell.focused_assertion_owner_phase,
-          test_file: "src/focused/assertionRegistry.test.ts",
-          test_name: `registers ${cell.focused_assertion_id}`,
-        });
-      }
-    }
-  }
-  return registrations;
-}
 function makeStory(overrides: Partial<AcceptanceStory> = {}): AcceptanceStory {
   const requirement = "branch:strict-schema-rejection";
   return {
@@ -434,6 +412,75 @@ describe("manifest invariants", () => {
     }
   });
 
+  it("rejects a declared branch requirement without a linked real call", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const story = stories[1]!;
+    const requirement = "branch:deadline-before-admission";
+    story.requirements.push(requirement);
+    story.pass.push({
+      id: "unlinked-deadline-pass",
+      requirement,
+      assertion: "This assertion has no executable call linked to this story.",
+    });
+    story.evidence.push({
+      id: "unlinked-deadline-evidence",
+      requirement,
+      field: "requirement_result",
+      source: "No linked call exists.",
+      retention: "release_manifest",
+    });
+
+    expect(() => validateAcceptanceStories(stories)).toThrow(
+      /declared requirement.*linked executable call/i,
+    );
+  });
+
+  it("rejects every matrix-owned story when one of its linked calls is missing", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const story of stories) {
+      const linkedCell = TOOL_BEHAVIOR_MATRIX.flatMap((row) =>
+        Object.values(row.cells),
+      ).find(
+        (cell) =>
+          cell.applicability === "applicable" && cell.story_id === story.id,
+      );
+      if (linkedCell?.applicability !== "applicable") {
+        continue;
+      }
+      const malformed = structuredClone(stories);
+      const malformedStory = malformed.find(
+        ({ id }) => id === linkedCell.story_id,
+      )!;
+      malformedStory.steps = malformedStory.steps.filter(
+        ({ id }) => id !== linkedCell.step_id,
+      );
+
+      expect(() => validateAcceptanceStories(malformed), story.id).toThrow(
+        /too_small|too small|references an unknown step|linked executable call|executable call.*fault boundary/i,
+      );
+    }
+  });
+
+  it("rejects mutation outcomes in read-tool response envelopes", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const row = TOOL_BEHAVIOR_MATRIX.find(
+      ({ requirement }) => requirement === "branch:deadline-before-admission",
+    )!;
+    const cell = row.cells.jetkvm_display_capture;
+    expect(cell.applicability).toBe("applicable");
+    if (cell.applicability !== "applicable") {
+      return;
+    }
+    const story = stories.find(({ id }) => id === cell.story_id)!;
+    const step = story.steps.find(({ id }) => id === cell.step_id)!;
+    step.expect =
+      "unknown after a possible downstream write with mutation replay suppressed.";
+
+    expect(() => validateAcceptanceStories(stories)).toThrow(
+      /read tool.*mutation outcome/i,
+    );
+  });
+
   it("rejects a manifest that does not reference the complete exact-ten tool catalogue", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     for (const story of stories) {
@@ -472,13 +519,27 @@ describe("every-handler behavior matrix", () => {
     expect(cells).toHaveLength(32 * 10);
     expect(
       cells.filter(({ applicability }) => applicability === "applicable"),
-    ).toHaveLength(194);
+    ).toHaveLength(193);
     expect(
       cells.filter(({ applicability }) => applicability === "not_applicable"),
-    ).toHaveLength(126);
+    ).toHaveLength(127);
+  });
+
+  it("reviews release partial verification as inapplicable", () => {
+    const row = TOOL_BEHAVIOR_MATRIX.find(
+      ({ requirement }) => requirement === "branch:partial-verification",
+    )!;
+    const cell = row.cells.jetkvm_input_release;
+    expect(cell.applicability).toBe("not_applicable");
+    if (cell.applicability === "not_applicable") {
+      expect(cell.rationale).toMatch(
+        /device_state_verified|verified device state/i,
+      );
+    }
   });
 
   it("gives every applicable cell a stable focused assertion ID and an explicit coverage scope", () => {
+    const ids: string[] = [];
     for (const row of TOOL_BEHAVIOR_MATRIX) {
       for (const cell of Object.values(row.cells)) {
         if (cell.applicability !== "applicable") {
@@ -489,8 +550,10 @@ describe("every-handler behavior matrix", () => {
         expect(link.focused_assertion_id).toMatch(
           /^(?:unit|adapter|transport):[a-z0-9-]+(?::[a-z0-9-]+)+$/,
         );
+        ids.push(cell.focused_assertion_id);
       }
     }
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("marks Phase 2 focused IDs as reservations owned by the implementing phase", () => {
@@ -526,95 +589,71 @@ describe("every-handler behavior matrix", () => {
     }
   });
 
-  it("requires focused assertion registrations only as their owning phase lands", () => {
-    const phase3 = makeFocusedAssertionRegistrations(["phase_3"]);
-    const throughPhase4 = makeFocusedAssertionRegistrations([
-      "phase_3",
-      "phase_4",
-    ]);
-    const all = makeFocusedAssertionRegistrations([
-      "phase_3",
-      "phase_4",
-      "phase_5",
-    ]);
-
-    expect(() =>
-      validateFocusedAssertionRegistrations([], "phase_2"),
-    ).not.toThrow();
-    expect(() => validateFocusedAssertionRegistrations([], "phase_3")).toThrow(
-      /unresolved.*phase_3/i,
+  it("does not expose an ungrounded owning-phase or release registration gate", () => {
+    expect("validateFocusedAssertionRegistrations" in storyManifest).toBe(
+      false,
     );
-    expect(() =>
-      validateFocusedAssertionRegistrations(phase3, "phase_3"),
-    ).not.toThrow();
-    expect(() =>
-      validateFocusedAssertionRegistrations(phase3, "phase_4"),
-    ).toThrow(/unresolved.*phase_4/i);
-    expect(() =>
-      validateFocusedAssertionRegistrations(throughPhase4, "phase_4"),
-    ).not.toThrow();
-    expect(() =>
-      validateFocusedAssertionRegistrations(all, "phase_5"),
-    ).not.toThrow();
-    expect(() =>
-      validateFocusedAssertionRegistrations(all, "release"),
-    ).not.toThrow();
+    expect("FOCUSED_ASSERTION_GATES" in storyManifest).toBe(false);
   });
 
-  it("rejects duplicate, unknown, and wrong-owner focused registrations", () => {
-    const [registration] = makeFocusedAssertionRegistrations(["phase_3"]);
-    expect(registration).toBeDefined();
-
-    expect(() =>
-      validateFocusedAssertionRegistrations(
-        [registration!, registration!],
-        "phase_2",
-      ),
-    ).toThrow(/duplicate focused assertion registration/i);
-    expect(() =>
-      validateFocusedAssertionRegistrations(
-        [
-          {
-            ...registration!,
-            focused_assertion_id: "unit:unknown:assertion",
-          },
-        ],
-        "phase_2",
-      ),
-    ).toThrow(/unknown focused assertion registration/i);
-    expect(() =>
-      validateFocusedAssertionRegistrations(
-        [{ ...registration!, owner_phase: "phase_4" }],
-        "phase_2",
-      ),
-    ).toThrow(/owner phase/i);
-  });
-
-  it("links deadline and cancellation cells to compatible per-tool faults", () => {
-    for (const [requirement, stepPrefix, faultPrefix] of [
-      [
-        "branch:deadline-before-admission",
-        "deadline-before-admission",
-        "expire-before-admission",
-      ],
-      [
-        "branch:cancellation-before-write",
-        "cancel-before-write",
-        "cancel-before-write",
-      ],
-    ] as const) {
-      const row = TOOL_BEHAVIOR_MATRIX.find(
-        (candidate) => candidate.requirement === requirement,
-      )!;
-      for (const tool of JETKVM_TOOL_NAMES) {
-        const cell = row.cells[tool];
-        expect(cell.applicability).toBe("applicable");
-        if (cell.applicability !== "applicable") {
-          continue;
-        }
+  it("links serialized cells to compatible per-tool faults", () => {
+    const deadline = TOOL_BEHAVIOR_MATRIX.find(
+      ({ requirement }) => requirement === "branch:deadline-before-admission",
+    )!;
+    for (const tool of JETKVM_TOOL_NAMES) {
+      const cell = deadline.cells[tool];
+      expect(cell.applicability).toBe("applicable");
+      if (cell.applicability === "applicable") {
         const slug = tool.replaceAll("_", "-");
-        expect(cell.step_id).toBe(`${stepPrefix}-${slug}`);
-        expect(cell.fault_id).toBe(`${faultPrefix}-${slug}`);
+        expect(cell.step_id).toBe(`deadline-before-admission-${slug}`);
+        expect(cell.fault_id).toBe(`expire-before-admission-${slug}`);
+      }
+    }
+
+    const cancellation = TOOL_BEHAVIOR_MATRIX.find(
+      ({ requirement }) => requirement === "branch:cancellation-before-write",
+    )!;
+    for (const tool of JETKVM_TOOL_NAMES) {
+      const cell = cancellation.cells[tool];
+      expect(cell.applicability).toBe("applicable");
+      if (cell.applicability !== "applicable") {
+        continue;
+      }
+      const slug = tool.replaceAll("_", "-");
+      expect(cell.step_id).toBe(
+        tool === "jetkvm_input_keyboard"
+          ? "cancel-physical-key-before-write"
+          : tool === "jetkvm_input_paste"
+            ? "paste-cancel-before-acceptance"
+            : `cancel-before-write-${slug}`,
+      );
+      expect(cell.fault_id).toBe(
+        tool === "jetkvm_input_keyboard"
+          ? "cancel-keyboard-before-write"
+          : tool === "jetkvm_input_paste"
+            ? "cancel-before-paste-acceptance"
+            : `cancel-before-write-${slug}`,
+      );
+    }
+
+    const cleanup = TOOL_BEHAVIOR_MATRIX.find(
+      ({ requirement }) => requirement === "branch:cleanup-failure",
+    )!;
+    for (const tool of [
+      "jetkvm_input_keyboard",
+      "jetkvm_input_mouse",
+      "jetkvm_input_paste",
+      "jetkvm_input_release",
+      "jetkvm_power_control",
+      "jetkvm_session_connect",
+      "jetkvm_session_reconnect",
+    ] as const) {
+      const cell = cleanup.cells[tool];
+      expect(cell.applicability).toBe("applicable");
+      if (cell.applicability === "applicable") {
+        const slug = tool.replaceAll("_", "-");
+        expect(cell.step_id).toBe(`cleanup-failure-${slug}`);
+        expect(cell.fault_id).toBe(`arm-cleanup-failure-${slug}`);
       }
     }
   });
@@ -746,6 +785,34 @@ describe("every-handler behavior matrix", () => {
     }
   });
 
+  it("links shared SSE rows to their executable route cases", () => {
+    for (const [requirement, stepId, faultId, assertionId] of [
+      [
+        "branch:sse-route-security",
+        "secure-sse-get",
+        "allow-valid-routes",
+        "assert-valid-routes-share-boundary",
+      ],
+      [
+        "branch:sse-routing-close",
+        "post-inactive-sdk-stream",
+        "disconnect-inactive-stream-after-routing",
+        "assert-inactive-sdk-stream-500",
+      ],
+    ] as const) {
+      const row = TOOL_BEHAVIOR_MATRIX.find(
+        (candidate) => candidate.requirement === requirement,
+      )!;
+      const cell = row.cells.jetkvm_session_status;
+      expect(cell.applicability).toBe("applicable");
+      if (cell.applicability === "applicable") {
+        expect(cell.step_id).toBe(stepId);
+        expect(cell.fault_id).toBe(faultId);
+        expect(cell.assertion_id).toBe(assertionId);
+      }
+    }
+  });
+
   it("permits null-tool links only for explicitly typed shared SSE transport assertions", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
@@ -799,6 +866,94 @@ describe("every-handler behavior matrix", () => {
 });
 
 describe("reviewed story branch execution", () => {
+  it("rejects one-shot faults without an immediate linked-call clear", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const [storyIndex, clearId] of [
+      [1, "clear-permission-denied-unauthorized-takeover"],
+      [6, "clear-cancel-keyboard-before-write"],
+      [7, "clear-disconnect-after-paste-write"],
+      [8, "clear-restore-cleanup-failure-jetkvm-power-control"],
+      [10, "clear-disconnect-before-write-jetkvm-display-capture"],
+      [11, "clear-disconnect-after-write-jetkvm-display-capture"],
+      [13, "clear-malformed-after-write-jetkvm-power-control"],
+      [
+        18,
+        "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      ],
+      [23, "clear-disconnect-inactive-stream-after-routing"],
+    ] as const) {
+      const malformed = structuredClone(stories);
+      const clear = malformed[storyIndex]!.fault_script.find(
+        ({ id }) => id === clearId,
+      )!;
+      clear.boundary = "during_verification";
+
+      expect(() => validateAcceptanceStories(malformed), clearId).toThrow(
+        /one-shot fault.*immediate.*clear|bracket.*linked call/i,
+      );
+    }
+  });
+
+  it("rejects unknown or closed generations used by later cases before recovery", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+
+    const missingReconnect = structuredClone(stories);
+    missingReconnect[7]!.steps = missingReconnect[7]!.steps.filter(
+      ({ id }) => id !== "reconnect-disconnect-after-write-unknown",
+    );
+    expect(() => validateAcceptanceStories(missingReconnect)).toThrow(
+      /unknown|closed generation.*recover/i,
+    );
+
+    const reusedGeneration = structuredClone(stories);
+    const recovery = reusedGeneration[11]!.steps.find(
+      ({ id }) => id === "recover-after-postwrite-jetkvm-input-keyboard",
+    )!;
+    recovery.input.next_generation = 9;
+    expect(() => validateAcceptanceStories(reusedGeneration)).toThrow(
+      /(?:unknown|closed generation).*recover/i,
+    );
+  });
+
+  it("rejects ATX cases without inter-case baseline restoration and reproof", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const [storyIndex, proofId] of [
+      [9, "restore-and-prove-hold-power-baseline"],
+      [21, "restore-and-prove-prewrite-baseline"],
+    ] as const) {
+      const malformed = structuredClone(stories);
+      const proof = malformed[storyIndex]!.steps.find(
+        ({ id }) => id === proofId,
+      )!;
+      proof.call = "acceptance-fixture/noop";
+      expect(() => validateAcceptanceStories(malformed), proofId).toThrow(
+        /ATX.*baseline.*(?:restore|reproof)|inter-case/i,
+      );
+    }
+  });
+
+  it("rejects ATX binding-loss cases without exact duplicate and recovery order", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+
+    const misplacedPrewrite = structuredClone(stories);
+    const prewriteFault = misplacedPrewrite[21]!.fault_script.find(
+      ({ id }) => id === "atx-prewrite-binding-loss",
+    )!;
+    prewriteFault.after_step = "power-before-write-binding-loss";
+    expect(() => validateAcceptanceStories(misplacedPrewrite)).toThrow(
+      /ATX binding-loss.*duplicate.*recovery|bracket/i,
+    );
+
+    const changedDuplicate = structuredClone(stories);
+    const duplicate = changedDuplicate[21]!.steps.find(
+      ({ id }) => id === "repeat-power-after-on-binding-loss",
+    )!;
+    duplicate.input.request_id = "opaque-different-request";
+    expect(() => validateAcceptanceStories(changedDuplicate)).toThrow(
+      /ATX binding-loss.*duplicate.*recovery|bracket/i,
+    );
+  });
+
   it("story 1 executes strict-schema, deadline-release, and busy as distinct calls and faults", async () => {
     const [story] = await loadAcceptanceStories(storiesDirectory);
     expect(story!.steps.slice(0, 4).map(({ id }) => id)).toEqual([
@@ -860,8 +1015,12 @@ describe("reviewed story branch execution", () => {
       clearPrefix,
       stepPrefix,
       retryPrefix,
+      tools,
+      expectedRequestIds,
     } of [
       {
+        tools: JETKVM_TOOL_NAMES,
+        expectedRequestIds: 7,
         storyIndex: 0,
         requirement: "branch:deadline-before-admission",
         faultPrefix: "expire-before-admission",
@@ -870,6 +1029,11 @@ describe("reviewed story branch execution", () => {
         retryPrefix: "retry-deadline-before-admission",
       },
       {
+        tools: JETKVM_TOOL_NAMES.filter(
+          (tool) =>
+            tool !== "jetkvm_input_keyboard" && tool !== "jetkvm_input_paste",
+        ),
+        expectedRequestIds: 5,
         storyIndex: 5,
         requirement: "branch:cancellation-before-write",
         faultPrefix: "cancel-before-write",
@@ -884,7 +1048,7 @@ describe("reviewed story branch execution", () => {
       )!;
       const requestIds = new Set<string>();
 
-      for (const tool of JETKVM_TOOL_NAMES) {
+      for (const tool of tools) {
         const slug = tool.replaceAll("_", "-");
         const cell = row.cells[tool];
         expect(cell.applicability).toBe("applicable");
@@ -919,7 +1083,7 @@ describe("reviewed story branch execution", () => {
           story.steps.indexOf(call),
         );
       }
-      expect(requestIds).toHaveLength(7);
+      expect(requestIds).toHaveLength(expectedRequestIds);
     }
   });
 
@@ -933,9 +1097,9 @@ describe("reviewed story branch execution", () => {
       ],
       [
         5,
-        "retry-cancel-before-write-jetkvm-input-keyboard",
-        "cancel-before-write-jetkvm-input-mouse",
-        "cancel-before-write-jetkvm-input-keyboard",
+        "retry-cancel-before-write-jetkvm-input-release",
+        "cancel-before-write-jetkvm-power-control",
+        "cancel-before-write-jetkvm-input-release",
       ],
     ] as const) {
       const stories = await loadAcceptanceStories(storiesDirectory);
@@ -1021,7 +1185,7 @@ describe("reviewed story branch execution", () => {
       [
         "display-change-after-first-dispatch",
         "opaque-observation-display-after",
-        /unknown.*one downstream write.*suffix/i,
+        /outcome unknown.*dispatched_action_count 2.*completed_action_count 1.*suppressed/i,
       ],
     ] as const;
     const observationIds = new Set<string>();

@@ -8,6 +8,7 @@ import type {
   DeviceRpcBinding,
   QualifiedEdidRead,
 } from "../device/DeviceRpcAdapter.js";
+import { validateSessionPlaneBundle } from "../planes/SessionPlaneBundle.js";
 import { FakeBrowserPlane } from "./fakes/FakeBrowserPlane.js";
 import { FakeNativeControlPlane } from "./fakes/FakeNativeControlPlane.js";
 import { PlaneFaultError, type PlaneFault } from "./fakes/PlaneScenario.js";
@@ -120,7 +121,11 @@ class RecordingAdapter implements DeviceRpcAdapter {
   }
 }
 
-const THROWING_FAULTS: readonly PlaneFault[] = [
+type ThrowingPlaneFault = Exclude<
+  PlaneFault,
+  "disconnect_after_persisted_terminal"
+>;
+const THROWING_FAULTS: readonly ThrowingPlaneFault[] = [
   "deadline_before_admission",
   "cancellation_before_admission",
   "disconnect_before_write",
@@ -139,6 +144,158 @@ const THROWING_FAULTS: readonly PlaneFault[] = [
   "event_gap",
   "duplicate_request_id",
 ];
+
+const FAULT_FAILURES = {
+  deadline_before_admission: {
+    code: "DEADLINE_EXCEEDED",
+    outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "none",
+  },
+  cancellation_before_admission: {
+    code: "CANCELLED",
+    outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "none",
+  },
+  disconnect_before_write: {
+    code: "CONNECTION_LOST",
+    outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "reconnect_then_capture",
+  },
+  disconnect_after_write_before_ack: {
+    code: "CONNECTION_LOST",
+    outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+  },
+  disconnect_after_ack_before_post_read: {
+    code: "PARTIAL_VERIFICATION",
+    outcome: "applied",
+    safeToRetry: false,
+    requiredNextStep: "none",
+  },
+  malformed_response: {
+    code: "DOWNSTREAM_MALFORMED_RESPONSE",
+    outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+  },
+  permission_denied: {
+    code: "PERMISSION_DENIED",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "grant_permission",
+  },
+  capability_missing: {
+    code: "CAPABILITY_MISSING",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "enable_capability",
+  },
+  control_busy: {
+    code: "CONTROL_BUSY",
+    outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "wait_or_request_takeover",
+  },
+  takeover: {
+    code: "SESSION_TAKEN_OVER",
+    outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
+  },
+  stale_generation: {
+    code: "STALE_SESSION_GENERATION",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+  },
+  partial_multi_event: {
+    code: "MUTATION_OUTCOME_UNKNOWN",
+    outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+  },
+  partial_verification: {
+    code: "PARTIAL_VERIFICATION",
+    outcome: "applied",
+    safeToRetry: false,
+    requiredNextStep: "none",
+  },
+  cleanup_failure: {
+    code: "MUTATION_OUTCOME_UNKNOWN",
+    outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+  },
+  post_reconnect_without_capture: {
+    code: "STALE_OBSERVATION",
+    outcome: "not_sent",
+    safeToRetry: true,
+    requiredNextStep: "capture_then_retry",
+  },
+  event_gap: {
+    code: "EVENT_GAP",
+    outcome: "unknown",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
+  },
+  duplicate_request_id: {
+    code: "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+    outcome: "not_sent",
+    safeToRetry: false,
+    requiredNextStep: "none",
+  },
+} as const satisfies Record<ThrowingPlaneFault, object>;
+
+describe("SessionPlaneBundle", () => {
+  it("accepts only one exact Browser-owned adapter object in both planes", () => {
+    const adapter = new RecordingAdapter();
+    const browser = new FakeBrowserPlane(adapter);
+    const native = new FakeNativeControlPlane(adapter);
+
+    const bundle = validateSessionPlaneBundle({
+      browser,
+      native,
+      deviceRpc: adapter,
+    });
+
+    expect(bundle.browser.deviceRpc).toBe(adapter);
+    expect(bundle.native.deviceRpc).toBe(adapter);
+    expect(bundle.deviceRpc).toBe(adapter);
+  });
+
+  it("rejects every A/B adapter mix but permits a later synchronized bundle", () => {
+    const first = new RecordingAdapter();
+    const second = new RecordingAdapter();
+    const firstBrowser = new FakeBrowserPlane(first);
+    const firstNative = new FakeNativeControlPlane(first);
+
+    expect(() =>
+      validateSessionPlaneBundle({
+        browser: firstBrowser,
+        native: new FakeNativeControlPlane(second),
+        deviceRpc: first,
+      }),
+    ).toThrow(/same DeviceRpcAdapter/i);
+    expect(() =>
+      validateSessionPlaneBundle({
+        browser: firstBrowser,
+        native: firstNative,
+        deviceRpc: second,
+      }),
+    ).toThrow(/same DeviceRpcAdapter/i);
+
+    const replacement = validateSessionPlaneBundle({
+      browser: new FakeBrowserPlane(second),
+      native: new FakeNativeControlPlane(second),
+      deviceRpc: second,
+    });
+    expect(replacement.deviceRpc).toBe(second);
+  });
+});
 
 describe("FakeBrowserPlane", () => {
   it("publishes only its injected adapter in the BrowserConnection", async () => {
@@ -191,16 +348,12 @@ describe("FakeBrowserPlane", () => {
         .catch((caught) => caught);
 
       expect(error).toBeInstanceOf(PlaneFaultError);
-      expect(error).toMatchObject({ fault });
-      if (
-        fault === "disconnect_after_ack_before_post_read" ||
-        fault === "partial_verification"
-      ) {
-        expect(error).toMatchObject({ outcome: "applied", acknowledged: true });
-      }
+      expect(error).toMatchObject({
+        fault,
+        ...FAULT_FAILURES[fault],
+      });
       if (fault === "partial_multi_event") {
         expect(error).toMatchObject({
-          outcome: "unknown",
           dispatchedCount: 2,
           completedCount: 1,
           suffixSuppressed: true,
@@ -329,6 +482,37 @@ describe("FakeNativeControlPlane", () => {
       "performAtx",
     ]);
     expect(native.deviceRpc).toBe(adapter);
+  });
+
+  it("rejects incoherent explicit ATX provenance instead of weakening the native fake", async () => {
+    const adapter = new RecordingAdapter();
+    const native = new FakeNativeControlPlane(adapter);
+    native.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "powerControl",
+          result: {
+            ...atx,
+            atxLedObservation: {
+              power: null,
+              hdd: false,
+              observedAt: null,
+              freshness: "unknown",
+            },
+          },
+        },
+      ],
+    });
+
+    await expect(
+      native.powerControl(
+        ref,
+        { requestId: "power-a", action: "press_power" },
+        deadline,
+      ),
+    ).rejects.toThrow(/ATX result shape is invalid/i);
+    expect(adapter.calls).toEqual([]);
   });
 
   it("can force a pre-adapter native fault with zero adapter calls", async () => {

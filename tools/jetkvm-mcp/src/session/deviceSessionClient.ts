@@ -236,6 +236,7 @@ export class DeviceSessionClient {
     let planeInvoked = false;
     let irreversibleTransition = false;
     try {
+      this.#throwIfAborted(scope, false);
       const permissions = [...this.#permissionsForPrincipal(principal)];
       if (!permissions.includes("session.connect")) {
         throw clientError(
@@ -457,6 +458,7 @@ export class DeviceSessionClient {
     let planeInvoked = false;
     let irreversibleTransition = false;
     try {
+      this.#throwIfAborted(scope, false);
       const permissions = [...this.#permissionsForPrincipal(principal)];
       if (!permissions.includes("session.reconnect")) {
         throw clientError(
@@ -783,6 +785,7 @@ export class DeviceSessionClient {
     signal: AbortSignal,
     operation: () => Promise<T>,
   ): Promise<T> {
+    signal.throwIfAborted();
     const previous = this.#lockTail;
     const slot = Promise.withResolvers<void>();
     this.#lockTail = previous.then(() => slot.promise);

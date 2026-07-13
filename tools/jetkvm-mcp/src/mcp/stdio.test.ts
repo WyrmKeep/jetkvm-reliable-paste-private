@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 
 import {
   ListToolsResultSchema,
@@ -116,6 +116,61 @@ function initialize(id: number): JSONRPCMessage {
   };
 }
 
+class ControlledWritable extends Writable {
+  readonly chunks: Buffer[] = [];
+  readonly #callbacks: Array<() => void> = [];
+  readonly #waiters: Array<{ count: number; resolve: () => void }> = [];
+
+  constructor() {
+    super({ highWaterMark: 1 });
+  }
+
+  override _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.chunks.push(Buffer.from(chunk));
+    this.#callbacks.push(callback);
+    this.#flushWaiters();
+  }
+
+  releaseNext(): void {
+    const callback = this.#callbacks.shift();
+    if (callback === undefined)
+      throw new Error("No controlled write to release");
+    callback();
+  }
+
+  async waitForCount(count: number): Promise<void> {
+    if (this.chunks.length >= count) return;
+    const pending = Promise.withResolvers<void>();
+    this.#waiters.push({ count, resolve: pending.resolve });
+    await pending.promise;
+  }
+
+  #flushWaiters(): void {
+    const waiters = this.#waiters.splice(0);
+    for (const waiter of waiters) {
+      if (this.chunks.length >= waiter.count) waiter.resolve();
+      else this.#waiters.push(waiter);
+    }
+  }
+}
+
+class EpipeWritable extends Writable {
+  override _write(
+    _chunk: Buffer,
+    _encoding: BufferEncoding,
+    _callback: (error?: Error | null) => void,
+  ): void {
+    const error = Object.assign(new Error("private downstream path"), {
+      code: "EPIPE",
+    });
+    queueMicrotask(() => this.emit("error", error));
+  }
+}
+
 function send(stream: PassThrough, message: JSONRPCMessage): void {
   stream.write(`${JSON.stringify(message)}\n`);
 }
@@ -139,7 +194,7 @@ describe("stdio adapter", () => {
     });
     handles.push(handle);
 
-    const initializeLine = `${JSON.stringify(initialize(1))}\n`;
+    const initializeLine = `${JSON.stringify(initialize(1))}\r\n`;
     stdin.write(initializeLine.slice(0, 13));
     expect(collector.messages).toEqual([]);
     stdin.write(initializeLine.slice(13));
@@ -243,6 +298,221 @@ describe("stdio adapter", () => {
       result: expect.any(Object),
     });
     expect(collector.rawChunks.join("")).not.toContain("broken");
+  });
+
+  it.each(["unterminated", "newline-terminated"] as const)(
+    "closes without dispatch when a %s frame exceeds 1 MiB",
+    async (kind) => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const errors: Error[] = [];
+      const handler = vi.fn(async (_input: unknown) =>
+        businessError("jetkvm_session_connect"),
+      );
+      const handle = await startStdioServer(
+        completeRegistry({ jetkvm_session_connect: handler }),
+        {
+          stdin,
+          stdout,
+          onError: (error) => errors.push(error),
+        },
+      );
+      handles.push(handle);
+
+      const oversized = Buffer.alloc(1_048_577, 0x20);
+      stdin.write(
+        kind === "newline-terminated"
+          ? Buffer.concat([oversized, Buffer.from("\n")])
+          : oversized,
+      );
+      await handle.closed;
+
+      expect(errors.map((error) => error.message)).toEqual([
+        "Inbound stdio frame exceeds 1048576 bytes",
+      ]);
+      expect(handler).not.toHaveBeenCalled();
+      expect(stdout.readableLength).toBe(0);
+    },
+  );
+
+  it("accepts an exactly 1 MiB JSON frame with a fragmented CRLF delimiter", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const collector = new JsonLineCollector(stdout);
+    const handle = await startStdioServer(completeRegistry(), {
+      stdin,
+      stdout,
+    });
+    handles.push(handle);
+    const json = JSON.stringify(initialize(1));
+    const padding = " ".repeat(1_048_576 - Buffer.byteLength(json));
+
+    stdin.write(`${json}${padding}\r`);
+    expect(collector.messages).toEqual([]);
+    stdin.write("\n");
+    await collector.waitForCount(1);
+
+    expect(collector.messages[0]).toMatchObject({
+      id: 1,
+      result: expect.any(Object),
+    });
+  });
+
+  it("reports and discards a residual non-newline frame at EOF", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const errors: Error[] = [];
+    const handle = await startStdioServer(completeRegistry(), {
+      stdin,
+      stdout,
+      onError: (error) => errors.push(error),
+    });
+    handles.push(handle);
+
+    stdin.end('{"jsonrpc":"2.0"');
+    await handle.closed;
+
+    expect(errors.map((error) => error.message)).toEqual([
+      "Incomplete stdio frame at EOF",
+    ]);
+    expect(stdout.readableLength).toBe(0);
+  });
+
+  it("accepts one maximum legal 8 MiB PNG response within the output cap", async () => {
+    const stdin = new PassThrough();
+    const stdout = new ControlledWritable();
+    const errors: Error[] = [];
+    const handle = await startStdioServer(completeRegistry(), {
+      stdin,
+      stdout,
+      onError: (error) => errors.push(error),
+    });
+    handles.push(handle);
+    const maximumPngBase64Length = 4 * Math.ceil((8 * 1024 * 1024) / 3);
+
+    void handle.transport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { image: "A".repeat(maximumPngBase64Length) },
+    });
+    await stdout.waitForCount(1);
+
+    expect(stdout.chunks[0]?.byteLength).toBeGreaterThan(
+      maximumPngBase64Length,
+    );
+    expect(stdout.chunks[0]?.byteLength).toBeLessThan(16 * 1024 * 1024);
+    expect(errors).toEqual([]);
+    stdout.releaseNext();
+  });
+
+  it("bounds stalled stdout across concurrent large responses and closes on overflow", async () => {
+    const stdin = new PassThrough();
+    const stdout = new ControlledWritable();
+    const errors: Error[] = [];
+    const largeText = "x".repeat(9 * 1024 * 1024);
+    const handler = vi.fn(async () => businessError("jetkvm_session_connect"));
+    const handle = await startStdioServer(
+      completeRegistry({ jetkvm_session_connect: handler }),
+      {
+        stdin,
+        stdout,
+        onError: (error) => errors.push(error),
+      },
+    );
+    handles.push(handle);
+
+    for (const id of [2, 3, 4]) {
+      void handle.transport.send({
+        jsonrpc: "2.0",
+        id,
+        result: { payload: largeText },
+      });
+    }
+    await handle.closed;
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(errors.map((error) => error.message)).toEqual([
+      "Outbound stdio queue exceeds 16777216 bytes",
+    ]);
+    expect(stdout.chunks).toHaveLength(1);
+    expect(stdout.chunks[0]?.byteLength).toBeLessThan(10 * 1024 * 1024);
+  });
+
+  it("resumes stalled stdout in JSON-RPC response order", async () => {
+    const stdin = new PassThrough();
+    const stdout = new ControlledWritable();
+    const handle = await startStdioServer(completeRegistry(), {
+      stdin,
+      stdout,
+    });
+    handles.push(handle);
+
+    send(stdin, initialize(1));
+    await stdout.waitForCount(1);
+    stdout.releaseNext();
+    send(stdin, { jsonrpc: "2.0", method: "notifications/initialized" });
+    send(stdin, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    send(stdin, { jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
+    await stdout.waitForCount(2);
+    stdout.releaseNext();
+    await stdout.waitForCount(3);
+
+    expect(
+      stdout.chunks.slice(1).map((chunk) => JSON.parse(chunk.toString()).id),
+    ).toEqual([2, 3]);
+    stdout.releaseNext();
+  });
+
+  it("closes on a bounded stdout write timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const stdin = new PassThrough();
+      const stdout = new ControlledWritable();
+      const errors: Error[] = [];
+      const handle = await startStdioServer(completeRegistry(), {
+        stdin,
+        stdout,
+        onError: (error) => errors.push(error),
+      });
+      handles.push(handle);
+
+      send(stdin, initialize(1));
+      await stdout.waitForCount(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await handle.closed;
+
+      expect(errors.map((error) => error.message)).toEqual([
+        "Outbound stdio write timed out after 10000 ms",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("captures EPIPE before the SDK writes and removes stdout listeners on close", async () => {
+    const stdin = new PassThrough();
+    const stdout = new EpipeWritable();
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const handle = await startStdioServer(completeRegistry(), {
+        stdin,
+        stdout,
+      });
+      handles.push(handle);
+      expect(stdout.listenerCount("error")).toBe(1);
+
+      send(stdin, initialize(1));
+      await handle.closed;
+
+      expect(stderrWrite).toHaveBeenCalledOnce();
+      expect(stderrWrite).toHaveBeenCalledWith(
+        "jetkvm-mcp: stdio output failure\n",
+      );
+      expect(stdout.listenerCount("error")).toBe(0);
+      await handle.close();
+    } finally {
+      stderrWrite.mockRestore();
+    }
   });
 
   it("treats EOF and repeated close as one cleanup", async () => {

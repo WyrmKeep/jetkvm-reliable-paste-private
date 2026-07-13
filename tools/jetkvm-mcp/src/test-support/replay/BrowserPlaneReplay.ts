@@ -6,6 +6,7 @@ import { PHYSICAL_KEYS } from "../../domain.js";
 import type {
   Deadline,
   DeviceRpcAdapter,
+  DeviceRpcBinding,
   SessionRef,
 } from "../../device/DeviceRpcAdapter.js";
 import type {
@@ -89,7 +90,7 @@ const connectionSchema = z
     binding: bindingSchema,
     connectionEpoch: z.number().int().positive(),
     browserChannelGeneration: z.number().int().positive(),
-    displayGeneration: z.number().int().positive(),
+    displayGeneration: z.number().int().nonnegative(),
   })
   .strict();
 const observationSchema = z
@@ -97,7 +98,7 @@ const observationSchema = z
     observationId: z.string().min(1).max(256),
     sessionGeneration: z.number().int().positive(),
     connectionEpoch: z.number().int().positive(),
-    displayGeneration: z.number().int().positive(),
+    displayGeneration: z.number().int().nonnegative(),
     frameId: z.string().min(1).max(256),
     capturedAt: z.string().datetime(),
     sourceWidth: z.number().int().positive(),
@@ -149,15 +150,27 @@ export interface ReplayFrameArtifactProvider {
   resolve(sha256: string): Promise<Uint8Array>;
 }
 
+export type ReplayDeviceRpcAdapterReplacement = (
+  previous: DeviceRpcAdapter,
+  recordedBinding: DeviceRpcBinding,
+) => DeviceRpcAdapter;
+
 export class BrowserPlaneReplay implements BrowserPlane {
   private readonly replay: SanitizedReplayCursor;
+  private currentDeviceRpc: DeviceRpcAdapter;
 
   public constructor(
-    public readonly deviceRpc: DeviceRpcAdapter,
+    deviceRpc: DeviceRpcAdapter,
     tape: SanitizedReplayTape,
     private readonly frameArtifacts?: ReplayFrameArtifactProvider,
+    private readonly replaceDeviceRpc?: ReplayDeviceRpcAdapterReplacement,
   ) {
+    this.currentDeviceRpc = deviceRpc;
     this.replay = new SanitizedReplayCursor(tape, "browser");
+  }
+
+  public get deviceRpc(): DeviceRpcAdapter {
+    return this.currentDeviceRpc;
   }
 
   public assertExhausted(): void {
@@ -185,6 +198,11 @@ export class BrowserPlaneReplay implements BrowserPlane {
     ) {
       throw new Error("Replay connect response identity is invalid.");
     }
+    if (!this.bindingMatches(this.deviceRpc.binding, parsed.data.binding)) {
+      throw new Error(
+        "Replay connect adapter does not match the recorded binding.",
+      );
+    }
     return { ...parsed.data, deviceRpc: this.deviceRpc };
   }
 
@@ -209,7 +227,24 @@ export class BrowserPlaneReplay implements BrowserPlane {
     ) {
       throw new Error("Replay reconnect response identity is invalid.");
     }
-    return { ...parsed.data, deviceRpc: this.deviceRpc };
+    const previous = this.deviceRpc;
+    if (this.bindingMatches(previous.binding, parsed.data.binding)) {
+      throw new Error("Replay reconnect must replace the previous binding.");
+    }
+    if (this.replaceDeviceRpc === undefined) {
+      throw new Error("Replay reconnect requires an adapter replacement.");
+    }
+    const replacement = this.replaceDeviceRpc(previous, parsed.data.binding);
+    if (
+      replacement === previous ||
+      !this.bindingMatches(replacement.binding, parsed.data.binding)
+    ) {
+      throw new Error(
+        "Replay reconnect replacement must be a new adapter with the recorded binding.",
+      );
+    }
+    this.currentDeviceRpc = replacement;
+    return { ...parsed.data, deviceRpc: replacement };
   }
 
   public async capture(
@@ -351,6 +386,18 @@ export class BrowserPlaneReplay implements BrowserPlane {
     if (parsed.data.requestId !== request.requestId)
       throw new Error(`Replay ${operation} receipt request ID is invalid.`);
     return parsed.data;
+  }
+
+  private bindingMatches(
+    actual: DeviceRpcBinding,
+    expected: DeviceRpcBinding,
+  ): boolean {
+    return (
+      actual.sessionId === expected.sessionId &&
+      actual.sessionGeneration === expected.sessionGeneration &&
+      actual.connectionEpoch === expected.connectionEpoch &&
+      actual.browserChannelGeneration === expected.browserChannelGeneration
+    );
   }
 
   private validateDeadline(deadline: Deadline): void {

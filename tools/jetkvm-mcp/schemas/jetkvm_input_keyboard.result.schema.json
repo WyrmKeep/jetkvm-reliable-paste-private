@@ -189,7 +189,7 @@
                           "$ref": "#/anyOf/0/properties/operation_id"
                         },
                         "connection_epoch": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         },
                         "display_generation": {
                           "$ref": "#/anyOf/0/properties/duration_ms"
@@ -202,16 +202,16 @@
                           "minLength": 1
                         },
                         "source_width": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         },
                         "source_height": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         },
                         "image_width": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         },
                         "image_height": {
-                          "$ref": "#/anyOf/0/properties/duration_ms"
+                          "$ref": "#/anyOf/0/properties/session_generation"
                         },
                         "rotation": {
                           "type": "number",
@@ -232,10 +232,10 @@
                               "$ref": "#/anyOf/0/properties/duration_ms"
                             },
                             "content_width": {
-                              "$ref": "#/anyOf/0/properties/duration_ms"
+                              "$ref": "#/anyOf/0/properties/session_generation"
                             },
                             "content_height": {
-                              "$ref": "#/anyOf/0/properties/duration_ms"
+                              "$ref": "#/anyOf/0/properties/session_generation"
                             }
                           },
                           "required": [

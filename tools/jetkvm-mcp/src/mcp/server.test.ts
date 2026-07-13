@@ -61,7 +61,7 @@ function businessError(tool: JetKvmToolName): CallToolResult {
   };
 }
 
-function successfulConnect(): CallToolResult {
+function successfulConnect(takeoverPerformed = false): CallToolResult {
   const capabilities = Object.fromEntries(
     CAPABILITY_NAMES.map((name) => [name, true]),
   );
@@ -81,7 +81,7 @@ function successfulConnect(): CallToolResult {
       state: "ready" as const,
       connection_epoch: 1,
       display_generation: 1,
-      takeover_performed: false,
+      takeover_performed: takeoverPerformed,
       fresh_capture_required: true,
       permissions: ["session.connect" as const],
       capabilities,
@@ -97,6 +97,16 @@ function callToolResult(envelope: Record<string, unknown>): CallToolResult {
     structuredContent: envelope,
     content: [{ type: "text", text: JSON.stringify(envelope) }],
   };
+}
+function isMutableRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mutableRecord(value: unknown): Record<string, unknown> {
+  if (!isMutableRecord(value)) {
+    throw new Error("Expected a mutable record fixture.");
+  }
+  return value;
 }
 
 function completeRegistry(
@@ -391,7 +401,15 @@ describe("createMcpServer", () => {
     "correlates $tool success counts to the validated action list",
     async ({ tool, arguments: callArguments }) => {
       let returnedCount = 1;
-      const handler: JetKvmToolHandler = async () => {
+      let mutateActions = true;
+      const handler: JetKvmToolHandler = async (input) => {
+        if (mutateActions) {
+          const parsedInput = mutableRecord(input);
+          if (!Array.isArray(parsedInput.actions)) {
+            throw new Error("Expected parsed actions.");
+          }
+          parsedInput.actions.splice(1);
+        }
         const result = {
           request_id: "request-actions",
           outcome: "applied",
@@ -420,6 +438,7 @@ describe("createMcpServer", () => {
       await expect(
         client.callTool({ name: tool, arguments: callArguments }),
       ).rejects.toThrow(/Invalid handler result/);
+      mutateActions = false;
       returnedCount = callArguments.actions.length;
       await expect(
         client.callTool({ name: tool, arguments: callArguments }),
@@ -510,7 +529,14 @@ describe("createMcpServer", () => {
 
   it("enforces exact reconnect request, session, and generation correlation", async () => {
     let overrides: Record<string, unknown> = {};
-    const handler: JetKvmToolHandler = async () => {
+    let mutateIdentifiers = false;
+    const handler: JetKvmToolHandler = async (input) => {
+      if (mutateIdentifiers) {
+        const parsedInput = mutableRecord(input);
+        parsedInput.session_id = "session-other";
+        parsedInput.session_generation = 6;
+        parsedInput.request_id = "request-other";
+      }
       const baseResult = {
         request_id: "request-reconnect",
         outcome: "applied",
@@ -524,9 +550,11 @@ describe("createMcpServer", () => {
         takeover_performed: false,
         fresh_capture_required: true,
       };
+      const resultOverrides =
+        overrides.result === undefined ? {} : mutableRecord(overrides.result);
       const result = {
         ...baseResult,
-        ...((overrides.result as Record<string, unknown> | undefined) ?? {}),
+        ...resultOverrides,
       };
       return callToolResult({
         ok: true,
@@ -553,12 +581,28 @@ describe("createMcpServer", () => {
       },
     };
 
+    mutateIdentifiers = true;
+    overrides = {
+      session_id: "session-other",
+      session_generation: 7,
+      result: {
+        request_id: "request-other",
+        previous_session_generation: 6,
+        new_session_generation: 7,
+      },
+    };
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    mutateIdentifiers = false;
+
     for (const invalidOverrides of [
       { result: { request_id: "request-other" } },
       { result: { previous_session_generation: 6 } },
       { result: { new_session_generation: 7 }, session_generation: 7 },
       { session_generation: 9 },
       { session_id: "session-other" },
+      { result: { takeover_performed: true } },
     ]) {
       overrides = invalidOverrides;
       await expect(client.callTool(call)).rejects.toThrow(
@@ -576,6 +620,378 @@ describe("createMcpServer", () => {
           previous_session_generation: 7,
           new_session_generation: 8,
         },
+      },
+    });
+  });
+
+  it("correlates paste normalization evidence against the pre-handler text snapshot", async () => {
+    const originalText = "\uFEFFCafe\u0301\r\n";
+    const normalizedText = "Café\n";
+    const evidenceFor = (text: string) => ({
+      original_byte_count: Buffer.byteLength(text, "utf8"),
+      normalized_byte_count: Buffer.byteLength(
+        text
+          .replace(/^\uFEFF/, "")
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n")
+          .normalize("NFC"),
+        "utf8",
+      ),
+      normalized_sha256: createHash("sha256")
+        .update(
+          text
+            .replace(/^\uFEFF/, "")
+            .replace(/\r\n/g, "\n")
+            .replace(/\r/g, "\n")
+            .normalize("NFC"),
+          "utf8",
+        )
+        .digest("hex"),
+    });
+    let mutateText = true;
+    const handler: JetKvmToolHandler = async (input) => {
+      if (mutateText) {
+        mutableRecord(input).text = "x";
+      }
+      const evidence = evidenceFor(mutateText ? "x" : originalText);
+      return callToolResult({
+        ok: true,
+        tool: "jetkvm_input_paste",
+        operation_id: "operation-paste-evidence",
+        session_id: "session-1",
+        session_generation: 1,
+        duration_ms: 1,
+        result: {
+          request_id: "request-paste-evidence",
+          outcome: "applied",
+          verification: "device_ack_only",
+          safe_to_retry: false,
+          required_next_step: "none",
+          ...evidence,
+          accepted_at: "2026-07-13T00:00:00.000Z",
+          completed_at: "2026-07-13T00:00:01.000Z",
+          terminal_state: "succeeded",
+          measured_chars_per_second: null,
+          post_capture: null,
+        },
+      });
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_input_paste: handler }),
+    );
+    const call = {
+      name: "jetkvm_input_paste" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-paste-evidence",
+        text: originalText,
+        timeout_ms: 100,
+      },
+    };
+
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    mutateText = false;
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      structuredContent: {
+        ok: true,
+        result: {
+          original_byte_count: Buffer.byteLength(originalText, "utf8"),
+          normalized_byte_count: Buffer.byteLength(normalizedText, "utf8"),
+          normalized_sha256: createHash("sha256")
+            .update(normalizedText, "utf8")
+            .digest("hex"),
+        },
+      },
+    });
+  });
+
+  it("correlates paste error progress to normalized source code points", async () => {
+    let mutateText = true;
+    let progress = {
+      failed_action_index: 3,
+      dispatched_action_count: 4,
+      completed_action_count: 3,
+    };
+    const handler: JetKvmToolHandler = async (input) => {
+      if (mutateText) {
+        mutableRecord(input).text = "A😀éZ";
+      }
+      const envelope = {
+        ok: false,
+        tool: "jetkvm_input_paste",
+        operation_id: "operation-paste-progress",
+        session_id: "session-1",
+        session_generation: 1,
+        duration_ms: 1,
+        error: {
+          code: "MUTATION_OUTCOME_UNKNOWN",
+          message: "Paste progress is unknown.",
+          phase: "execute",
+          outcome: "unknown",
+          verification: "none",
+          safe_to_retry: false,
+          required_next_step: "inspect_device_state_before_retry",
+          details: {
+            permission: null,
+            capability: null,
+            ...progress,
+            downstream_stage: "write",
+            expected_generation: null,
+            actual_generation: null,
+            observation_id: "observation-1",
+          },
+        },
+      };
+      return { ...callToolResult(envelope), isError: true };
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_input_paste: handler }),
+    );
+    const call = {
+      name: "jetkvm_input_paste" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-paste-progress",
+        text: "A😀é",
+        timeout_ms: 100,
+      },
+    };
+
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    mutateText = false;
+    progress = {
+      failed_action_index: 1,
+      dispatched_action_count: 2,
+      completed_action_count: 1,
+    };
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          details: {
+            failed_action_index: 1,
+            dispatched_action_count: 2,
+            completed_action_count: 1,
+          },
+        },
+      },
+    });
+    progress = {
+      failed_action_index: 0,
+      dispatched_action_count: 2,
+      completed_action_count: 1,
+    };
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+  });
+
+  it("correlates capture format, bounds, and no-upscale geometry against the request snapshot", async () => {
+    const bytes = Uint8Array.of(1);
+    const data = Buffer.from(bytes).toString("base64");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    let mode:
+      | "mutated_request"
+      | "out_of_bounds"
+      | "upscaled"
+      | "aspect_mismatch"
+      | "valid" = "mutated_request";
+    const handler: JetKvmToolHandler = async (input) => {
+      if (mode === "mutated_request") {
+        const parsedInput = mutableRecord(input);
+        parsedInput.format = "jpeg";
+        parsedInput.max_width = 128;
+        parsedInput.max_height = 128;
+      }
+      const sourceWidth =
+        mode === "upscaled" ? 32 : mode === "aspect_mismatch" ? 100 : 100;
+      const sourceHeight =
+        mode === "upscaled" ? 32 : mode === "aspect_mismatch" ? 50 : 100;
+      const imageWidth = mode === "mutated_request" ? 100 : 64;
+      const imageHeight = mode === "mutated_request" ? 100 : 64;
+      const contentX = mode === "out_of_bounds" ? 1 : 0;
+      const mimeType = mode === "mutated_request" ? "image/jpeg" : "image/png";
+      const envelope = {
+        ok: true,
+        tool: "jetkvm_display_capture",
+        operation_id: "operation-capture-correlation",
+        session_id: "session-1",
+        session_generation: 1,
+        duration_ms: 1,
+        result: {
+          observation_id: "observation-capture-correlation",
+          connection_epoch: 1,
+          display_generation: 1,
+          frame_id: "frame-capture-correlation",
+          captured_at: "2026-07-13T00:00:00.000Z",
+          source_width: sourceWidth,
+          source_height: sourceHeight,
+          image_width: imageWidth,
+          image_height: imageHeight,
+          rotation: 0,
+          geometry: {
+            content_x: contentX,
+            content_y: 0,
+            content_width: imageWidth,
+            content_height: imageHeight,
+          },
+          image: {
+            content_index: 1,
+            mime_type: mimeType,
+            sha256,
+            byte_length: bytes.byteLength,
+          },
+        },
+      };
+      return {
+        structuredContent: envelope,
+        content: [
+          { type: "text" as const, text: JSON.stringify(envelope) },
+          { type: "image" as const, data, mimeType },
+        ],
+      };
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_display_capture: handler }),
+    );
+    const call = {
+      name: "jetkvm_display_capture" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        format: "png",
+        max_width: 64,
+        max_height: 64,
+        timeout_ms: 100,
+      },
+    };
+
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    for (const invalidMode of [
+      "out_of_bounds",
+      "upscaled",
+      "aspect_mismatch",
+    ] as const) {
+      mode = invalidMode;
+      await expect(client.callTool(call)).rejects.toThrow(
+        /Invalid handler result/,
+      );
+    }
+    mode = "valid";
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      structuredContent: {
+        ok: true,
+        result: {
+          source_width: 100,
+          source_height: 100,
+          image_width: 64,
+          image_height: 64,
+          image: { mime_type: "image/png" },
+        },
+      },
+    });
+  });
+
+  it("correlates power action against the pre-handler request snapshot", async () => {
+    let mutateAction = true;
+    const handler: JetKvmToolHandler = async (input) => {
+      if (mutateAction) {
+        mutableRecord(input).action = "press_reset";
+      }
+      const action = mutateAction ? "press_reset" : "press_power";
+      return callToolResult({
+        ok: true,
+        tool: "jetkvm_power_control",
+        operation_id: "operation-power-correlation",
+        session_id: "session-1",
+        session_generation: 1,
+        duration_ms: 1,
+        result: {
+          request_id: "request-power-correlation",
+          outcome: "applied",
+          verification: "device_ack_only",
+          safe_to_retry: false,
+          required_next_step: "none",
+          action,
+          wire_action: action === "press_reset" ? "reset" : "power-short",
+          fixed_press_ms: 200,
+          serial_sequence_completed: true,
+          atx_led_observation: {
+            power: null,
+            hdd: null,
+            observed_at: null,
+            freshness: "unknown",
+          },
+        },
+      });
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_power_control: handler }),
+    );
+    const call = {
+      name: "jetkvm_power_control" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        request_id: "request-power-correlation",
+        action: "press_power",
+        timeout_ms: 100,
+      },
+    };
+
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    mutateAction = false;
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      structuredContent: {
+        ok: true,
+        result: {
+          action: "press_power",
+          wire_action: "power-short",
+        },
+      },
+    });
+  });
+
+  it("does not let a connect handler manufacture takeover from a mutated request", async () => {
+    let mutateTakeover = true;
+    const handler: JetKvmToolHandler = async (input) => {
+      if (mutateTakeover) {
+        mutableRecord(input).takeover = true;
+      }
+      return successfulConnect(mutateTakeover);
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_session_connect: handler }),
+    );
+    const call = {
+      name: "jetkvm_session_connect" as const,
+      arguments: {
+        request_id: "request-1",
+        takeover: false,
+        timeout_ms: 100,
+      },
+    };
+
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    mutateTakeover = false;
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      structuredContent: {
+        ok: true,
+        result: { takeover_performed: false },
       },
     });
   });

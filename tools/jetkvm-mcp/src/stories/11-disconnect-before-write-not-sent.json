@@ -39,54 +39,153 @@
   ],
   "fault_script": [
     {
-      "id": "disconnect-at-prewrite",
-      "after_step": "capture-prewrite-observation",
+      "id": "arm-disconnect-before-write-jetkvm-display-capture",
+      "after_step": null,
       "boundary": "before_write",
-      "action": "For each linked tool, disconnect its downstream route after admission but before the first request write.",
-      "expected_effect": "Each call is not_sent with zero writes and safe retry classification."
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_display_capture only.",
+      "expected_effect": "The linked read call loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-display-capture",
+      "after_step": "disconnect-before-write-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Clear the display-capture disconnect injector.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-display-status",
+      "after_step": "recover-after-prewrite-jetkvm-display-capture",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_display_status only.",
+      "expected_effect": "The linked read call loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-display-status",
+      "after_step": "disconnect-before-write-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the display-status disconnect injector.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-input-keyboard",
+      "after_step": "recover-after-prewrite-jetkvm-display-status",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_input_keyboard only.",
+      "expected_effect": "The linked mutation loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-input-keyboard",
+      "after_step": "disconnect-before-write-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Clear the keyboard disconnect injector and release its reservations.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-input-mouse",
+      "after_step": "recover-after-prewrite-jetkvm-input-keyboard",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_input_mouse only.",
+      "expected_effect": "The linked mutation loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-input-mouse",
+      "after_step": "disconnect-before-write-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Clear the mouse disconnect injector and release its reservations.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-input-paste",
+      "after_step": "recover-after-prewrite-jetkvm-input-mouse",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_input_paste only.",
+      "expected_effect": "The linked mutation loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-input-paste",
+      "after_step": "disconnect-before-write-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Clear the paste disconnect injector and release its reservations.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-input-release",
+      "after_step": "recover-after-prewrite-jetkvm-input-paste",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_input_release only.",
+      "expected_effect": "The linked mutation loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-input-release",
+      "after_step": "disconnect-before-write-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Clear the input-release disconnect injector and release its reservation.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-power-control",
+      "after_step": "recover-after-prewrite-jetkvm-input-release",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_power_control only.",
+      "expected_effect": "The linked mutation loses its route before any accepted ATX write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-power-control",
+      "after_step": "disconnect-before-write-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Clear the power disconnect injector and release its reservation.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-session-connect",
+      "after_step": "recover-after-prewrite-jetkvm-power-control",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_session_connect only.",
+      "expected_effect": "The linked connect loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-session-connect",
+      "after_step": "disconnect-before-write-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Clear the session-connect disconnect injector and release its reservation.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-session-reconnect",
+      "after_step": "recover-after-prewrite-jetkvm-session-connect",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_session_reconnect only.",
+      "expected_effect": "The linked reconnect loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-session-reconnect",
+      "after_step": "disconnect-before-write-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Clear the session-reconnect disconnect injector and release its reservation.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-before-write-jetkvm-session-status",
+      "after_step": "recover-after-prewrite-jetkvm-session-reconnect",
+      "boundary": "before_write",
+      "action": "Arm a one-shot pre-write disconnect for jetkvm_session_status only.",
+      "expected_effect": "The linked read call loses its route before any accepted downstream write."
+    },
+    {
+      "id": "clear-disconnect-before-write-jetkvm-session-status",
+      "after_step": "disconnect-before-write-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the session-status disconnect injector.",
+      "expected_effect": "The story leaves no disconnect injector armed."
     }
   ],
   "steps": [
     {
-      "id": "capture-prewrite-observation",
+      "id": "disconnect-before-write-jetkvm-display-capture",
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "timeout_ms": 1000
-      },
-      "timeout_ms": 1000,
-      "expect": "A fresh observation for the faulted mutation."
-    },
-    {
-      "id": "mouse-before-write-loss",
-      "tool": "jetkvm_input_mouse",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation",
-        "request_id": "opaque-prewrite-loss",
-        "actions": [
-          {
-            "type": "click",
-            "x": 12,
-            "y": 18,
-            "button": "left"
-          }
-        ],
-        "timeout_ms": 1000
-      },
-      "timeout_ms": 1000,
-      "expect": "not_sent with zero input dispatch and safe retry classification."
-    },
-    {
-      "id": "mouse-before-write-loss-jetkvm-display-capture",
-      "tool": "jetkvm_display_capture",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-session",
+        "session_id": "opaque-session-07",
         "session_generation": 7,
         "format": "jpeg",
         "max_width": 1280,
@@ -94,147 +193,273 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_display_capture when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and no image block."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-display-status",
+      "id": "recover-after-prewrite-jetkvm-display-capture",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-07",
+        "next_session_id": "opaque-session-08",
+        "next_generation": 8,
+        "next_tool": "jetkvm_display_status",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The one-shot fault is cleared and a new current owned session is proven before the next cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-display-status",
       "tool": "jetkvm_display_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_display_status when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-input-keyboard",
+      "id": "recover-after-prewrite-jetkvm-display-status",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-08",
+        "next_session_id": "opaque-session-09",
+        "next_generation": 9,
+        "next_tool": "jetkvm_input_keyboard",
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-09"
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared, a new current owned session is proven, and a fresh keyboard observation is captured before the next cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-input-keyboard",
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-mouse-before-write-loss-input-keyboard",
-        "request_id": "opaque-mouse-before-write-loss-input-keyboard",
-        "actions": [
-          {
-            "type": "key_press",
-            "key": "Enter"
-          }
-        ],
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-09",
+        "request_id": "opaque-prewrite-keyboard",
+        "actions": [{ "type": "key_press", "key": "Enter" }],
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_input_keyboard when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and the observation reservation is released."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-input-mouse",
+      "id": "recover-after-prewrite-jetkvm-input-keyboard",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-09",
+        "next_session_id": "opaque-session-10",
+        "next_generation": 10,
+        "next_tool": "jetkvm_input_mouse",
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-10"
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared, a new current owned session is proven, and a fresh mouse observation is captured before the next cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-input-mouse",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-mouse-before-write-loss-input-mouse",
-        "request_id": "opaque-mouse-before-write-loss-input-mouse",
-        "actions": [
-          {
-            "type": "move",
-            "x": 40,
-            "y": 50
-          }
-        ],
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-10",
+        "request_id": "opaque-prewrite-mouse",
+        "actions": [{ "type": "move", "x": 40, "y": 50 }],
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_input_mouse when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and the observation reservation is released."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-input-paste",
+      "id": "recover-after-prewrite-jetkvm-input-mouse",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-10",
+        "next_session_id": "opaque-session-11",
+        "next_generation": 11,
+        "next_tool": "jetkvm_input_paste",
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-11"
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared, a new current owned session is proven, and a fresh paste observation is captured before the next cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-input-paste",
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-mouse-before-write-loss-input-paste",
-        "request_id": "opaque-mouse-before-write-loss-input-paste",
+        "session_id": "opaque-session-11",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-11",
+        "request_id": "opaque-prewrite-paste",
         "text": "FixturePaste91",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_input_paste when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and the observation reservation is released."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-input-release",
+      "id": "recover-after-prewrite-jetkvm-input-paste",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-11",
+        "next_session_id": "opaque-session-12",
+        "next_generation": 12,
+        "next_tool": "jetkvm_input_release",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared and a new current owned session is proven before the next cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-input-release",
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-mouse-before-write-loss-input-release",
+        "session_id": "opaque-session-12",
+        "session_generation": 12,
+        "request_id": "opaque-prewrite-release",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_input_release when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-power-control",
+      "id": "recover-after-prewrite-jetkvm-input-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-12",
+        "next_session_id": "opaque-session-13",
+        "next_generation": 13,
+        "next_tool": "jetkvm_power_control",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared and a new current owned session with the recorded ATX baseline is proven before the next cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-mouse-before-write-loss-power-control",
+        "session_id": "opaque-session-13",
+        "session_generation": 13,
+        "request_id": "opaque-prewrite-power",
         "action": "press_power",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_power_control when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and zero ATX writes."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-session-connect",
+      "id": "recover-after-prewrite-jetkvm-power-control",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-13",
+        "prepare_unowned_connect": true,
+        "next_tool": "jetkvm_session_connect",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared, the prior session is closed, and an unowned connect baseline is proven before the next cell, with no ATX change or replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-session-connect",
       "tool": "jetkvm_session_connect",
       "call": "tools/call",
       "input": {
-        "request_id": "opaque-mouse-before-write-loss-session-connect",
+        "request_id": "opaque-prewrite-connect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_session_connect when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase connect, outcome not_sent, verification none, safe_to_retry true, required_next_step none, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and releases the connect request reservation."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-session-reconnect",
+      "id": "recover-after-prewrite-jetkvm-session-connect",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "next_session_id": "opaque-session-15",
+        "next_generation": 15,
+        "next_tool": "jetkvm_session_reconnect",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared and a new current owned session is proven before the reconnect cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-mouse-before-write-loss-session-reconnect",
+        "session_id": "opaque-session-15",
+        "session_generation": 15,
+        "request_id": "opaque-prewrite-reconnect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_session_reconnect when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes and releases the reconnect request reservation."
     },
     {
-      "id": "mouse-before-write-loss-jetkvm-session-status",
+      "id": "recover-after-prewrite-jetkvm-session-reconnect",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-15",
+        "next_session_id": "opaque-session-16",
+        "next_generation": 16,
+        "next_tool": "jetkvm_session_status",
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared and a new current owned session is proven before the final read cell, with no replay."
+    },
+    {
+      "id": "disconnect-before-write-jetkvm-session-status",
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-16",
+        "session_generation": 16,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_session_status when its downstream connection is lost before write, with safe retry classification and zero writes."
+      "expect": "CONNECTION_LOST read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and details.downstream_stage write. Separately, adapter evidence records exactly zero accepted downstream writes."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:disconnect-before-write",
-      "assertion": "Disconnect before the write boundary is not_sent with the safe retry classification."
+      "assertion": "Every explicit mutation call returns canonical CONNECTION_LOST/not_sent with zero accepted downstream writes; session connect requires next step none and every other mutation requires reconnect_then_capture."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:disconnect-before-write",
+      "assertion": "The explicit display capture, display status, and session status read calls return CONNECTION_LOST at phase execute with outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and downstream_stage write."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:disconnect-before-write",
+      "assertion": "Each tool-specific one-shot fault is cleared before an executable recovery establishes the next current session and any required fresh observation; separate adapter telemetry proves zero accepted downstream writes."
     }
   ],
   "evidence": [
@@ -242,7 +467,14 @@
       "id": "evidence-1",
       "requirement": "branch:disconnect-before-write",
       "field": "requirement_result",
-      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "source": "The schema-validated mutation and read ToolError envelopes from each explicit ordered fake or replay call.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:disconnect-before-write",
+      "field": "artifact_hash",
+      "source": "Ordered adapter telemetry separately proving accepted downstream write count 0 plus clear-and-recovery completion for every faulted call.",
       "retention": "release_manifest"
     }
   ],

@@ -89,15 +89,15 @@
       "id": "change-display-after-first-dispatch",
       "after_step": "capture-display-after-observation",
       "boundary": "after_write",
-      "action": "Change the display geometry after the first event of a two-event mouse request is dispatched.",
-      "expected_effect": "The result is unknown with one downstream write and the undispatched suffix suppressed."
+      "action": "Change the display geometry after action 0 completes and action 1 is dispatched, but before action 1 completes.",
+      "expected_effect": "The DISPLAY_CHANGED result is unknown with failed_action_index 1, dispatched_action_count 2, completed_action_count 1, and every action after index 1 suppressed."
     },
     {
       "id": "interrupt-mouse-after-first-event",
       "after_step": "capture-partial-observation",
       "boundary": "after_write",
-      "action": "Interrupt the two-action mouse request after its first downstream event.",
-      "expected_effect": "The partial request is unknown with exact counts and its undispatched suffix suppressed."
+      "action": "Interrupt the two-action mouse request after action 0 completes and action 1 is dispatched, but before action 1 completes.",
+      "expected_effect": "The CANCELLED result is unknown with failed_action_index 1, dispatched_action_count 2, completed_action_count 1, and every action after index 1 suppressed."
     },
     {
       "id": "validate-scroll-before-plane",
@@ -111,7 +111,7 @@
       "after_step": "reject-horizontal-scroll",
       "boundary": "before_write",
       "action": "Arm pre-write cancellation for jetkvm_display_capture only.",
-      "expected_effect": "The next jetkvm_display_capture call is cancelled before its first downstream write."
+      "expected_effect": "The admitted read call returns CANCELLED at phase execute with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage admission; internal evidence records one admission/reservation and zero downstream requests or writes."
     },
     {
       "id": "clear-cancel-before-write-jetkvm-display-capture",
@@ -125,7 +125,7 @@
       "after_step": "cancel-before-write-jetkvm-display-capture",
       "boundary": "before_write",
       "action": "Arm pre-write cancellation for jetkvm_display_status only.",
-      "expected_effect": "The next jetkvm_display_status call is cancelled before its first downstream write."
+      "expected_effect": "The admitted read call returns CANCELLED at phase execute with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage admission; internal evidence records one admission/reservation and zero downstream requests or writes."
     },
     {
       "id": "clear-cancel-before-write-jetkvm-display-status",
@@ -206,7 +206,7 @@
     },
     {
       "id": "cancel-before-write-jetkvm-session-connect",
-      "after_step": "retry-cancel-before-write-jetkvm-power-control",
+      "after_step": "restore-reprove-atx-after-cancellation-power-retry",
       "boundary": "before_write",
       "action": "Arm pre-write cancellation for jetkvm_session_connect only.",
       "expected_effect": "The next jetkvm_session_connect call is cancelled before its first downstream write."
@@ -223,7 +223,7 @@
       "after_step": "retry-cancel-before-write-jetkvm-session-connect",
       "boundary": "before_write",
       "action": "Arm pre-write cancellation for jetkvm_session_status only.",
-      "expected_effect": "The next jetkvm_session_status call is cancelled before its first downstream write."
+      "expected_effect": "The admitted read call returns CANCELLED at phase execute with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage admission; internal evidence records one admission/reservation and zero downstream requests or writes."
     },
     {
       "id": "clear-cancel-before-write-jetkvm-session-status",
@@ -492,27 +492,31 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown after one downstream write with the remaining suffix suppressed after the display change."
+      "expect": "DISPLAY_CHANGED mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step release_then_reconnect_then_capture, details.failed_action_index 1, details.dispatched_action_count 2, details.completed_action_count 1, and details.downstream_stage write. Counts are bounded by the two-action request and every action after index 1 is suppressed."
     },
     {
       "id": "capture-partial-observation",
-      "tool": "jetkvm_display_capture",
-      "call": "tools/call",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-release-reconnect-and-capture",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "timeout_ms": 1000
+        "closed_session_id": "opaque-session",
+        "closed_generation": 7,
+        "next_session_id": "opaque-session-08",
+        "next_generation": 8,
+        "next_observation_id": "opaque-observation-partial",
+        "inspect_device_state": true,
+        "emergency_release": true
       },
       "timeout_ms": 1000,
-      "expect": "A fresh observation saved as opaque-observation-partial."
+      "expect": "Inspect the unknown display-change result, perform authoritative release, reconnect at generation 8, and capture fresh opaque-observation-partial without replaying the failed mouse request."
     },
     {
       "id": "partial-mouse-dispatch",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "observation_id": "opaque-observation-partial",
         "request_id": "opaque-mouse-partial",
         "actions": [
@@ -531,27 +535,31 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown with one dispatched and completed event and the click suffix suppressed."
+      "expect": "CANCELLED mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, details.failed_action_index 1, details.dispatched_action_count 2, details.completed_action_count 1, and details.downstream_stage write. Counts are bounded by the two-action request and every action after index 1 is suppressed."
     },
     {
       "id": "capture-negative-scroll-observation",
-      "tool": "jetkvm_display_capture",
-      "call": "tools/call",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-release-reconnect-and-capture",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "timeout_ms": 1000
+        "closed_session_id": "opaque-session-08",
+        "closed_generation": 8,
+        "next_session_id": "opaque-session-09",
+        "next_generation": 9,
+        "next_observation_id": "opaque-observation-negative",
+        "inspect_device_state": true,
+        "emergency_release": true
       },
       "timeout_ms": 1000,
-      "expect": "A fresh unused observation saved as opaque-observation-negative."
+      "expect": "Inspect the unknown partial-dispatch result, perform authoritative release, reconnect at generation 9, and capture fresh opaque-observation-negative without replaying the failed mouse request."
     },
     {
       "id": "scroll-negative-bound",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-negative",
         "request_id": "opaque-scroll-neg",
         "actions": [
@@ -572,8 +580,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-negative",
         "request_id": "opaque-scroll-neg-reuse",
         "actions": [
@@ -594,8 +602,8 @@
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -606,8 +614,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-pos",
         "actions": [
@@ -629,8 +637,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-zero",
         "actions": [
@@ -651,8 +659,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-frac",
         "actions": [
@@ -673,8 +681,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-over",
         "actions": [
@@ -695,8 +703,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-x",
         "actions": [
@@ -718,35 +726,35 @@
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "format": "jpeg",
         "max_width": 1280,
         "max_height": 720,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_display_capture after cancellation before its first downstream write, with zero downstream writes."
+      "expect": "CANCELLED read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage admission. Separately, ordered harness evidence records admission/reservation count 1, downstream request count 0, accepted downstream write count 0, and no image block."
     },
     {
       "id": "cancel-before-write-jetkvm-display-status",
       "tool": "jetkvm_display_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_display_status after cancellation before its first downstream write, with zero downstream writes."
+      "expect": "CANCELLED read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage admission. Separately, ordered harness evidence records admission/reservation count 1, downstream request count 0, accepted downstream write count 0, and no BrowserPlane call."
     },
     {
       "id": "cancel-before-write-jetkvm-input-keyboard",
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cancel-before-write-input-keyboard",
         "request_id": "opaque-cancel-before-write-input-keyboard",
         "actions": [
@@ -765,8 +773,8 @@
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cancel-before-write-input-keyboard",
         "request_id": "opaque-cancel-before-write-input-keyboard",
         "actions": [
@@ -785,8 +793,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cancel-before-write-input-mouse",
         "request_id": "opaque-cancel-before-write-input-mouse",
         "actions": [
@@ -806,8 +814,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cancel-before-write-input-mouse",
         "request_id": "opaque-cancel-before-write-input-mouse",
         "actions": [
@@ -827,8 +835,8 @@
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cancel-before-write-input-paste",
         "request_id": "opaque-cancel-before-write-input-paste",
         "text": "FixturePaste91",
@@ -842,8 +850,8 @@
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cancel-before-write-input-paste",
         "request_id": "opaque-cancel-before-write-input-paste",
         "text": "FixturePaste91",
@@ -857,8 +865,8 @@
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "request_id": "opaque-cancel-before-write-input-release",
         "timeout_ms": 1000
       },
@@ -870,8 +878,8 @@
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "request_id": "opaque-cancel-before-write-input-release",
         "timeout_ms": 1000
       },
@@ -883,8 +891,8 @@
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "request_id": "opaque-cancel-before-write-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -897,14 +905,28 @@
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "request_id": "opaque-cancel-before-write-power-control",
         "action": "press_power",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
       "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the power request reservation was released."
+    },
+    {
+      "id": "restore-reprove-atx-after-cancellation-power-retry",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-reprove",
+      "input": {
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
+        "restore_serial": true,
+        "restore_extension": true,
+        "restore_observable_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Restore and re-prove the ATX serial binding, extension state, and recorded observable baseline before arming the session-connect cancellation cell."
     },
     {
       "id": "cancel-before-write-jetkvm-session-connect",
@@ -935,20 +957,20 @@
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_session_status after cancellation before its first downstream write, with zero downstream writes."
+      "expect": "CANCELLED read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage admission. Separately, ordered harness evidence records admission/reservation count 1, downstream request count 0, accepted downstream write count 0, and no BrowserPlane call."
     },
     {
       "id": "cancel-before-write-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "request_id": "opaque-cancel-before-write-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -961,8 +983,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
         "request_id": "opaque-cancel-before-write-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -975,12 +997,12 @@
     {
       "id": "assertion-1",
       "requirement": "branch:cancellation-before-write",
-      "assertion": "Each linked tool call runs under its compatible cancellation-before-write fault and returns not_sent with zero downstream writes. Clearing each fault isolates the next tool; every mutation retries the same normalized input under its tool-unique request identifier and reaches ordinary applied or CONTROL_BUSY handling."
+      "assertion": "Each linked mutation call runs under its compatible cancellation-before-write fault and returns not_sent; the three admitted read calls return CANCELLED with outcome null and verification none. Separate harness evidence proves one admission/reservation and zero downstream requests or writes for each read; clearing each fault isolates the next tool, and every mutation retries the same normalized input to ordinary applied or CONTROL_BUSY handling."
     },
     {
       "id": "assertion-2",
       "requirement": "branch:partial-multi-event-dispatch",
-      "assertion": "A partial multi-event dispatch is unknown with exact dispatched and completed counts and suppresses the suffix."
+      "assertion": "Every two-action mouse or keyboard partial-dispatch error is unknown with failed_action_index equal to completed_action_count, dispatched_action_count equal to completed_action_count plus 1, all counts bounded by request length, and no action after the failed index dispatched; the executable two-action mouse cases prove the exact tuple 1/2/1."
     },
     {
       "id": "assertion-3",
@@ -1005,7 +1027,7 @@
       "id": "evidence-2",
       "requirement": "branch:partial-multi-event-dispatch",
       "field": "requirement_result",
-      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "source": "The focused mouse and keyboard count assertions plus ordered fake or replay events proving request length 2, failed_action_index 1, dispatched_action_count 2, completed_action_count 1, and no dispatch after index 1.",
       "retention": "release_manifest"
     },
     {

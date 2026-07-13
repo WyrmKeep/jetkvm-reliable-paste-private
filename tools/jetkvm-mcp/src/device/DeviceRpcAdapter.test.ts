@@ -633,6 +633,81 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     expect(channel.writes()).toHaveLength(0);
   });
 
+  it.each([
+    [
+      "fresh observation without a timestamp",
+      { power: true, hdd: false, observed_at: null, freshness: "fresh" },
+    ],
+    [
+      "unknown observation with a timestamp",
+      {
+        power: null,
+        hdd: null,
+        observed_at: "2026-07-13T00:00:00.000Z",
+        freshness: "unknown",
+      },
+    ],
+    [
+      "unknown observation with an LED fact",
+      { power: true, hdd: null, observed_at: null, freshness: "unknown" },
+    ],
+  ] as const)(
+    "rejects an incoherent ATX %s",
+    async (_label, atxLedObservation) => {
+      const channel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+      const pending = adapter.performAtx(
+        BINDING,
+        { requestId: "request-a", action: "press_power" },
+        deadline(),
+      );
+      await channel.waitForWrites(1);
+      channel.respondToWrite(
+        0,
+        atxWireResult({ atx_led_observation: atxLedObservation }),
+      );
+
+      const error = await pending.catch((caught) => caught);
+
+      expectDeviceError(error, {
+        code: "MALFORMED_RESPONSE",
+        boundary: "ack",
+        outcome: "unknown",
+      });
+    },
+  );
+
+  it("maps an observed ATX LED snapshot with qualified provenance", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.performAtx(
+      BINDING,
+      { requestId: "request-a", action: "press_power" },
+      deadline(),
+    );
+    await channel.waitForWrites(1);
+    channel.respondToWrite(
+      0,
+      atxWireResult({
+        atx_led_observation: {
+          power: true,
+          hdd: null,
+          observed_at: "2026-07-13T00:00:00.000Z",
+          freshness: "stale",
+        },
+      }),
+    );
+
+    await expect(pending).resolves.toMatchObject({
+      atxLedObservation: {
+        power: true,
+        hdd: null,
+        observedAt: "2026-07-13T00:00:00.000Z",
+        freshness: "stale",
+      },
+    });
+  });
+
   it("redacts malformed downstream payloads and classifies them after write as unknown", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);

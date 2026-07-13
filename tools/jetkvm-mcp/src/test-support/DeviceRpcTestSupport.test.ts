@@ -102,10 +102,78 @@ describe("FakeDeviceRpcAdapter", () => {
     const next = { ...binding, connectionEpoch: 4 };
     fake.replaceBinding(next);
     await expect(fake.readEdid(binding, deadline)).rejects.toMatchObject({
-      fault: "stale_generation",
+      name: "DeviceRpcError",
+      code: "STALE_BINDING",
+      boundary: "admission",
       outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
     });
     expect(fake.binding).toEqual(next);
+  });
+
+  it.each(["connectionEpoch", "browserChannelGeneration"] as const)(
+    "classifies a stale %s without pretending the session generation changed",
+    async (field) => {
+      const fake = new FakeDeviceRpcAdapter(binding);
+      fake.replaceBinding({ ...binding, [field]: binding[field] + 1 });
+
+      await expect(fake.readDisplayState(binding, deadline)).rejects.toEqual(
+        expect.objectContaining({
+          name: "DeviceRpcError",
+          code: "STALE_BINDING",
+          boundary: "admission",
+          outcome: "not_sent",
+          writeBegan: false,
+          acknowledged: false,
+        }),
+      );
+    },
+  );
+
+  it("keeps a genuinely stale session discriminated from an epoch/channel binding loss", async () => {
+    const fake = new FakeDeviceRpcAdapter(binding);
+
+    await expect(
+      fake.readDisplayState(
+        { ...binding, sessionGeneration: binding.sessionGeneration + 1 },
+        deadline,
+      ),
+    ).rejects.toMatchObject({
+      fault: "stale_generation",
+      code: "STALE_SESSION_GENERATION",
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture",
+    });
+  });
+  it("rejects an incoherent ATX result instead of letting the fake weaken provenance", async () => {
+    const fake = new FakeDeviceRpcAdapter(binding);
+    fake.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "performAtx",
+          result: {
+            ...atx,
+            atxLedObservation: {
+              power: true,
+              hdd: false,
+              observedAt: null,
+              freshness: "fresh",
+            },
+          },
+        },
+      ],
+    });
+
+    await expect(
+      fake.performAtx(
+        binding,
+        { requestId: "power-a", action: "press_power" },
+        deadline,
+      ),
+    ).rejects.toThrow(/ATX result shape is invalid/i);
   });
 });
 
@@ -149,6 +217,34 @@ describe("ReplayDeviceRpcAdapter", () => {
       ),
     ).resolves.toEqual(atx);
     expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("rejects incoherent ATX provenance before constructing a replay adapter", () => {
+    expect(
+      () =>
+        new ReplayDeviceRpcAdapter(binding, {
+          version: 1,
+          plane: "device_rpc",
+          exchanges: [
+            {
+              operation: "performAtx",
+              request: json({
+                ref: binding,
+                request: { requestId: "power-a", action: "press_power" },
+              }),
+              response: json({
+                ...atx,
+                atxLedObservation: {
+                  power: true,
+                  hdd: null,
+                  observedAt: null,
+                  freshness: "unknown",
+                },
+              }),
+            },
+          ],
+        }),
+    ).toThrow(/invalid sanitized replay tape/i);
   });
 
   it.each([

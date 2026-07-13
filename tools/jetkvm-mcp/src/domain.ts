@@ -435,9 +435,9 @@ export type InputPasteResult = MutationState & {
   original_byte_count: number;
   normalized_byte_count: number;
   normalized_sha256: string;
-  accepted_at: string | null;
-  completed_at: string | null;
-  terminal_state: "succeeded" | "failed" | "cancelled" | "unknown";
+  accepted_at: string;
+  completed_at: string;
+  terminal_state: "succeeded";
   measured_chars_per_second: number | null;
   post_capture: DisplayCaptureResult | null;
 };
@@ -466,17 +466,26 @@ export type PowerControlInput = {
   action: PowerAction;
   timeout_ms: number;
 };
+export type AtxLedObservation =
+  | {
+      power: boolean | null;
+      hdd: boolean | null;
+      observed_at: string;
+      freshness: "fresh" | "stale";
+    }
+  | {
+      power: null;
+      hdd: null;
+      observed_at: null;
+      freshness: "unknown";
+    };
+
 export type PowerControlResult = MutationState & {
   action: PowerAction;
   wire_action: "power-short" | "power-long" | "reset";
   fixed_press_ms: 200 | 5000;
   serial_sequence_completed: boolean;
-  atx_led_observation: {
-    power: boolean | null;
-    hdd: boolean | null;
-    observed_at: string | null;
-    freshness: "fresh" | "stale" | "unknown";
-  };
+  atx_led_observation: AtxLedObservation;
 };
 
 export type ToolInputByName = {

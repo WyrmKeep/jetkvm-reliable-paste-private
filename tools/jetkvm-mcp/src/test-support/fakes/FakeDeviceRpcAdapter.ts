@@ -1,4 +1,7 @@
+import { z } from "zod";
+
 import {
+  DeviceRpcError,
   mapDeviceRpcBindingToWire,
   type AtxAction,
   type AtxWireReceipt,
@@ -14,6 +17,40 @@ import {
   type PlaneEvent,
   type PlaneScenario,
 } from "./PlaneScenario.js";
+
+const atxLedObservationSchema = z.discriminatedUnion("freshness", [
+  z
+    .object({
+      power: z.boolean().nullable(),
+      hdd: z.boolean().nullable(),
+      observedAt: z.string().datetime(),
+      freshness: z.enum(["fresh", "stale"]),
+    })
+    .strict(),
+  z
+    .object({
+      power: z.null(),
+      hdd: z.null(),
+      observedAt: z.null(),
+      freshness: z.literal("unknown"),
+    })
+    .strict(),
+]);
+export const fakeAtxReceiptSchema = z
+  .object({
+    requestId: z.string().min(1),
+    action: z.enum(["press_power", "hold_power", "press_reset"]),
+    wireAction: z.enum(["power-short", "power-long", "reset"]),
+    fixedPressMs: z.union([z.literal(200), z.literal(5000)]),
+    serialSequenceCompleted: z.literal(true),
+    acknowledgedAt: z.string().datetime(),
+    atxLedObservation: atxLedObservationSchema,
+    verification: z.literal("device_ack_only"),
+    postRead: z
+      .object({ status: z.enum(["available", "unavailable"]) })
+      .strict(),
+  })
+  .strict();
 
 export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
   private currentBinding: DeviceRpcBinding;
@@ -73,7 +110,7 @@ export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<AtxWireReceipt> {
     this.assertCurrent(ref);
-    return this.requiredResult<AtxWireReceipt>(
+    const result = this.requiredResult<unknown>(
       "performAtx",
       this.scenarios.consume(
         "performAtx",
@@ -84,17 +121,32 @@ export class FakeDeviceRpcAdapter implements DeviceRpcAdapter {
         deadline,
       ),
     );
+    const parsed = fakeAtxReceiptSchema.safeParse(result);
+    if (!parsed.success) {
+      throw new Error("Fake DeviceRpcAdapter ATX result shape is invalid.");
+    }
+    return parsed.data;
   }
 
   private assertCurrent(ref: DeviceRpcBinding): void {
     if (
       ref.sessionId !== this.currentBinding.sessionId ||
-      ref.sessionGeneration !== this.currentBinding.sessionGeneration ||
+      ref.sessionGeneration !== this.currentBinding.sessionGeneration
+    ) {
+      throw new PlaneFaultError("stale_generation", 0, 0);
+    }
+    if (
       ref.connectionEpoch !== this.currentBinding.connectionEpoch ||
       ref.browserChannelGeneration !==
         this.currentBinding.browserChannelGeneration
     ) {
-      throw new PlaneFaultError("stale_generation", 0, 0);
+      throw new DeviceRpcError(
+        "STALE_BINDING",
+        "admission",
+        "not_sent",
+        false,
+        false,
+      );
     }
   }
 

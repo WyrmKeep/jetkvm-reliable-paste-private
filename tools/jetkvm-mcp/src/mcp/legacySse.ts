@@ -10,7 +10,7 @@ import {
   type Server as HttpsServer,
   type ServerOptions as HttpsServerOptions,
 } from "node:https";
-import { isIP, type AddressInfo, type Socket } from "node:net";
+import { isIP, Socket, type AddressInfo } from "node:net";
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
@@ -35,6 +35,7 @@ interface LegacySseServerConstructionProof {
   readonly scheme: "http" | "https";
   readonly connectionsCheckingIntervalMs: number;
   readonly tlsHandshakeTimeoutMs: number | null;
+  readonly absoluteTlsHandshakeTimeoutMs: number | null;
 }
 
 const serverConstructionProofs = new WeakMap<
@@ -154,7 +155,7 @@ export class LegacySseAdapter {
         void this.handleRequest(request, response);
       },
     );
-    return this.#proveAndAttachServer(server, "http", null);
+    return this.#proveAndAttachServer(server, "http", null, null);
   }
 
   createHttpsServer(options: HttpsServerOptions): HttpsServer {
@@ -172,7 +173,13 @@ export class LegacySseAdapter {
         void this.handleRequest(request, response);
       },
     );
-    return this.#proveAndAttachServer(server, "https", handshakeTimeout);
+    installAbsoluteTlsHandshakeDeadline(server, handshakeTimeout);
+    return this.#proveAndAttachServer(
+      server,
+      "https",
+      handshakeTimeout,
+      handshakeTimeout,
+    );
   }
 
   attachServer(server: LegacySseNodeServer): void {
@@ -200,11 +207,16 @@ export class LegacySseAdapter {
         (proof.tlsHandshakeTimeoutMs === null ||
           proof.tlsHandshakeTimeoutMs <= 0 ||
           proof.tlsHandshakeTimeoutMs >
+            this.#securityPolicy.requestHeaderTimeoutMs ||
+          proof.absoluteTlsHandshakeTimeoutMs === null ||
+          proof.absoluteTlsHandshakeTimeoutMs <= 0 ||
+          proof.absoluteTlsHandshakeTimeoutMs >
             this.#securityPolicy.requestHeaderTimeoutMs)) ||
       server.headersTimeout !== this.#securityPolicy.requestHeaderTimeoutMs ||
       server.requestTimeout !==
         this.#securityPolicy.requestBodyTotalTimeoutMs ||
-      server.keepAliveTimeout !== this.#securityPolicy.keepAliveTimeoutMs
+      server.keepAliveTimeout !== this.#securityPolicy.keepAliveTimeoutMs ||
+      server.keepAliveTimeoutBuffer !== 0
     ) {
       throw new Error("Legacy SSE server construction proof is invalid");
     }
@@ -222,6 +234,11 @@ export class LegacySseAdapter {
       keepAliveTimeout: {
         configurable: false,
         value: this.#securityPolicy.keepAliveTimeoutMs,
+        writable: false,
+      },
+      keepAliveTimeoutBuffer: {
+        configurable: false,
+        value: 0,
         writable: false,
       },
       maxHeadersCount: {
@@ -259,6 +276,7 @@ export class LegacySseAdapter {
     server: T,
     scheme: "http" | "https",
     tlsHandshakeTimeoutMs: number | null,
+    absoluteTlsHandshakeTimeoutMs: number | null,
   ): T {
     serverConstructionProofs.set(server, {
       owner: this.#constructionOwner,
@@ -266,6 +284,7 @@ export class LegacySseAdapter {
       connectionsCheckingIntervalMs:
         this.#securityPolicy.requestHeaderTimeoutMs,
       tlsHandshakeTimeoutMs,
+      absoluteTlsHandshakeTimeoutMs,
     });
     try {
       this.attachServer(server);
@@ -283,6 +302,15 @@ export class LegacySseAdapter {
     try {
       if (!this.#admitRouteAttempt()) {
         sendPreBodyRejection(request, response, 429, "Too Many Requests");
+        return;
+      }
+
+      if (hasDuplicateSecurityHeaders(request)) {
+        sendPreBodyRejection(request, response, 400, "Bad Request");
+        return;
+      }
+      if (hasAmbiguousFramingHeaders(request)) {
+        sendPreBodyRejection(request, response, 400, "Bad Request");
         return;
       }
 
@@ -310,6 +338,16 @@ export class LegacySseAdapter {
       if (principal === undefined) return;
       if (request.method !== expectedMethod) {
         sendPreBodyRejection(request, response, 405, "Method Not Allowed");
+        return;
+      }
+
+      if (isSseRoute && requestDeclaresBody(request)) {
+        sendPreBodyRejection(
+          request,
+          response,
+          400,
+          "Request body not allowed",
+        );
         return;
       }
 
@@ -639,23 +677,20 @@ export class LegacySseAdapter {
       this.#postRateByPrincipal.clear();
       this.#postRateBySession.clear();
     }
-    if (this.#postRateCount >= this.#securityPolicy.postRateLimit) {
+    const principalCount = this.#postRateByPrincipal.get(principalId) ?? 0;
+    const sessionCount = this.#postRateBySession.get(sessionId) ?? 0;
+    if (
+      this.#postRateCount >= this.#securityPolicy.postRateLimit ||
+      principalCount >= this.#securityPolicy.postRateLimitPerPrincipal ||
+      sessionCount >= this.#securityPolicy.postRateLimitPerSession
+    ) {
       return false;
     }
 
-    const principalCount = this.#postRateByPrincipal.get(principalId) ?? 0;
-    const sessionCount = this.#postRateBySession.get(sessionId) ?? 0;
     this.#postRateCount += 1;
-    if (principalCount < this.#securityPolicy.postRateLimitPerPrincipal) {
-      this.#postRateByPrincipal.set(principalId, principalCount + 1);
-    }
-    if (sessionCount < this.#securityPolicy.postRateLimitPerSession) {
-      this.#postRateBySession.set(sessionId, sessionCount + 1);
-    }
-    return (
-      principalCount < this.#securityPolicy.postRateLimitPerPrincipal &&
-      sessionCount < this.#securityPolicy.postRateLimitPerSession
-    );
+    this.#postRateByPrincipal.set(principalId, principalCount + 1);
+    this.#postRateBySession.set(sessionId, sessionCount + 1);
+    return true;
   }
 
   #releasePostAdmission(admission: PostAdmission): void {
@@ -728,6 +763,60 @@ export class LegacySseAdapter {
   }
 }
 
+function installAbsoluteTlsHandshakeDeadline(
+  server: HttpsServer,
+  timeoutMs: number,
+): void {
+  const clearByConnection = new Map<string, () => void>();
+  const connectionIdentity = (socket: Socket): string | undefined => {
+    if (
+      socket.remoteAddress === undefined ||
+      socket.remotePort === undefined ||
+      socket.localAddress === undefined ||
+      socket.localPort === undefined
+    ) {
+      return undefined;
+    }
+    return [
+      socket.remoteAddress,
+      socket.remotePort,
+      socket.localAddress,
+      socket.localPort,
+    ].join("\0");
+  };
+
+  server.on("connection", (socket) => {
+    if (!(socket instanceof Socket)) {
+      socket.destroy();
+      return;
+    }
+    const identity = connectionIdentity(socket);
+    if (identity === undefined || clearByConnection.has(identity)) {
+      socket.destroy();
+      return;
+    }
+    const timer = setTimeout(() => socket.destroy(), timeoutMs);
+    timer.unref();
+    const clearDeadline = (): void => {
+      if (clearByConnection.get(identity) !== clearDeadline) return;
+      clearByConnection.delete(identity);
+      clearTimeout(timer);
+      socket.off("close", clearDeadline);
+    };
+    clearByConnection.set(identity, clearDeadline);
+    socket.once("close", clearDeadline);
+  });
+
+  server.on("secureConnection", (socket) => {
+    const identity = connectionIdentity(socket);
+    if (identity === undefined) {
+      socket.destroy();
+      return;
+    }
+    clearByConnection.get(identity)?.();
+  });
+}
+
 interface ListenerSocket extends Socket {
   readonly encrypted?: boolean;
   readonly server?: LegacySseNodeServer;
@@ -750,7 +839,10 @@ function requestMatchesListenerPolicy(
     (proof.scheme === "https" &&
       (proof.tlsHandshakeTimeoutMs === null ||
         proof.tlsHandshakeTimeoutMs <= 0 ||
-        proof.tlsHandshakeTimeoutMs > policy.requestHeaderTimeoutMs))
+        proof.tlsHandshakeTimeoutMs > policy.requestHeaderTimeoutMs ||
+        proof.absoluteTlsHandshakeTimeoutMs === null ||
+        proof.absoluteTlsHandshakeTimeoutMs <= 0 ||
+        proof.absoluteTlsHandshakeTimeoutMs > policy.requestHeaderTimeoutMs))
   ) {
     return false;
   }
@@ -758,6 +850,8 @@ function requestMatchesListenerPolicy(
     server.headersTimeout !== policy.requestHeaderTimeoutMs ||
     server.requestTimeout !== policy.requestBodyTotalTimeoutMs ||
     server.keepAliveTimeout !== policy.keepAliveTimeoutMs ||
+    server.keepAliveTimeoutBuffer !== 0 ||
+    !isImmutableKeepAliveTimeoutBuffer(server) ||
     server.maxHeadersCount !== 64 ||
     server.maxRequestsPerSocket !== 1_000 ||
     server.maxConnections !== policy.maxConnections ||
@@ -903,12 +997,68 @@ function isImmutableConnectionCap(
   );
 }
 
+function isImmutableKeepAliveTimeoutBuffer(
+  server: LegacySseNodeServer,
+): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    server,
+    "keepAliveTimeoutBuffer",
+  );
+  return (
+    descriptor?.configurable === false &&
+    descriptor.writable === false &&
+    descriptor.value === 0
+  );
+}
+
+function hasDuplicateSecurityHeaders(request: IncomingMessage): boolean {
+  let seen = 0;
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    const name = request.rawHeaders[index]?.toLowerCase();
+    let mask = 0;
+    if (name === "host") mask = 1;
+    else if (name === "origin") mask = 2;
+    else if (name === "authorization") mask = 4;
+    else if (name === "x-jetkvm-csrf") mask = 8;
+    if (mask === 0) continue;
+    if ((seen & mask) !== 0) return true;
+    seen |= mask;
+  }
+  return false;
+}
+
+function hasAmbiguousFramingHeaders(request: IncomingMessage): boolean {
+  let contentLengthCount = 0;
+  let contentTypeCount = 0;
+  let transferEncodingCount = 0;
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    const name = request.rawHeaders[index]?.toLowerCase();
+    if (name === "content-length") contentLengthCount += 1;
+    else if (name === "content-type") contentTypeCount += 1;
+    else if (name === "transfer-encoding") transferEncodingCount += 1;
+    if (
+      contentLengthCount > 1 ||
+      contentTypeCount > 1 ||
+      transferEncodingCount > 1
+    ) {
+      return true;
+    }
+  }
+  return contentLengthCount > 0 && transferEncodingCount > 0;
+}
+
 function singleHeader(
   request: IncomingMessage,
   name: string,
 ): string | undefined {
-  const value = request.headers[name];
-  return typeof value === "string" ? value : undefined;
+  let value: string | undefined;
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    if (request.rawHeaders[index]?.toLowerCase() !== name) continue;
+    const next = request.rawHeaders[index + 1];
+    if (value !== undefined || next === undefined) return undefined;
+    value = next;
+  }
+  return value;
 }
 
 function parseContentLength(value: string | undefined): number | undefined {
@@ -984,13 +1134,25 @@ async function readBody(
   return completion.promise;
 }
 
+function requestDeclaresBody(request: IncomingMessage): boolean {
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    const name = request.rawHeaders[index]?.toLowerCase();
+    if (name === "transfer-encoding") return true;
+    if (name !== "content-length") continue;
+    const value = request.rawHeaders[index + 1];
+    if (value === undefined || parseContentLength(value) !== 0) return true;
+  }
+  return false;
+}
+
 function sendPreBodyRejection(
   request: IncomingMessage,
   response: ServerResponse,
   statusCode: number,
   body: string,
 ): void {
-  sendText(response, statusCode, body, request.method === "POST");
+  request.pause();
+  sendText(response, statusCode, body, true);
 }
 
 function sendText(

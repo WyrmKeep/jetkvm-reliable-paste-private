@@ -28,12 +28,12 @@
     },
     {
       "id": "scenario-ready",
-      "description": "Ordinary keyboard, pointer, macro, wheel, and paste producers are deterministically paused at release race boundaries.",
+      "description": "Ordinary keyboard, pointer, macro, wheel, and Reliable Paste producers can be started, proven active or queued, and deterministically paused at release race boundaries before emergency release.",
       "required": true
     },
     {
       "id": "matrix-tool-fixtures",
-      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "description": "The harness provisions every cleanup-failure call in its own restored ready session generation with a tool-unique session, request, and separately captured fresh observation when required.",
       "required": true
     }
   ],
@@ -42,8 +42,113 @@
       "id": "race-release-producers",
       "after_step": null,
       "boundary": "queued",
-      "action": "Inject cleanup failure after each linked tool operation while release also races every deferred producer and ordinary writer.",
-      "expected_effect": "Cleanup evidence remains authoritative, no restoration is fabricated, and no deferred producer writes after the gate closes."
+      "action": "Start ordinary keyboard, pointer, macro, wheel, and Reliable Paste producers in generation 7; prove each producer active or queued; pause each at its release race boundary; then race only release-all-input against them.",
+      "expected_effect": "Release closes the gate before any paused suffix can write, drains and joins every producer, and returns correlated zero-state facts for generation 7."
+    },
+    {
+      "id": "clear-race-release-producers",
+      "after_step": "release-all-input",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear every release-race barrier and injector after the one linked emergency-release call.",
+      "expected_effect": "All generation-7 producers are joined, no later tool inherits a race injector, and the drained generation is never reused."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-input-keyboard",
+      "after_step": "release-all-input",
+      "boundary": "during_cleanup",
+      "action": "Restore the fixture baseline, provision ready case-owned session opaque-session-cleanup-failure-input-keyboard generation 8, capture opaque-observation-cleanup-failure-input-keyboard, and arm a one-shot cleanup failure for only the next jetkvm_input_keyboard call.",
+      "expected_effect": "The keyboard operation reaches its cleanup branch in fresh generation 8 and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-input-keyboard",
+      "after_step": "cleanup-failure-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the keyboard cleanup injector, inspect and emergency-release generation 8, close its case-owned session, and restore the fixture baseline.",
+      "expected_effect": "No keyboard fault or generation-8 state reaches the next case."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-input-mouse",
+      "after_step": "cleanup-failure-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Provision ready case-owned session opaque-session-cleanup-failure-input-mouse generation 9, capture opaque-observation-cleanup-failure-input-mouse, and arm a one-shot cleanup failure for only the next jetkvm_input_mouse call.",
+      "expected_effect": "The mouse operation reaches its cleanup branch in fresh generation 9 and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-input-mouse",
+      "after_step": "cleanup-failure-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the mouse cleanup injector, inspect and emergency-release generation 9, close its case-owned session, and restore the fixture baseline.",
+      "expected_effect": "No mouse fault or generation-9 state reaches the next case."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-input-paste",
+      "after_step": "cleanup-failure-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Provision ready case-owned session opaque-session-cleanup-failure-input-paste generation 10, capture opaque-observation-cleanup-failure-input-paste, and arm a one-shot cleanup failure for only the next jetkvm_input_paste call.",
+      "expected_effect": "The paste operation reaches its cleanup branch in fresh generation 10 and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-input-paste",
+      "after_step": "cleanup-failure-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the paste cleanup injector, inspect and emergency-release generation 10, stop and join Reliable Paste, close its case-owned session, and restore the fixture baseline.",
+      "expected_effect": "No paste fault, producer, or generation-10 state reaches the next case."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-input-release",
+      "after_step": "cleanup-failure-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Provision ready case-owned session opaque-session-cleanup-failure-input-release generation 11 and arm a one-shot cleanup failure for only the next jetkvm_input_release call.",
+      "expected_effect": "The release operation reaches its cleanup branch in fresh generation 11 and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-input-release",
+      "after_step": "cleanup-failure-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the release cleanup injector, independently verify zero held state for generation 11, close its case-owned session, and restore the fixture baseline.",
+      "expected_effect": "No release fault or drained generation-11 state reaches the next case."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-power-control",
+      "after_step": "cleanup-failure-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Provision ready case-owned session opaque-session-cleanup-failure-power-control generation 12 and arm a one-shot cleanup failure for only the next jetkvm_power_control call.",
+      "expected_effect": "The ATX operation reaches its cleanup branch in fresh generation 12 and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-power-control",
+      "after_step": "cleanup-failure-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the power cleanup injector, inspect and emergency-release generation 12, restore the recorded ATX-observable baseline, close its case-owned session, and restore the fixture baseline.",
+      "expected_effect": "The next case begins only after generation 12 is retired and the recorded power baseline is proven."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-session-connect",
+      "after_step": "cleanup-failure-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Verify the fixture baseline with no active incumbent session and arm a one-shot cleanup failure for only the next jetkvm_session_connect call.",
+      "expected_effect": "The connect operation reaches its cleanup branch with its unique request and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-session-connect",
+      "after_step": "cleanup-failure-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the connect cleanup injector, resolve and close any case-owned session produced by the ambiguous connect cleanup, and restore the fixture baseline.",
+      "expected_effect": "No connect fault, ownership attempt, browser, or channel reaches the reconnect case."
+    },
+    {
+      "id": "arm-cleanup-failure-jetkvm-session-reconnect",
+      "after_step": "cleanup-failure-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Provision ready case-owned session opaque-session-cleanup-failure-session-reconnect generation 13 and arm a one-shot cleanup failure for only the next jetkvm_session_reconnect call.",
+      "expected_effect": "The reconnect operation reaches its cleanup branch in fresh generation 13 and retains cleanup-phase error evidence without replay or fabricated restoration."
+    },
+    {
+      "id": "clear-restore-cleanup-failure-jetkvm-session-reconnect",
+      "after_step": "cleanup-failure-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the reconnect cleanup injector, resolve the attempted successor, emergency-release any published case generation, close its browser and session, and restore the fixture baseline.",
+      "expected_effect": "No reconnect fault, stale generation, browser, or channel survives the final case."
     }
   ],
   "steps": [
@@ -52,9 +157,9 @@
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
+        "session_id": "opaque-session-release-race",
         "session_generation": 7,
-        "request_id": "opaque-request",
+        "request_id": "opaque-request-release-race-all-input",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -65,8 +170,8 @@
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-cleanup-failure-input-keyboard",
+        "session_generation": 8,
         "observation_id": "opaque-observation-cleanup-failure-input-keyboard",
         "request_id": "opaque-cleanup-failure-input-keyboard",
         "actions": [
@@ -85,8 +190,8 @@
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-cleanup-failure-input-mouse",
+        "session_generation": 9,
         "observation_id": "opaque-observation-cleanup-failure-input-mouse",
         "request_id": "opaque-cleanup-failure-input-mouse",
         "actions": [
@@ -106,8 +211,8 @@
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-cleanup-failure-input-paste",
+        "session_generation": 10,
         "observation_id": "opaque-observation-cleanup-failure-input-paste",
         "request_id": "opaque-cleanup-failure-input-paste",
         "text": "FixturePaste91",
@@ -121,8 +226,8 @@
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-cleanup-failure-input-release",
+        "session_generation": 11,
         "request_id": "opaque-cleanup-failure-input-release",
         "timeout_ms": 1000
       },
@@ -134,8 +239,8 @@
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-cleanup-failure-power-control",
+        "session_generation": 12,
         "request_id": "opaque-cleanup-failure-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -160,8 +265,8 @@
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-cleanup-failure-session-reconnect",
+        "session_generation": 13,
         "request_id": "opaque-cleanup-failure-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -174,12 +279,12 @@
     {
       "id": "assertion-1",
       "requirement": "branch:cleanup-failure",
-      "assertion": "Cleanup failure retains cleanup-phase evidence and does not fabricate restoration."
+      "assertion": "Each linked cleanup-failure tool runs under its own one-shot injector in an independently restored ready case generation with unique session, request, and observation identifiers; cleanup-phase evidence remains authoritative and no tool fabricates restoration."
     },
     {
       "id": "assertion-2",
       "requirement": "contract:release-races-every-writer",
-      "assertion": "No producer emits after its release acknowledgement; missing zero-state acknowledgement returns unknown and keeps the mutation gate closed."
+      "assertion": "Every keyboard, pointer, macro, wheel, and paste producer is proven active or queued before release; none emits after its release acknowledgement, and each later cleanup-failure case starts only after the prior case is unconditionally cleared, released, closed, and restored."
     }
   ],
   "evidence": [

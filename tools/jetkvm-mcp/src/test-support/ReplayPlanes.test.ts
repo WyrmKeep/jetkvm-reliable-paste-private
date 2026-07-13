@@ -229,6 +229,67 @@ function browserReleaseReceipt(requestId: string) {
   };
 }
 
+function replayRecovery(
+  code: string,
+  outcome: "not_sent" | "unknown" | "applied" | "already_applied",
+) {
+  if (code === "PARTIAL_VERIFICATION") {
+    return { safeToRetry: false, requiredNextStep: "none" as const };
+  }
+  if (outcome !== "not_sent") {
+    return {
+      safeToRetry: false,
+      requiredNextStep:
+        code === "SESSION_TAKEN_OVER" || code === "EVENT_GAP"
+          ? ("release_then_reconnect_then_capture" as const)
+          : ("inspect_device_state_before_retry" as const),
+    };
+  }
+  if (code === "CONNECTION_LOST" || code === "DEVICE_UNREACHABLE") {
+    return {
+      safeToRetry: true,
+      requiredNextStep: "reconnect_then_capture" as const,
+    };
+  }
+  if (code === "STALE_SESSION_GENERATION") {
+    return {
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture" as const,
+    };
+  }
+  if (code === "STALE_OBSERVATION") {
+    return {
+      safeToRetry: true,
+      requiredNextStep: "capture_then_retry" as const,
+    };
+  }
+  if (code === "PERMISSION_DENIED") {
+    return {
+      safeToRetry: false,
+      requiredNextStep: "grant_permission" as const,
+    };
+  }
+  if (code === "CAPABILITY_MISSING") {
+    return {
+      safeToRetry: false,
+      requiredNextStep: "enable_capability" as const,
+    };
+  }
+  if (code === "CONTROL_BUSY") {
+    return {
+      safeToRetry: true,
+      requiredNextStep: "wait_or_request_takeover" as const,
+    };
+  }
+  return {
+    safeToRetry:
+      code === "AUTH_RATE_LIMITED" ||
+      code === "CANCELLED" ||
+      code === "DEADLINE_EXCEEDED",
+    requiredNextStep: "none" as const,
+  };
+}
+
 describe("sanitized versioned replay tapes", () => {
   it("enforces MIME-specific capture limits and definitive response correlation", () => {
     const captureCases = [
@@ -421,6 +482,299 @@ describe("sanitized versioned replay tapes", () => {
     }
   });
 
+  it("accepts generation zero while preserving the other connection and capture fences", () => {
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation: "connect",
+            request: { ref },
+            response: { ...browserConnection(), displayGeneration: 0 },
+          },
+          {
+            operation: "capture",
+            request: {
+              ref,
+              request: { format: "jpeg", maxWidth: 1920, maxHeight: 1080 },
+            },
+            response: {
+              ...browserObservation("image/jpeg", 1),
+              displayGeneration: 0,
+            },
+          },
+        ]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("requires strict cached-versus-unobserved fact metadata and qualified binding-loss freshness", () => {
+    const nativeStatusTape = (candidate: CachedDisplayState) => ({
+      version: 1 as const,
+      plane: "native" as const,
+      exchanges: [
+        {
+          operation: "sessionStatus",
+          request: { ref },
+          response: {
+            rpcReachability: "reachable",
+            nativeProcess: "available",
+            display: candidate,
+          },
+        },
+      ],
+    });
+    const unknownSignal = {
+      value: "unknown" as const,
+      observedAt: null,
+      ageMs: null,
+      freshness: "unknown" as const,
+      source: "none" as const,
+    };
+
+    expect(() =>
+      validateSanitizedReplayTape(
+        nativeStatusTape({ ...display, signal: unknownSignal }),
+      ),
+    ).not.toThrow();
+    for (const signal of [
+      { ...display.signal, source: "none" },
+      { ...display.signal, freshness: "unknown" },
+      { ...unknownSignal, source: "cached_event" },
+      {
+        ...unknownSignal,
+        observedAt: "2026-07-13T00:00:00.000Z",
+        ageMs: 0,
+      },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape(
+          nativeStatusTape({ ...display, signal } as CachedDisplayState),
+        ),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+
+    const lostBinding = {
+      ...display,
+      qualification: "binding_lost_cached_only" as const,
+    };
+    expect(() =>
+      validateSanitizedReplayTape(nativeStatusTape(lostBinding)),
+    ).toThrow(/invalid sanitized replay tape/i);
+    expect(() =>
+      validateSanitizedReplayTape(
+        nativeStatusTape({
+          ...lostBinding,
+          signal: { ...display.signal, freshness: "stale" },
+          resolution: { ...display.resolution, freshness: "stale" },
+          fps: { ...display.fps, freshness: "stale" },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("records only public plane errors and preserves their exact recovery tuple", () => {
+    const malformed = {
+      code: "DOWNSTREAM_MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+      verification: "none",
+      safeToRetry: false,
+      requiredNextStep: "inspect_device_state_before_retry",
+    } as const;
+    const stale = {
+      code: "STALE_SESSION_GENERATION",
+      boundary: "admission",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture",
+    } as const;
+
+    for (const error of [malformed, stale]) {
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([{ operation: "connect", request: { ref }, error }]),
+        ),
+      ).not.toThrow();
+      const cursor = new SanitizedReplayCursor(
+        browserTape([{ operation: "connect", request: { ref }, error }]),
+        "browser",
+      );
+      expect(() => cursor.consume("connect", { ref })).toThrow(
+        expect.objectContaining({
+          code: error.code,
+          outcome: error.outcome,
+          safeToRetry: error.safeToRetry,
+          requiredNextStep: error.requiredNextStep,
+        }),
+      );
+    }
+
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation: "connect",
+            request: { ref },
+            error: {
+              ...malformed,
+              code: "MALFORMED_RESPONSE",
+            },
+          },
+        ]),
+      ),
+    ).toThrow(/invalid sanitized replay tape/i);
+  });
+
+  it("correlates every success and error count with the operation request", () => {
+    const mouseExchange = {
+      operation: "mouse",
+      request: browserMutationRequests.mouse,
+      response: browserMutationReceipt("mouse-request"),
+    };
+    expect(() =>
+      validateSanitizedReplayTape(browserTape([mouseExchange])),
+    ).toThrow(/invalid sanitized replay tape/i);
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            ...mouseExchange,
+            response: {
+              ...mouseExchange.response,
+              dispatchedCount: 2,
+              completedCount: 2,
+            },
+          },
+        ]),
+      ),
+    ).not.toThrow();
+
+    const unicodePaste = {
+      ...browserMutationRequests.paste,
+      request: {
+        ...browserMutationRequests.paste.request,
+        textByteLength: 7,
+        sourceCharacterCount: 3,
+      },
+    };
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation: "paste",
+            request: unicodePaste,
+            response: browserPasteReceipt("paste-request"),
+          },
+        ]),
+      ),
+    ).toThrow(/invalid sanitized replay tape/i);
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation: "paste",
+            request: unicodePaste,
+            response: {
+              ...browserPasteReceipt("paste-request"),
+              dispatchedCount: 3,
+              completedCount: 3,
+              originalByteCount: 7,
+            },
+          },
+        ]),
+      ),
+    ).not.toThrow();
+
+    const partial = {
+      code: "MUTATION_OUTCOME_UNKNOWN",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+      verification: "none",
+      safeToRetry: false,
+      requiredNextStep: "inspect_device_state_before_retry",
+      requestedCount: 2,
+      dispatchedCount: 2,
+      completedCount: 1,
+      failedIndex: 1,
+    } as const;
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation: "mouse",
+            request: browserMutationRequests.mouse,
+            error: partial,
+          },
+        ]),
+      ),
+    ).not.toThrow();
+    for (const error of [
+      { ...partial, requestedCount: 1 },
+      { ...partial, failedIndex: 0 },
+      { ...partial, dispatchedCount: 3 },
+      { ...partial, dispatchedCount: 1 },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([
+            {
+              operation: "mouse",
+              request: browserMutationRequests.mouse,
+              error,
+            },
+          ]),
+        ),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+
+    for (const dispatchedCount of [1, 2]) {
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([
+            {
+              operation: "paste",
+              request: unicodePaste,
+              error: {
+                ...partial,
+                requestedCount: 3,
+                dispatchedCount,
+              },
+            },
+          ]),
+        ),
+      ).not.toThrow();
+    }
+
+    expect(() =>
+      validateSanitizedReplayTape(
+        browserTape([
+          {
+            operation: "mouse",
+            request: browserMutationRequests.mouse,
+            error: {
+              code: "PARTIAL_DISPATCH",
+              boundary: "ack",
+              outcome: "unknown",
+              writeBegan: true,
+              acknowledged: false,
+              verification: "none",
+              requestedCount: 2,
+              dispatchedCount: 1,
+              completedCount: 1,
+            },
+          },
+        ]),
+      ),
+    ).toThrow(/invalid sanitized replay tape/i);
+  });
+
   it("accepts every exact connect tuple and rejects substitutions and capability classification", () => {
     const notSent = (
       code: string,
@@ -432,6 +786,7 @@ describe("sanitized versioned replay tapes", () => {
       writeBegan: false,
       acknowledged: false,
       verification: "none",
+      ...replayRecovery(code, "not_sent"),
     });
     const unknown = (code: string) => ({
       code,
@@ -440,13 +795,14 @@ describe("sanitized versioned replay tapes", () => {
       writeBegan: true,
       acknowledged: false,
       verification: "none",
+      ...replayRecovery(code, "unknown"),
     });
     const legal = [
       notSent("DEADLINE_EXCEEDED"),
       notSent("CANCELLED"),
       notSent("CONNECTION_LOST", "send"),
       unknown("CONNECTION_LOST"),
-      unknown("MALFORMED_RESPONSE"),
+      unknown("DOWNSTREAM_MALFORMED_RESPONSE"),
       notSent("PERMISSION_DENIED"),
       unknown("SESSION_TAKEN_OVER"),
       notSent("STALE_SESSION_GENERATION"),
@@ -525,6 +881,7 @@ describe("sanitized versioned replay tapes", () => {
       writeBegan: false,
       acknowledged: false,
       verification: "none",
+      ...replayRecovery(code, "not_sent"),
       ...zeroCounts,
     });
     const unknown = (code: string, boundary: "ack" | "post_ack" = "ack") => ({
@@ -534,51 +891,41 @@ describe("sanitized versioned replay tapes", () => {
       writeBegan: true,
       acknowledged: false,
       verification: "none",
+      ...replayRecovery(code, "unknown"),
       ...partialCounts,
     });
-    const applied = (code: string, boundary: "post_ack" | "persisted") => ({
+    const applied = (code: string, boundary: "post_ack") => ({
       code,
       boundary,
-      outcome: "applied",
+      outcome: "applied" as const,
       writeBegan: true,
       acknowledged: true,
-      verification: "device_ack_only",
+      verification: "device_ack_only" as const,
       ...completeCounts,
+      ...replayRecovery(code, "applied"),
     });
     const partialDispatch = {
-      ...unknown("PARTIAL_DISPATCH"),
+      ...unknown("MUTATION_OUTCOME_UNKNOWN"),
       requestedCount: 2,
-      dispatchedCount: 1,
+      dispatchedCount: 2,
       completedCount: 1,
+      failedIndex: 1,
     };
     const tuples = [
       ["deadline", notSent("DEADLINE_EXCEEDED")],
       ["cancelled", notSent("CANCELLED")],
       ["connection-before-write", notSent("CONNECTION_LOST", "send")],
       ["connection-after-write", unknown("CONNECTION_LOST")],
-      ["malformed", unknown("MALFORMED_RESPONSE")],
+      ["malformed", unknown("DOWNSTREAM_MALFORMED_RESPONSE")],
       ["permission", notSent("PERMISSION_DENIED")],
       ["capability", notSent("CAPABILITY_MISSING")],
       ["taken-over", unknown("SESSION_TAKEN_OVER")],
       ["stale-generation", notSent("STALE_SESSION_GENERATION")],
-      ["post-ack-read", applied("POST_ACK_READ_FAILED", "post_ack")],
-      ["terminal-preserved", applied("TERMINAL_RESULT_PRESERVED", "persisted")],
+      ["post-ack-read", applied("PARTIAL_VERIFICATION", "post_ack")],
       ["partial-dispatch", partialDispatch],
-      ["cleanup", unknown("CLEANUP_FAILED", "post_ack")],
+      ["cleanup", unknown("MUTATION_OUTCOME_UNKNOWN", "post_ack")],
       ["event-gap", unknown("EVENT_GAP")],
-      [
-        "already-applied",
-        {
-          code: "ALREADY_APPLIED",
-          boundary: "admission",
-          outcome: "already_applied",
-          writeBegan: false,
-          acknowledged: true,
-          verification: "device_ack_only",
-          ...completeCounts,
-        },
-      ],
-      ["fresh-capture", notSent("FRESH_CAPTURE_REQUIRED")],
+      ["fresh-capture", notSent("STALE_OBSERVATION")],
     ] as const;
     const rejectedByOperation: Record<
       keyof typeof browserMutationRequests,
@@ -597,6 +944,21 @@ describe("sanitized versioned replay tapes", () => {
       "release",
     ] as const) {
       for (const [name, error] of tuples) {
+        const expectedCount = operation === "release" ? 1 : 2;
+        const correlatedError =
+          error.outcome === "applied"
+            ? {
+                ...error,
+                dispatchedCount: expectedCount,
+                completedCount: expectedCount,
+              }
+            : error.outcome === "unknown" && !("requestedCount" in error)
+              ? {
+                  ...error,
+                  dispatchedCount: expectedCount,
+                  completedCount: expectedCount - 1,
+                }
+              : error;
         const validate = () =>
           validateSanitizedReplayTape({
             version: 1,
@@ -605,7 +967,7 @@ describe("sanitized versioned replay tapes", () => {
               {
                 operation,
                 request: browserMutationRequests[operation],
-                error,
+                error: correlatedError,
               },
             ],
           });
@@ -618,11 +980,12 @@ describe("sanitized versioned replay tapes", () => {
     }
 
     for (const error of [
-      unknown("PARTIAL_DISPATCH"),
+      unknown("MUTATION_OUTCOME_UNKNOWN"),
       { ...partialDispatch, requestedCount: 1 },
       { ...partialDispatch, requestedCount: 3 },
       { ...partialDispatch, completedCount: 2 },
-      { ...partialDispatch, dispatchedCount: 2 },
+      { ...partialDispatch, dispatchedCount: 1 },
+      { ...partialDispatch, dispatchedCount: 3 },
     ]) {
       expect(() =>
         validateSanitizedReplayTape({
@@ -825,6 +1188,7 @@ describe("sanitized versioned replay tapes", () => {
       writeBegan: false,
       acknowledged: false,
       verification: "none",
+      ...replayRecovery("CONNECTION_LOST", "not_sent"),
       dispatchedCount: 0,
       completedCount: 0,
     } as const;
@@ -835,16 +1199,18 @@ describe("sanitized versioned replay tapes", () => {
       writeBegan: true,
       acknowledged: false,
       verification: "none",
+      ...replayRecovery("CONNECTION_LOST", "unknown"),
       dispatchedCount: 1,
       completedCount: 0,
     } as const;
     const acknowledgedFailure = {
-      code: "POST_ACK_READ_FAILED",
+      code: "PARTIAL_VERIFICATION",
       boundary: "post_ack",
       outcome: "applied",
       writeBegan: true,
       acknowledged: true,
       verification: "device_ack_only",
+      ...replayRecovery("PARTIAL_VERIFICATION", "applied"),
       dispatchedCount: 1,
       completedCount: 1,
     } as const;
@@ -1014,6 +1380,7 @@ describe("sanitized versioned replay tapes", () => {
           writeBegan: false,
           acknowledged: false,
           verification: "none",
+          ...replayRecovery("CONTROL_BUSY", "not_sent"),
         },
       },
       {
@@ -1032,15 +1399,17 @@ describe("sanitized versioned replay tapes", () => {
           },
         },
         error: {
-          code: "PARTIAL_DISPATCH",
+          code: "MUTATION_OUTCOME_UNKNOWN",
           boundary: "ack",
           outcome: "unknown",
           writeBegan: true,
           acknowledged: false,
           verification: "none",
+          ...replayRecovery("MUTATION_OUTCOME_UNKNOWN", "unknown"),
           requestedCount: 2,
-          dispatchedCount: 1,
+          dispatchedCount: 2,
           completedCount: 1,
+          failedIndex: 1,
         },
       },
       {
@@ -1052,12 +1421,13 @@ describe("sanitized versioned replay tapes", () => {
           request: { requestId: "power-a", action: "press_power" },
         },
         error: {
-          code: "POST_ACK_READ_FAILED",
+          code: "PARTIAL_VERIFICATION",
           boundary: "post_ack",
           outcome: "applied",
           writeBegan: true,
           acknowledged: true,
           verification: "device_ack_only",
+          ...replayRecovery("PARTIAL_VERIFICATION", "applied"),
         },
       },
       {
@@ -1069,12 +1439,13 @@ describe("sanitized versioned replay tapes", () => {
           request: { requestId: "capture-a", format: "jpeg", quality: 80 },
         },
         error: {
-          code: "PARTIAL_DISPATCH",
+          code: "MUTATION_OUTCOME_UNKNOWN",
           boundary: "ack",
           outcome: "unknown",
           writeBegan: true,
           acknowledged: false,
           verification: "none",
+          ...replayRecovery("MUTATION_OUTCOME_UNKNOWN", "unknown"),
         },
       },
       {
@@ -1083,12 +1454,13 @@ describe("sanitized versioned replay tapes", () => {
         operation: "release",
         request: { ref, request: { requestId: "release-a" } },
         error: {
-          code: "FRESH_CAPTURE_REQUIRED",
+          code: "STALE_OBSERVATION",
           boundary: "admission",
           outcome: "not_sent",
           writeBegan: false,
           acknowledged: false,
           verification: "none",
+          ...replayRecovery("STALE_OBSERVATION", "not_sent"),
           dispatchedCount: 0,
           completedCount: 0,
         },
@@ -1099,12 +1471,13 @@ describe("sanitized versioned replay tapes", () => {
         operation: "displayStatus",
         request: { ref },
         error: {
-          code: "POST_ACK_READ_FAILED",
+          code: "PARTIAL_VERIFICATION",
           boundary: "post_ack",
           outcome: "applied",
           writeBegan: true,
           acknowledged: true,
           verification: "device_ack_only",
+          ...replayRecovery("PARTIAL_VERIFICATION", "applied"),
         },
       },
     ] as const;
@@ -1142,26 +1515,29 @@ describe("sanitized versioned replay tapes", () => {
         writeBegan: false,
         acknowledged: false,
         verification: "none",
+        ...replayRecovery("CONNECTION_LOST", "not_sent"),
         dispatchedCount: 1,
         completedCount: 0,
       },
       {
-        code: "PARTIAL_DISPATCH",
+        code: "MUTATION_OUTCOME_UNKNOWN",
         boundary: "ack",
         outcome: "unknown",
         writeBegan: true,
         acknowledged: false,
         verification: "none",
+        ...replayRecovery("MUTATION_OUTCOME_UNKNOWN", "unknown"),
         dispatchedCount: 1,
         completedCount: 1,
       },
       {
-        code: "POST_ACK_READ_FAILED",
+        code: "PARTIAL_VERIFICATION",
         boundary: "post_ack",
         outcome: "applied",
         writeBegan: true,
         acknowledged: true,
         verification: "device_ack_only",
+        ...replayRecovery("PARTIAL_VERIFICATION", "applied"),
         dispatchedCount: 2,
         completedCount: 1,
       },
@@ -1175,6 +1551,85 @@ describe("sanitized versioned replay tapes", () => {
       ).toThrow(/invalid sanitized replay tape/i);
     }
   });
+
+  it("enforces the exact ATX provenance union on native and device RPC tapes", () => {
+    const exchanges = [
+      {
+        plane: "device_rpc",
+        operation: "performAtx",
+        request: jsonValue({
+          ref: binding,
+          request: { requestId: "power-a", action: "press_power" },
+        }),
+      },
+      {
+        plane: "native",
+        operation: "powerControl",
+        request: jsonValue({
+          ref,
+          request: { requestId: "power-a", action: "press_power" },
+        }),
+      },
+    ] as const;
+    const invalidObservations = [
+      { power: true, hdd: false, observedAt: null, freshness: "fresh" },
+      {
+        power: null,
+        hdd: null,
+        observedAt: "2026-07-13T00:00:00.000Z",
+        freshness: "unknown",
+      },
+      { power: null, hdd: false, observedAt: null, freshness: "unknown" },
+    ] as const;
+
+    for (const replayCase of exchanges) {
+      for (const atxLedObservation of invalidObservations) {
+        expect(() =>
+          validateSanitizedReplayTape({
+            version: 1,
+            plane: replayCase.plane,
+            exchanges: [
+              {
+                operation: replayCase.operation,
+                request: replayCase.request,
+                response: jsonValue({ ...atx, atxLedObservation }),
+              },
+            ],
+          }),
+        ).toThrow(/invalid sanitized replay tape/i);
+      }
+    }
+  });
+
+  it.each(["fresh", "stale"] as const)(
+    "accepts an observed ATX tape with %s provenance",
+    (freshness) => {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "device_rpc",
+          exchanges: [
+            {
+              operation: "performAtx",
+              request: {
+                ref: binding,
+                request: { requestId: "power-a", action: "press_power" },
+              },
+              response: {
+                ...atx,
+                atxLedObservation: {
+                  power: true,
+                  hdd: null,
+                  observedAt: "2026-07-13T00:00:00.000Z",
+                  freshness,
+                },
+              },
+            },
+          ],
+        }),
+      ).not.toThrow();
+    },
+  );
 
   it("requires every replayed ATX receipt to correlate and use the exact semantic wire mapping", () => {
     const semantics = [
@@ -1327,8 +1782,8 @@ describe("BrowserPlaneReplay", () => {
             requestId: "request-a",
             outcome: "applied",
             verification: "device_ack_only",
-            dispatchedCount: 1,
-            completedCount: 1,
+            dispatchedCount: 3,
+            completedCount: 3,
             acknowledgedAt: "2026-07-13T00:00:00.000Z",
             originalByteCount: Buffer.byteLength(text),
             normalizedByteCount: Buffer.byteLength(text),
@@ -1349,6 +1804,67 @@ describe("BrowserPlaneReplay", () => {
         deadline,
       ),
     ).resolves.toMatchObject({ requestId: "request-a", outcome: "applied" });
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("replaces the Browser-owned adapter across a recorded reconnect", async () => {
+    class BoundReplayAdapter extends ReplayAdapter {
+      public invalidated = false;
+
+      public constructor(public override readonly binding: DeviceRpcBinding) {
+        super();
+      }
+    }
+
+    const initial = new BoundReplayAdapter(binding);
+    const nextBinding = {
+      ...binding,
+      connectionEpoch: binding.connectionEpoch + 1,
+      browserChannelGeneration: binding.browserChannelGeneration + 1,
+    };
+    const next = new BoundReplayAdapter(nextBinding);
+    const connection = (
+      actual: DeviceRpcBinding,
+      displayGeneration: number,
+    ) => ({
+      state: "ready" as const,
+      ref,
+      binding: actual,
+      connectionEpoch: actual.connectionEpoch,
+      browserChannelGeneration: actual.browserChannelGeneration,
+      displayGeneration,
+    });
+    const replay = new BrowserPlaneReplay(
+      initial,
+      browserTape([
+        {
+          operation: "connect",
+          request: { ref },
+          response: jsonValue(connection(binding, 0)),
+        },
+        {
+          operation: "reconnect",
+          request: { ref },
+          response: jsonValue(connection(nextBinding, 0)),
+        },
+      ]),
+      undefined,
+      (previous, recordedBinding) => {
+        expect(previous).toBe(initial);
+        expect(recordedBinding).toEqual(nextBinding);
+        initial.invalidated = true;
+        return next;
+      },
+    );
+
+    const connected = await replay.connect(ref, deadline);
+    expect(connected.deviceRpc).toBe(initial);
+    expect(replay.deviceRpc).toBe(initial);
+
+    const reconnected = await replay.reconnect(ref, deadline);
+    expect(initial.invalidated).toBe(true);
+    expect(reconnected.deviceRpc).toBe(next);
+    expect(replay.deviceRpc).toBe(next);
     expect(() => replay.assertExhausted()).not.toThrow();
   });
 });
@@ -1397,6 +1913,46 @@ describe("NativeControlPlaneReplay", () => {
     expect(() => replay.assertExhausted()).not.toThrow();
   });
 
+  it("rejects incoherent adapter ATX provenance before native result mapping", async () => {
+    const invalidAtx = {
+      ...atx,
+      atxLedObservation: {
+        power: true,
+        hdd: null,
+        observedAt: null,
+        freshness: "unknown",
+      },
+    } as unknown as AtxWireReceipt;
+    class InvalidAtxReplayAdapter extends ReplayAdapter {
+      public override async performAtx(): Promise<AtxWireReceipt> {
+        this.calls.push("performAtx");
+        return invalidAtx;
+      }
+    }
+    const replay = new NativeControlPlaneReplay(new InvalidAtxReplayAdapter(), {
+      version: 1,
+      plane: "native",
+      exchanges: [
+        {
+          operation: "powerControl",
+          request: {
+            ref,
+            request: { requestId: "power-a", action: "press_power" },
+          },
+          response: jsonValue(atx),
+        },
+      ],
+    });
+
+    await expect(
+      replay.powerControl(
+        ref,
+        { requestId: "power-a", action: "press_power" },
+        deadline,
+      ),
+    ).rejects.toThrow(/ATX receipt shape is invalid/i);
+  });
+
   it("fails closed if the adapter result differs from the proven tape", async () => {
     const adapter = new ReplayAdapter();
     const tape: SanitizedReplayTape = {
@@ -1409,6 +1965,9 @@ describe("NativeControlPlaneReplay", () => {
           response: jsonValue({
             ...display,
             qualification: "binding_lost_cached_only",
+            signal: { ...display.signal, freshness: "stale" },
+            resolution: { ...display.resolution, freshness: "stale" },
+            fps: { ...display.fps, freshness: "stale" },
             edid,
           }),
         },

@@ -8,6 +8,7 @@ import {
 } from "node:http";
 import { connect, type AddressInfo, type Socket } from "node:net";
 import type { Server as HttpsServer } from "node:https";
+import { connect as connectTls, type TLSSocket } from "node:tls";
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -35,6 +36,22 @@ const AUTHORITY = "mcp.example.test";
 const ORIGIN = "https://client.example.test";
 const TOKEN = "test-only-bearer";
 const PRINCIPAL = "operator-a";
+const TEST_TLS_KEY = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgZYQkNHZkAo6HBAxJ
+qQkC+TFfas0/7683rr1wLHtdqVuhRANCAASoum/7fiyE/orVK+S3a7/l9h8V29nE
+Cm+WCt0dQUvJfQkxrP/Pb4tFVHEAaitJYxfWm3lRr5dO4sB3nIVa60Ki
+-----END PRIVATE KEY-----`;
+const TEST_TLS_CERT = `-----BEGIN CERTIFICATE-----
+MIIBfTCCASOgAwIBAgIUO+y0ClMJahI0IWgIdKfp/+YwtWwwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDcxMzA3MjIyNFoXDTM2MDcxMDA3
+MjIyNFowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0D
+AQcDQgAEqLpv+34shP6K1Svkt2u/5fYfFdvZxApvlgrdHUFLyX0JMaz/z2+LRVRx
+AGorSWMX1pt5Ua+XTuLAd5yFWutCoqNTMFEwHQYDVR0OBBYEFOeGEQz+TFlFiPH/
+1pqbHZv6X/foMB8GA1UdIwQYMBaAFOeGEQz+TFlFiPH/1pqbHZv6X/foMA8GA1Ud
+EwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhANjMfCoov2tr20D5kozHjQq5
+MIeO9vc+mVHzieR6JvTKAiBN/gGEbx2pv4EH9jI5wto2gF8AOMvqBirAyPmZg6w1
+Zg==
+-----END CERTIFICATE-----`;
 
 function businessError(
   tool: JetKvmToolName,
@@ -415,6 +432,106 @@ describe("legacy SSE adapter", () => {
   );
 
   it.each([
+    ["Host", "hOsT", "attacker.example.test"],
+    ["Origin", "oRiGiN", "https://attacker.example.test"],
+    ["Authorization", "aUtHoRiZaTiOn", "Bearer attacker"],
+    ["X-JetKVM-CSRF", "x-JeTkVm-CsRf", "0"],
+  ] as const)(
+    "rejects duplicate %s raw headers before authentication or allocation",
+    async (_name, duplicateName, duplicateValue) => {
+      const authenticateBearer = vi.fn((authorization: string | undefined) => {
+        if (authorization !== `Bearer ${TOKEN}`) {
+          throw new Error("invalid bearer");
+        }
+        return { principalId: PRINCIPAL };
+      });
+      const transportFactory = vi.fn(() => {
+        throw new Error("duplicate header reached allocation");
+      });
+      const { baseUrl } = await startAdapter({
+        authenticateBearer,
+        transportFactory,
+      });
+      const socket = await connectRaw(Number(new URL(baseUrl).port));
+      socket.write(
+        [
+          "GET /sse HTTP/1.1",
+          `Host: ${AUTHORITY}`,
+          `Origin: ${ORIGIN}`,
+          `Authorization: Bearer ${TOKEN}`,
+          "X-JetKVM-CSRF: 1",
+          `${duplicateName}: ${duplicateValue}`,
+          "Connection: keep-alive",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+
+      const response = await waitForSocketClose(socket, 500);
+      expect(response).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+      expect(authenticateBearer).not.toHaveBeenCalled();
+      expect(transportFactory).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      "Transfer-Encoding",
+      "GET",
+      "/unknown",
+      ["Transfer-Encoding: gzip", "tRaNsFeR-EnCoDiNg: chunked"],
+      "1\r\n{\r\n",
+    ],
+    [
+      "Content-Length",
+      "POST",
+      "/messages?sessionId=00000000-0000-4000-8000-000000000001",
+      [
+        "Content-Type: application/json",
+        "Content-Length: 100",
+        "cOnTeNt-LeNgTh: 101",
+      ],
+      "{",
+    ],
+    [
+      "Content-Type",
+      "POST",
+      "/messages?sessionId=00000000-0000-4000-8000-000000000001",
+      [
+        "Content-Type: application/json",
+        "cOnTeNt-TyPe: text/plain",
+        "Content-Length: 100",
+      ],
+      "{",
+    ],
+  ] as const)(
+    "rejects ambiguous duplicate %s framing before routing or authentication",
+    async (_name, method, path, framingHeaders, body) => {
+      const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
+      const { baseUrl } = await startAdapter({ authenticateBearer });
+      const socket = await connectRaw(Number(new URL(baseUrl).port));
+      socket.write(
+        [
+          `${method} ${path} HTTP/1.1`,
+          `Host: ${AUTHORITY}`,
+          `Origin: ${ORIGIN}`,
+          `Authorization: Bearer ${TOKEN}`,
+          "X-JetKVM-CSRF: 1",
+          ...framingHeaders,
+          "Connection: keep-alive",
+          "",
+          body,
+        ].join("\r\n"),
+      );
+
+      const response = await waitForSocketClose(socket, 500);
+      expect(response).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+      expect(response.toLowerCase()).toContain("\r\nconnection: close\r\n");
+      expect(authenticateBearer).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["GET", "/sse", { Host: "attacker.example.test" }, "Host"],
     ["GET", "/sse", { Origin: "https://attacker.example.test" }, "Origin"],
     ["GET", "/sse", { "X-JetKVM-CSRF": "0" }, "anti-CSRF"],
@@ -754,9 +871,13 @@ describe("legacy SSE adapter", () => {
     expect(() => {
       value.server.keepAliveTimeout = 0;
     }).toThrow(TypeError);
+    expect(() => {
+      value.server.keepAliveTimeoutBuffer = 1_000;
+    }).toThrow(TypeError);
     expect(value.server.headersTimeout).toBe(10_000);
     expect(value.server.requestTimeout).toBe(30_000);
     expect(value.server.keepAliveTimeout).toBe(5_000);
+    expect(value.server.keepAliveTimeoutBuffer).toBe(0);
   });
 
   it("rejects servers without project-owned construction proof", () => {
@@ -797,7 +918,7 @@ describe("legacy SSE adapter", () => {
     }
   });
 
-  it("expires incomplete TLS handshakes no later than the header bound", async () => {
+  it("expires a fragmented TLS ClientHello at the absolute header bound", async () => {
     const adapter = new LegacySseAdapter({
       securityPolicy: parseLegacySsePolicy({
         enabled: true,
@@ -809,8 +930,89 @@ describe("legacy SSE adapter", () => {
 
     try {
       const socket = await connectRaw(port);
-      await waitForSocketClose(socket, 500);
+      const fragmentedClientHello = Buffer.from([
+        0x16,
+        0x03,
+        0x01,
+        0x40,
+        0x00,
+        0x01,
+        0x00,
+        0x3f,
+        0xfc,
+        0x03,
+        0x03,
+        ...Buffer.alloc(256),
+      ]);
+      let offset = 11;
+      socket.write(fragmentedClientHello.subarray(0, offset));
+      // Real activity is required to prove TLS reads cannot reset the deadline.
+      const activity = setInterval(() => {
+        if (socket.destroyed) return;
+        const nextOffset = Math.min(offset + 1, fragmentedClientHello.length);
+        socket.write(fragmentedClientHello.subarray(offset, nextOffset));
+        offset = nextOffset;
+      }, 10);
+      try {
+        await waitForSocketClose(socket, 200);
+      } finally {
+        clearInterval(activity);
+      }
     } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
+  });
+
+  it("clears the absolute TLS deadline after a completed handshake", async () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: true,
+        requestHeaderTimeoutMs: 40,
+      }),
+    });
+    const server = adapter.createHttpsServer({
+      key: TEST_TLS_KEY,
+      cert: TEST_TLS_CERT,
+    });
+    const port = await listenOnLoopback(server);
+    let client: TLSSocket | undefined;
+
+    try {
+      client = connectTls({
+        host: "127.0.0.1",
+        port,
+        rejectUnauthorized: false,
+      });
+      const secured = Promise.withResolvers<void>();
+      client.once("secureConnect", secured.resolve);
+      client.once("error", secured.reject);
+      await secured.promise;
+
+      const endpointFrame = Promise.withResolvers<void>();
+      let response = "";
+      client.on("data", (chunk: Buffer) => {
+        response += chunk.toString("utf8");
+        if (response.includes("event: endpoint")) endpointFrame.resolve();
+      });
+      client.write(
+        "GET /sse HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n",
+      );
+      await endpointFrame.promise;
+
+      const survived = Promise.withResolvers<void>();
+      // This platform integration wait exceeds the absolute handshake deadline.
+      const survivalTimer = setTimeout(survived.resolve, 100);
+      client.once("close", () => {
+        clearTimeout(survivalTimer);
+        survived.reject(
+          new Error("Completed TLS connection hit the handshake deadline"),
+        );
+      });
+      await survived.promise;
+      expect(client.destroyed).toBe(false);
+    } finally {
+      client?.destroy();
       await adapter.close();
       await closeServer(server);
     }
@@ -927,6 +1129,68 @@ describe("legacy SSE adapter", () => {
     expect(response).toMatch(/^HTTP\/1\.1 401 Unauthorized\r\n/);
     expect(response.toLowerCase()).toContain("\r\nconnection: close\r\n");
     expect(response.endsWith("Unauthorized")).toBe(true);
+  });
+
+  it("releases a full connection cap of rejected GET and HEAD trickles", async () => {
+    const transportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => new SSEServerTransport(endpoint, response),
+    );
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 1,
+        maxConcurrentStreamsPerPrincipal: 1,
+        maxConcurrentPosts: 1,
+        maxConcurrentPostsPerPrincipal: 1,
+        maxConcurrentPostsPerSession: 1,
+      },
+      transportFactory,
+    });
+    const port = Number(new URL(value.baseUrl).port);
+    const sockets = await Promise.all(
+      Array.from({ length: value.server.maxConnections }, () =>
+        connectRaw(port),
+      ),
+    );
+
+    for (const [index, socket] of sockets.entries()) {
+      const method = index % 2 === 0 ? "GET" : "HEAD";
+      const chunked = index % 4 >= 2;
+      socket.write(
+        [
+          `${method} /sse HTTP/1.1`,
+          `Host: ${AUTHORITY}`,
+          `Origin: ${ORIGIN}`,
+          `Authorization: Bearer ${TOKEN}`,
+          "X-JetKVM-CSRF: 1",
+          ...(chunked
+            ? ["Transfer-Encoding: chunked"]
+            : ["Content-Length: 1048576"]),
+          "Connection: keep-alive",
+          "",
+          chunked ? "1\r\n{\r\n" : "{",
+        ].join("\r\n"),
+      );
+    }
+    const responses = await Promise.all(
+      sockets.map((socket) => waitForSocketClose(socket, 500)),
+    );
+
+    for (const [index, response] of responses.entries()) {
+      expect(response).toMatch(
+        index % 2 === 0
+          ? /^HTTP\/1\.1 400 Bad Request\r\n/
+          : /^HTTP\/1\.1 405 Method Not Allowed\r\n/,
+      );
+      expect(response.toLowerCase()).toContain("\r\nconnection: close\r\n");
+    }
+    expect(transportFactory).not.toHaveBeenCalled();
+
+    const valid = await openSse(value.baseUrl);
+    expect(transportFactory).toHaveBeenCalledOnce();
+    valid.response.destroy();
   });
 
   it("enforces global and per-principal stream concurrency before allocation", async () => {
@@ -1244,6 +1508,151 @@ describe("legacy SSE adapter", () => {
         )
       ).status,
     ).toBe(429);
+  });
+
+  it.each([
+    [
+      "principal",
+      {
+        postRateLimit: 2,
+        postRateLimitPerPrincipal: 1,
+        postRateLimitPerSession: 2,
+      },
+      "/messages?sessionId=00000000-0000-4000-8000-000000000002",
+      "/messages?sessionId=00000000-0000-4000-8000-000000000003",
+    ],
+    [
+      "session",
+      {
+        postRateLimit: 2,
+        postRateLimitPerPrincipal: 2,
+        postRateLimitPerSession: 1,
+      },
+      "/messages?sessionId=00000000-0000-4000-8000-000000000001",
+      "/messages?sessionId=00000000-0000-4000-8000-000000000002",
+    ],
+  ] as const)(
+    "does not burn global POST capacity on a %s quota rejection",
+    async (_scope, policy, rejectedPath, secondPrincipalPath) => {
+      const firstPath =
+        "/messages?sessionId=00000000-0000-4000-8000-000000000001";
+      const value = await startAdapter({
+        policy,
+        authenticateBearer: (authorization) => ({
+          principalId:
+            authorization === "Bearer second-token" ? "operator-b" : PRINCIPAL,
+        }),
+      });
+
+      expect((await post(value.baseUrl, firstPath, "{}")).status).toBe(404);
+      expect((await post(value.baseUrl, rejectedPath, "{}")).status).toBe(429);
+      expect(
+        (
+          await post(
+            value.baseUrl,
+            secondPrincipalPath,
+            "{}",
+            authorizedHeaders("second-token"),
+          )
+        ).status,
+      ).toBe(404);
+    },
+  );
+
+  it("closes trickled requests at full route, stream, and POST quotas", async () => {
+    const routeLimited = await startAdapter({
+      policy: {
+        routeAttemptRateLimit: 1,
+        routeAttemptRateWindowMs: 1_000,
+      },
+    });
+    expect(
+      (
+        await testFetch(`${routeLimited.baseUrl}/unknown`, {
+          headers: authorizedHeaders(),
+        })
+      ).status,
+    ).toBe(404);
+    const routeSocket = await connectRaw(
+      Number(new URL(routeLimited.baseUrl).port),
+    );
+    routeSocket.write(
+      [
+        "GET /unknown HTTP/1.1",
+        ...Object.entries(authorizedHeaders()).map(
+          ([name, value]) => `${name}: ${value}`,
+        ),
+        "Content-Length: 100",
+        "Connection: keep-alive",
+        "",
+        "{",
+      ].join("\r\n"),
+    );
+    const routeResponse = await waitForSocketClose(routeSocket, 500);
+    expect(routeResponse).toMatch(/^HTTP\/1\.1 429 Too Many Requests\r\n/);
+    expect(routeResponse.toLowerCase()).toContain("\r\nconnection: close\r\n");
+
+    const streamLimited = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 1,
+        maxConcurrentStreamsPerPrincipal: 1,
+      },
+    });
+    const heldStream = await openSse(streamLimited.baseUrl);
+    const streamSocket = await connectRaw(
+      Number(new URL(streamLimited.baseUrl).port),
+    );
+    streamSocket.write(
+      [
+        "GET /sse HTTP/1.1",
+        ...Object.entries(authorizedHeaders()).map(
+          ([name, value]) => `${name}: ${value}`,
+        ),
+        "Transfer-Encoding: gzip",
+        "tRaNsFeR-EnCoDiNg: chunked",
+        "Connection: keep-alive",
+        "",
+        "1\r\n{\r\n",
+      ].join("\r\n"),
+    );
+    const streamResponse = await waitForSocketClose(streamSocket, 500);
+    expect(streamResponse).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+    expect(streamResponse.toLowerCase()).toContain("\r\nconnection: close\r\n");
+    heldStream.response.destroy();
+
+    const postLimited = await startAdapter({
+      policy: {
+        postRateLimit: 1,
+        postRateLimitPerPrincipal: 1,
+        postRateLimitPerSession: 1,
+      },
+    });
+    const firstPostPath =
+      "/messages?sessionId=00000000-0000-4000-8000-000000000001";
+    const secondPostPath =
+      "/messages?sessionId=00000000-0000-4000-8000-000000000002";
+    expect((await post(postLimited.baseUrl, firstPostPath, "{}")).status).toBe(
+      404,
+    );
+    const postSocket = await connectRaw(
+      Number(new URL(postLimited.baseUrl).port),
+    );
+    postSocket.write(
+      [
+        `POST ${secondPostPath} HTTP/1.1`,
+        ...Object.entries(authorizedHeaders()).map(
+          ([name, value]) => `${name}: ${value}`,
+        ),
+        "Content-Type: application/json",
+        "Content-Length: 100",
+        "Connection: keep-alive",
+        "",
+        "{",
+      ].join("\r\n"),
+    );
+    const postResponse = await waitForSocketClose(postSocket, 500);
+    expect(postResponse).toMatch(/^HTTP\/1\.1 429 Too Many Requests\r\n/);
+    expect(postResponse.toLowerCase()).toContain("\r\nconnection: close\r\n");
   });
 
   it("releases POST concurrency after routing, validation, and accepted work", async () => {

@@ -27,11 +27,25 @@
   ],
   "fault_script": [
     {
-      "id": "interrupt-key-sequence",
+      "id": "cancel-keyboard-before-write",
       "after_step": "capture-keyboard-observation",
+      "boundary": "before_write",
+      "action": "Arm one-shot cancellation for the next admitted keyboard request immediately before its first BrowserPlane write.",
+      "expected_effect": "The public ToolError is CANCELLED at phase execute with outcome not_sent, verification none, safe_to_retry true, required_next_step none, details.downstream_stage write, and null public action counts; ordered harness evidence records one requested action, zero dispatched actions, zero completed actions, and zero BrowserPlane writes."
+    },
+    {
+      "id": "clear-cancel-keyboard-before-write",
+      "after_step": "cancel-physical-key-before-write",
+      "boundary": "during_cleanup",
+      "action": "Clear the one-shot keyboard cancellation injector and release the request and observation reservations.",
+      "expected_effect": "No later keyboard case inherits the cancellation fault; the same fresh observation remains available to the zero-dispatch validation cases."
+    },
+    {
+      "id": "interrupt-key-sequence",
+      "after_step": "capture-partial-keyboard-observation",
       "boundary": "after_write",
-      "action": "Stop a multi-action dispatch after one correlated physical-key event and force ordinary held-state cleanup.",
-      "expected_effect": "The suffix is suppressed, counts are exact, outcome is unknown, and cleanup releases held keys."
+      "action": "Cancel the two-action keyboard request after action 0 completes and action 1 is dispatched, but before action 1 completes.",
+      "expected_effect": "The public ToolError is CANCELLED with outcome unknown, failed_action_index 1, dispatched_action_count 2, completed_action_count 1, every action after index 1 suppressed, and ordinary held-state cleanup."
     }
   ],
   "steps": [
@@ -46,6 +60,86 @@
       },
       "timeout_ms": 1000,
       "expect": "A fresh unused observation."
+    },
+    {
+      "id": "cancel-physical-key-before-write",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-key-cancel-before-write",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CANCELLED mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry true, required_next_step none, details.failed_action_index null, details.dispatched_action_count null, details.completed_action_count null, and details.downstream_stage write. Separately, ordered harness evidence records requested_action_count 1, dispatched_action_count 0, completed_action_count 0, and exactly zero BrowserPlane writes."
+    },
+    {
+      "id": "reject-text-keyboard-action",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-keyboard-text-action",
+        "actions": [
+          {
+            "type": "text",
+            "text": "A"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict input-schema rejection before the keyboard handler, controller, adapter, or BrowserPlane call; ordered harness evidence records requested action index 0 and exactly zero BrowserPlane dispatches."
+    },
+    {
+      "id": "reject-unknown-physical-key",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-keyboard-unknown-key",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "KeyAA"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict input-schema rejection of the noncanonical physical key before the keyboard handler, controller, adapter, or BrowserPlane call; ordered harness evidence records requested action index 0 and exactly zero BrowserPlane dispatches."
+    },
+    {
+      "id": "reject-impossible-key-transition",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation",
+        "request_id": "opaque-keyboard-impossible-transition",
+        "actions": [
+          {
+            "type": "key_up",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "INVALID_KEY mutation ToolError with phase validate, outcome not_sent, verification none, safe_to_retry false, required_next_step none, details.failed_action_index null, details.dispatched_action_count null, details.completed_action_count null, and details.downstream_stage none. Separately, controller evidence identifies rejected action index 0 with requested_action_count 1, dispatched_action_count 0, completed_action_count 0, and exactly zero BrowserPlane dispatches."
     },
     {
       "id": "send-physical-keys",
@@ -69,24 +163,60 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "Physical keys press in order, release in reverse order, and report exact counts."
+      "expect": "Applied mutation result with outcome applied, verification device_ack_only, safe_to_retry false, required_next_step none, dispatched_action_count 2, completed_action_count 2, and held_keys empty. BrowserPlane evidence is ControlLeft down, KeyA down, KeyA up, ControlLeft up, Enter down, Enter up in that exact order."
+    },
+    {
+      "id": "capture-partial-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A second fresh unused observation for the faulted multi-action keyboard request."
+    },
+    {
+      "id": "send-partial-physical-keys",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-partial-keyboard",
+        "request_id": "opaque-keys-partial",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "KeyA"
+          },
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CANCELLED mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, details.failed_action_index 1, details.dispatched_action_count 2, details.completed_action_count 1, and details.downstream_stage write. Counts are bounded by the two-action request, every action after index 1 is suppressed, and cleanup empties held_keys."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:cancellation-before-write",
-      "assertion": "Cancellation before the write boundary is not_sent and records zero downstream writes."
+      "assertion": "The explicit pre-write cancellation call returns canonical CANCELLED/not_sent with null public counts, while separate ordered harness evidence records one requested action, zero dispatched and completed actions, and zero BrowserPlane writes."
     },
     {
       "id": "assertion-2",
       "requirement": "branch:partial-multi-event-dispatch",
-      "assertion": "A partial multi-event dispatch is unknown with exact dispatched and completed counts and suppresses the suffix."
+      "assertion": "The explicit two-action post-write cancellation call is unknown with failed_action_index equal to completed_action_count, dispatched_action_count equal to completed_action_count plus 1, the exact tuple 1/2/1, no dispatch after index 1, and empty held state after cleanup."
     },
     {
       "id": "assertion-3",
       "requirement": "contract:physical-keys-only",
-      "assertion": "Text, characters, scripts, commands, unknown keys, and impossible transitions are rejected before dispatch."
+      "assertion": "Executable text-action and noncanonical-key calls fail strict schema before the handler; executable key_up-without-held-state reaches the controller and returns INVALID_KEY/not_sent; all three record exactly zero BrowserPlane dispatches, while the valid chord and Enter sequence completes in exact physical order."
     }
   ],
   "evidence": [
@@ -101,7 +231,7 @@
       "id": "evidence-2",
       "requirement": "branch:partial-multi-event-dispatch",
       "field": "requirement_result",
-      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "source": "The focused keyboard count assertion and ordered fake or replay events proving request length 2, failed_action_index 1, dispatched_action_count 2, completed_action_count 1, and no dispatch after index 1.",
       "retention": "release_manifest"
     },
     {

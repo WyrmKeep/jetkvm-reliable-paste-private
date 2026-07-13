@@ -14,7 +14,7 @@ const SENSITIVE_FIELD =
   /(?:address|authorization|authority|base64|bearer|bytes|clipboard|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
 const SENSITIVE_STRING =
   /(?:\b(?:https?|wss?|file):\/\/|\bBearer\s+\S+|\b(?:[a-z0-9_]*(?:authorization|bearer|cookie|credential|password|secret|token)[a-z0-9_]*)\s*[:=]\s*\S+|\bcandidate:\d+|\ba=fingerprint:|(?:^|\r?\n)v=0(?:\r?\n|$)|data:image\/)/iu;
-const MALFORMED_QUOTED_FIELD = /\\?["']([^"'\\\r\n]+)\\?["']\s*:/gu;
+const MALFORMED_QUOTED_FIELD = /\\?["']((?:\\.|[^"'\\\r\n])+?)\\?["']\s*:/gu;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -224,9 +224,15 @@ function isErrorContextField(normalizedKey: string): boolean {
 }
 
 function hasMalformedSensitiveField(value: string): boolean {
+  const trimmed = value.trimStart();
+  const jsonLike = trimmed.startsWith("{") || trimmed.startsWith("[");
   for (const match of value.matchAll(MALFORMED_QUOTED_FIELD)) {
     const key = match[1];
-    if (key !== undefined && SENSITIVE_FIELD.test(normalizeFieldName(key))) {
+    if (
+      key !== undefined &&
+      ((jsonLike && key.includes("\\")) ||
+        SENSITIVE_FIELD.test(normalizeFieldName(key)))
+    ) {
       return true;
     }
   }

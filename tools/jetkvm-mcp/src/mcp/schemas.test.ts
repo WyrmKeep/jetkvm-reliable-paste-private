@@ -527,19 +527,19 @@ describe("strict canonical tool schemas", () => {
     ).toBe(true);
   });
 
-  it("accepts documented non-negative result dimensions and counts", () => {
+  it("accepts zero-byte image metadata with positive dimensions", () => {
     expect(
       TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse({
         ...captureResult,
-        source_width: 0,
-        source_height: 0,
-        image_width: 0,
-        image_height: 0,
+        source_width: 1,
+        source_height: 1,
+        image_width: 1,
+        image_height: 1,
         geometry: {
           content_x: 0,
           content_y: 0,
-          content_width: 0,
-          content_height: 0,
+          content_width: 1,
+          content_height: 1,
         },
         image: { ...captureResult.image, byte_length: 0 },
       }).success,
@@ -1802,6 +1802,9 @@ describe("strict canonical tool schemas", () => {
       { terminal_state: "unknown" },
       { accepted_at: null },
       { completed_at: null },
+      { original_byte_count: 0 },
+      { normalized_byte_count: 0 },
+      { normalized_byte_count: 262_145 },
     ]) {
       const invalid = successEnvelope("jetkvm_input_paste", {
         ...(validPayloads.jetkvm_input_paste as object),
@@ -1815,6 +1818,159 @@ describe("strict canonical tool schemas", () => {
         validate(invalid),
         `JSON Schema ${JSON.stringify(invalidResult)}`,
       ).toBe(false);
+    }
+  });
+  it("requires bounded coherent progress for paste post-admission errors", () => {
+    const document =
+      generateJsonSchemaDocuments()["jetkvm_input_paste.result.schema.json"]!;
+    const validate = new Ajv({ strict: false }).compile(document);
+    const pasteError = (
+      code:
+        | "MUTATION_OUTCOME_UNKNOWN"
+        | "PASTE_FAILED"
+        | "PASTE_CANCELLED"
+        | "EVENT_GAP",
+      dispatched_action_count: number | null,
+      completed_action_count: number | null,
+    ) => ({
+      ok: false,
+      tool: "jetkvm_input_paste",
+      operation_id: "operation-paste-progress",
+      session_id: "session-1",
+      session_generation: 1,
+      duration_ms: 1,
+      error: {
+        code,
+        message: "Paste progress is terminal.",
+        phase: "execute",
+        outcome: "unknown",
+        verification: "none",
+        safe_to_retry: false,
+        required_next_step:
+          code === "MUTATION_OUTCOME_UNKNOWN"
+            ? "inspect_device_state_before_retry"
+            : "release_then_reconnect_then_capture",
+        details: {
+          permission: null,
+          capability: null,
+          failed_action_index: 0,
+          dispatched_action_count,
+          completed_action_count,
+          downstream_stage: "write",
+          expected_generation: null,
+          actual_generation: null,
+          observation_id: "observation-1",
+        },
+      },
+    });
+    for (const code of [
+      "MUTATION_OUTCOME_UNKNOWN",
+      "PASTE_FAILED",
+      "PASTE_CANCELLED",
+      "EVENT_GAP",
+    ] as const) {
+      for (const [dispatched, completed] of [
+        [0, 0],
+        [262_144, 262_144],
+      ] as const) {
+        const candidate = pasteError(code, dispatched, completed);
+        expect(
+          TOOL_RESULT_SCHEMAS.jetkvm_input_paste.safeParse(candidate).success,
+        ).toBe(true);
+        expect(validate(candidate)).toBe(true);
+      }
+      for (const [dispatched, completed] of [
+        [null, null],
+        [-1, 0],
+        [262_145, 262_144],
+      ] as const) {
+        const candidate = pasteError(code, dispatched, completed);
+        expect(
+          TOOL_RESULT_SCHEMAS.jetkvm_input_paste.safeParse(candidate).success,
+        ).toBe(false);
+        expect(validate(candidate)).toBe(false);
+      }
+      expect(
+        TOOL_RESULT_SCHEMAS.jetkvm_input_paste.safeParse(pasteError(code, 1, 2))
+          .success,
+      ).toBe(false);
+    }
+    expect(JSON.stringify(document)).toContain(
+      "completed_action_count must not exceed dispatched_action_count",
+    );
+  });
+
+  it("requires positive ready-state connection epochs in runtime and generated schemas", () => {
+    const documents = generateJsonSchemaDocuments();
+    const ajv = new Ajv({ strict: false });
+    for (const tool of [
+      "jetkvm_session_connect",
+      "jetkvm_session_reconnect",
+      "jetkvm_display_capture",
+    ] as const) {
+      const validate = ajv.compile(documents[`${tool}.result.schema.json`]!);
+      for (const connection_epoch of [1, Number.MAX_SAFE_INTEGER]) {
+        const envelope = successEnvelope(tool, {
+          ...(validPayloads[tool] as object),
+          connection_epoch,
+        });
+        expect(TOOL_RESULT_SCHEMAS[tool].safeParse(envelope).success).toBe(
+          true,
+        );
+        expect(validate(envelope)).toBe(true);
+      }
+      const invalid = successEnvelope(tool, {
+        ...(validPayloads[tool] as object),
+        connection_epoch: 0,
+      });
+      expect(TOOL_RESULT_SCHEMAS[tool].safeParse(invalid).success).toBe(false);
+      expect(validate(invalid)).toBe(false);
+    }
+  });
+
+  it("requires positive capture dimensions in runtime and generated schemas", () => {
+    const document =
+      generateJsonSchemaDocuments()[
+        "jetkvm_display_capture.result.schema.json"
+      ]!;
+    const validate = new Ajv({ strict: false }).compile(document);
+    const minimum = {
+      ...captureResult,
+      source_width: 1,
+      source_height: 1,
+      image_width: 1,
+      image_height: 1,
+      geometry: {
+        content_x: 0,
+        content_y: 0,
+        content_width: 1,
+        content_height: 1,
+      },
+    };
+    const valid = successEnvelope("jetkvm_display_capture", minimum);
+    expect(
+      TOOL_RESULT_SCHEMAS.jetkvm_display_capture.safeParse(valid).success,
+    ).toBe(true);
+    expect(validate(valid)).toBe(true);
+    for (const invalidResult of [
+      { ...minimum, source_width: 0 },
+      { ...minimum, source_height: 0 },
+      { ...minimum, image_width: 0 },
+      { ...minimum, image_height: 0 },
+      {
+        ...minimum,
+        geometry: { ...minimum.geometry, content_width: 0 },
+      },
+      {
+        ...minimum,
+        geometry: { ...minimum.geometry, content_height: 0 },
+      },
+    ]) {
+      const invalid = successEnvelope("jetkvm_display_capture", invalidResult);
+      expect(
+        TOOL_RESULT_SCHEMAS.jetkvm_display_capture.safeParse(invalid).success,
+      ).toBe(false);
+      expect(validate(invalid)).toBe(false);
     }
   });
 

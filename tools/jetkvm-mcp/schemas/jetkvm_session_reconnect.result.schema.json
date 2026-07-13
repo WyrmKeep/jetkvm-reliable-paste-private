@@ -63,7 +63,7 @@
               "$ref": "#/anyOf/0/properties/session_generation"
             },
             "connection_epoch": {
-              "$ref": "#/anyOf/0/properties/duration_ms"
+              "$ref": "#/anyOf/0/properties/session_generation"
             },
             "state": {
               "type": "string",

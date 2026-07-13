@@ -39,34 +39,153 @@
   ],
   "fault_script": [
     {
-      "id": "disconnect-at-postwrite",
+      "id": "arm-disconnect-after-write-jetkvm-display-capture",
       "after_step": null,
       "boundary": "after_write",
-      "action": "For each linked tool, disconnect after its downstream request write and before acknowledgement.",
-      "expected_effect": "Each call is unknown, closes its gate, and is never automatically replayed."
+      "action": "Arm a one-shot post-write disconnect for jetkvm_display_capture only.",
+      "expected_effect": "The read request write is accepted, acknowledgement is absent, and the public read error retains outcome null."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-display-capture",
+      "after_step": "disconnect-after-write-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Clear the display-capture disconnect injector.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-display-status",
+      "after_step": "recover-after-postwrite-jetkvm-display-capture",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_display_status only.",
+      "expected_effect": "The read request write is accepted, acknowledgement is absent, and the public read error retains outcome null."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-display-status",
+      "after_step": "disconnect-after-write-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the display-status disconnect injector.",
+      "expected_effect": "No later cell inherits this fault."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-input-keyboard",
+      "after_step": "recover-after-postwrite-jetkvm-display-status",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_input_keyboard only.",
+      "expected_effect": "The linked mutation is unknown after one dispatched action and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-input-keyboard",
+      "after_step": "disconnect-after-write-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Clear the keyboard disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown request is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-input-mouse",
+      "after_step": "recover-after-postwrite-jetkvm-input-keyboard",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_input_mouse only.",
+      "expected_effect": "The linked mutation is unknown after one dispatched action and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-input-mouse",
+      "after_step": "disconnect-after-write-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Clear the mouse disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown request is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-input-paste",
+      "after_step": "recover-after-postwrite-jetkvm-input-mouse",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_input_paste only.",
+      "expected_effect": "The linked mutation is unknown after its request write and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-input-paste",
+      "after_step": "disconnect-after-write-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Clear the paste disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown request is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-input-release",
+      "after_step": "recover-after-postwrite-jetkvm-input-paste",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_input_release only.",
+      "expected_effect": "The linked mutation is unknown after its request write and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-input-release",
+      "after_step": "disconnect-after-write-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Clear the input-release disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown request is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-power-control",
+      "after_step": "recover-after-postwrite-jetkvm-input-release",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_power_control only.",
+      "expected_effect": "The linked ATX mutation is unknown after one accepted write and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-power-control",
+      "after_step": "disconnect-after-write-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Clear the power disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown ATX request is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-session-connect",
+      "after_step": "recover-after-postwrite-jetkvm-power-control",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_session_connect only.",
+      "expected_effect": "The linked connect is unknown after its request write and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-session-connect",
+      "after_step": "disconnect-after-write-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Clear the session-connect disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown connect is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-session-reconnect",
+      "after_step": "recover-after-postwrite-jetkvm-session-connect",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_session_reconnect only.",
+      "expected_effect": "The linked reconnect is unknown after its request write and is never replayed."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-session-reconnect",
+      "after_step": "disconnect-after-write-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Clear the session-reconnect disconnect injector without reopening its unknown mutation gate.",
+      "expected_effect": "No later cell inherits this fault and the unknown reconnect is not replayed."
+    },
+    {
+      "id": "arm-disconnect-after-write-jetkvm-session-status",
+      "after_step": "recover-after-postwrite-jetkvm-session-reconnect",
+      "boundary": "after_write",
+      "action": "Arm a one-shot post-write disconnect for jetkvm_session_status only.",
+      "expected_effect": "The read request write is accepted, acknowledgement is absent, and the public read error retains outcome null."
+    },
+    {
+      "id": "clear-disconnect-after-write-jetkvm-session-status",
+      "after_step": "disconnect-after-write-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the session-status disconnect injector.",
+      "expected_effect": "The story leaves no disconnect injector armed."
     }
   ],
   "steps": [
     {
-      "id": "power-after-write-loss",
-      "tool": "jetkvm_power_control",
-      "call": "tools/call",
-      "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-request",
-        "timeout_ms": 1000,
-        "action": "press_power"
-      },
-      "timeout_ms": 1000,
-      "expect": "unknown with inspect-device-state-before-retry guidance and exactly one admitted sequence."
-    },
-    {
-      "id": "power-after-write-loss-jetkvm-display-capture",
+      "id": "disconnect-after-write-jetkvm-display-capture",
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
+        "session_id": "opaque-session-07",
         "session_generation": 7,
         "format": "jpeg",
         "max_width": 1280,
@@ -74,147 +193,294 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_display_capture after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and details.downstream_stage acknowledgement. Separately, adapter telemetry records exactly one accepted capture request write, zero acknowledgements, zero replay writes, and no image block."
     },
     {
-      "id": "power-after-write-loss-jetkvm-display-status",
+      "id": "recover-after-postwrite-jetkvm-display-capture",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-07",
+        "next_session_id": "opaque-session-08",
+        "next_generation": 8,
+        "next_tool": "jetkvm_display_status",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The one-shot fault is cleared; inspection, authoritative release, and reconnect establish a new current owned session before the next cell without replaying the prior request."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-display-status",
       "tool": "jetkvm_display_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_display_status after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and details.downstream_stage acknowledgement. Separately, adapter telemetry records exactly one accepted status request write, zero acknowledgements, and zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-input-keyboard",
+      "id": "recover-after-postwrite-jetkvm-display-status",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-08",
+        "next_session_id": "opaque-session-09",
+        "next_generation": 9,
+        "next_tool": "jetkvm_input_keyboard",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-09"
+      },
+      "timeout_ms": 1000,
+      "expect": "The fault is cleared; inspection, release, reconnect, and a fresh keyboard capture establish the next current binding without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-input-keyboard",
       "tool": "jetkvm_input_keyboard",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-power-after-write-loss-input-keyboard",
-        "request_id": "opaque-power-after-write-loss-input-keyboard",
-        "actions": [
-          {
-            "type": "key_press",
-            "key": "Enter"
-          }
-        ],
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-09",
+        "request_id": "opaque-postwrite-keyboard",
+        "actions": [{ "type": "key_press", "key": "Enter" }],
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_input_keyboard after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, details.failed_action_index 0, details.dispatched_action_count 1, details.completed_action_count 0, and details.downstream_stage acknowledgement. The unknown gate is retained and adapter telemetry records zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-input-mouse",
+      "id": "recover-after-postwrite-jetkvm-input-keyboard",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-09",
+        "next_session_id": "opaque-session-10",
+        "next_generation": 10,
+        "next_tool": "jetkvm_input_mouse",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-10"
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown request remains closed; inspection, release, reconnect, and a fresh mouse capture establish the next current binding without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-input-mouse",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-power-after-write-loss-input-mouse",
-        "request_id": "opaque-power-after-write-loss-input-mouse",
-        "actions": [
-          {
-            "type": "move",
-            "x": 40,
-            "y": 50
-          }
-        ],
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-10",
+        "request_id": "opaque-postwrite-mouse",
+        "actions": [{ "type": "move", "x": 40, "y": 50 }],
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_input_mouse after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, details.failed_action_index 0, details.dispatched_action_count 1, details.completed_action_count 0, and details.downstream_stage acknowledgement. The unknown gate is retained and adapter telemetry records zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-input-paste",
+      "id": "recover-after-postwrite-jetkvm-input-mouse",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-10",
+        "next_session_id": "opaque-session-11",
+        "next_generation": 11,
+        "next_tool": "jetkvm_input_paste",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-11"
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown request remains closed; inspection, release, reconnect, and a fresh paste capture establish the next current binding without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-input-paste",
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "observation_id": "opaque-observation-power-after-write-loss-input-paste",
-        "request_id": "opaque-power-after-write-loss-input-paste",
+        "session_id": "opaque-session-11",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-11",
+        "request_id": "opaque-postwrite-paste",
         "text": "FixturePaste91",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_input_paste after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate is retained; adapter telemetry records exactly one accepted request write, zero acknowledgements, and zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-input-release",
+      "id": "recover-after-postwrite-jetkvm-input-paste",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-11",
+        "next_session_id": "opaque-session-12",
+        "next_generation": 12,
+        "next_tool": "jetkvm_input_release",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown paste request remains closed; inspection, release, and reconnect establish the next current binding without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-input-release",
       "tool": "jetkvm_input_release",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-power-after-write-loss-input-release",
+        "session_id": "opaque-session-12",
+        "session_generation": 12,
+        "request_id": "opaque-postwrite-release",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_input_release after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate is retained; adapter telemetry records exactly one accepted request write, zero acknowledgements, and zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-power-control",
+      "id": "recover-after-postwrite-jetkvm-input-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-12",
+        "next_session_id": "opaque-session-13",
+        "next_generation": 13,
+        "next_tool": "jetkvm_power_control",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown release request remains closed; inspection, release, reconnect, and ATX-baseline proof establish the next current binding without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-power-control",
       "tool": "jetkvm_power_control",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-power-after-write-loss-power-control",
+        "session_id": "opaque-session-13",
+        "session_generation": 13,
+        "request_id": "opaque-postwrite-power",
         "action": "press_power",
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_power_control after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate is retained; adapter telemetry records exactly one accepted ATX write, zero acknowledgements, and zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-session-connect",
+      "id": "recover-after-postwrite-jetkvm-power-control",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-13",
+        "prepare_unowned_connect": true,
+        "next_tool": "jetkvm_session_connect",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown ATX request remains closed; inspection restores and proves the ATX baseline, closes the prior session, and prepares an unowned connect state without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-session-connect",
       "tool": "jetkvm_session_connect",
       "call": "tools/call",
       "input": {
-        "request_id": "opaque-power-after-write-loss-session-connect",
+        "request_id": "opaque-postwrite-connect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_session_connect after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase connect, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate is retained; adapter telemetry records exactly one accepted connect write, zero acknowledgements, and zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-session-reconnect",
+      "id": "recover-after-postwrite-jetkvm-session-connect",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "next_session_id": "opaque-session-15",
+        "next_generation": 15,
+        "next_tool": "jetkvm_session_reconnect",
+        "inspect_session_publication": true,
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown connect remains closed; uncertain publication is inspected and cleaned before a new current owned session is established without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-session-reconnect",
       "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
-        "request_id": "opaque-power-after-write-loss-session-reconnect",
+        "session_id": "opaque-session-15",
+        "session_generation": 15,
+        "request_id": "opaque-postwrite-reconnect",
         "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_session_reconnect after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate is retained; adapter telemetry records exactly one accepted reconnect write, zero acknowledgements, and zero replay writes."
     },
     {
-      "id": "power-after-write-loss-jetkvm-session-status",
+      "id": "recover-after-postwrite-jetkvm-session-reconnect",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-and-recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-15",
+        "next_session_id": "opaque-session-16",
+        "next_generation": 16,
+        "next_tool": "jetkvm_session_status",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "The unknown reconnect remains closed; inspection, release, and reconnect establish a new current owned session before the final read cell without replay."
+    },
+    {
+      "id": "disconnect-after-write-jetkvm-session-status",
       "tool": "jetkvm_session_status",
       "call": "tools/call",
       "input": {
-        "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_id": "opaque-session-16",
+        "session_generation": 16,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "unknown for jetkvm_session_status after downstream write and before acknowledgement, with the gate closed and zero replay."
+      "expect": "CONNECTION_LOST read ToolError with phase execute, outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and details.downstream_stage acknowledgement. Separately, adapter telemetry records exactly one accepted session-status request write, zero acknowledgements, and zero replay writes."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:disconnect-after-write",
-      "assertion": "Disconnect after a possible write is unknown, closes the mutation gate, and performs zero replay writes."
+      "assertion": "Every explicit mutation call returns canonical CONNECTION_LOST/unknown with safe_to_retry false and required_next_step inspect_device_state_before_retry; each unknown mutation gate performs zero replay writes."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:disconnect-after-write",
+      "assertion": "The explicit display capture, display status, and session status read calls return CONNECTION_LOST at phase execute with outcome null, verification none, safe_to_retry true, required_next_step reconnect_then_capture, and downstream_stage acknowledgement without mutation gate semantics."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:disconnect-after-write",
+      "assertion": "Each tool-specific one-shot fault is cleared before executable inspect-release-reconnect recovery establishes the next current session and any required fresh observation; separate adapter telemetry proves one accepted write, zero acknowledgements, and zero replay writes."
     }
   ],
   "evidence": [
@@ -222,7 +488,14 @@
       "id": "evidence-1",
       "requirement": "branch:disconnect-after-write",
       "field": "requirement_result",
-      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "source": "The schema-validated mutation and read ToolError envelopes from each explicit ordered fake or replay call.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:disconnect-after-write",
+      "field": "artifact_hash",
+      "source": "Ordered adapter telemetry separately proving one accepted downstream write, zero acknowledgements, zero automatic replay writes, and completed inspect-release-reconnect recovery for every faulted call.",
       "retention": "release_manifest"
     }
   ],

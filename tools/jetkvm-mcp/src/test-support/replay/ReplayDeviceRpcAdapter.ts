@@ -117,14 +117,24 @@ const atxSchema = z
     fixedPressMs: z.union([z.literal(200), z.literal(5000)]),
     serialSequenceCompleted: z.literal(true),
     acknowledgedAt: z.string().datetime(),
-    atxLedObservation: z
-      .object({
-        power: z.boolean().nullable(),
-        hdd: z.boolean().nullable(),
-        observedAt: z.string().datetime().nullable(),
-        freshness: z.enum(["fresh", "stale", "unknown"]),
-      })
-      .strict(),
+    atxLedObservation: z.discriminatedUnion("freshness", [
+      z
+        .object({
+          power: z.boolean().nullable(),
+          hdd: z.boolean().nullable(),
+          observedAt: z.string().datetime(),
+          freshness: z.enum(["fresh", "stale"]),
+        })
+        .strict(),
+      z
+        .object({
+          power: z.null(),
+          hdd: z.null(),
+          observedAt: z.null(),
+          freshness: z.literal("unknown"),
+        })
+        .strict(),
+    ]),
     verification: z.literal("device_ack_only"),
     postRead: z
       .object({ status: z.enum(["available", "unavailable"]) })

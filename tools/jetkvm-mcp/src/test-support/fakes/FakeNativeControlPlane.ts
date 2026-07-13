@@ -16,6 +16,7 @@ import {
   type PlaneEvent,
   type PlaneScenario,
 } from "./PlaneScenario.js";
+import { fakeAtxReceiptSchema } from "./FakeDeviceRpcAdapter.js";
 
 export class FakeNativeControlPlane implements NativeControlPlane {
   private readonly scenarios = new PlaneScenarioEngine();
@@ -84,8 +85,18 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       },
       deadline,
     );
-    if (explicit !== undefined) return explicit as PowerReceipt;
-    return this.deviceRpc.performAtx(this.bindingFor(ref), request, deadline);
+    const result =
+      explicit ??
+      (await this.deviceRpc.performAtx(
+        this.bindingFor(ref),
+        request,
+        deadline,
+      ));
+    const parsed = fakeAtxReceiptSchema.safeParse(result);
+    if (!parsed.success) {
+      throw new Error("Fake NativeControlPlane ATX result shape is invalid.");
+    }
+    return parsed.data;
   }
 
   private bindingFor(ref: SessionRef): DeviceRpcBinding {
