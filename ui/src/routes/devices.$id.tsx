@@ -29,13 +29,21 @@ import {
   useNetworkStateStore,
   User,
   useRTCStore,
+  useSettingsStore,
   useUiStore,
   useUpdateStore,
   useVideoStore,
   VideoState,
   useFailsafeModeStore,
 } from "@hooks/stores";
-import { JsonRpcRequest, JsonRpcResponse, RpcMethodNotFound, useJsonRpc } from "@hooks/useJsonRpc";
+import {
+  RpcMethodNotFound,
+  JsonRpcRequestFailure,
+  useJsonRpc,
+  type JsonRpcRequest,
+  type JsonRpcRequestChannel,
+  type JsonRpcResponse,
+} from "@hooks/useJsonRpc";
 import { useDeviceUiNavigation } from "@hooks/useAppNavigation";
 import { useVersion } from "@hooks/useVersion";
 import WebRTCVideo from "@components/WebRTCVideo";
@@ -56,6 +64,12 @@ import { m } from "@localizations/messages.js";
 import { doRpcHidHandshake, useHidRpc } from "@hooks/useHidRpc";
 import useKeyboard from "@hooks/useKeyboard";
 import { registerTestHandlers, cleanupTestHooks } from "@/test/testHooks";
+import { HID_RPC_VERSION } from "@hooks/hidRpc";
+import { keyboards } from "@/keyboardLayouts";
+import { AutomationController, type ProductRpcRequest } from "@/automation/controller";
+import { createAutomationFacadeRegistry } from "@/automation/bridge";
+import { ProductReliablePasteTransport } from "@/automation/paste";
+import { shouldPublishAutomationChannels } from "@/automation/channelPolicy";
 
 export type AuthMode = "password" | "noPassword" | null;
 
@@ -129,6 +143,9 @@ export default function KvmIdRoute() {
     isTurnServerInUse,
     setTurnServerInUse,
     rpcDataChannel,
+    rpcHidChannel,
+    rpcHidProtocolVersion,
+    hidRpcDisabled,
     setTransceiver,
     setRpcHidChannel,
     setRpcHidUnreliableNonOrderedChannel,
@@ -137,6 +154,71 @@ export default function KvmIdRoute() {
     terminalChannel,
     setTerminalChannel,
   } = useRTCStore();
+
+  const automationController = useMemo(() => new AutomationController(), []);
+  const automationRegistry = useMemo(() => createAutomationFacadeRegistry(), []);
+  const { request: requestRpc, send } = useJsonRpc(onJsonRpcRequest);
+  const automationRpcRequests = useMemo(() => new WeakMap<RTCDataChannel, ProductRpcRequest>(), []);
+  const automationRpcRequestFor = useCallback(
+    (channel: RTCDataChannel): ProductRpcRequest => {
+      const existing = automationRpcRequests.get(channel);
+      if (existing) return existing;
+      const request: ProductRpcRequest = (method, rpcParams, options) => {
+        if (useRTCStore.getState().rpcDataChannel !== channel) {
+          return Promise.reject(new JsonRpcRequestFailure("CHANNEL_CLOSED", false));
+        }
+        return requestRpc(method, rpcParams, options);
+      };
+      automationRpcRequests.set(channel, request);
+      return request;
+    },
+    [automationRpcRequests, requestRpc],
+  );
+  const { keyboardLayout, mouseMode, scrollThrottling } = useSettingsStore();
+  const {
+    setHdmiState,
+    videoElement,
+    displayRevision,
+    width: videoWidth,
+    height: videoHeight,
+  } = useVideoStore();
+
+  useEffect(() => {
+    const token = automationRegistry.bind(automationController);
+    return token.unbind;
+  }, [automationController, automationRegistry]);
+
+  const syncAutomationChannels = useCallback(
+    (
+      rpcChannel: RTCDataChannel | null,
+      hidChannel: RTCDataChannel | null,
+      forceUnavailable = false,
+    ) => {
+      const rtc = useRTCStore.getState();
+      const connected = rtc.peerConnectionState === "connected";
+      const rpcOpen = connected && rpcChannel?.readyState === "open";
+      const hidOpen = connected && hidChannel?.readyState === "open";
+      if (
+        !shouldPublishAutomationChannels({
+          connected,
+          rpcOpen,
+          hidOpen,
+          hidDisabled: rtc.hidRpcDisabled,
+          hidProtocolVersion: rtc.rpcHidProtocolVersion,
+          forceUnavailable,
+        })
+      ) {
+        return;
+      }
+      automationController.replaceChannels({
+        rpcIdentity: rpcOpen ? rpcChannel : null,
+        rpcRequest: rpcOpen && rpcChannel ? automationRpcRequestFor(rpcChannel) : null,
+        hidIdentity: hidOpen ? hidChannel : null,
+        hidReady: hidOpen && !rtc.hidRpcDisabled && rtc.rpcHidProtocolVersion === HID_RPC_VERSION,
+      });
+    },
+    [automationController, automationRpcRequestFor],
+  );
 
   const location = useLocation();
   const isLegacySignalingEnabled = useRef(false);
@@ -149,6 +231,7 @@ export default function KvmIdRoute() {
   const cleanupAndStopReconnecting = useCallback(
     function cleanupAndStopReconnecting() {
       console.log("Closing peer connection");
+      syncAutomationChannels(null, null, true);
 
       setConnectionFailed(true);
       if (peerConnection) {
@@ -159,7 +242,7 @@ export default function KvmIdRoute() {
       peerConnection?.close();
       signalingAttempts.current = 0;
     },
-    [peerConnection, setPeerConnectionState],
+    [peerConnection, setPeerConnectionState, syncAutomationChannels],
   );
 
   // We need to track connectionFailed in a ref to avoid stale closure issues
@@ -183,13 +266,9 @@ export default function KvmIdRoute() {
       remoteDescription: RTCSessionDescriptionInit,
     ) {
       setLoadingMessage(m.setting_remote_description());
-
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(remoteDescription));
-        console.log(
-          "[setRemoteSessionDescription] Remote description set successfully to: " +
-            remoteDescription.sdp,
-        );
+        console.log("[setRemoteSessionDescription] Remote description set successfully");
         setLoadingMessage(m.establishing_secure_connection());
       } catch (error) {
         console.error("[setRemoteSessionDescription] Failed to set remote description:", error);
@@ -391,7 +470,7 @@ export default function KvmIdRoute() {
       const json = await res.json();
       if (res.status === 401) return navigate(isOnDevice ? "/login-local" : "/login");
       if (!res.ok) {
-        console.error("Error getting SDP", { status: res.status, json });
+        console.error("Error getting SDP", { status: res.status });
         cleanupAndStopReconnecting();
         return;
       }
@@ -432,18 +511,22 @@ export default function KvmIdRoute() {
     }
 
     // Set up event listeners and data channels
+    const isCurrentPeerConnection = () => useRTCStore.getState().peerConnection === pc;
     pc.onconnectionstatechange = () => {
+      if (!isCurrentPeerConnection()) return;
       console.debug("[setupPeerConnection] Connection state changed", pc.connectionState);
       setPeerConnectionState(pc.connectionState);
     };
 
     pc.onnegotiationneeded = async () => {
+      if (!isCurrentPeerConnection()) return;
       try {
         console.debug("[setupPeerConnection] Creating offer");
         makingOffer.current = true;
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        if (!isCurrentPeerConnection()) return;
         const sd = btoa(JSON.stringify(pc.localDescription));
         const isNewSignalingEnabled = isLegacySignalingEnabled.current === false;
         if (isNewSignalingEnabled) {
@@ -453,13 +536,14 @@ export default function KvmIdRoute() {
         }
       } catch (e) {
         console.error(`[setupPeerConnection] Error creating offer: ${e}`, new Date().toISOString());
-        cleanupAndStopReconnecting();
+        if (isCurrentPeerConnection()) cleanupAndStopReconnecting();
       } finally {
-        makingOffer.current = false;
+        if (isCurrentPeerConnection()) makingOffer.current = false;
       }
     };
 
     pc.onicecandidate = ({ candidate }) => {
+      if (!isCurrentPeerConnection()) return;
       if (!candidate) return;
       if (candidate.candidate === "") return;
       sendWebRTCSignal("new-ice-candidate", candidate);
@@ -467,6 +551,7 @@ export default function KvmIdRoute() {
 
     pc.onicegatheringstatechange = event => {
       const pc = event.currentTarget as RTCPeerConnection;
+      if (!isCurrentPeerConnection()) return;
       if (pc.iceGatheringState === "complete") {
         console.debug("ICE Gathering completed");
         setLoadingMessage(m.ice_gathering_completed());
@@ -482,41 +567,71 @@ export default function KvmIdRoute() {
     };
 
     pc.ontrack = function (event) {
+      if (!isCurrentPeerConnection()) return;
       setMediaStream(event.streams[0]);
     };
 
     setTransceiver(pc.addTransceiver("video", { direction: "recvonly" }));
 
+    setRpcDataChannel(null);
+    setRpcHidChannel(null);
+    setRpcHidUnreliableChannel(null);
+    setRpcHidUnreliableNonOrderedChannel(null);
+    setRpcHidProtocolVersion(null);
+
     const rpcDataChannel = pc.createDataChannel("rpc");
     rpcDataChannel.onclose = () => {
       console.log("rpcDataChannel has closed");
+      if (useRTCStore.getState().rpcDataChannel !== rpcDataChannel) return;
       setRpcDataChannel(null);
+      syncAutomationChannels(null, useRTCStore.getState().rpcHidChannel, true);
     };
     rpcDataChannel.onerror = (ev: Event) =>
       console.error(`Error on DataChannel '${rpcDataChannel.label}': ${ev}`);
     rpcDataChannel.onopen = () => {
+      if (!isCurrentPeerConnection()) return;
       setRpcDataChannel(rpcDataChannel);
+      syncAutomationChannels(rpcDataChannel, useRTCStore.getState().rpcHidChannel);
     };
 
     const rpcHidChannel = pc.createDataChannel("hidrpc");
     rpcHidChannel.binaryType = "arraybuffer";
-    rpcHidChannel.onclose = () => console.log("rpcHidChannel has closed");
+    rpcHidChannel.onclose = () => {
+      console.log("rpcHidChannel has closed");
+      if (useRTCStore.getState().rpcHidChannel !== rpcHidChannel) return;
+      setRpcHidChannel(null);
+      setRpcHidProtocolVersion(null);
+      syncAutomationChannels(useRTCStore.getState().rpcDataChannel, null, true);
+    };
     rpcHidChannel.onerror = (ev: Event) =>
       console.error(`Error on rpcHidChannel '${rpcHidChannel.label}': ${ev}`);
     rpcHidChannel.onopen = () => {
+      if (!isCurrentPeerConnection()) return;
       setRpcHidChannel(rpcHidChannel);
+      syncAutomationChannels(useRTCStore.getState().rpcDataChannel, rpcHidChannel);
     };
-    doRpcHidHandshake(rpcHidChannel, setRpcHidProtocolVersion);
+    doRpcHidHandshake(rpcHidChannel, version => {
+      if (!isCurrentPeerConnection() || useRTCStore.getState().rpcHidChannel !== rpcHidChannel) {
+        return;
+      }
+      setRpcHidProtocolVersion(version);
+    });
 
     const rpcHidUnreliableChannel = pc.createDataChannel("hidrpc-unreliable-ordered", {
       ordered: true,
       maxRetransmits: 0,
     });
     rpcHidUnreliableChannel.binaryType = "arraybuffer";
-    rpcHidUnreliableChannel.onclose = () => console.log("rpcHidUnreliableChannel has closed");
+    rpcHidUnreliableChannel.onclose = () => {
+      console.log("rpcHidUnreliableChannel has closed");
+      if (useRTCStore.getState().rpcHidUnreliableChannel === rpcHidUnreliableChannel) {
+        setRpcHidUnreliableChannel(null);
+      }
+    };
     rpcHidUnreliableChannel.onerror = (ev: Event) =>
       console.error(`Error on rpcHidUnreliableChannel '${rpcHidUnreliableChannel.label}': ${ev}`);
     rpcHidUnreliableChannel.onopen = () => {
+      if (!isCurrentPeerConnection()) return;
       setRpcHidUnreliableChannel(rpcHidUnreliableChannel);
     };
 
@@ -525,25 +640,40 @@ export default function KvmIdRoute() {
       maxRetransmits: 0,
     });
     rpcHidUnreliableNonOrderedChannel.binaryType = "arraybuffer";
-    rpcHidUnreliableNonOrderedChannel.onclose = () =>
+    rpcHidUnreliableNonOrderedChannel.onclose = () => {
       console.log("rpcHidUnreliableNonOrderedChannel has closed");
+      if (
+        useRTCStore.getState().rpcHidUnreliableNonOrderedChannel ===
+        rpcHidUnreliableNonOrderedChannel
+      ) {
+        setRpcHidUnreliableNonOrderedChannel(null);
+      }
+    };
     rpcHidUnreliableNonOrderedChannel.onerror = (ev: Event) =>
       console.error(
         `Error on rpcHidUnreliableNonOrderedChannel '${rpcHidUnreliableNonOrderedChannel.label}': ${ev}`,
       );
     rpcHidUnreliableNonOrderedChannel.onopen = () => {
+      if (!isCurrentPeerConnection()) return;
       setRpcHidUnreliableNonOrderedChannel(rpcHidUnreliableNonOrderedChannel);
     };
 
     // Create terminal channel as part of initial offer
     const terminalDataChannel = pc.createDataChannel("terminal");
-    terminalDataChannel.onclose = () => console.log("terminalDataChannel has closed");
+    terminalDataChannel.onclose = () => {
+      console.log("terminalDataChannel has closed");
+      if (useRTCStore.getState().terminalChannel === terminalDataChannel) {
+        setTerminalChannel(null);
+      }
+    };
     terminalDataChannel.onerror = (ev: Event) =>
       console.error(`Error on terminalDataChannel '${terminalDataChannel.label}': ${ev}`);
     terminalDataChannel.onopen = () => {
+      if (!isCurrentPeerConnection()) return;
       setTerminalChannel(terminalDataChannel);
     };
 
+    makingOffer.current = false;
     setPeerConnection(pc);
   }, [
     cleanupAndStopReconnecting,
@@ -560,6 +690,7 @@ export default function KvmIdRoute() {
     setRpcHidProtocolVersion,
     setTerminalChannel,
     setTransceiver,
+    syncAutomationChannels,
   ]);
 
   useEffect(() => {
@@ -586,15 +717,30 @@ export default function KvmIdRoute() {
       setSidebarView(null);
       setPeerConnection(null);
       setRpcDataChannel(null);
+      setRpcHidChannel(null);
+      setRpcHidUnreliableChannel(null);
+      setRpcHidUnreliableNonOrderedChannel(null);
+      setRpcHidProtocolVersion(null);
+      automationController.replaceChannels({
+        rpcIdentity: null,
+        rpcRequest: null,
+        hidIdentity: null,
+        hidReady: false,
+      });
       setTerminalChannel(null);
     };
   }, [
     clearCandidatePairStats,
     clearInboundRtpStats,
+    setRpcHidChannel,
+    setRpcHidProtocolVersion,
+    setRpcHidUnreliableChannel,
+    setRpcHidUnreliableNonOrderedChannel,
     setPeerConnection,
     setSidebarView,
     setRpcDataChannel,
     setTerminalChannel,
+    automationController,
   ]);
 
   // TURN server usage detection
@@ -651,7 +797,6 @@ export default function KvmIdRoute() {
   }, 10000);
 
   const { setNetworkState } = useNetworkStateStore();
-  const { setHdmiState } = useVideoStore();
   const { keyboardLedState, setKeyboardLedState, keysDownState, setKeysDownState, setUsbState } =
     useHidStore();
   const setHidRpcDisabled = useRTCStore(state => state.setHidRpcDisabled);
@@ -662,11 +807,117 @@ export default function KvmIdRoute() {
 
   // Mouse handler for E2E tests
   const { reportAbsMouseEvent, rpcHidReady } = useHidRpc();
+  useEffect(() => {
+    syncAutomationChannels(rpcDataChannel, rpcHidChannel);
+  }, [
+    hidRpcDisabled,
+    peerConnectionState,
+    rpcDataChannel,
+    rpcHidChannel,
+    rpcHidProtocolVersion,
+    syncAutomationChannels,
+  ]);
+
+  useEffect(() => {
+    automationController.setInputMode(mouseMode === "absolute", scrollThrottling === 0);
+  }, [automationController, mouseMode, scrollThrottling]);
+
+  useEffect(() => {
+    const media = videoElement?.srcObject;
+    const trackLive =
+      media instanceof MediaStream &&
+      media.getVideoTracks().some(track => track.readyState === "live" && !track.muted);
+    const sourceWidth = videoElement?.videoWidth || videoWidth;
+    const sourceHeight = videoElement?.videoHeight || videoHeight;
+    const ready =
+      peerConnectionState === "connected" &&
+      videoElement !== null &&
+      videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      trackLive &&
+      sourceWidth > 0 &&
+      sourceHeight > 0;
+    automationController.replaceDisplay({
+      videoIdentity: videoElement,
+      video: videoElement,
+      videoReady: ready,
+      sourceWidth: ready ? sourceWidth : null,
+      sourceHeight: ready ? sourceHeight : null,
+      sourceRevision: displayRevision,
+    });
+  }, [
+    automationController,
+    displayRevision,
+    peerConnectionState,
+    videoElement,
+    videoHeight,
+    videoWidth,
+  ]);
+
+  useEffect(() => {
+    const channelGeneration = automationController.snapshot().channel_generation;
+    automationController.invalidateInputCapabilities(channelGeneration);
+    if (
+      peerConnectionState !== "connected" ||
+      rpcDataChannel?.readyState !== "open" ||
+      rpcHidChannel?.readyState !== "open" ||
+      !rpcHidReady
+    ) {
+      return;
+    }
+    const cancellation = new AbortController();
+    const probe = async () => {
+      let reliablePaste = false;
+      try {
+        const result = await requestRpc(
+          "getPasteCapabilities",
+          {},
+          {
+            operationId: `automation-capability-${channelGeneration}`,
+            timeoutMs: 3000,
+            signal: cancellation.signal,
+            onWrite: () => undefined,
+          },
+        );
+        reliablePaste =
+          typeof result === "object" &&
+          result !== null &&
+          !Array.isArray(result) &&
+          Object.keys(result).length === 1 &&
+          "pasteState" in result &&
+          result.pasteState === true;
+      } catch {
+        reliablePaste = false;
+      }
+      if (cancellation.signal.aborted) return;
+      if (!keyboardLayout) return;
+      const normalizedLayout = keyboardLayout.replace("en_US", "en-US");
+      const selectedKeyboard = keyboards.find(keyboard => keyboard.isoCode === normalizedLayout);
+      if (!selectedKeyboard || selectedKeyboard.isoCode !== normalizedLayout) return;
+      const pasteTransport = reliablePaste
+        ? new ProductReliablePasteTransport(rpcHidChannel, selectedKeyboard)
+        : null;
+      automationController.publishInputCapabilities(
+        channelGeneration,
+        selectedKeyboard.isoCode,
+        pasteTransport,
+      );
+    };
+    void probe();
+    return () => cancellation.abort();
+  }, [
+    automationController,
+    keyboardLayout,
+    peerConnectionState,
+    requestRpc,
+    rpcDataChannel,
+    rpcHidChannel,
+    rpcHidReady,
+  ]);
 
   const [hasUpdated, setHasUpdated] = useState(false);
   const { navigateTo } = useDeviceUiNavigation();
 
-  function onJsonRpcRequest(resp: JsonRpcRequest) {
+  function onJsonRpcRequest(resp: JsonRpcRequest, rpcIdentity: JsonRpcRequestChannel) {
     if (resp.method === "otherSessionConnected") {
       navigateTo("/other-session");
     }
@@ -678,8 +929,9 @@ export default function KvmIdRoute() {
     }
 
     if (resp.method === "videoInputState") {
+      automationController.observeVideoInputState(resp.params, rpcIdentity);
       const hdmiState = resp.params as Parameters<VideoState["setHdmiState"]>[0];
-      console.debug("Setting HDMI state", hdmiState);
+      console.debug("Video input state event received");
       setHdmiState(hdmiState);
     }
 
@@ -749,8 +1001,6 @@ export default function KvmIdRoute() {
       setFailsafeMode(active, reason);
     }
   }
-
-  const { send } = useJsonRpc(onJsonRpcRequest);
 
   // Mouse movement handler for E2E tests (needs send from useJsonRpc)
   const handleAbsMouseMove = useCallback(

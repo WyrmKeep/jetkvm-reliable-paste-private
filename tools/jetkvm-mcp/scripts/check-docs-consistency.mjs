@@ -45,6 +45,13 @@ const REQUIRED_INSTALLED_SMOKE_SCRIPTS = Object.freeze({
   "smoke:installed-sse-protocol":
     "npm run build && node scripts/installed-sse-protocol-smoke.mjs",
 });
+const REQUIRED_MCP_PHASE3_SCRIPT =
+  "vitest run src/browser/bridgeProtocol.test.ts src/browser/BrowserController.test.ts src/browser/frames.test.ts src/browser/geometry.test.ts src/handlers/inputDisplay.matrix.test.ts src/native/JetKvmNativeControlPlane.test.ts src/planes/JetKvmBrowserPlane.test.ts src/test-support/PlaneSeams.test.ts src/test-support/ReplayPlanes.test.ts src/test-support/uiFixture.test.ts src/stories/manifest.test.ts src/stories/phase3.acceptance.test.ts && node --test scripts/check-docs-consistency.test.mjs";
+const REQUIRED_UI_PHASE3_SCRIPT =
+  "vitest run --config vitest.config.ts src/automation/bridge.test.ts src/automation/capture.test.ts src/automation/controller.test.ts src/automation/inputGuard.test.ts src/automation/paste.test.ts src/hooks/hidRpc.test.ts src/hooks/useJsonRpc.test.ts src/utils/hidRpcTransport.test.ts src/utils/keepaliveScheduler.test.ts src/utils/pasteBatches.test.ts src/utils/pasteMacro.test.ts src/utils/pasteText.test.ts";
+const REQUIRED_MCP_TYPECHECK_SCRIPT = "tsc -p tsconfig.json --noEmit";
+const REQUIRED_UI_TYPECHECK_SCRIPT =
+  "npm run i18n:compile && tsc --noEmit -p tsconfig.app.json";
 
 function countOccurrences(text, literal) {
   let count = 0;
@@ -292,10 +299,82 @@ function assertCanonicalStatusProvenance(text, label) {
   }
 }
 
+function assertPhase3OperatorDocumentation(readmeText, securityText) {
+  const status =
+    "Phase 3 input/display implementation is present and tested, but the all-ten production registry remains inactive until the Phase 4 power/session handlers and Phase 5 composition gate are complete.";
+  if (
+    !readmeText.includes(status) ||
+    /(?:all ten production handlers are registered and active|production tool handlers are active)/i.test(
+      readmeText,
+    )
+  ) {
+    throw new Error(
+      "Phase 3 production registry status must remain explicitly inactive; false activation claims are prohibited",
+    );
+  }
+  if (
+    !readmeText.includes(
+      "Coordinates are interpreted against the source image geometry",
+    ) ||
+    !/fresh single-use observation/i.test(readmeText)
+  ) {
+    throw new Error("Phase 3 coordinate and observation documentation drifted");
+  }
+  if (
+    !readmeText.includes(
+      "Physical keyboard actions accept canonical physical keys only",
+    ) ||
+    !/Reliable Paste/i.test(readmeText)
+  ) {
+    throw new Error(
+      "Phase 3 physical keyboard versus paste documentation drifted",
+    );
+  }
+  if (
+    !readmeText.includes("nominal ~91 source characters per second") ||
+    !/terminal.*target application|target application.*terminal/i.test(
+      readmeText,
+    )
+  ) {
+    throw new Error(
+      "Phase 3 91 cps and terminal semantics documentation drifted",
+    );
+  }
+  if (
+    !readmeText.includes("Release is the recovery primitive") ||
+    !/inspect.*release.*reconnect.*fresh capture/i.test(readmeText)
+  ) {
+    throw new Error("Phase 3 release recovery documentation drifted");
+  }
+  if (
+    !readmeText.includes("per-fact provenance") ||
+    !/cached_event.*none.*unknown/is.test(readmeText)
+  ) {
+    throw new Error("Phase 3 display provenance documentation drifted");
+  }
+  if (!readmeText.includes("read-only EDID")) {
+    throw new Error("Phase 3 read-only EDID documentation drifted");
+  }
+  if (
+    !/preserve the browser sandbox/i.test(securityText) ||
+    !securityText.includes("authorized MCP image content block")
+  ) {
+    throw new Error(
+      "Phase 3 browser sandbox and image privacy documentation drifted",
+    );
+  }
+  if (!securityText.includes("paste text is ephemeral")) {
+    throw new Error("Phase 3 paste text must remain documented as ephemeral");
+  }
+}
+
 export function checkDocsConsistency({
   designText,
   planText,
+  readmeText,
+  securityText,
   packageJson,
+  uiPackageJson,
   storyIds,
 }) {
   for (const [label, text] of [
@@ -305,6 +384,7 @@ export function checkDocsConsistency({
     assertCanonicalBrowserPlaneContract(text, label);
     assertCanonicalStatusProvenance(text, label);
   }
+  assertPhase3OperatorDocumentation(readmeText, securityText);
   if (
     countOccurrences(designText, "    content_index: 1;") !== 1 ||
     !planText.includes(
@@ -527,6 +607,23 @@ export function checkDocsConsistency({
       throw new Error(`package.json must define ${scriptName} as ${command}`);
     }
   }
+  if (scripts?.["test:phase3"] !== REQUIRED_MCP_PHASE3_SCRIPT) {
+    throw new Error(
+      "Phase 3 MCP test:phase3 hook must contain the exact focused gate",
+    );
+  }
+  if (scripts?.typecheck !== REQUIRED_MCP_TYPECHECK_SCRIPT) {
+    throw new Error("Phase 3 MCP typecheck hook must remain deterministic");
+  }
+  const uiScripts = uiPackageJson?.scripts;
+  if (uiScripts?.["test:phase3"] !== REQUIRED_UI_PHASE3_SCRIPT) {
+    throw new Error(
+      "Phase 3 UI test:phase3 hook must contain the exact focused gate",
+    );
+  }
+  if (uiScripts?.typecheck !== REQUIRED_UI_TYPECHECK_SCRIPT) {
+    throw new Error("Phase 3 UI typecheck hook must remain deterministic");
+  }
 
   return {
     toolNames: [...CANONICAL_TOOL_NAMES],
@@ -541,26 +638,35 @@ async function run() {
   const packageRoot = resolve(scriptsDirectory, "..");
   const repositoryRoot = resolve(packageRoot, "../..");
   const storiesDirectory = resolve(packageRoot, "src/stories");
-  const [designText, planText, packageJsonText, storyFiles] = await Promise.all(
-    [
-      readFile(
-        resolve(
-          repositoryRoot,
-          "docs/superpowers/specs/2026-07-12-jetkvm-computer-use-mcp-design.md",
-        ),
-        "utf8",
+  const [
+    designText,
+    planText,
+    readmeText,
+    securityText,
+    packageJsonText,
+    uiPackageJsonText,
+    storyFiles,
+  ] = await Promise.all([
+    readFile(
+      resolve(
+        repositoryRoot,
+        "docs/superpowers/specs/2026-07-12-jetkvm-computer-use-mcp-design.md",
       ),
-      readFile(
-        resolve(
-          repositoryRoot,
-          "docs/superpowers/plans/2026-07-12-jetkvm-computer-use-mcp.md",
-        ),
-        "utf8",
+      "utf8",
+    ),
+    readFile(
+      resolve(
+        repositoryRoot,
+        "docs/superpowers/plans/2026-07-12-jetkvm-computer-use-mcp.md",
       ),
-      readFile(resolve(packageRoot, "package.json"), "utf8"),
-      readdir(storiesDirectory),
-    ],
-  );
+      "utf8",
+    ),
+    readFile(resolve(packageRoot, "README.md"), "utf8"),
+    readFile(resolve(packageRoot, "SECURITY.md"), "utf8"),
+    readFile(resolve(packageRoot, "package.json"), "utf8"),
+    readFile(resolve(repositoryRoot, "ui/package.json"), "utf8"),
+    readdir(storiesDirectory),
+  ]);
   const storyIds = storyFiles
     .filter((name) => name.endsWith(".json"))
     .sort()
@@ -569,7 +675,10 @@ async function run() {
   const result = checkDocsConsistency({
     designText,
     planText,
+    readmeText,
+    securityText,
     packageJson: JSON.parse(packageJsonText),
+    uiPackageJson: JSON.parse(uiPackageJsonText),
     storyIds,
   });
   process.stdout.write(

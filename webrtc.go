@@ -502,10 +502,6 @@ func getOnHidMessageHandler(session *Session, scopedLogger *zerolog.Logger, chan
 			Str("channel", channel).
 			Int("length", len(msg.Data)).
 			Logger()
-		// only log data if the log level is debug or lower
-		if scopedLogger.GetLevel() > zerolog.DebugLevel {
-			l = l.With().Str("data", string(msg.Data)).Logger()
-		}
 
 		if msg.IsString {
 			l.Warn().Msg("received string data in HID RPC message handler")
@@ -683,7 +679,7 @@ func newSession(config SessionConfig) (*Session, error) {
 	var isConnected bool
 
 	peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
-		scopedLogger.Info().Interface("candidate", candidate).Msg("WebRTC peerConnection has a new ICE candidate")
+		scopedLogger.Debug().Bool("gathering_complete", candidate == nil).Msg("WebRTC ICE gathering advanced")
 		if candidate != nil && config.ws != nil {
 			err := wsjson.Write(context.Background(), config.ws, gin.H{"type": "new-ice-candidate", "data": candidate.ToJSON()})
 			if err != nil {

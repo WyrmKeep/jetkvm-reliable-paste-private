@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { PHYSICAL_KEYS } from "../../domain.js";
+import { PHYSICAL_KEYS, type PhysicalKey } from "../../domain.js";
 import {
   OPAQUE_ID_PATTERN,
   type Deadline,
@@ -73,6 +73,37 @@ const mutationReceiptSchema = z
     acknowledgedAt: z.string().datetime(),
   })
   .strict();
+const heldKeysSchema = z
+  .array(z.enum(PHYSICAL_KEYS))
+  .superRefine((heldKeys, context) => {
+    let previousIndex = -1;
+    for (const [index, key] of heldKeys.entries()) {
+      const canonicalIndex = PHYSICAL_KEYS.indexOf(key);
+      if (canonicalIndex <= previousIndex) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Held keys must be unique and in canonical order.",
+        });
+        return;
+      }
+      previousIndex = canonicalIndex;
+    }
+  });
+const keyboardMutationReceiptSchema = mutationReceiptSchema
+  .extend({ heldKeys: heldKeysSchema })
+  .strict();
+type KeyboardMutationReceipt = MutationReceipt & {
+  readonly heldKeys: readonly PhysicalKey[];
+};
+
+function freezeKeyboardMutationReceipt(
+  receipt: KeyboardMutationReceipt,
+): KeyboardMutationReceipt {
+  Object.freeze(receipt.heldKeys);
+  return Object.freeze(receipt);
+}
+
 const pasteReceiptSchema = mutationReceiptSchema
   .extend({
     originalByteCount: nonNegativeIntegerSchema,
@@ -576,6 +607,18 @@ export class FakeBrowserPlane implements BrowserPlane {
     requestId: string,
     expectedCount: number,
   ): MutationReceipt {
+    if (operation === "keyboard") {
+      const parsed = keyboardMutationReceiptSchema.safeParse(result);
+      if (
+        !parsed.success ||
+        parsed.data.requestId !== requestId ||
+        parsed.data.dispatchedCount !== expectedCount ||
+        parsed.data.completedCount !== expectedCount
+      ) {
+        throw new Error(`Fake BrowserPlane ${operation} receipt is invalid.`);
+      }
+      return freezeKeyboardMutationReceipt(parsed.data);
+    }
     const parsed = mutationReceiptSchema.safeParse(result);
     if (
       !parsed.success ||

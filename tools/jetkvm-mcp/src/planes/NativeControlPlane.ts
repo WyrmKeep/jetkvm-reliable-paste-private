@@ -21,6 +21,9 @@ export interface NativeSessionStatus {
 export interface NativeDisplayStatus extends CachedDisplayState {
   readonly edid: QualifiedEdidRead;
 }
+export interface NativeDisplayStatusRequest {
+  readonly edidReadSupported: boolean;
+}
 
 export interface PowerRequest {
   readonly requestId: string;
@@ -42,6 +45,7 @@ export interface NativeControlPlane {
   ): Promise<NativeSessionStatus>;
   displayStatus(
     ref: SessionRef,
+    request: NativeDisplayStatusRequest,
     deadline: Deadline,
   ): Promise<NativeDisplayStatus>;
   powerControl(

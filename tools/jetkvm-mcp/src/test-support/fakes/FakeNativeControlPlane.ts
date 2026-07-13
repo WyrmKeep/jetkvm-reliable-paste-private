@@ -9,6 +9,7 @@ import type {
 import type {
   NativeControlPlane,
   NativeDisplayStatus,
+  NativeDisplayStatusRequest,
   NativeSessionStatus,
   PowerReceipt,
   PowerRequest,
@@ -106,12 +107,14 @@ export class FakeNativeControlPlane implements NativeControlPlane {
 
   public async displayStatus(
     ref: SessionRef,
+    request: NativeDisplayStatusRequest,
     deadline: Deadline,
   ): Promise<NativeDisplayStatus> {
     const binding = this.bindingFor(ref);
+    const edidReadSupported = request.edidReadSupported;
     const explicit = this.scenarios.consume(
       "displayStatus",
-      { ref: { ...ref } },
+      { ref: { ...ref }, request: { edidReadSupported } },
       deadline,
     );
     if (explicit !== undefined) {
@@ -132,6 +135,18 @@ export class FakeNativeControlPlane implements NativeControlPlane {
       return { ...parsedDisplay.data, edid: parsedEdid.data };
     }
     const display = await this.deviceRpc.readDisplayState(binding, deadline);
+    if (!edidReadSupported) {
+      return {
+        ...display,
+        edid: {
+          status: "unsupported",
+          readCompleted: false,
+          reason: "edid_read_capability_absent",
+          observedAt: null,
+          data: null,
+        },
+      };
+    }
     const edid = await this.deviceRpc.readEdid(binding, deadline);
     return { ...display, edid };
   }

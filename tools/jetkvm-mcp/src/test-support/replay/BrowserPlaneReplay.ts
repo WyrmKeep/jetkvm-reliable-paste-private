@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
-import { PHYSICAL_KEYS } from "../../domain.js";
+import { PHYSICAL_KEYS, type PhysicalKey } from "../../domain.js";
 
 import {
   OPAQUE_ID_PATTERN,
@@ -54,6 +54,41 @@ const mutationReceiptSchema = z
   .object(mutationReceiptFields)
   .strict()
   .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
+const heldKeysSchema = z
+  .array(z.enum(PHYSICAL_KEYS))
+  .superRefine((heldKeys, context) => {
+    let previousIndex = -1;
+    for (const [index, key] of heldKeys.entries()) {
+      const canonicalIndex = PHYSICAL_KEYS.indexOf(key);
+      if (canonicalIndex <= previousIndex) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Held keys must be unique and in canonical order.",
+        });
+        return;
+      }
+      previousIndex = canonicalIndex;
+    }
+  });
+const keyboardMutationReceiptSchema = z
+  .object({
+    ...mutationReceiptFields,
+    heldKeys: heldKeysSchema,
+  })
+  .strict()
+  .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
+type KeyboardMutationReceipt = MutationReceipt & {
+  readonly heldKeys: readonly PhysicalKey[];
+};
+
+function freezeKeyboardMutationReceipt(
+  receipt: KeyboardMutationReceipt,
+): KeyboardMutationReceipt {
+  Object.freeze(receipt.heldKeys);
+  return Object.freeze(receipt);
+}
+
 const pasteReceiptSchema = z
   .object({
     ...mutationReceiptFields,
@@ -432,14 +467,16 @@ export class BrowserPlaneReplay implements BrowserPlane {
     request: KeyboardRequest,
     deadline: Deadline,
   ): Promise<MutationReceipt> {
-    return this.withObservation(ref, request.observationId, () =>
-      this.consumeReceipt(
-        "keyboard",
-        ref,
-        request,
-        deadline,
-        mutationReceiptSchema,
-        request.actions.length,
+    return this.withObservation(ref, request.observationId, async () =>
+      freezeKeyboardMutationReceipt(
+        await this.consumeReceipt(
+          "keyboard",
+          ref,
+          request,
+          deadline,
+          keyboardMutationReceiptSchema,
+          request.actions.length,
+        ),
       ),
     );
   }

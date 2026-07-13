@@ -10,6 +10,7 @@ import {
 import type {
   NativeControlPlane,
   NativeDisplayStatus,
+  NativeDisplayStatusRequest,
   NativeSessionStatus,
   PowerReceipt,
   PowerRequest,
@@ -103,13 +104,26 @@ export class NativeControlPlaneReplay implements NativeControlPlane {
 
   public async displayStatus(
     ref: SessionRef,
+    request: NativeDisplayStatusRequest,
     deadline: Deadline,
   ): Promise<NativeDisplayStatus> {
     this.validateDeadline(deadline);
     const binding = this.bindingFor(ref);
-    const expected = this.replay.consume("displayStatus", { ref: { ...ref } });
+    const edidReadSupported = request.edidReadSupported;
+    const expected = this.replay.consume("displayStatus", {
+      ref: { ...ref },
+      request: { edidReadSupported },
+    });
     const display = await this.deviceRpc.readDisplayState(binding, deadline);
-    const edid = await this.deviceRpc.readEdid(binding, deadline);
+    const edid = edidReadSupported
+      ? await this.deviceRpc.readEdid(binding, deadline)
+      : {
+          status: "unsupported" as const,
+          readCompleted: false as const,
+          reason: "edid_read_capability_absent" as const,
+          observedAt: null,
+          data: null,
+        };
     const actual: NativeDisplayStatus = { ...display, edid };
     this.replay.assertResult("displayStatus", expected, this.asJson(actual));
     return actual;

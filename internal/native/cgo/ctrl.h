@@ -53,6 +53,12 @@ const char *jetkvm_ui_get_lvgl_version();
 
 const char *jetkvm_ui_event_code_to_name(int code);
 
+typedef enum
+{
+    JETKVM_EDID_READ_SUCCESS = 0,
+    JETKVM_EDID_READ_FAILED = 1,
+} jetkvm_edid_read_status_t;
+
 int jetkvm_video_init(float quality_factor);
 void jetkvm_video_shutdown();
 void jetkvm_video_start();
@@ -61,7 +67,7 @@ uint8_t jetkvm_video_get_streaming_status();
 int jetkvm_video_set_quality_factor(float quality_factor);
 float jetkvm_video_get_quality_factor();
 int jetkvm_video_set_edid(const char *edid_hex);
-char *jetkvm_video_get_edid_hex();
+jetkvm_edid_read_status_t jetkvm_video_get_edid_hex(char **edid_hex_out);
 char *jetkvm_video_log_status();
 jetkvm_video_state_t *jetkvm_video_get_status();
 

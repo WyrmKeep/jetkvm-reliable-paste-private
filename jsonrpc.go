@@ -19,6 +19,7 @@ import (
 
 	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/hidrpc"
+	"github.com/jetkvm/kvm/internal/native"
 	"github.com/jetkvm/kvm/internal/usbgadget"
 	"github.com/jetkvm/kvm/internal/utils"
 )
@@ -35,6 +36,51 @@ type JSONRPCResponse struct {
 	Result  any    `json:"result,omitempty"`
 	Error   any    `json:"error,omitempty"`
 	ID      any    `json:"id"`
+}
+
+func (response JSONRPCResponse) MarshalJSON() ([]byte, error) {
+	if response.Error != nil {
+		return json.Marshal(struct {
+			JSONRPC string `json:"jsonrpc"`
+			Error   any    `json:"error"`
+			ID      any    `json:"id"`
+		}{
+			JSONRPC: response.JSONRPC,
+			Error:   response.Error,
+			ID:      response.ID,
+		})
+	}
+	return json.Marshal(struct {
+		JSONRPC string `json:"jsonrpc"`
+		Result  any    `json:"result"`
+		ID      any    `json:"id"`
+	}{
+		JSONRPC: response.JSONRPC,
+		Result:  response.Result,
+		ID:      response.ID,
+	})
+}
+
+func newJSONRPCHandlerErrorResponse(id any, err error) JSONRPCResponse {
+	errorBody := map[string]any{
+		"code":    -32603,
+		"message": "Internal error",
+	}
+	if errors.Is(err, native.ErrEDIDReadFailed) {
+		errorBody["data"] = native.ErrEDIDReadFailed.Error()
+	}
+	return JSONRPCResponse{
+		JSONRPC: "2.0",
+		Error:   errorBody,
+		ID:      id,
+	}
+}
+func logRPCHandlerSuccess(log zerolog.Logger, method string, duration time.Duration, result any) {
+	event := log.Trace().Dur("duration", duration)
+	if method != "getEDID" {
+		event.Interface("result", result)
+	}
+	event.Msg("RPC handler returned")
 }
 
 type JSONRPCEvent struct {
@@ -81,10 +127,11 @@ func writeJSONRPCEvent(event string, params any, session *Session) {
 		jsonRpcLogger.Info().Msg("RPC channel not available")
 		return
 	}
-
 	requestString := string(requestBytes)
+
 	scopedLogger := jsonRpcLogger.With().
-		Str("data", requestString).
+		Str("event", event).
+		Int("byte_count", len(requestBytes)).
 		Logger()
 
 	scopedLogger.Trace().Msg("sending JSONRPC event")
@@ -101,7 +148,7 @@ func onRPCMessage(message webrtc.DataChannelMessage, session *Session) {
 	err := json.Unmarshal(message.Data, &request)
 	if err != nil {
 		jsonRpcLogger.Warn().
-			Str("data", string(message.Data)).
+			Int("byte_count", len(message.Data)).
 			Err(err).
 			Msg("Error unmarshalling JSONRPC request")
 
@@ -119,7 +166,7 @@ func onRPCMessage(message webrtc.DataChannelMessage, session *Session) {
 
 	scopedLogger := jsonRpcLogger.With().
 		Str("method", request.Method).
-		Interface("params", request.Params).
+		Int("param_count", len(request.Params)).
 		Interface("id", request.ID).Logger()
 
 	scopedLogger.Trace().Msg("Received RPC request")
@@ -141,21 +188,18 @@ func onRPCMessage(message webrtc.DataChannelMessage, session *Session) {
 
 	result, err := callRPCHandler(scopedLogger, handler, request.Params, session)
 	if err != nil {
-		scopedLogger.Error().Err(err).Msg("Error calling RPC handler")
-		errorResponse := JSONRPCResponse{
-			JSONRPC: "2.0",
-			Error: map[string]any{
-				"code":    -32603,
-				"message": "Internal error",
-				"data":    err.Error(),
-			},
-			ID: request.ID,
+		if errors.Is(err, native.ErrEDIDReadFailed) {
+			scopedLogger.Error().
+				Str("code", native.ErrEDIDReadFailed.Error()).
+				Msg("RPC handler returned a qualified failure")
+		} else {
+			scopedLogger.Error().Msg("RPC handler returned an internal failure")
 		}
-		writeJSONRPCResponse(errorResponse, session)
+		writeJSONRPCResponse(newJSONRPCHandlerErrorResponse(request.ID, err), session)
 		return
 	}
 
-	scopedLogger.Trace().Dur("duration", time.Since(t)).Interface("result", result).Msg("RPC handler returned")
+	logRPCHandlerSuccess(scopedLogger, request.Method, time.Since(t), result)
 
 	response := JSONRPCResponse{
 		JSONRPC: "2.0",
@@ -1553,8 +1597,12 @@ func executeKeyboardMacroStep(generation controlsession.Generation, step hidrpc.
 	return nil
 }
 
+func logKeyboardMacroExecution(log *zerolog.Logger, macro []hidrpc.KeyboardMacroStep) {
+	log.Debug().Int("step_count", len(macro)).Msg("Executing keyboard macro")
+}
+
 func rpcDoExecuteKeyboardMacro(ctx context.Context, generation controlsession.Generation, macro []hidrpc.KeyboardMacroStep) error {
-	logger.Debug().Interface("macro", macro).Msg("Executing keyboard macro")
+	logKeyboardMacroExecution(logger, macro)
 
 	timer := time.NewTimer(time.Hour)
 	if !timer.Stop() {

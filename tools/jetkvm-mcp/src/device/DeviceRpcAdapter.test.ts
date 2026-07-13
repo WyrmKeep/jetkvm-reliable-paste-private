@@ -1033,6 +1033,26 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
     expect(channel.writes()).toHaveLength(0);
   });
+  it("ignores reconstructed proxy streaming when qualifying an event", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "videoInputState",
+        params: displayWireResult({ ready: true, streaming: 0 }),
+      }),
+    );
+    channel.close();
+
+    await expect(
+      adapter.readDisplayState(BINDING, deadline()),
+    ).resolves.toMatchObject({
+      signal: { value: "present", source: "cached_event" },
+      qualification: "binding_lost_cached_only",
+    });
+    expect(channel.writes()).toHaveLength(0);
+  });
 
   it("routes an interleaved videoInputState event without failing the correlated response", async () => {
     const channel = new FakeDeviceRpcChannel();
@@ -2001,6 +2021,76 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
       });
     },
   );
+
+  it("qualifies only the exact getEDID lower-layer failure marker", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readEdid(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const request = channel.decodedWrite(0);
+    if (
+      typeof request !== "object" ||
+      request === null ||
+      !("id" in request) ||
+      typeof request.id !== "string"
+    ) {
+      throw new Error("EDID request has no string correlation id.");
+    }
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: {
+          code: -32603,
+          message: "Internal error",
+          data: "EDID_READ_FAILED",
+        },
+      }),
+    );
+
+    const error = await pending.catch((caught) => caught);
+    expectDeviceError(error, {
+      code: "EDID_READ_FAILED",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+    });
+    expect(JSON.stringify(error)).not.toContain("ioctl");
+  });
+
+  it.each([
+    "EDID_READ_FAILED: ioctl failed",
+    "edid_read_failed",
+    " EDID_READ_FAILED",
+  ])("does not qualify a near-match EDID error marker %p", async (data) => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readEdid(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const request = channel.decodedWrite(0);
+    if (
+      typeof request !== "object" ||
+      request === null ||
+      !("id" in request) ||
+      typeof request.id !== "string"
+    ) {
+      throw new Error("EDID request has no string correlation id.");
+    }
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32603, message: "Internal error", data },
+      }),
+    );
+
+    await expect(pending).rejects.toMatchObject({
+      code: "DOWNSTREAM_ERROR",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
 
   it("preserves a getEDID router error instead of fabricating unavailable", async () => {
     const channel = new FakeDeviceRpcChannel();

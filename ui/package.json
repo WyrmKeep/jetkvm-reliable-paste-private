@@ -27,6 +27,8 @@
     "i18n:find-excess": "python3 ./tools/find_excess_messages.py",
     "i18n:find-unused": "python3 ./tools/find_unused_messages.py",
     "i18n:find-dupes": "python3 ./tools/find_duplicate_translations.py",
+    "typecheck": "npm run i18n:compile && tsc --noEmit -p tsconfig.app.json",
+    "test:phase3": "vitest run --config vitest.config.ts src/automation/bridge.test.ts src/automation/capture.test.ts src/automation/controller.test.ts src/automation/inputGuard.test.ts src/automation/paste.test.ts src/hooks/hidRpc.test.ts src/hooks/useJsonRpc.test.ts src/utils/hidRpcTransport.test.ts src/utils/keepaliveScheduler.test.ts src/utils/pasteBatches.test.ts src/utils/pasteMacro.test.ts src/utils/pasteText.test.ts",
     "test:e2e": "playwright test",
     "test:unit": "vitest run --config vitest.config.ts",
     "bench:paste": "vitest bench --config vitest.config.ts src/utils/pasteMacro.bench.ts --run"

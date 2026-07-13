@@ -51,7 +51,7 @@ func (c *GRPCClient) VideoSetEDID(edid string) error {
 func (c *GRPCClient) VideoGetEDID() (string, error) {
 	resp, err := c.client.VideoGetEDID(context.Background(), &pb.Empty{})
 	if err != nil {
-		return "", err
+		return "", normalizeEDIDReadError(err)
 	}
 	return resp.Edid, nil
 }

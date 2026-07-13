@@ -4,15 +4,16 @@ Computer-use MCP server for one operator-configured JetKVM per process.
 
 ## Implementation status
 
-The current `0.1.0` source tree contains the reviewed Phase 1 safety foundation and Phase 2 public contracts:
+The current `0.1.0` source tree contains the reviewed Phase 1 safety foundation, Phase 2 public contracts, and the Phase 3 input/display implementation:
 
 - the exact ten-tool catalogue and generated JSON Schemas;
 - transport-independent application sessions, request-id ledger, and a generation-fenced `DeviceRpcAdapter`;
-- capability-shaped browser/native interfaces plus deterministic test-only fake and replay seams;
-- MCP SDK 1.29 stdio and opt-in legacy HTTP/SSE protocol adapters; and
-- a strict 24-story acceptance manifest.
+- capability-shaped browser/native interfaces plus deterministic test-only fake and sanitized replay seams;
+- MCP SDK 1.29 stdio and opt-in legacy HTTP/SSE protocol adapters;
+- a strict 24-story acceptance manifest and execution-produced Phase 3 assertion gate; and
+- implemented and focused-tested display capture/status, mouse, physical keyboard, Reliable Paste, and emergency input release handlers.
 
-Production tool handlers are intentionally inactive: `createMcpServer({})` lists no tools, and a registry must be either empty or contain all ten complete handlers. Device control arrives in the later input/display and power/session phases. This package is therefore not yet a standalone usable release, and it has no public CLI entry point.
+Phase 3 input/display implementation is present and tested, but the all-ten production registry remains inactive until the Phase 4 power/session handlers and Phase 5 composition gate are complete. `createMcpServer({})` therefore still lists no production tools: a registry must be either empty or contain all ten complete handlers. This package is not yet a standalone usable release and has no public CLI entry point.
 
 The v0.1 catalogue is exactly:
 
@@ -49,6 +50,18 @@ Legacy HTTP/SSE is a separate, explicit adapter, not a JetKVM endpoint. `LegacyS
 
 V0.1 deliberately supports stdio plus legacy SSE only. Project-owned Streamable HTTP is out of scope pending a separate design and security review.
 
+## Phase 3 input and display semantics
+
+`jetkvm_display_capture` returns a fresh frame, an opaque observation ID, immutable source and rendered geometry, and exactly one authorized image content block. Coordinates are interpreted against the source image geometry recorded by the fresh single-use observation; absolute mouse input must present that observation, and reconnect, age, consumption, or a display-generation change invalidates it. Coordinates are never guessed from a browser viewport or a later frame.
+
+Physical keyboard actions accept canonical physical keys only. Key presses, key down/up, and chords model physical state; arbitrary text fields are rejected. Use `jetkvm_input_paste` for text. Reliable Paste follows the existing product paste path at a nominal ~91 source characters per second, reports normalized byte/hash evidence, and separates acceptance/progress from its correlated terminal event. A successful terminal means the correlated producer completed; it is not proof that the target application accepted or interpreted the text.
+
+Release is the recovery primitive for held or uncertain input. After an unknown mutation, the safe sequence is inspect, release, reconnect, and fresh capture; automatic replay is forbidden. `jetkvm_input_release` closes the mutation gate, stops and joins Reliable Paste and other producers, drains the generation, and verifies zero keyboard and pointer state before recovery proceeds.
+
+Display status has per-fact provenance: signal, native resolution, and FPS each carry their own observation time, age, freshness, and source. A valid device event produces `cached_event`; before any valid event the source is `none`, values are null or `unknown`, and a validation-only poll never fabricates a snapshot or resets event age. Browser-rendered geometry, native source resolution, and freshness are correlated observations, not interchangeable facts.
+
+EDID is read-only EDID. Without the capability it is `unsupported` with no read attempt; a completed successful empty read is `unavailable`; returned data is `available`; and an attempted lower-layer failure is `EDID_READ_FAILED`. There is no EDID mutation tool. Image bytes remain only in the authorized MCP image content block, paste text is never retained, and the managed browser runs with its sandbox and artifact recorders preserved.
+
 ## Contract and protocol checks
 
 From this directory:
@@ -56,6 +69,7 @@ From this directory:
 ```sh
 npm ci
 npm run test:phase2
+npm run test:phase3
 npm run typecheck
 npm run build
 npm run schemas:check

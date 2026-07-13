@@ -8,7 +8,6 @@ import (
 
 	"github.com/jetkvm/kvm/internal/hidrpc"
 	"github.com/jetkvm/kvm/internal/usbgadget"
-	"github.com/rs/zerolog"
 )
 
 func handleHidRPCMessage(message hidrpc.Message, session *Session) {
@@ -74,7 +73,7 @@ func onHidMessage(msg hidQueueMessage, session *Session) {
 
 	scopedLogger := hidRPCLogger.With().
 		Str("channel", msg.channel).
-		Bytes("data", data).
+		Int("byte_count", len(data)).
 		Logger()
 	scopedLogger.Debug().Msg("HID RPC message received")
 
@@ -88,10 +87,6 @@ func onHidMessage(msg hidQueueMessage, session *Session) {
 	if err := hidrpc.Unmarshal(data, &message); err != nil {
 		scopedLogger.Warn().Err(err).Msg("failed to unmarshal HID RPC message")
 		return
-	}
-
-	if scopedLogger.GetLevel() <= zerolog.DebugLevel {
-		scopedLogger = scopedLogger.With().Str("descr", message.String()).Logger()
 	}
 
 	t := time.Now()

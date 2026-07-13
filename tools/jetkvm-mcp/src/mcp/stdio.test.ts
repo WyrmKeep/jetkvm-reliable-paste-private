@@ -365,6 +365,45 @@ describe("stdio adapter", () => {
     ).toHaveLength(2);
     expect(errors).toEqual([]);
   });
+  it("supplies one stable non-null local principal to every stdio tool call", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const collector = new JsonLineCollector(stdout);
+    const principals: Array<string | null> = [];
+    const handler: JetKvmToolHandler = async (_input, context) => {
+      principals.push(context.principalId);
+      return businessError("jetkvm_session_connect");
+    };
+    const handle = await startStdioServer(
+      completeRegistry({ jetkvm_session_connect: handler }),
+      { stdin, stdout },
+    );
+    handles.push(handle);
+
+    send(stdin, initialize(1));
+    await collector.waitForCount(1);
+    send(stdin, { jsonrpc: "2.0", method: "notifications/initialized" });
+    for (const [id, requestId] of [
+      [2, "stdio-principal-a"],
+      [3, "stdio-principal-b"],
+    ] as const) {
+      send(stdin, {
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: {
+          name: "jetkvm_session_connect",
+          arguments: { request_id: requestId, timeout_ms: 1000 },
+        },
+      });
+    }
+    await collector.waitForCount(3);
+
+    expect(principals).toHaveLength(2);
+    expect(principals[0]).toMatch(/^principal-[a-f0-9]{64}$/);
+    expect(principals[1]).toBe(principals[0]);
+  });
+
 
   it("dispatches calls and turns cancellation notifications into an aborted handler signal", async () => {
     const stdin = new PassThrough();

@@ -42,6 +42,12 @@ const bindingSchema = sessionRefSchema
   })
   .strict();
 const refRequestSchema = z.object({ ref: sessionRefSchema }).strict();
+const displayStatusRequestSchema = z
+  .object({
+    ref: sessionRefSchema,
+    request: z.object({ edidReadSupported: z.boolean() }).strict(),
+  })
+  .strict();
 const bindingRequestSchema = z.object({ ref: bindingSchema }).strict();
 const requestIdSchema = opaqueIdSchema;
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -301,6 +307,36 @@ const mutationReceiptSchema = z
   })
   .strict()
   .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
+const heldKeysSchema = z
+  .array(z.enum(PHYSICAL_KEYS))
+  .superRefine((heldKeys, context) => {
+    let previousIndex = -1;
+    for (const [index, key] of heldKeys.entries()) {
+      const canonicalIndex = PHYSICAL_KEYS.indexOf(key);
+      if (canonicalIndex <= previousIndex) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: "Held keys must be unique and in canonical order.",
+        });
+        return;
+      }
+      previousIndex = canonicalIndex;
+    }
+  });
+const keyboardMutationReceiptSchema = z
+  .object({
+    requestId: requestIdSchema,
+    outcome: z.enum(["applied", "already_applied"]),
+    verification: z.enum(["device_ack_only", "device_state_verified"]),
+    dispatchedCount: nonNegativeIntegerSchema,
+    completedCount: nonNegativeIntegerSchema,
+    acknowledgedAt: timestampSchema,
+    heldKeys: heldKeysSchema,
+  })
+  .strict()
+  .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
+
 const pasteReceiptSchema = z
   .object({
     requestId: requestIdSchema,
@@ -1401,7 +1437,7 @@ const browserExchangeSchema = z.union([
   exchangeSchema(
     "keyboard",
     keyboardRequestSchema,
-    mutationReceiptSchema,
+    keyboardMutationReceiptSchema,
     browserObservedMutationErrorSchema,
     browserCountedResponseMatchesRequest(actionCount),
     browserCountedErrorMatchesRequest(actionCount, true),
@@ -1461,7 +1497,7 @@ const nativeExchangeSchema = z.union([
   ),
   exchangeSchema(
     "displayStatus",
-    refRequestSchema,
+    displayStatusRequestSchema,
     displayObjectSchema
       .extend({ edid: edidSchema })
       .strict()

@@ -310,6 +310,130 @@ describe("DeviceSessionClient", () => {
     expect(connected.ref.sessionId).not.toContain("transport");
   });
 
+  it("retains immutable permission and capability snapshots for the published generation", async () => {
+    const permissions: PermissionName[] = [
+      ...BASE_PERMISSIONS,
+      "display.capture",
+      "input.mouse",
+    ];
+    const capabilities: CapabilitySnapshot = { ...ALL_CAPABILITIES };
+    const { client } = makeClient({
+      permissionsForPrincipal: () => permissions,
+      capabilitiesForConnection: async () => capabilities,
+    });
+    const connected = await client.connect("principal-a", connectInput());
+
+    permissions.splice(0, permissions.length, "session.connect");
+    capabilities.display_capture = false;
+    capabilities.mouse = false;
+
+    const snapshot = client.resolveSession("principal-a", connected.ref);
+    expect(snapshot.permissions).toEqual([
+      ...BASE_PERMISSIONS,
+      "display.capture",
+      "input.mouse",
+    ]);
+    expect(snapshot.capabilities).toEqual(ALL_CAPABILITIES);
+    expect(Object.isFrozen(snapshot.permissions)).toBe(true);
+    expect(Object.isFrozen(snapshot.capabilities)).toBe(true);
+  });
+
+  it("replaces authorization snapshots atomically with the reconnected generation", async () => {
+    let permissions: readonly PermissionName[] = [
+      ...BASE_PERMISSIONS,
+      "display.capture",
+    ];
+    let capabilities: CapabilitySnapshot = { ...ALL_CAPABILITIES };
+    const { client } = makeClient({
+      permissionsForPrincipal: () => permissions,
+      capabilitiesForConnection: async () => capabilities,
+    });
+    const connected = await client.connect("principal-a", connectInput());
+
+    permissions = [...BASE_PERMISSIONS, "input.keyboard"];
+    capabilities = {
+      ...ALL_CAPABILITIES,
+      display_capture: false,
+      keyboard: true,
+    };
+    const reconnected = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+
+    const snapshot = client.resolveSession("principal-a", reconnected.ref);
+    expect(snapshot.permissions).toEqual([
+      ...BASE_PERMISSIONS,
+      "input.keyboard",
+    ]);
+    expect(snapshot.capabilities).toEqual(capabilities);
+    expect(snapshot.capabilities.display_capture).toBe(false);
+    expect(Object.isFrozen(snapshot.permissions)).toBe(true);
+    expect(Object.isFrozen(snapshot.capabilities)).toBe(true);
+    await expectClientError(
+      Promise.resolve().then(() =>
+        client.resolveSession("principal-a", connected.ref),
+      ),
+      "STALE_SESSION_GENERATION",
+    );
+  });
+
+  it("acknowledges fresh capture only for current generation and display evidence", async () => {
+    const { client } = makeClient();
+    const connected = await client.connect("principal-a", connectInput());
+
+    expect(
+      client.acknowledgeCurrentCapture("principal-a", {
+        ref: connected.ref,
+        connectionEpoch: connected.result.connection_epoch + 1,
+        displayGeneration: connected.result.display_generation,
+      }),
+    ).toBe(false);
+    const advancedDisplayGeneration = connected.result.display_generation + 1;
+    expect(
+      client.acknowledgeCurrentCapture("principal-a", {
+        ref: connected.ref,
+        connectionEpoch: connected.result.connection_epoch,
+        displayGeneration: advancedDisplayGeneration,
+      }),
+    ).toBe(true);
+    expect(client.resolveSession("principal-a", connected.ref)).toMatchObject({
+      displayGeneration: advancedDisplayGeneration,
+      freshCaptureRequired: false,
+    });
+    expect(
+      client.acknowledgeCurrentCapture("principal-a", {
+        ref: connected.ref,
+        connectionEpoch: connected.result.connection_epoch,
+        displayGeneration: connected.result.display_generation,
+      }),
+    ).toBe(false);
+
+    const reconnected = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+    expect(
+      client.acknowledgeCurrentCapture("principal-a", {
+        ref: connected.ref,
+        connectionEpoch: connected.result.connection_epoch,
+        displayGeneration: connected.result.display_generation,
+      }),
+    ).toBe(false);
+    expect(
+      client.resolveSession("principal-a", reconnected.ref)
+        .freshCaptureRequired,
+    ).toBe(true);
+    expect(
+      client.acknowledgeCurrentCapture("principal-a", {
+        ref: reconnected.ref,
+        connectionEpoch: reconnected.result.connection_epoch,
+        displayGeneration: client.resolveSession("principal-a", reconnected.ref)
+          .displayGeneration,
+      }),
+    ).toBe(true);
+  });
+
   it("replays an idempotent connect without creating another application session", async () => {
     const { client, browser } = makeClient();
     const first = await client.connect("principal-a", connectInput());
