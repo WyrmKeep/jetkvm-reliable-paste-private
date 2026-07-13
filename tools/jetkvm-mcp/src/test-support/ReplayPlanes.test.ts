@@ -13,6 +13,7 @@ import type {
 import { BrowserPlaneReplay } from "./replay/BrowserPlaneReplay.js";
 import { NativeControlPlaneReplay } from "./replay/NativeControlPlaneReplay.js";
 import {
+  SanitizedReplayCursor,
   ReplayMismatchError,
   validateSanitizedReplayTape,
   type JsonValue,
@@ -107,14 +108,30 @@ function browserTape(
 describe("sanitized versioned replay tapes", () => {
   it.each([
     ["url", "https://device.invalid"],
+    ["targetUrl", "https://device.invalid"],
+    ["device_url_suffix", "https://device.invalid"],
     ["credential", "private"],
+    ["clientCredentials", "private"],
+    ["credential_backup", "private"],
     ["cookie", "private"],
     ["authorization", "Bearer private"],
+    ["authHeader", "private"],
+    ["deviceAuthConfig", "private"],
+    ["requestHeaders", "private"],
+    ["headers", "private"],
+    ["raw_request_headers_copy", "private"],
     ["sdp", "v=0"],
+    ["localSdpOffer", "v=0"],
     ["ice_candidate", "candidate:1"],
+    ["remoteIceCandidates", "candidate:1"],
+    ["prefixedIceServers", "private"],
     ["frame_bytes", "aGVsbG8="],
+    ["capturedFrameData", "aGVsbG8="],
+    ["screenshotBase64", "aGVsbG8="],
+    ["encodedMediaPayload", "aGVsbG8="],
     ["media_payload", "aGVsbG8="],
     ["paste_text", "private paste"],
+    ["normalizedPasteText", "private paste"],
     ["text", "private paste"],
   ])("rejects forbidden %s fields", (key, value) => {
     const tape = {
@@ -166,6 +183,130 @@ describe("sanitized versioned replay tapes", () => {
         extra: true,
       }),
     ).toThrow(/invalid sanitized replay tape/i);
+  });
+
+  it("enforces plane-specific operations and strict request and response allowlists", () => {
+    const validExchange = {
+      operation: "mouse",
+      request: {
+        ref,
+        request: {
+          observationId: "observation-a",
+          requestId: "request-a",
+          actions: [{ type: "move", x: 1, y: 2 }],
+        },
+      },
+      response: {
+        requestId: "request-a",
+        outcome: "applied",
+        verification: "device_ack_only",
+        dispatchedCount: 1,
+        completedCount: 1,
+        acknowledgedAt: "2026-07-13T00:00:00.000Z",
+      },
+    } as const;
+
+    expect(() =>
+      validateSanitizedReplayTape(browserTape([validExchange])),
+    ).not.toThrow();
+    for (const exchange of [
+      { ...validExchange, operation: "readEdid" },
+      {
+        ...validExchange,
+        request: { ...validExchange.request, harmlessMetadata: true },
+      },
+      {
+        ...validExchange,
+        response: { ...validExchange.response, harmlessMetadata: true },
+      },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape(browserTape([exchange])),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
+
+  it("preserves recorded mutation boundaries and rejects collapsed outcomes", () => {
+    const request = {
+      ref,
+      request: {
+        observationId: "observation-a",
+        requestId: "request-a",
+        actions: [{ type: "move", x: 1, y: 2 }],
+      },
+    };
+    const beforeWrite = {
+      code: "CONNECTION_LOST",
+      boundary: "send",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+      dispatchedCount: 0,
+      completedCount: 0,
+    } as const;
+    const afterWrite = {
+      code: "CONNECTION_LOST",
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+      verification: "none",
+      dispatchedCount: 1,
+      completedCount: 0,
+    } as const;
+    const acknowledgedFailure = {
+      code: "POST_ACK_READ_FAILED",
+      boundary: "post_ack",
+      outcome: "applied",
+      writeBegan: true,
+      acknowledged: true,
+      verification: "device_ack_only",
+      dispatchedCount: 1,
+      completedCount: 1,
+    } as const;
+
+    for (const error of [beforeWrite, afterWrite, acknowledgedFailure]) {
+      const cursor = new SanitizedReplayCursor(
+        browserTape([{ operation: "mouse", request, error }]),
+        "browser",
+      );
+      expect(() => cursor.consume("mouse", request)).toThrowError(
+        expect.objectContaining(error),
+      );
+      expect(() => cursor.assertExhausted()).not.toThrow();
+    }
+
+    expect(() =>
+      validateSanitizedReplayTape({
+        version: 1,
+        plane: "browser",
+        exchanges: [
+          {
+            operation: "mouse",
+            request,
+            error: { ...beforeWrite, code: "UNRECOGNIZED_ERROR_CODE" },
+          },
+        ],
+      }),
+    ).toThrow(/invalid sanitized replay tape/i);
+
+    for (const error of [
+      { ...beforeWrite, outcome: "unknown" },
+      { ...afterWrite, outcome: "not_sent" },
+      { ...afterWrite, acknowledged: true },
+      { ...afterWrite, verification: "device_ack_only" },
+      { ...afterWrite, completedCount: 2 },
+      { ...afterWrite, completedCount: undefined },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [{ operation: "mouse", request, error }],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
   });
 });
 
@@ -221,7 +362,14 @@ describe("BrowserPlaneReplay", () => {
               actions: [{ type: "move", x: 1, y: 2 }],
             },
           },
-          response: {},
+          response: {
+            requestId: "request-a",
+            outcome: "applied",
+            verification: "device_ack_only",
+            dispatchedCount: 1,
+            completedCount: 1,
+            acknowledgedAt: "2026-07-13T00:00:00.000Z",
+          },
         },
       ]),
     );

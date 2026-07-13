@@ -5,10 +5,13 @@ import { resolve } from "node:path";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { describe, expect, it } from "vitest";
 
+import { JETKVM_TOOL_NAMES } from "../domain.js";
+
 import {
   ACCEPTANCE_STORY_SCHEMA_NAME,
   BEHAVIOR_REQUIREMENT_IDS,
   CANONICAL_STORY_IDS,
+  TOOL_BEHAVIOR_MATRIX,
   acceptanceStorySchema,
   loadAcceptanceStories,
   validateAcceptanceStories,
@@ -423,6 +426,136 @@ describe("manifest invariants", () => {
     }
     expect(() => validateAcceptanceStories(stories)).toThrow(
       /exact-ten tool reference inventory/i,
+    );
+  });
+});
+
+describe("every-handler behavior matrix", () => {
+  it("is exactly 32 behavior rows by the exact-ten public tools", () => {
+    expect(TOOL_BEHAVIOR_MATRIX).toHaveLength(BEHAVIOR_REQUIREMENT_IDS.length);
+    expect(TOOL_BEHAVIOR_MATRIX.map(({ requirement }) => requirement)).toEqual([
+      ...BEHAVIOR_REQUIREMENT_IDS,
+    ]);
+    for (const row of TOOL_BEHAVIOR_MATRIX) {
+      expect(Object.keys(row.cells)).toEqual([...JETKVM_TOOL_NAMES]);
+    }
+  });
+
+  it("records every cell as either executable coverage or a reviewed N/A", () => {
+    const cells = TOOL_BEHAVIOR_MATRIX.flatMap((row) =>
+      Object.values(row.cells),
+    );
+    expect(cells).toHaveLength(32 * 10);
+    expect(
+      cells.filter(({ applicability }) => applicability === "applicable"),
+    ).toHaveLength(196);
+    expect(
+      cells.filter(({ applicability }) => applicability === "not_applicable"),
+    ).toHaveLength(124);
+  });
+
+  it("rejects a missing per-tool behavior cell", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+    const row = matrix.find(
+      ({ requirement }) => requirement === "branch:strict-schema-rejection",
+    )!;
+    delete (row.cells as unknown as Record<string, unknown>).jetkvm_input_mouse;
+
+    expect(() => validateAcceptanceStories(stories, matrix)).toThrow(
+      /missing behavior matrix cell.*jetkvm_input_mouse/i,
+    );
+  });
+
+  it("rejects an N/A cell without its reviewed tool-specific rationale", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+    const row = matrix.find(
+      ({ requirement }) => requirement === "branch:scroll-validation",
+    )!;
+    (row.cells as unknown as Record<string, unknown>).jetkvm_session_status = {
+      applicability: "not_applicable",
+      rationale: "",
+    };
+
+    expect(() => validateAcceptanceStories(stories, matrix)).toThrow(
+      /reviewed rationale.*jetkvm_session_status.*scroll-validation/i,
+    );
+  });
+
+  it("rejects applicable prose-only coverage without any executable call, fault, or pass link", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const [field, missingId] of [
+      ["step_id", "prose-only-step"],
+      ["fault_id", "prose-only-fault"],
+      ["assertion_id", "prose-only-assertion"],
+    ] as const) {
+      const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+      const row = matrix.find(
+        ({ requirement }) => requirement === "branch:strict-schema-rejection",
+      )!;
+      const cell = row.cells.jetkvm_session_connect;
+      expect(cell.applicability).toBe("applicable");
+      (cell as unknown as Record<string, unknown>)[field] = missingId;
+
+      expect(() => validateAcceptanceStories(stories, matrix), field).toThrow(
+        /executable call.*fault boundary.*pass assertion/i,
+      );
+    }
+  });
+});
+
+describe("reviewed story branch execution", () => {
+  it("story 1 executes strict-schema, deadline-release, and busy as distinct calls and faults", async () => {
+    const [story] = await loadAcceptanceStories(storiesDirectory);
+    expect(story!.steps.map(({ id }) => id)).toEqual([
+      "reject-strict-schema",
+      "deadline-before-admission",
+      "connect-without-takeover",
+    ]);
+    expect(
+      story!.fault_script.map(({ id, boundary }) => [id, boundary]),
+    ).toEqual([
+      ["strict-schema-before-controller", "before_admission"],
+      ["expire-before-admission", "before_admission"],
+      ["incumbent-busy", "before_admission"],
+    ]);
+  });
+
+  it("story 6 requires fresh observations for both accepted scroll bounds and rejects consumed reuse", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const story = stories[5]!;
+    const negative = story.steps.find(
+      ({ id }) => id === "scroll-negative-bound",
+    )!;
+    const positive = story.steps.find(
+      ({ id }) => id === "scroll-positive-bound",
+    )!;
+    const consumed = story.steps.find(
+      ({ id }) => id === "reuse-consumed-negative-observation",
+    )!;
+
+    expect(negative.input.observation_id).not.toBe(
+      positive.input.observation_id,
+    );
+    expect(consumed.input.observation_id).toBe(negative.input.observation_id);
+
+    const reusedAccepted = structuredClone(stories);
+    const reusedPositive = reusedAccepted[5]!.steps.find(
+      ({ id }) => id === "scroll-positive-bound",
+    )!;
+    reusedPositive.input.observation_id = negative.input.observation_id;
+    expect(() => validateAcceptanceStories(reusedAccepted)).toThrow(
+      /accepted scroll.*fresh observation/i,
+    );
+
+    const noConsumedProof = structuredClone(stories);
+    const changedConsumed = noConsumedProof[5]!.steps.find(
+      ({ id }) => id === "reuse-consumed-negative-observation",
+    )!;
+    changedConsumed.input.observation_id = "opaque-unconsumed-observation";
+    expect(() => validateAcceptanceStories(noConsumedProof)).toThrow(
+      /consumed-observation reuse/i,
     );
   });
 });

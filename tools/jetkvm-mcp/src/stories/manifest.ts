@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
-import { JETKVM_TOOL_NAMES } from "../domain.ts";
+import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.ts";
 
 export const ACCEPTANCE_STORY_SCHEMA_NAME = "AcceptanceStory";
 
@@ -68,6 +68,909 @@ export const BEHAVIOR_REQUIREMENT_IDS = [
   "branch:device-rpc-adapter-mid-flight-loss",
   "branch:scroll-validation",
 ] as const;
+
+type ApplicableBehaviorCell = {
+  applicability: "applicable";
+  story_id: (typeof CANONICAL_STORY_IDS)[number];
+  step_id: string;
+  fault_id: string;
+  assertion_id: string;
+};
+
+type NotApplicableBehaviorCell = {
+  applicability: "not_applicable";
+  rationale: string;
+};
+
+export type ToolBehaviorMatrixCell =
+  | ApplicableBehaviorCell
+  | NotApplicableBehaviorCell;
+
+export type ToolBehaviorMatrixRow = {
+  requirement: (typeof BEHAVIOR_REQUIREMENT_IDS)[number];
+  cells: Readonly<Record<JetKvmToolName, ToolBehaviorMatrixCell>>;
+};
+
+export type ToolBehaviorMatrix = readonly ToolBehaviorMatrixRow[];
+
+type MatrixDefinition = {
+  requirement: (typeof BEHAVIOR_REQUIREMENT_IDS)[number];
+  applicable: Partial<Readonly<Record<JetKvmToolName, ApplicableBehaviorCell>>>;
+  not_applicable: Partial<
+    Readonly<Record<JetKvmToolName, NotApplicableBehaviorCell>>
+  >;
+};
+
+const T = {
+  capture: "jetkvm_display_capture",
+  displayStatus: "jetkvm_display_status",
+  keyboard: "jetkvm_input_keyboard",
+  mouse: "jetkvm_input_mouse",
+  paste: "jetkvm_input_paste",
+  release: "jetkvm_input_release",
+  power: "jetkvm_power_control",
+  connect: "jetkvm_session_connect",
+  reconnect: "jetkvm_session_reconnect",
+  sessionStatus: "jetkvm_session_status",
+} as const satisfies Readonly<Record<string, JetKvmToolName>>;
+
+function linked(
+  storyIndex: number,
+  step_id: string,
+  fault_id: string,
+  assertion_id: string,
+): ApplicableBehaviorCell {
+  return {
+    applicability: "applicable",
+    story_id: CANONICAL_STORY_IDS[storyIndex]!,
+    step_id,
+    fault_id,
+    assertion_id,
+  };
+}
+
+function reviewed(
+  tool: JetKvmToolName,
+  rationale: string,
+): NotApplicableBehaviorCell {
+  return {
+    applicability: "not_applicable",
+    rationale: `Reviewed for ${tool}: ${rationale}`,
+  };
+}
+
+function forEveryTool(
+  cell: ApplicableBehaviorCell,
+): MatrixDefinition["applicable"] {
+  return Object.fromEntries(
+    JETKVM_TOOL_NAMES.map((tool) => [tool, { ...cell }]),
+  ) as Record<JetKvmToolName, ApplicableBehaviorCell>;
+}
+
+const MATRIX_DEFINITIONS = [
+  {
+    requirement: "branch:strict-schema-rejection",
+    applicable: forEveryTool(
+      linked(
+        0,
+        "reject-strict-schema",
+        "strict-schema-before-controller",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:permission-denied",
+    applicable: forEveryTool(
+      linked(
+        14,
+        "status-without-permission",
+        "deny-then-remove-capability",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:capability-missing",
+    applicable: forEveryTool(
+      linked(
+        14,
+        "keyboard-without-capability",
+        "deny-then-remove-capability",
+        "assertion-2",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:deadline-before-admission",
+    applicable: forEveryTool(
+      linked(
+        0,
+        "deadline-before-admission",
+        "expire-before-admission",
+        "assertion-2",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:cancellation-before-write",
+    applicable: forEveryTool(
+      linked(
+        5,
+        "cancel-before-write",
+        "cancel-before-mouse-write",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:disconnect-before-write",
+    applicable: forEveryTool(
+      linked(
+        10,
+        "mouse-before-write-loss",
+        "disconnect-at-prewrite",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:disconnect-after-write",
+    applicable: forEveryTool(
+      linked(
+        11,
+        "power-after-write-loss",
+        "disconnect-at-postwrite",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:malformed-downstream-response",
+    applicable: forEveryTool(
+      linked(
+        13,
+        "malformed-display-status",
+        "malformed-boundary-cases",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:stale-session-generation",
+    applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.connect).map((tool) => [
+        tool,
+        linked(
+          15,
+          "stale-keyboard-generation",
+          "retain-prior-generation",
+          "assertion-1",
+        ),
+      ]),
+    ),
+    not_applicable: {
+      [T.connect]: reviewed(
+        T.connect,
+        "connect creates the first generation and accepts no session_generation field to compare as stale.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:busy-without-takeover",
+    applicable: {
+      [T.connect]: linked(
+        0,
+        "connect-without-takeover",
+        "incumbent-busy",
+        "assertion-3",
+      ),
+      [T.reconnect]: linked(
+        0,
+        "connect-without-takeover",
+        "incumbent-busy",
+        "assertion-3",
+      ),
+    },
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture operates only inside an already-owned session and has no takeover option or ownership publication.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status is read-only inside the incumbent session and cannot request ownership.",
+      ),
+      [T.keyboard]: reviewed(
+        T.keyboard,
+        "keyboard input requires an existing generation and cannot acquire or take over device ownership.",
+      ),
+      [T.mouse]: reviewed(
+        T.mouse,
+        "mouse input requires an existing observation and cannot acquire or take over device ownership.",
+      ),
+      [T.paste]: reviewed(
+        T.paste,
+        "paste requires an existing observation and cannot acquire or take over device ownership.",
+      ),
+      [T.release]: reviewed(
+        T.release,
+        "release drains an already-owned generation and has no ownership acquisition path.",
+      ),
+      [T.power]: reviewed(
+        T.power,
+        "power control requires an existing generation and cannot publish device ownership.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status only inspects the incumbent generation and has no takeover input.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:authorized-takeover",
+    applicable: {
+      [T.connect]: linked(
+        1,
+        "authorized-takeover",
+        "alternate-takeover-permission",
+        "assertion-2",
+      ),
+      [T.reconnect]: linked(
+        1,
+        "authorized-takeover",
+        "alternate-takeover-permission",
+        "assertion-2",
+      ),
+    },
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture cannot request takeover and only reads from the generation already authorized by connect or reconnect.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status cannot request takeover and only reads the current authorized generation.",
+      ),
+      [T.keyboard]: reviewed(
+        T.keyboard,
+        "keyboard actions cannot request takeover; they are fenced to an existing authorized generation.",
+      ),
+      [T.mouse]: reviewed(
+        T.mouse,
+        "mouse actions cannot request takeover; they are fenced to an existing authorized generation.",
+      ),
+      [T.paste]: reviewed(
+        T.paste,
+        "paste cannot request takeover; it is fenced to an existing authorized generation.",
+      ),
+      [T.release]: reviewed(
+        T.release,
+        "release is an emergency operation for the current generation, not an ownership publication operation.",
+      ),
+      [T.power]: reviewed(
+        T.power,
+        "power control cannot request takeover and only mutates through an existing authorized generation.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status is read-only and has no takeover option or ownership publication.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:unauthorized-takeover",
+    applicable: {
+      [T.connect]: linked(
+        1,
+        "denied-takeover",
+        "alternate-takeover-permission",
+        "assertion-3",
+      ),
+      [T.reconnect]: linked(
+        1,
+        "denied-takeover",
+        "alternate-takeover-permission",
+        "assertion-3",
+      ),
+    },
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture exposes no takeover flag, so takeover authorization is never evaluated by this handler.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status exposes no takeover flag, so takeover authorization is never evaluated.",
+      ),
+      [T.keyboard]: reviewed(
+        T.keyboard,
+        "keyboard input exposes no takeover flag and cannot enter the ownership authorization branch.",
+      ),
+      [T.mouse]: reviewed(
+        T.mouse,
+        "mouse input exposes no takeover flag and cannot enter the ownership authorization branch.",
+      ),
+      [T.paste]: reviewed(
+        T.paste,
+        "paste exposes no takeover flag and cannot enter the ownership authorization branch.",
+      ),
+      [T.release]: reviewed(
+        T.release,
+        "release exposes no takeover flag and operates only on the caller's current generation.",
+      ),
+      [T.power]: reviewed(
+        T.power,
+        "power control exposes no takeover flag and cannot enter the ownership authorization branch.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status exposes no takeover flag and performs no ownership change.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:definitive-acknowledgement",
+    applicable: Object.fromEntries(
+      [
+        T.connect,
+        T.reconnect,
+        T.keyboard,
+        T.mouse,
+        T.paste,
+        T.release,
+        T.power,
+      ].map((tool) => [
+        tool,
+        linked(9, "press-power", "fixed-atx-sequence", "assertion-1"),
+      ]),
+    ),
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture returns a fresh read result rather than the MutationState acknowledgement contract.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status returns observed read facts and does not acknowledge a mutation.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status returns observed session facts and does not acknowledge a mutation.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:duplicate-same-request-digest",
+    applicable: Object.fromEntries(
+      [
+        T.connect,
+        T.reconnect,
+        T.keyboard,
+        T.mouse,
+        T.paste,
+        T.release,
+        T.power,
+      ].map((tool) => [
+        tool,
+        linked(12, "same-release-request", "repeat-ledger-key", "assertion-1"),
+      ]),
+    ),
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture has no request_id and is intentionally outside mutation-ledger deduplication.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status has no request_id and is intentionally outside mutation-ledger deduplication.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status has no request_id and is intentionally outside mutation-ledger deduplication.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:duplicate-changed-digest",
+    applicable: Object.fromEntries(
+      [
+        T.connect,
+        T.reconnect,
+        T.keyboard,
+        T.mouse,
+        T.paste,
+        T.release,
+        T.power,
+      ].map((tool) => [
+        tool,
+        linked(
+          12,
+          "changed-release-request",
+          "repeat-ledger-key",
+          "assertion-2",
+        ),
+      ]),
+    ),
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture has no request_id whose digest could conflict with a prior mutation.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status has no request_id whose digest could conflict with a prior mutation.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status has no request_id whose digest could conflict with a prior mutation.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:partial-verification",
+    applicable: Object.fromEntries(
+      [
+        T.connect,
+        T.reconnect,
+        T.keyboard,
+        T.mouse,
+        T.paste,
+        T.release,
+        T.power,
+      ].map((tool) => [
+        tool,
+        linked(
+          16,
+          "power-with-post-read-failure",
+          "fail-post-ack-read",
+          "assertion-2",
+        ),
+      ]),
+    ),
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture is a single read result and has no applied mutation acknowledgement to preserve during later verification.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status is a read and has no applied acknowledgement followed by mutation verification.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status is a read and has no applied acknowledgement followed by mutation verification.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:partial-multi-event-dispatch",
+    applicable: {
+      [T.mouse]: linked(
+        5,
+        "partial-mouse-dispatch",
+        "interrupt-mouse-after-first-event",
+        "assertion-2",
+      ),
+      [T.keyboard]: linked(
+        6,
+        "send-physical-keys",
+        "interrupt-key-sequence",
+        "assertion-2",
+      ),
+      [T.paste]: linked(
+        7,
+        "submit-reliable-paste",
+        "paste-boundary-sequence",
+        "assertion-3",
+      ),
+    },
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture produces one bounded read result and has no ordered mutation-event suffix to suppress.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status produces one read result and has no ordered mutation-event suffix to suppress.",
+      ),
+      [T.release]: reviewed(
+        T.release,
+        "release is one generation-drain operation whose partial state is covered by cleanup and unknown-outcome semantics, not a caller event list.",
+      ),
+      [T.power]: reviewed(
+        T.power,
+        "power accepts one semantic action; ON/OFF serialization is covered by the dedicated ATX rows rather than a caller event list.",
+      ),
+      [T.connect]: reviewed(
+        T.connect,
+        "connect accepts one ownership operation and no caller-supplied multi-event sequence.",
+      ),
+      [T.reconnect]: reviewed(
+        T.reconnect,
+        "reconnect accepts one replacement operation and no caller-supplied multi-event sequence.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status is a read and has no caller-supplied multi-event sequence.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:post-reconnect-input-without-capture",
+    applicable: {
+      [T.mouse]: linked(
+        2,
+        "input-with-old-observation",
+        "publish-new-generation",
+        "assertion-2",
+      ),
+      [T.keyboard]: linked(
+        2,
+        "input-with-old-observation",
+        "publish-new-generation",
+        "assertion-2",
+      ),
+      [T.paste]: linked(
+        2,
+        "input-with-old-observation",
+        "publish-new-generation",
+        "assertion-2",
+      ),
+    },
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture creates the fresh observation required after reconnect rather than consuming an observation.",
+      ),
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status consumes no input observation and remains a read-only status operation.",
+      ),
+      [T.release]: reviewed(
+        T.release,
+        "emergency release intentionally requires no observation so it can drain unsafe held input.",
+      ),
+      [T.power]: reviewed(
+        T.power,
+        "power control is generation-fenced but does not consume a display observation.",
+      ),
+      [T.connect]: reviewed(
+        T.connect,
+        "connect creates session ownership and does not consume a prior display observation.",
+      ),
+      [T.reconnect]: reviewed(
+        T.reconnect,
+        "reconnect invalidates observations and returns fresh_capture_required rather than consuming one.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status consumes no input observation and only reports fresh_capture_required.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:cleanup-failure",
+    applicable: Object.fromEntries(
+      [
+        T.capture,
+        T.keyboard,
+        T.mouse,
+        T.paste,
+        T.release,
+        T.power,
+        T.connect,
+        T.reconnect,
+      ].map((tool) => [
+        tool,
+        tool === T.capture
+          ? linked(
+              3,
+              "capture-fresh-frame",
+              "post-capture-cleanup-failure",
+              "assertion-2",
+            )
+          : linked(
+              8,
+              "release-all-input",
+              "race-release-producers",
+              "assertion-1",
+            ),
+      ]),
+    ),
+    not_applicable: {
+      [T.displayStatus]: reviewed(
+        T.displayStatus,
+        "display status holds no input, producer, ownership publication, or mutation resource requiring post-operation cleanup.",
+      ),
+      [T.sessionStatus]: reviewed(
+        T.sessionStatus,
+        "session status holds no input, producer, ownership publication, or mutation resource requiring post-operation cleanup.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:per-fact-status-provenance",
+    applicable: {
+      [T.displayStatus]: linked(
+        18,
+        "status-with-unequal-facts",
+        "lose-binding-during-read",
+        "assertion-1",
+      ),
+      [T.sessionStatus]: linked(
+        18,
+        "session-status-after-binding-loss",
+        "lose-binding-during-read",
+        "assertion-1",
+      ),
+    },
+    not_applicable: {
+      [T.capture]: reviewed(
+        T.capture,
+        "capture returns one fresh frame timestamp and geometry, not independently sourced cached status facts.",
+      ),
+      [T.keyboard]: reviewed(
+        T.keyboard,
+        "keyboard returns mutation counts and held state, not signal, resolution, or FPS provenance.",
+      ),
+      [T.mouse]: reviewed(
+        T.mouse,
+        "mouse returns mutation counts and post-capture state, not independently sourced status facts.",
+      ),
+      [T.paste]: reviewed(
+        T.paste,
+        "paste returns correlated lifecycle facts, not signal, resolution, or FPS provenance.",
+      ),
+      [T.release]: reviewed(
+        T.release,
+        "release returns drain acknowledgements, not signal, resolution, or FPS provenance.",
+      ),
+      [T.power]: reviewed(
+        T.power,
+        "power reports a separately qualified ATX LED observation, not native capture fact provenance.",
+      ),
+      [T.connect]: reviewed(
+        T.connect,
+        "connect returns ownership and generation state, not independently sourced native capture facts.",
+      ),
+      [T.reconnect]: reviewed(
+        T.reconnect,
+        "reconnect returns replacement evidence and fresh_capture_required, not native capture fact provenance.",
+      ),
+    },
+  },
+  {
+    requirement: "branch:edid-capability-absent",
+    applicable: {
+      [T.displayStatus]: linked(
+        4,
+        "status-without-edid-capability",
+        "sequence-edid-states",
+        "assertion-1",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.displayStatus).map(
+        (tool) => [
+          tool,
+          reviewed(
+            tool,
+            "only jetkvm_display_status exposes the optional read-only EDID result union; this handler has no EDID field.",
+          ),
+        ],
+      ),
+    ),
+  },
+  {
+    requirement: "branch:edid-successful-empty",
+    applicable: {
+      [T.displayStatus]: linked(
+        4,
+        "status-with-empty-edid",
+        "sequence-edid-states",
+        "assertion-2",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.displayStatus).map(
+        (tool) => [
+          tool,
+          reviewed(
+            tool,
+            "only jetkvm_display_status performs a qualified EDID read that can complete successfully with no EDID bytes.",
+          ),
+        ],
+      ),
+    ),
+  },
+  {
+    requirement: "branch:edid-lower-layer-failure",
+    applicable: {
+      [T.displayStatus]: linked(
+        19,
+        "read-edid-lower-failure",
+        "fail-qualified-edid-read",
+        "assertion-1",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.displayStatus).map(
+        (tool) => [
+          tool,
+          reviewed(
+            tool,
+            "only jetkvm_display_status invokes the lower-layer read-only EDID operation that can return EDID_READ_FAILED.",
+          ),
+        ],
+      ),
+    ),
+  },
+  {
+    requirement: "branch:reconnect-evidence",
+    applicable: {
+      [T.reconnect]: linked(
+        20,
+        "reconnect-with-new-channel",
+        "replace-one-shared-adapter",
+        "assertion-1",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.reconnect).map((tool) => [
+        tool,
+        reviewed(
+          tool,
+          "only jetkvm_session_reconnect publishes a replacement generation and must prove new WebRTC, RPC, HID, and browser-channel observations.",
+        ),
+      ]),
+    ),
+  },
+  {
+    requirement: "branch:atx-gate-and-serialization",
+    applicable: {
+      [T.power]: linked(
+        21,
+        "serialized-power-short",
+        "atx-midflight-binding-loss",
+        "assertion-1",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.power).map((tool) => [
+        tool,
+        reviewed(
+          tool,
+          "only jetkvm_power_control drives the atx-power serial extension and owns its full-sequence mutex and fixed timing.",
+        ),
+      ]),
+    ),
+  },
+  {
+    requirement: "branch:atx-acknowledgement-semantics",
+    applicable: {
+      [T.power]: linked(
+        21,
+        "serialized-power-short",
+        "atx-midflight-binding-loss",
+        "assertion-2",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.power).map((tool) => [
+        tool,
+        reviewed(
+          tool,
+          "only jetkvm_power_control reports serial ON/OFF completion separately from an uncorrelated cached ATX LED fact.",
+        ),
+      ]),
+    ),
+  },
+  {
+    requirement: "branch:sse-route-security",
+    applicable: forEveryTool(
+      linked(22, "secure-sse-get", "deny-routes-before-state", "assertion-1"),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:sse-routing-close",
+    applicable: forEveryTool(
+      linked(
+        23,
+        "post-accepted-message",
+        "exercise-routing-statuses",
+        "assertion-1",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:shared-device-rpc-adapter-binding",
+    applicable: forEveryTool(
+      linked(
+        20,
+        "inspect-replacement-channel",
+        "replace-one-shared-adapter",
+        "assertion-2",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:device-rpc-adapter-replacement",
+    applicable: forEveryTool(
+      linked(
+        20,
+        "reconnect-with-new-channel",
+        "replace-one-shared-adapter",
+        "assertion-3",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:device-rpc-adapter-mid-flight-loss",
+    applicable: forEveryTool(
+      linked(
+        18,
+        "session-status-after-binding-loss",
+        "lose-binding-during-read",
+        "assertion-2",
+      ),
+    ),
+    not_applicable: {},
+  },
+  {
+    requirement: "branch:scroll-validation",
+    applicable: {
+      [T.mouse]: linked(
+        5,
+        "scroll-negative-bound",
+        "validate-scroll-before-plane",
+        "assertion-3",
+      ),
+    },
+    not_applicable: Object.fromEntries(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.mouse).map((tool) => [
+        tool,
+        reviewed(
+          tool,
+          "only jetkvm_input_mouse accepts HID wheel deltas; this handler exposes no scroll action or horizontal wheel field.",
+        ),
+      ]),
+    ),
+  },
+] as const satisfies readonly MatrixDefinition[];
+
+function buildToolBehaviorMatrix(): ToolBehaviorMatrix {
+  return MATRIX_DEFINITIONS.map((definition) => {
+    const { requirement } = definition;
+    const { applicable, not_applicable } = definition as MatrixDefinition;
+    const cells = Object.fromEntries(
+      JETKVM_TOOL_NAMES.map((tool) => {
+        const cell = applicable[tool] ?? not_applicable[tool];
+        if (cell === undefined) {
+          throw new Error(
+            `Behavior matrix definition ${requirement} has no reviewed cell for ${tool}`,
+          );
+        }
+        return [tool, cell];
+      }),
+    ) as Record<JetKvmToolName, ToolBehaviorMatrixCell>;
+    return { requirement, cells };
+  });
+}
+
+export const TOOL_BEHAVIOR_MATRIX = buildToolBehaviorMatrix();
 
 const storyConditionSchema = z
   .object({
@@ -379,8 +1282,151 @@ function assertSafetyPolicy(story: AcceptanceStory): void {
   }
 }
 
+function assertScrollObservationExecution(
+  stories: readonly AcceptanceStory[],
+): void {
+  const story = stories[5];
+  if (story?.id !== "mouse-observation-fence-and-single-use") {
+    throw new Error("Canonical story 6 is unavailable for scroll validation");
+  }
+
+  const stepById = new Map(story.steps.map((step) => [step.id, step]));
+  const orderedIds = [
+    "capture-negative-scroll-observation",
+    "scroll-negative-bound",
+    "reuse-consumed-negative-observation",
+    "capture-positive-scroll-observation",
+    "scroll-positive-bound",
+  ] as const;
+  const positions = orderedIds.map((id) =>
+    story.steps.findIndex((step) => step.id === id),
+  );
+  if (
+    positions.some((position) => position < 0) ||
+    positions.some(
+      (position, index) => index > 0 && position <= positions[index - 1]!,
+    )
+  ) {
+    throw new Error(
+      "Story 6 must capture a fresh observation before each accepted scroll bound and then exercise consumed-observation reuse",
+    );
+  }
+
+  const negative = stepById.get("scroll-negative-bound")!;
+  const positive = stepById.get("scroll-positive-bound")!;
+  const consumed = stepById.get("reuse-consumed-negative-observation")!;
+  const negativeObservation = negative.input.observation_id;
+  const positiveObservation = positive.input.observation_id;
+  if (
+    typeof negativeObservation !== "string" ||
+    typeof positiveObservation !== "string" ||
+    negativeObservation === positiveObservation
+  ) {
+    throw new Error(
+      "Story 6 accepted scroll bounds must each use a fresh observation",
+    );
+  }
+  if (
+    consumed.input.observation_id !== negativeObservation ||
+    consumed.tool !== "jetkvm_input_mouse" ||
+    !/OBSERVATION_CONSUMED/.test(consumed.expect)
+  ) {
+    throw new Error(
+      "Story 6 must prove consumed-observation reuse fails before input",
+    );
+  }
+}
+
+function assertBehaviorMatrix(
+  stories: readonly AcceptanceStory[],
+  matrix: ToolBehaviorMatrix,
+): void {
+  if (
+    matrix.length !== BEHAVIOR_REQUIREMENT_IDS.length ||
+    matrix.some(
+      (row, index) => row.requirement !== BEHAVIOR_REQUIREMENT_IDS[index],
+    )
+  ) {
+    throw new Error(
+      "Behavior matrix must contain the exact 32 requirement rows in specification order",
+    );
+  }
+
+  const storiesById = new Map(stories.map((story) => [story.id, story]));
+  for (const row of matrix) {
+    const cellKeys = Object.keys(row.cells);
+    const extraCell = cellKeys.find(
+      (key) => !JETKVM_TOOL_NAMES.includes(key as JetKvmToolName),
+    );
+    if (extraCell !== undefined) {
+      throw new Error(
+        `Behavior matrix row ${row.requirement} has unknown tool cell ${extraCell}`,
+      );
+    }
+
+    let applicableCount = 0;
+    for (const tool of JETKVM_TOOL_NAMES) {
+      if (!Object.hasOwn(row.cells, tool)) {
+        throw new Error(
+          `Missing behavior matrix cell for ${tool} in ${row.requirement}`,
+        );
+      }
+      const cell = row.cells[tool];
+      if (cell === undefined) {
+        throw new Error(
+          `Missing behavior matrix cell for ${tool} in ${row.requirement}`,
+        );
+      }
+
+      if (cell.applicability === "not_applicable") {
+        const prefix = `Reviewed for ${tool}: `;
+        if (
+          !cell.rationale.startsWith(prefix) ||
+          cell.rationale.slice(prefix.length).trim().length < 24
+        ) {
+          throw new Error(
+            `Missing reviewed rationale for ${tool} in ${row.requirement}`,
+          );
+        }
+        continue;
+      }
+
+      applicableCount += 1;
+      const story = storiesById.get(cell.story_id);
+      const step = story?.steps.find(({ id }) => id === cell.step_id);
+      const fault = story?.fault_script.find(({ id }) => id === cell.fault_id);
+      const assertion = story?.pass.find(({ id }) => id === cell.assertion_id);
+      if (
+        story === undefined ||
+        step === undefined ||
+        fault === undefined ||
+        assertion === undefined
+      ) {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} coverage must link an executable call, fault boundary, and pass assertion`,
+        );
+      }
+      if (
+        !story.requirements.includes(row.requirement) ||
+        assertion.requirement !== row.requirement
+      ) {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} pass assertion is not declared by linked story ${story.id}`,
+        );
+      }
+    }
+
+    if (applicableCount === 0) {
+      throw new Error(
+        `Behavior matrix row ${row.requirement} has no executable applicable cell`,
+      );
+    }
+  }
+}
+
 export function validateAcceptanceStories(
   values: readonly unknown[],
+  matrix: ToolBehaviorMatrix = TOOL_BEHAVIOR_MATRIX,
 ): AcceptanceStory[] {
   const stories = values.map((value) => acceptanceStorySchema.parse(value));
   const actualIds = stories.map(({ id }) => id);
@@ -443,6 +1489,8 @@ export function validateAcceptanceStories(
       "Manifest does not contain a complete exact-ten tool reference inventory",
     );
   }
+  assertScrollObservationExecution(stories);
+  assertBehaviorMatrix(stories, matrix);
 
   return stories;
 }

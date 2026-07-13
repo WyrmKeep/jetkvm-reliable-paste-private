@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 import {
+  GENERATED_JSON_SCHEMA_DOCUMENTS,
   SCHEMA_FILE_NAMES,
-  generateJsonSchemaDocuments,
 } from "../src/mcp/schemas.ts";
 import {
   ACCEPTANCE_STORY_SCHEMA_NAME,
@@ -26,7 +26,7 @@ const GENERATED_SCHEMA_FILE_NAMES = [
 const packageDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
 const schemaDirectory = join(packageDirectory, "schemas");
 const documents = {
-  ...generateJsonSchemaDocuments(),
+  ...GENERATED_JSON_SCHEMA_DOCUMENTS,
   [STORY_SCHEMA_FILE_NAME]: zodToJsonSchema(acceptanceStorySchema, {
     name: ACCEPTANCE_STORY_SCHEMA_NAME,
     $refStrategy: "root",

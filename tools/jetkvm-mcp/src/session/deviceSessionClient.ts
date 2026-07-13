@@ -290,9 +290,11 @@ export class DeviceSessionClient {
           irreversibleTransition = true;
           incumbent.state = "taken_over";
           incumbent.lifecycle.abort(new DeadlineAbort("caller"));
-          this.#activeSessionId = null;
           planeInvoked = true;
           await this.#browser.close(this.#ref(incumbent), scope.remaining());
+          if (this.#activeSessionId === incumbent.sessionId) {
+            this.#activeSessionId = null;
+          }
         }
 
         this.#throwIfAborted(scope, planeInvoked);
@@ -528,9 +530,11 @@ export class DeviceSessionClient {
           irreversibleTransition = true;
           incumbent.state = "taken_over";
           incumbent.lifecycle.abort(new DeadlineAbort("caller"));
-          this.#activeSessionId = null;
           planeInvoked = true;
           await this.#browser.close(this.#ref(incumbent), scope.remaining());
+          if (this.#activeSessionId === incumbent.sessionId) {
+            this.#activeSessionId = null;
+          }
         } else if (recordWasTakenOver && !takeover) {
           throw clientError(
             "SESSION_TAKEN_OVER",
@@ -545,12 +549,12 @@ export class DeviceSessionClient {
         irreversibleTransition = true;
         record.state = "closing";
         record.lifecycle.abort(new DeadlineAbort("caller"));
-        if (this.#activeSessionId === record.sessionId) {
-          this.#activeSessionId = null;
-        }
         if (!recordWasTakenOver) {
           planeInvoked = true;
           await this.#browser.close(previousRef, scope.remaining());
+          if (this.#activeSessionId === record.sessionId) {
+            this.#activeSessionId = null;
+          }
           this.#throwIfAborted(scope, true);
         }
 

@@ -1,26 +1,28 @@
+import { createHash } from "node:crypto";
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
   CallToolRequestSchema,
   ErrorCode,
   ListToolsRequestSchema,
   McpError,
   type CallToolResult,
-  type ServerNotification,
-  type ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
-import {
-  TOOL_CATALOGUE,
-  TOOL_CATALOGUE_BY_NAME,
-  type ToolCatalogueEntry,
-} from "./toolCatalogue.js";
+import { validateAndMapMcpResult } from "./results.js";
+import { GENERATED_JSON_SCHEMA_DOCUMENTS } from "./schemas.js";
+import { TOOL_CATALOGUE, TOOL_CATALOGUE_BY_NAME } from "./toolCatalogue.js";
+
+export type JetKvmHandlerContext = Readonly<{
+  signal: AbortSignal;
+  principalId: string | null;
+  correlationId: string;
+}>;
 
 export type JetKvmToolHandler = (
   input: unknown,
-  extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+  context: JetKvmHandlerContext,
 ) => CallToolResult | Promise<CallToolResult>;
 
 export type HandlerRegistry = Readonly<
@@ -60,14 +62,14 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
             name: entry.name,
             title: entry.title,
             description: entry.description,
-            inputSchema: publishedInputSchema(entry),
-            outputSchema: {
-              ...toJsonSchemaCompat(entry.outputSchema, {
-                strictUnions: true,
-                pipeStrategy: "output",
-              }),
-              type: "object" as const,
-            },
+            inputSchema:
+              GENERATED_JSON_SCHEMA_DOCUMENTS[
+                `${entry.name}.input.schema.json`
+              ],
+            outputSchema:
+              GENERATED_JSON_SCHEMA_DOCUMENTS[
+                `${entry.name}.result.schema.json`
+              ],
           })),
   }));
 
@@ -102,70 +104,45 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
       );
     }
 
-    const result = await handler(input.data, extra);
-    const output = await entry.outputSchema.safeParseAsync(
-      result.structuredContent,
-    );
-    if (!output.success) {
+    const context: JetKvmHandlerContext = Object.freeze({
+      signal: extra.signal,
+      principalId: sanitizedPrincipalId(extra.authInfo?.clientId),
+      correlationId: correlationIdFor(extra.requestId),
+    });
+    let result: CallToolResult;
+    try {
+      result = await handler(input.data, context);
+    } catch {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Tool handler failed for ${name}`,
+      );
+    }
+    try {
+      return validateAndMapMcpResult(toolName, result);
+    } catch {
       throw new McpError(
         ErrorCode.InternalError,
         `Invalid handler result for ${name}`,
       );
     }
-    return result;
   });
 
   return server;
 }
 
-function publishedInputSchema(
-  entry: ToolCatalogueEntry,
-): Record<string, unknown> {
-  const schema = toJsonSchemaCompat(entry.inputSchema, {
-    strictUnions: true,
-    pipeStrategy: "input",
-  });
-  const properties = requiredRecord(schema.properties, "input properties");
-
-  if (entry.name === "jetkvm_input_paste") {
-    const text = requiredRecord(properties.text, "paste text");
-    text["x-utf8-byte-max"] = 262_144;
+function sanitizedPrincipalId(principalId: string | undefined): string | null {
+  if (principalId === undefined) return null;
+  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(principalId)) {
+    return principalId;
   }
-
-  if (entry.name === "jetkvm_input_mouse") {
-    const actions = requiredRecord(properties.actions, "mouse actions");
-    const items = requiredRecord(actions.items, "mouse action items");
-    if (!Array.isArray(items.anyOf)) {
-      throw new Error("Generated mouse schema is missing action variants");
-    }
-    const scroll = items.anyOf.find((candidate) => {
-      if (!isRecord(candidate)) return false;
-      const candidateProperties = candidate.properties;
-      if (!isRecord(candidateProperties)) return false;
-      const type = candidateProperties.type;
-      return isRecord(type) && type.const === "scroll";
-    });
-    const scrollProperties = requiredRecord(
-      requiredRecord(scroll, "scroll action").properties,
-      "scroll properties",
-    );
-    const deltaY = requiredRecord(scrollProperties.delta_y, "scroll delta_y");
-    deltaY.not = { const: 0 };
-  }
-
-  return schema;
+  return `principal-${createHash("sha256").update(principalId).digest("hex").slice(0, 32)}`;
 }
 
-function requiredRecord(
-  value: unknown,
-  description: string,
-): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new Error(`Generated tool schema is missing ${description}`);
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function correlationIdFor(requestId: string | number): string {
+  const canonical =
+    typeof requestId === "number"
+      ? `number:${requestId}`
+      : `string:${requestId}`;
+  return `mcp-${createHash("sha256").update(canonical).digest("hex").slice(0, 32)}`;
 }

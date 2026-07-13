@@ -54,6 +54,10 @@ export interface LegacySseBearerCredential {
   readonly secret: DisposableSecret;
 }
 
+export type LegacySseBearerAuthenticator = (
+  authorization: string | undefined,
+) => LegacySsePrincipal;
+
 export class CredentialConfigurationError extends Error {
   constructor(message: string) {
     super(message);
@@ -213,12 +217,18 @@ export function evaluateLegacySseRequest(
   request: LegacySseRequestHeaders,
   policy: LegacySseSecurityPolicy,
   bearer?: LegacySseBearerCredential,
+  authenticateBearer?: LegacySseBearerAuthenticator,
 ): LegacySsePrincipal {
   if (!policy.enabled) {
     throw new HttpBoundaryError(403);
   }
 
-  const principal = authenticateRequest(request.authorization, policy, bearer);
+  const principal = authenticateRequest(
+    request.authorization,
+    policy,
+    bearer,
+    authenticateBearer,
+  );
 
   if (
     request.host === undefined ||
@@ -248,9 +258,21 @@ function authenticateRequest(
   authorization: string | undefined,
   policy: LegacySseSecurityPolicy,
   bearer: LegacySseBearerCredential | undefined,
+  authenticateBearer: LegacySseBearerAuthenticator | undefined,
 ): string {
   if (!policy.requiresBearer) {
     return "local-operator";
+  }
+  if (authenticateBearer !== undefined) {
+    try {
+      const principal = authenticateBearer(authorization);
+      if (!/^[a-zA-Z0-9._~-]{1,128}$/u.test(principal.principalId)) {
+        throw new Error("invalid principal");
+      }
+      return principal.principalId;
+    } catch {
+      throw new HttpBoundaryError(401);
+    }
   }
   if (bearer === undefined || authorization === undefined) {
     throw new HttpBoundaryError(401);
@@ -346,7 +368,7 @@ function readProtectedCredentialFile(path: string): Uint8Array {
         "Credential file changed while opening",
       );
     }
-    return Uint8Array.from(readFileSync(descriptor));
+    return readFileSync(descriptor);
   } finally {
     closeSync(descriptor);
   }

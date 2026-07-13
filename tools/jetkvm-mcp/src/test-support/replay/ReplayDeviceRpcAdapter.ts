@@ -10,9 +10,19 @@ import type {
   QualifiedEdidRead,
 } from "../../device/DeviceRpcAdapter.js";
 import {
+  ReplayMismatchError,
   SanitizedReplayCursor,
   type SanitizedReplayTape,
 } from "./SanitizedReplayTape.js";
+
+const bindingSchema = z
+  .object({
+    sessionId: z.string().min(1).max(256),
+    sessionGeneration: z.number().int().positive(),
+    connectionEpoch: z.number().int().positive(),
+    browserChannelGeneration: z.number().int().positive(),
+  })
+  .strict();
 
 const factMetadata = {
   observedAt: z.string().datetime().nullable(),
@@ -124,10 +134,14 @@ const atxSchema = z
 export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
   private readonly replay: SanitizedReplayCursor;
 
-  public constructor(
-    public readonly binding: DeviceRpcBinding,
-    tape: SanitizedReplayTape,
-  ) {
+  public readonly binding: DeviceRpcBinding;
+
+  public constructor(binding: DeviceRpcBinding, tape: SanitizedReplayTape) {
+    const parsedBinding = bindingSchema.safeParse(binding);
+    if (!parsedBinding.success) {
+      throw new Error("Replay adapter constructor binding is invalid.");
+    }
+    this.binding = Object.freeze({ ...parsedBinding.data });
     this.replay = new SanitizedReplayCursor(tape, "device_rpc");
   }
 
@@ -140,6 +154,7 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<CachedDisplayState> {
     this.validateDeadline(deadline);
+    this.validateRef(ref);
     const response = this.replay.consume("readDisplayState", {
       ref: { ...ref },
     });
@@ -154,6 +169,7 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<QualifiedEdidRead> {
     this.validateDeadline(deadline);
+    this.validateRef(ref);
     const response = this.replay.consume("readEdid", { ref: { ...ref } });
     const parsed = edidSchema.safeParse(response);
     if (!parsed.success)
@@ -167,6 +183,7 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     deadline: Deadline,
   ): Promise<AtxWireReceipt> {
     this.validateDeadline(deadline);
+    this.validateRef(ref);
     const response = this.replay.consume("performAtx", {
       ref: { ...ref },
       request: { requestId: request.requestId, action: request.action },
@@ -175,6 +192,23 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     if (!parsed.success)
       throw new Error("Replay ATX response shape is invalid.");
     return parsed.data;
+  }
+
+  private validateRef(ref: DeviceRpcBinding): void {
+    const parsed = bindingSchema.safeParse(ref);
+    const matches =
+      parsed.success &&
+      parsed.data.sessionId === this.binding.sessionId &&
+      parsed.data.sessionGeneration === this.binding.sessionGeneration &&
+      parsed.data.connectionEpoch === this.binding.connectionEpoch &&
+      parsed.data.browserChannelGeneration ===
+        this.binding.browserChannelGeneration;
+    if (!matches) {
+      throw new ReplayMismatchError(
+        this.replay.position,
+        "Replay device RPC binding is stale or invalid.",
+      );
+    }
   }
 
   private validateDeadline(deadline: Deadline): void {

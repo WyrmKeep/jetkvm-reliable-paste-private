@@ -14,9 +14,13 @@ import {
   DisposableSecret,
   type LegacySseBearerCredential,
 } from "../browser/auth.js";
-import { parseLegacySsePolicy } from "../config.js";
+import { parseLegacySsePolicy, type LegacySseConfigInput } from "../config.js";
 import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
-import type { HandlerRegistry, JetKvmToolHandler } from "./server.js";
+import type {
+  HandlerRegistry,
+  JetKvmHandlerContext,
+  JetKvmToolHandler,
+} from "./server.js";
 import { LegacySseAdapter, type LegacySseAdapterOptions } from "./legacySse.js";
 
 const AUTHORITY = "mcp.example.test";
@@ -103,33 +107,48 @@ function authorizedHeaders(principalToken = TOKEN): Record<string, string> {
   };
 }
 
+interface StartAdapterOptions extends Partial<LegacySseAdapterOptions> {
+  readonly policy?: LegacySseConfigInput;
+  readonly listenHost?: string;
+}
+
 async function startAdapter(
-  options: Partial<LegacySseAdapterOptions> = {},
+  options: StartAdapterOptions = {},
 ): Promise<RunningAdapter> {
   const credential = {
     principalId: PRINCIPAL,
     secret: DisposableSecret.fromUtf8(TOKEN),
   } satisfies LegacySseBearerCredential;
+  const {
+    policy: policyOverride = {},
+    listenHost,
+    ...adapterOptions
+  } = options;
   const policy = parseLegacySsePolicy({
     enabled: true,
+    scheme: "http",
     bindHost: "0.0.0.0",
     allowNetworkExposure: true,
+    allowPlaintextHttp: true,
+    allowDangerousNetworkPlaintext: true,
     hostAuthorities: [AUTHORITY],
     allowedOrigins: [ORIGIN],
     bearerEnvironmentVariable: "JETKVM_TEST_SSE_BEARER",
+    ...policyOverride,
   });
   const adapter = new LegacySseAdapter({
     handlerRegistry: completeRegistry(),
     securityPolicy: policy,
     bearerCredential: credential,
-    ...options,
+    ...adapterOptions,
   });
   const server = createServer((request, response) => {
     void adapter.handleRequest(request, response);
   });
+  adapter.attachServer(server);
   const listening = Promise.withResolvers<void>();
   server.once("listening", listening.resolve);
-  server.listen(0, "127.0.0.1");
+  server.listen(0, listenHost ?? policy.bindHost);
   await listening.promise;
   const address = server.address() as AddressInfo;
   const value = {
@@ -374,11 +393,9 @@ describe("legacy SSE adapter", () => {
   it("keeps malformed/missing routing separate from safe indistinguishable 404 cases", async () => {
     const streamClosed = Promise.withResolvers<void>();
     const { baseUrl } = await startAdapter({
-      authorizeRequest: (headers) => ({
+      authenticateBearer: (authorization) => ({
         principalId:
-          headers.authorization === "Bearer other-token"
-            ? "operator-b"
-            : PRINCIPAL,
+          authorization === "Bearer other-token" ? "operator-b" : PRINCIPAL,
       }),
       onDiagnostic: (event) => {
         if (event.code === "transport_closed") streamClosed.resolve();
@@ -420,11 +437,11 @@ describe("legacy SSE adapter", () => {
     expect(await closed.text()).toBe("Not Found");
   });
 
-  it("accepts one parsed application/json message and forwards redacted auth info", async () => {
-    const observedAuth = Promise.withResolvers<unknown>();
+  it("forwards only app-owned principal/correlation context to handlers", async () => {
+    const observedContext = Promise.withResolvers<JetKvmHandlerContext>();
     const handler = vi.fn(
-      async (_input: unknown, extra: { authInfo?: unknown }) => {
-        observedAuth.resolve(extra.authInfo);
+      async (_input: unknown, context: JetKvmHandlerContext) => {
+        observedContext.resolve(context);
         return businessError("jetkvm_session_connect", "auth-forwarded");
       },
     );
@@ -467,11 +484,17 @@ describe("legacy SSE adapter", () => {
 
     expect(called.status).toBe(202);
     expect(await called.text()).toBe("Accepted");
-    await expect(observedAuth.promise).resolves.toEqual({
-      token: "[REDACTED]",
-      clientId: PRINCIPAL,
-      scopes: ["mcp"],
-    });
+    const context = await observedContext.promise;
+    expect(Object.keys(context).sort()).toEqual([
+      "correlationId",
+      "principalId",
+      "signal",
+    ]);
+    expect(context.principalId).toBe(PRINCIPAL);
+    expect(context.correlationId).toMatch(/^mcp-[0-9a-f]{32}$/);
+    expect(JSON.stringify(context)).not.toMatch(
+      /authInfo|requestInfo|sessionId|authorization|bearer|csrf|test-only-bearer/i,
+    );
     expect(await stream.nextFrame()).toMatch(
       /^event: message\ndata: .*"operation_id":"auth-forwarded".*\n\n$/,
     );
@@ -552,19 +575,453 @@ describe("legacy SSE adapter", () => {
     stream.response.destroy();
   });
 
-  it("expires routing entries without distinguishing them from unknown sessions", async () => {
-    let now = 1_000;
+  it.each([
+    ["disabled policy", { enabled: false }, authorizedHeaders()],
+    ["Host", {}, { ...authorizedHeaders(), Host: "attacker.example.test" }],
+    [
+      "Origin",
+      {},
+      { ...authorizedHeaders(), Origin: "https://attacker.example.test" },
+    ],
+    ["anti-CSRF", {}, { ...authorizedHeaders(), "X-JetKVM-CSRF": "0" }],
+  ] as const)(
+    "keeps %s invariant when a bearer authenticator is injected",
+    async (_case, policy, headers) => {
+      const transportFactory = vi.fn(
+        (
+          endpoint: string,
+          response: ConstructorParameters<typeof SSEServerTransport>[1],
+        ) => new SSEServerTransport(endpoint, response),
+      );
+      const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
+      const { baseUrl } = await startAdapter({
+        policy,
+        authenticateBearer,
+        transportFactory,
+      });
+
+      const response = await testFetch(`${baseUrl}/sse`, { headers });
+
+      expect(response.status).toBe(403);
+      expect(await response.text()).toBe("Forbidden");
+      expect(transportFactory).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      "loopback policy on a wildcard listener",
+      { bindHost: "127.0.0.1" },
+      "0.0.0.0",
+    ],
+    ["HTTPS policy on plaintext", { scheme: "https" as const }, "0.0.0.0"],
+  ] as const)(
+    "rejects %s before authentication or allocation",
+    async (_case, policy, listenHost) => {
+      const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
+      const transportFactory = vi.fn(
+        (
+          endpoint: string,
+          response: ConstructorParameters<typeof SSEServerTransport>[1],
+        ) => new SSEServerTransport(endpoint, response),
+      );
+      const { baseUrl } = await startAdapter({
+        policy,
+        listenHost,
+        authenticateBearer,
+        transportFactory,
+      });
+
+      const response = await testFetch(`${baseUrl}/sse`, {
+        headers: authorizedHeaders(),
+      });
+
+      expect(response.status).toBe(403);
+      expect(await response.text()).toBe("Forbidden");
+      expect(authenticateBearer).not.toHaveBeenCalled();
+      expect(transportFactory).not.toHaveBeenCalled();
+    },
+  );
+
+  it("fails closed if attached listener deadlines are weakened", async () => {
+    const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
+    const transportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => new SSEServerTransport(endpoint, response),
+    );
+    const value = await startAdapter({
+      authenticateBearer,
+      transportFactory,
+    });
+    value.server.headersTimeout = 0;
+
+    const response = await testFetch(`${value.baseUrl}/sse`, {
+      headers: authorizedHeaders(),
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("Forbidden");
+    expect(authenticateBearer).not.toHaveBeenCalled();
+    expect(transportFactory).not.toHaveBeenCalled();
+  });
+
+  it("enforces global and per-principal stream concurrency before allocation", async () => {
+    const streamClosed = Promise.withResolvers<void>();
+    const transportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => new SSEServerTransport(endpoint, response),
+    );
     const { baseUrl } = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 2,
+        maxConcurrentStreamsPerPrincipal: 1,
+      },
+      transportFactory,
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
+    });
+    const first = await openSse(baseUrl);
+
+    const principalLimited = await testFetch(`${baseUrl}/sse`, {
+      headers: authorizedHeaders(),
+    });
+    expect(principalLimited.status).toBe(429);
+    expect(await principalLimited.text()).toBe("Too Many Requests");
+    expect(transportFactory).toHaveBeenCalledTimes(1);
+
+    first.response.destroy();
+    await streamClosed.promise;
+    const replacement = await openSse(baseUrl);
+    expect(transportFactory).toHaveBeenCalledTimes(2);
+    replacement.response.destroy();
+
+    const globalTransportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => new SSEServerTransport(endpoint, response),
+    );
+    const global = await startAdapter({
+      policy: {
+        maxConcurrentStreams: 1,
+        maxConcurrentStreamsPerPrincipal: 1,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId:
+          authorization === "Bearer second-token" ? "operator-b" : PRINCIPAL,
+      }),
+      transportFactory: globalTransportFactory,
+    });
+    const globalFirst = await openSse(global.baseUrl);
+    const globallyLimited = await testFetch(`${global.baseUrl}/sse`, {
+      headers: authorizedHeaders("second-token"),
+    });
+    expect(globallyLimited.status).toBe(429);
+    expect(await globallyLimited.text()).toBe("Too Many Requests");
+    expect(globalTransportFactory).toHaveBeenCalledTimes(1);
+    globalFirst.response.destroy();
+  });
+
+  it("enforces stream opening rate bounds before allocation", async () => {
+    let now = 1_000;
+    const streamClosed = Promise.withResolvers<void>();
+    const transportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => new SSEServerTransport(endpoint, response),
+    );
+    const { baseUrl } = await startAdapter({
+      policy: {
+        streamOpenRateLimit: 1,
+        streamOpenRateLimitPerPrincipal: 1,
+        streamOpenRateWindowMs: 100,
+      },
       now: () => now,
-      sessionTtlMs: 100,
+      transportFactory,
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
+    });
+    const first = await openSse(baseUrl);
+    first.response.destroy();
+    await streamClosed.promise;
+
+    const limited = await testFetch(`${baseUrl}/sse`, {
+      headers: authorizedHeaders(),
+    });
+    expect(limited.status).toBe(429);
+    expect(transportFactory).toHaveBeenCalledTimes(1);
+
+    now += 100;
+    const afterWindow = await openSse(baseUrl);
+    expect(transportFactory).toHaveBeenCalledTimes(2);
+    afterWindow.response.destroy();
+  });
+
+  it("expires idle streams with a refreshable timer", async () => {
+    const streamClosed = Promise.withResolvers<void>();
+    const { baseUrl } = await startAdapter({
+      policy: { sessionIdleTimeoutMs: 50 },
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
     });
     const stream = await openSse(baseUrl);
-    now += 100;
+    vi.useFakeTimers();
+    try {
+      const accepted = await post(
+        baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+        }),
+      );
+      expect(accepted.status).toBe(202);
+      await vi.advanceTimersByTimeAsync(49);
+      expect(stream.response.destroyed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await streamClosed.promise;
+    } finally {
+      vi.useRealTimers();
+    }
 
     const expired = await post(baseUrl, stream.endpoint, "{}");
-
     expect(expired.status).toBe(404);
     expect(await expired.text()).toBe("Not Found");
+  });
+
+  it("terminates a slow upload at the body idle deadline", async () => {
+    const routed = Promise.withResolvers<void>();
+    const { baseUrl } = await startAdapter({
+      policy: {
+        requestHeaderTimeoutMs: 50,
+        requestBodyIdleTimeoutMs: 20,
+        requestBodyTotalTimeoutMs: 100,
+      },
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") routed.resolve();
+      },
+    });
+    const stream = await openSse(baseUrl);
+    const url = new URL(`${baseUrl}${stream.endpoint}`);
+    const responseReady = Promise.withResolvers<IncomingMessage>();
+    const request = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: "POST",
+      headers: {
+        ...authorizedHeaders(),
+        "Content-Type": "application/json",
+        "Content-Length": "100",
+      },
+    });
+    request.once("response", responseReady.resolve);
+    request.once("error", responseReady.reject);
+
+    vi.useFakeTimers();
+    let response: IncomingMessage;
+    try {
+      request.write("{");
+      await routed.promise;
+      await vi.advanceTimersByTimeAsync(20);
+      response = await responseReady.promise;
+    } finally {
+      vi.useRealTimers();
+    }
+    response.setEncoding("utf8");
+    let text = "";
+    for await (const chunk of response) text += chunk;
+
+    expect(response.statusCode).toBe(408);
+    expect(text).toBe("Request Timeout");
+    request.destroy();
+    stream.response.destroy();
+  });
+
+  it("terminates a trickle upload at the body total deadline", async () => {
+    const routed = Promise.withResolvers<void>();
+    const { baseUrl } = await startAdapter({
+      policy: {
+        requestHeaderTimeoutMs: 50,
+        requestBodyIdleTimeoutMs: 30,
+        requestBodyTotalTimeoutMs: 70,
+      },
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") routed.resolve();
+      },
+    });
+    const stream = await openSse(baseUrl);
+    const url = new URL(`${baseUrl}${stream.endpoint}`);
+    const responseReady = Promise.withResolvers<IncomingMessage>();
+    const request = httpRequest({
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: "POST",
+      headers: {
+        ...authorizedHeaders(),
+        "Content-Type": "application/json",
+        "Content-Length": "100",
+      },
+    });
+    request.once("response", responseReady.resolve);
+    request.once("error", responseReady.reject);
+
+    vi.useFakeTimers();
+    let response: IncomingMessage;
+    try {
+      request.write("{");
+      await routed.promise;
+      for (let elapsed = 10; elapsed < 70; elapsed += 10) {
+        await vi.advanceTimersByTimeAsync(10);
+        request.write(" ");
+      }
+      await vi.advanceTimersByTimeAsync(10);
+      response = await responseReady.promise;
+    } finally {
+      vi.useRealTimers();
+    }
+    response.setEncoding("utf8");
+    let text = "";
+    for await (const chunk of response) text += chunk;
+
+    expect(response.statusCode).toBe(408);
+    expect(text).toBe("Request Timeout");
+    request.destroy();
+    stream.response.destroy();
+  });
+
+  it("closes a slow SSE reader before response buffering can grow past its cap", async () => {
+    let transport: SSEServerTransport | undefined;
+    const streamClosed = Promise.withResolvers<void>();
+    const { baseUrl } = await startAdapter({
+      policy: {
+        maxResponseBufferedBytes: 262_144,
+        responseBackpressureTimeoutMs: 20,
+      },
+      transportFactory: (endpoint, response) => {
+        transport = new SSEServerTransport(endpoint, response);
+        return transport;
+      },
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
+    });
+    const stream = await openSse(baseUrl);
+    stream.response.pause();
+
+    await transport!.send({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: { data: "x".repeat(300_000) },
+    });
+    await streamClosed.promise;
+
+    await expect(
+      transport!.send({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { data: "after-close" },
+      }),
+    ).rejects.toThrow("Not connected");
+    stream.response.destroy();
+  });
+
+  it("closes a backpressured SSE writer at its write deadline", async () => {
+    let transport: SSEServerTransport | undefined;
+    const streamClosed = Promise.withResolvers<void>();
+    const { baseUrl } = await startAdapter({
+      policy: {
+        maxResponseBufferedBytes: 1_048_576,
+        responseBackpressureTimeoutMs: 20,
+      },
+      transportFactory: (endpoint, response) => {
+        transport = new SSEServerTransport(endpoint, response);
+        return transport;
+      },
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
+    });
+    const stream = await openSse(baseUrl);
+    stream.response.pause();
+
+    vi.useFakeTimers();
+    try {
+      const sends = Array.from({ length: 12 }, (_, index) =>
+        transport!.send({
+          jsonrpc: "2.0",
+          method: "notifications/message",
+          params: { data: `${index}:${"x".repeat(60_000)}` },
+        }),
+      );
+      await Promise.all(sends);
+      await vi.advanceTimersByTimeAsync(20);
+      await streamClosed.promise;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await expect(
+      transport!.send({
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { data: "after-deadline" },
+      }),
+    ).rejects.toThrow("Not connected");
+    stream.response.destroy();
+  });
+
+  it("routes two independent streams and closing one leaves the other working", async () => {
+    const { baseUrl } = await startAdapter();
+    const first = await openSse(baseUrl);
+    const second = await openSse(baseUrl);
+    expect(first.endpoint).not.toBe(second.endpoint);
+
+    for (const [id, stream] of [
+      [1, first],
+      [2, second],
+    ] as const) {
+      const listed = await post(
+        baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/list",
+          params: {},
+        }),
+      );
+      expect(listed.status).toBe(202);
+      expect(await stream.nextFrame()).toMatch(
+        new RegExp(`^event: message\\ndata: .*"id":${id}.*\\n\\n$`),
+      );
+    }
+
+    first.response.destroy();
+    const listedAgain = await post(
+      baseUrl,
+      second.endpoint,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/list",
+        params: {},
+      }),
+    );
+    expect(listedAgain.status).toBe(202);
+    expect(await second.nextFrame()).toMatch(
+      /^event: message\ndata: .*"id":3.*\n\n$/,
+    );
+    second.response.destroy();
   });
 
   it.each([

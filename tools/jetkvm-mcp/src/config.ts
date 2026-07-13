@@ -8,6 +8,28 @@ const DEFAULT_CREDENTIAL_ENVIRONMENT_VARIABLE = "JETKVM_CREDENTIAL";
 const DEFAULT_SSE_BEARER_ENVIRONMENT_VARIABLE = "JETKVM_MCP_BEARER";
 const DEFAULT_SSE_BIND_HOST = "127.0.0.1";
 const DEFAULT_SSE_HOST_AUTHORITY = "127.0.0.1";
+const DEFAULT_SSE_MAX_CONCURRENT_STREAMS = 64;
+const DEFAULT_SSE_MAX_CONCURRENT_STREAMS_PER_PRINCIPAL = 8;
+const DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT = 120;
+const DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT_PER_PRINCIPAL = 30;
+const DEFAULT_SSE_STREAM_OPEN_RATE_WINDOW_MS = 60_000;
+const DEFAULT_SSE_SESSION_IDLE_TIMEOUT_MS = 300_000;
+const DEFAULT_SSE_REQUEST_BODY_IDLE_TIMEOUT_MS = 5_000;
+const DEFAULT_SSE_REQUEST_HEADER_TIMEOUT_MS = 10_000;
+const DEFAULT_SSE_KEEP_ALIVE_TIMEOUT_MS = 5_000;
+const DEFAULT_SSE_REQUEST_BODY_TOTAL_TIMEOUT_MS = 30_000;
+const DEFAULT_SSE_MAX_RESPONSE_BUFFERED_BYTES = 1_048_576;
+const DEFAULT_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS = 5_000;
+const MAX_SSE_CONCURRENT_STREAMS = 1_024;
+const MAX_SSE_STREAM_OPEN_RATE_LIMIT = 10_000;
+const MAX_SSE_STREAM_OPEN_RATE_WINDOW_MS = 3_600_000;
+const MAX_SSE_SESSION_IDLE_TIMEOUT_MS = 3_600_000;
+const MAX_SSE_REQUEST_BODY_IDLE_TIMEOUT_MS = 60_000;
+const MAX_SSE_REQUEST_BODY_TOTAL_TIMEOUT_MS = 120_000;
+const MAX_SSE_REQUEST_HEADER_TIMEOUT_MS = 60_000;
+const MAX_SSE_KEEP_ALIVE_TIMEOUT_MS = 60_000;
+const MAX_SSE_RESPONSE_BUFFERED_BYTES = 16_777_216;
+const MAX_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS = 60_000;
 const FORBIDDEN_PUBLIC_FIELD_NAMES: Readonly<Record<string, true>> = {
   auth: true,
   authentication: true,
@@ -29,17 +51,33 @@ const FORBIDDEN_PUBLIC_FIELD_NAMES: Readonly<Record<string, true>> = {
 
 export interface LegacySseConfigInput {
   readonly enabled?: boolean;
+  readonly scheme?: "https" | "http";
   readonly bindHost?: string;
   readonly hostAuthorities?: readonly string[];
   readonly allowedOrigins?: readonly string[];
   readonly allowNetworkExposure?: boolean;
+  readonly allowPlaintextHttp?: boolean;
+  readonly allowDangerousNetworkPlaintext?: boolean;
   readonly bearerCredentialFile?: string;
   readonly bearerEnvironmentVariable?: string;
+  readonly maxConcurrentStreams?: number;
+  readonly maxConcurrentStreamsPerPrincipal?: number;
+  readonly streamOpenRateLimit?: number;
+  readonly streamOpenRateLimitPerPrincipal?: number;
+  readonly streamOpenRateWindowMs?: number;
+  readonly sessionIdleTimeoutMs?: number;
+  readonly requestBodyIdleTimeoutMs?: number;
+  readonly requestHeaderTimeoutMs?: number;
+  readonly keepAliveTimeoutMs?: number;
+  readonly requestBodyTotalTimeoutMs?: number;
+  readonly maxResponseBufferedBytes?: number;
+  readonly responseBackpressureTimeoutMs?: number;
 }
 
 export interface OperatorConfigInput {
   readonly targetUrl?: string;
   readonly allowInsecureHttp?: boolean;
+  readonly allowDangerousTargetHttp?: boolean;
   readonly credentialFile?: string;
   readonly credentialEnvironmentVariable?: string;
   readonly legacySse?: LegacySseConfigInput;
@@ -48,12 +86,14 @@ export interface OperatorConfigInput {
 export interface OperatorConfigEnvironment {
   readonly JETKVM_TARGET_URL?: string;
   readonly JETKVM_ALLOW_INSECURE_HTTP?: string;
+  readonly JETKVM_ALLOW_DANGEROUS_TARGET_HTTP?: string;
   readonly JETKVM_CREDENTIAL_FILE?: string;
   readonly JETKVM_CREDENTIAL_ENV?: string;
 }
 
 export interface LegacySseSecurityPolicy {
   readonly enabled: boolean;
+  readonly scheme: "https" | "http";
   readonly bindHost: string;
   readonly hostAuthorities: readonly string[];
   readonly allowedOrigins: readonly string[];
@@ -62,11 +102,24 @@ export interface LegacySseSecurityPolicy {
   readonly requiresAntiCsrf: boolean;
   readonly bearerCredential: Readonly<CredentialSourceSelection> | null;
   readonly networkExposed: boolean;
+  readonly maxConcurrentStreams: number;
+  readonly maxConcurrentStreamsPerPrincipal: number;
+  readonly streamOpenRateLimit: number;
+  readonly streamOpenRateLimitPerPrincipal: number;
+  readonly streamOpenRateWindowMs: number;
+  readonly sessionIdleTimeoutMs: number;
+  readonly requestBodyIdleTimeoutMs: number;
+  readonly requestHeaderTimeoutMs: number;
+  readonly keepAliveTimeoutMs: number;
+  readonly requestBodyTotalTimeoutMs: number;
+  readonly maxResponseBufferedBytes: number;
+  readonly responseBackpressureTimeoutMs: number;
 }
 
 export interface OperatorConfig {
   readonly targetUrl: string;
   readonly allowInsecureHttp: boolean;
+  readonly allowDangerousTargetHttp: boolean;
   readonly credential: Readonly<CredentialSourceSelection>;
   readonly legacySse: Readonly<LegacySseSecurityPolicy>;
 }
@@ -94,8 +147,14 @@ export function parseOperatorConfig(
       "JETKVM_ALLOW_INSECURE_HTTP",
     ) ??
     false;
-  validateTargetUrl(targetUrl, allowInsecureHttp);
-
+  const allowDangerousTargetHttp =
+    input.allowDangerousTargetHttp ??
+    parseOptionalBoolean(
+      environment.JETKVM_ALLOW_DANGEROUS_TARGET_HTTP,
+      "JETKVM_ALLOW_DANGEROUS_TARGET_HTTP",
+    ) ??
+    false;
+  validateTargetUrl(targetUrl, allowInsecureHttp, allowDangerousTargetHttp);
   const credential = selectCredentialSource({
     ...(input.credentialFile === undefined
       ? {}
@@ -113,6 +172,7 @@ export function parseOperatorConfig(
   return Object.freeze({
     targetUrl,
     allowInsecureHttp,
+    allowDangerousTargetHttp,
     credential,
     legacySse,
   });
@@ -122,12 +182,31 @@ export function parseLegacySsePolicy(
   input: LegacySseConfigInput = {},
 ): Readonly<LegacySseSecurityPolicy> {
   const enabled = input.enabled ?? false;
+  const scheme = input.scheme ?? "https";
+  if (scheme !== "https" && scheme !== "http") {
+    throw new OperatorConfigError("Legacy SSE listener scheme is invalid");
+  }
   const bindHost = normalizeBindHost(input.bindHost ?? DEFAULT_SSE_BIND_HOST);
   const networkExposed = !isLoopbackHost(bindHost);
 
   if (networkExposed && input.allowNetworkExposure !== true) {
     throw new OperatorConfigError(
       "Non-loopback legacy SSE requires explicit network exposure",
+    );
+  }
+
+  if (scheme === "http" && input.allowPlaintextHttp !== true) {
+    throw new OperatorConfigError(
+      "Plain HTTP legacy SSE requires explicit insecure opt-in",
+    );
+  }
+  if (
+    scheme === "http" &&
+    networkExposed &&
+    input.allowDangerousNetworkPlaintext !== true
+  ) {
+    throw new OperatorConfigError(
+      "Non-loopback plain HTTP legacy SSE requires explicit dangerous-network opt-in",
     );
   }
 
@@ -180,8 +259,102 @@ export function parseLegacySsePolicy(
       })
     : null;
 
+  const maxConcurrentStreams = positiveSafeInteger(
+    input.maxConcurrentStreams,
+    DEFAULT_SSE_MAX_CONCURRENT_STREAMS,
+    MAX_SSE_CONCURRENT_STREAMS,
+    "Legacy SSE maximum concurrent streams",
+  );
+  const maxConcurrentStreamsPerPrincipal = positiveSafeInteger(
+    input.maxConcurrentStreamsPerPrincipal,
+    DEFAULT_SSE_MAX_CONCURRENT_STREAMS_PER_PRINCIPAL,
+    MAX_SSE_CONCURRENT_STREAMS,
+    "Legacy SSE per-principal maximum concurrent streams",
+  );
+  if (maxConcurrentStreamsPerPrincipal > maxConcurrentStreams) {
+    throw new OperatorConfigError(
+      "Legacy SSE per-principal concurrency cannot exceed the global limit",
+    );
+  }
+  const streamOpenRateLimit = positiveSafeInteger(
+    input.streamOpenRateLimit,
+    DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT,
+    MAX_SSE_STREAM_OPEN_RATE_LIMIT,
+    "Legacy SSE stream opening rate limit",
+  );
+  const streamOpenRateLimitPerPrincipal = positiveSafeInteger(
+    input.streamOpenRateLimitPerPrincipal,
+    DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT_PER_PRINCIPAL,
+    MAX_SSE_STREAM_OPEN_RATE_LIMIT,
+    "Legacy SSE per-principal stream opening rate limit",
+  );
+  if (streamOpenRateLimitPerPrincipal > streamOpenRateLimit) {
+    throw new OperatorConfigError(
+      "Legacy SSE per-principal rate cannot exceed the global limit",
+    );
+  }
+  const streamOpenRateWindowMs = positiveSafeInteger(
+    input.streamOpenRateWindowMs,
+    DEFAULT_SSE_STREAM_OPEN_RATE_WINDOW_MS,
+    MAX_SSE_STREAM_OPEN_RATE_WINDOW_MS,
+    "Legacy SSE stream opening rate window",
+  );
+  const sessionIdleTimeoutMs = positiveSafeInteger(
+    input.sessionIdleTimeoutMs,
+    DEFAULT_SSE_SESSION_IDLE_TIMEOUT_MS,
+    MAX_SSE_SESSION_IDLE_TIMEOUT_MS,
+    "Legacy SSE session idle timeout",
+  );
+  const requestHeaderTimeoutMs = positiveSafeInteger(
+    input.requestHeaderTimeoutMs,
+    DEFAULT_SSE_REQUEST_HEADER_TIMEOUT_MS,
+    MAX_SSE_REQUEST_HEADER_TIMEOUT_MS,
+    "Legacy SSE request header timeout",
+  );
+  const keepAliveTimeoutMs = positiveSafeInteger(
+    input.keepAliveTimeoutMs,
+    DEFAULT_SSE_KEEP_ALIVE_TIMEOUT_MS,
+    MAX_SSE_KEEP_ALIVE_TIMEOUT_MS,
+    "Legacy SSE keep-alive timeout",
+  );
+  const requestBodyIdleTimeoutMs = positiveSafeInteger(
+    input.requestBodyIdleTimeoutMs,
+    DEFAULT_SSE_REQUEST_BODY_IDLE_TIMEOUT_MS,
+    MAX_SSE_REQUEST_BODY_IDLE_TIMEOUT_MS,
+    "Legacy SSE request body idle timeout",
+  );
+  const requestBodyTotalTimeoutMs = positiveSafeInteger(
+    input.requestBodyTotalTimeoutMs,
+    DEFAULT_SSE_REQUEST_BODY_TOTAL_TIMEOUT_MS,
+    MAX_SSE_REQUEST_BODY_TOTAL_TIMEOUT_MS,
+    "Legacy SSE request body total timeout",
+  );
+  if (requestHeaderTimeoutMs > requestBodyTotalTimeoutMs) {
+    throw new OperatorConfigError(
+      "Legacy SSE request header timeout cannot exceed its total timeout",
+    );
+  }
+  if (requestBodyIdleTimeoutMs > requestBodyTotalTimeoutMs) {
+    throw new OperatorConfigError(
+      "Legacy SSE request body idle timeout cannot exceed its total timeout",
+    );
+  }
+  const maxResponseBufferedBytes = positiveSafeInteger(
+    input.maxResponseBufferedBytes,
+    DEFAULT_SSE_MAX_RESPONSE_BUFFERED_BYTES,
+    MAX_SSE_RESPONSE_BUFFERED_BYTES,
+    "Legacy SSE maximum response buffer",
+  );
+  const responseBackpressureTimeoutMs = positiveSafeInteger(
+    input.responseBackpressureTimeoutMs,
+    DEFAULT_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS,
+    MAX_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS,
+    "Legacy SSE response backpressure timeout",
+  );
+
   return Object.freeze({
     enabled,
+    scheme,
     bindHost,
     hostAuthorities,
     allowedOrigins,
@@ -190,6 +363,18 @@ export function parseLegacySsePolicy(
     requiresAntiCsrf: networkExposed,
     bearerCredential,
     networkExposed,
+    maxConcurrentStreams,
+    maxConcurrentStreamsPerPrincipal,
+    streamOpenRateLimit,
+    streamOpenRateLimitPerPrincipal,
+    streamOpenRateWindowMs,
+    sessionIdleTimeoutMs,
+    requestBodyIdleTimeoutMs,
+    requestBodyTotalTimeoutMs,
+    maxResponseBufferedBytes,
+    requestHeaderTimeoutMs,
+    keepAliveTimeoutMs,
+    responseBackpressureTimeoutMs,
   });
 }
 
@@ -224,6 +409,7 @@ export function assertPublicContractContainsNoOperatorSecrets(
 function validateTargetUrl(
   targetUrl: string,
   allowInsecureHttp: boolean,
+  allowDangerousTargetHttp: boolean,
 ): void {
   if (targetUrl.trim() !== targetUrl) {
     throw new OperatorConfigError("Invalid JetKVM target URL");
@@ -260,15 +446,27 @@ function validateTargetUrl(
       "Plain HTTP target requires explicit insecure opt-in",
     );
   }
+  if (
+    parsed.protocol === "http:" &&
+    !isLoopbackHost(parsed.hostname.replace(/^\[|\]$/gu, "")) &&
+    !allowDangerousTargetHttp
+  ) {
+    throw new OperatorConfigError(
+      "Non-loopback plain HTTP target requires explicit dangerous-network opt-in",
+    );
+  }
 }
 
 function normalizeBindHost(host: string): string {
-  if (host.length === 0 || host.trim() !== host || /[/:?#@]/u.test(host)) {
-    if (host !== "::" && host !== "::1") {
-      throw new OperatorConfigError("Legacy SSE bind host is invalid");
-    }
+  if (host.length === 0 || host.trim() !== host) {
+    throw new OperatorConfigError("Legacy SSE bind host is invalid");
   }
-  return host.toLowerCase();
+  const normalized = host.toLowerCase();
+  if (normalized === "localhost" || isIP(normalized) === 4) return normalized;
+  if (isIP(normalized) === 6) {
+    return new URL(`http://[${normalized}]`).hostname.slice(1, -1);
+  }
+  throw new OperatorConfigError("Legacy SSE bind host is invalid");
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -287,22 +485,29 @@ function normalizeHostAuthority(authority: string): string {
   if (
     authority.length === 0 ||
     authority.trim() !== authority ||
-    authority.includes("*") ||
-    authority.includes("/") ||
-    authority.includes("@")
+    authority !== authority.toLowerCase() ||
+    /[*\/@?#]/u.test(authority)
   ) {
     throw new OperatorConfigError("Legacy SSE Host authority is invalid");
   }
 
   try {
     const parsed = new URL(`http://${authority}`);
-    if (parsed.hostname.length === 0 || parsed.pathname !== "/") {
+    if (
+      parsed.hostname.length === 0 ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      parsed.host !== authority
+    ) {
       throw new Error("invalid");
     }
   } catch {
     throw new OperatorConfigError("Legacy SSE Host authority is invalid");
   }
-  return authority.toLowerCase();
+  return authority;
 }
 
 function normalizeOrigin(origin: string): string {
@@ -325,6 +530,21 @@ function normalizeOrigin(origin: string): string {
   } catch {
     throw new OperatorConfigError("Legacy SSE Origin is invalid");
   }
+}
+
+function positiveSafeInteger(
+  value: number | undefined,
+  fallback: number,
+  maximum: number,
+  name: string,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0 || resolved > maximum) {
+    throw new OperatorConfigError(
+      `${name} must be a positive integer no greater than ${maximum}`,
+    );
+  }
+  return resolved;
 }
 
 function parseOptionalBoolean(

@@ -266,7 +266,6 @@
                     "SESSION_NOT_FOUND",
                     "STALE_SESSION_GENERATION",
                     "SESSION_TAKEN_OVER",
-                    "CONTROL_BUSY",
                     "SESSION_DRAINED",
                     "DEVICE_UNREACHABLE",
                     "CONNECTION_LOST",
@@ -293,10 +292,7 @@
                     "ATX_BUSY",
                     "POWER_STATE_UNVERIFIED",
                     "CANCELLED",
-                    "DEADLINE_EXCEEDED",
-                    "MUTATION_OUTCOME_UNKNOWN",
-                    "PARTIAL_VERIFICATION",
-                    "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+                    "DEADLINE_EXCEEDED"
                   ]
                 },
                 "details": {
@@ -472,7 +468,8 @@
                   "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
                 },
                 "phase": {
-                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/phase"
+                  "type": "string",
+                  "const": "authorize"
                 },
                 "code": {
                   "type": "string",
@@ -530,7 +527,8 @@
                   "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/verification"
                 },
                 "safe_to_retry": {
-                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/safe_to_retry"
+                  "type": "boolean",
+                  "const": false
                 },
                 "required_next_step": {
                   "type": "string",
@@ -556,7 +554,8 @@
                   "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
                 },
                 "phase": {
-                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/phase"
+                  "type": "string",
+                  "const": "validate"
                 },
                 "code": {
                   "type": "string",
@@ -614,7 +613,8 @@
                   "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/verification"
                 },
                 "safe_to_retry": {
-                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/safe_to_retry"
+                  "type": "boolean",
+                  "const": false
                 },
                 "required_next_step": {
                   "type": "string",
@@ -648,5 +648,6 @@
       "additionalProperties": false
     }
   ],
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object"
 }

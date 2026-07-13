@@ -73,6 +73,23 @@ describe("structured redacting logger", () => {
     expect(output).not.toContain("at ");
   });
 
+  it("redacts credential assignments and every Error message to stable diagnostics", () => {
+    const redacted = redactStructuredData({
+      note: "JETKVM_CREDENTIAL=super-secret",
+      detail: "password: hunter2",
+      reason: new Error("apparently harmless but unclassified downstream text"),
+    });
+
+    expect(redacted).toEqual({
+      note: "[REDACTED]",
+      detail: "[REDACTED]",
+      reason: { name: "Error", message: "[REDACTED]" },
+    });
+    expect(JSON.stringify(redacted)).not.toMatch(
+      /super-secret|hunter2|downstream/,
+    );
+  });
+
   it("preserves allowlisted operational metadata without mutating the input", () => {
     const input = Object.freeze({
       operationId: "op-123",

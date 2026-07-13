@@ -16,6 +16,16 @@ import { DisposableSecret } from "@wyrmkeep/jetkvm-mcp/dist/browser/auth.js";
 import { parseLegacySsePolicy } from "@wyrmkeep/jetkvm-mcp/dist/config.js";
 import { LegacySseAdapter } from "@wyrmkeep/jetkvm-mcp/dist/mcp/legacySse.js";
 import { handlers } from "./deterministic-handlers.mjs";
+const observedContexts = [];
+const auditedHandlers = Object.fromEntries(
+  Object.entries(handlers).map(([name, handler]) => [
+    name,
+    async (input, context) => {
+      observedContexts.push({ name, context });
+      return handler(input, context);
+    },
+  ]),
+);
 
 const authority = "installed.mcp.test";
 const origin = "https://installed-client.test";
@@ -26,23 +36,31 @@ const credential = {
 };
 const policy = parseLegacySsePolicy({
   enabled: true,
+  scheme: "http",
   bindHost: "0.0.0.0",
   allowNetworkExposure: true,
+  allowPlaintextHttp: true,
+  allowDangerousNetworkPlaintext: true,
   hostAuthorities: [authority],
   allowedOrigins: [origin],
   bearerEnvironmentVariable: "JETKVM_INSTALLED_TEST_BEARER",
 });
+const transportClosed = Promise.withResolvers();
 const adapter = new LegacySseAdapter({
-  handlerRegistry: handlers,
+  handlerRegistry: auditedHandlers,
   securityPolicy: policy,
   bearerCredential: credential,
+  onDiagnostic: (event) => {
+    if (event.code === "transport_closed") transportClosed.resolve();
+  },
 });
 const server = createServer((request, response) => {
   void adapter.handleRequest(request, response);
 });
+adapter.attachServer(server);
 const listening = Promise.withResolvers();
 server.once("listening", listening.resolve);
-server.listen(0, "127.0.0.1");
+server.listen(0, policy.bindHost);
 await listening.promise;
 const address = server.address();
 if (!address || typeof address === "string") throw new Error("Missing server address");
@@ -134,12 +152,16 @@ const forbiddenGet = await request("/sse", {
 assert.equal(forbiddenGet.status, 403);
 assert.equal(forbiddenGet.text, "Forbidden");
 
-const stream = await openSse();
-assert.equal(stream.response.statusCode, 200);
-assert.equal(stream.response.headers["content-type"], "text/event-stream");
-assert.equal(stream.endpointFrame, \`event: endpoint\\ndata: \${stream.endpoint}\\n\\n\`);
+const first = await openSse();
+const second = await openSse();
+assert.notEqual(first.endpoint, second.endpoint);
+for (const stream of [first, second]) {
+  assert.equal(stream.response.statusCode, 200);
+  assert.equal(stream.response.headers["content-type"], "text/event-stream");
+  assert.equal(stream.endpointFrame, \`event: endpoint\\ndata: \${stream.endpoint}\\n\\n\`);
+}
 
-const unauthorizedPost = await request(stream.endpoint, {
+const unauthorizedPost = await request(first.endpoint, {
   method: "POST",
   requestHeaders: {
     Host: authority,
@@ -151,7 +173,7 @@ const unauthorizedPost = await request(stream.endpoint, {
 });
 assert.equal(unauthorizedPost.status, 401);
 
-async function postMessage(message) {
+async function postMessage(stream, message) {
   return request(stream.endpoint, {
     method: "POST",
     requestHeaders: { ...headers(), "Content-Type": "application/json" },
@@ -159,33 +181,61 @@ async function postMessage(message) {
   });
 }
 
-const initialized = await postMessage({
+for (const [id, stream] of [[1, first], [101, second]]) {
+  const initialized = await postMessage(stream, {
+    jsonrpc: "2.0",
+    id,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      clientInfo: { name: \`installed-sse-smoke-\${id}\`, version: "1.0.0" },
+    },
+  });
+  assert.deepEqual(initialized, {
+    status: 202,
+    headers: initialized.headers,
+    text: "Accepted",
+  });
+  const initializeFrame = await stream.nextFrame();
+  assert.match(initializeFrame, new RegExp(\`^event: message\\\\ndata: {.*"id":\${id}}\\\\n\\\\n$\`));
+}
+
+const listedFirst = await postMessage(first, {
   jsonrpc: "2.0",
-  id: 1,
-  method: "initialize",
-  params: {
-    protocolVersion: "2025-11-25",
-    capabilities: {},
-    clientInfo: { name: "installed-sse-smoke", version: "1.0.0" },
-  },
+  id: 2,
+  method: "tools/list",
+  params: {},
 });
-assert.deepEqual(initialized, {
-  status: 202,
-  headers: initialized.headers,
-  text: "Accepted",
-});
-const initializeFrame = await stream.nextFrame();
-assert.match(initializeFrame, /^event: message\\ndata: {.*"id":1}\\n\\n$/);
+assert.equal(listedFirst.status, 202);
+const firstListFrame = await first.nextFrame();
+const firstListPayload = JSON.parse(firstListFrame.slice("event: message\\ndata: ".length, -2));
+assert.equal(firstListPayload.result.tools.length, 10);
 
-const listed = await postMessage({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
-assert.equal(listed.status, 202);
-const listFrame = await stream.nextFrame();
-const listPayload = JSON.parse(listFrame.slice("event: message\\ndata: ".length, -2));
-assert.equal(listPayload.result.tools.length, 10);
-
-const called = await postMessage({
+first.response.destroy();
+await transportClosed.promise;
+const closedFirst = await postMessage(first, {
   jsonrpc: "2.0",
   id: 3,
+  method: "tools/list",
+  params: {},
+});
+assert.equal(closedFirst.status, 404);
+
+const listedSecond = await postMessage(second, {
+  jsonrpc: "2.0",
+  id: 102,
+  method: "tools/list",
+  params: {},
+});
+assert.equal(listedSecond.status, 202);
+const secondListFrame = await second.nextFrame();
+const secondListPayload = JSON.parse(secondListFrame.slice("event: message\\ndata: ".length, -2));
+assert.equal(secondListPayload.result.tools.length, 10);
+
+const called = await postMessage(second, {
+  jsonrpc: "2.0",
+  id: 103,
   method: "tools/call",
   params: {
     name: "jetkvm_session_connect",
@@ -193,10 +243,28 @@ const called = await postMessage({
   },
 });
 assert.equal(called.status, 202);
-const callFrame = await stream.nextFrame();
-assert.match(callFrame, /^event: message\\ndata: .*"operation_id":"operation-success".*\\n\\n$/);
+const callFrame = await second.nextFrame();
+const callPayload = JSON.parse(callFrame.slice("event: message\\ndata: ".length, -2));
+assert.equal(callPayload.result.structuredContent.operation_id, "operation-success");
+const firstRoutingId = new URL(first.endpoint, baseUrl).searchParams.get("sessionId");
+const secondRoutingId = new URL(second.endpoint, baseUrl).searchParams.get("sessionId");
+const applicationSessionId = callPayload.result.structuredContent.session_id;
+assert.notEqual(applicationSessionId, firstRoutingId);
+assert.notEqual(applicationSessionId, secondRoutingId);
 
-const invalidJson = await request(stream.endpoint, {
+assert.equal(observedContexts.length, 1);
+const [{ context }] = observedContexts;
+assert.deepEqual(Object.keys(context).sort(), ["correlationId", "principalId", "signal"]);
+assert.equal(context.principalId, "installed-operator");
+assert.match(context.correlationId, /^mcp-[a-f0-9]{32}$/);
+assert.notEqual(context.correlationId, firstRoutingId);
+assert.notEqual(context.correlationId, secondRoutingId);
+assert.doesNotMatch(
+  JSON.stringify(context),
+  /authInfo|requestInfo|sessionId|authorization|bearer|csrf|installed-test-token/i,
+);
+
+const invalidJson = await request(second.endpoint, {
   method: "POST",
   requestHeaders: { ...headers(), "Content-Type": "application/json" },
   body: "{",
@@ -204,7 +272,7 @@ const invalidJson = await request(stream.endpoint, {
 assert.equal(invalidJson.status, 400);
 assert.equal(invalidJson.text, "Invalid JSON");
 
-stream.response.destroy();
+second.response.destroy();
 await adapter.close();
 credential.secret.dispose();
 const closed = Promise.withResolvers();

@@ -106,6 +106,10 @@ const capabilityErrorDetails = (capability: z.ZodTypeAny) =>
 const genericErrorCodeSchema = errorCodeSchema.exclude([
   "PERMISSION_DENIED",
   "CAPABILITY_MISSING",
+  "CONTROL_BUSY",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "PARTIAL_VERIFICATION",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
 ]);
 const commonErrorShape = {
   message: z.string().min(1).max(512),
@@ -162,8 +166,10 @@ const readErrorBody = (permission: z.ZodTypeAny, capability: z.ZodTypeAny) =>
       .object({
         ...commonErrorShape,
         code: z.literal("PERMISSION_DENIED"),
+        phase: z.literal("authorize"),
         details: permissionErrorDetails(permission),
         ...readErrorOutcomeShape,
+        safe_to_retry: z.literal(false),
         required_next_step: z.literal("grant_permission"),
       })
       .strict(),
@@ -171,8 +177,10 @@ const readErrorBody = (permission: z.ZodTypeAny, capability: z.ZodTypeAny) =>
       .object({
         ...commonErrorShape,
         code: z.literal("CAPABILITY_MISSING"),
+        phase: z.literal("validate"),
         details: capabilityErrorDetails(capability),
         ...readErrorOutcomeShape,
+        safe_to_retry: z.literal(false),
         required_next_step: z.literal("enable_capability"),
       })
       .strict(),
@@ -211,11 +219,57 @@ const mutationErrorBody = (
     z
       .object({
         ...commonErrorShape,
+        code: z.literal("MUTATION_OUTCOME_UNKNOWN"),
+        phase: z.enum(["connect", "execute", "verify", "cleanup"]),
+        details: errorDetailsSchema,
+        ...unknownErrorOutcomeShape,
+      })
+      .strict(),
+    z
+      .object({
+        ...commonErrorShape,
+        code: z.literal("PARTIAL_VERIFICATION"),
+        phase: z.literal("verify"),
+        details: errorDetailsSchema,
+        outcome: z.literal("applied"),
+        verification: z.literal("device_ack_only"),
+        safe_to_retry: z.literal(false),
+        required_next_step: z.literal("none"),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonErrorShape,
+        code: z.literal("REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"),
+        phase: z.literal("validate"),
+        details: errorDetailsSchema,
+        outcome: z.literal("not_sent"),
+        verification: z.literal("none"),
+        safe_to_retry: z.literal(false),
+        required_next_step: z.literal("none"),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonErrorShape,
+        code: z.literal("CONTROL_BUSY"),
+        phase: z.literal("authorize"),
+        details: errorDetailsSchema,
+        outcome: z.literal("not_sent"),
+        verification: z.literal("none"),
+        safe_to_retry: z.literal(true),
+        required_next_step: z.literal("wait_or_request_takeover"),
+      })
+      .strict(),
+    z
+      .object({
+        ...commonErrorShape,
         code: z.literal("PERMISSION_DENIED"),
+        phase: z.literal("authorize"),
         details: permissionErrorDetails(permission),
         outcome: z.literal("not_sent"),
         verification: z.literal("none"),
-        safe_to_retry: z.boolean(),
+        safe_to_retry: z.literal(false),
         required_next_step: z.literal("grant_permission"),
       })
       .strict(),
@@ -223,10 +277,11 @@ const mutationErrorBody = (
       .object({
         ...commonErrorShape,
         code: z.literal("CAPABILITY_MISSING"),
+        phase: z.literal("validate"),
         details: capabilityErrorDetails(capability),
         outcome: z.literal("not_sent"),
         verification: z.literal("none"),
-        safe_to_retry: z.boolean(),
+        safe_to_retry: z.literal(false),
         required_next_step: z.literal("enable_capability"),
       })
       .strict(),
@@ -908,11 +963,15 @@ export function generateJsonSchemaDocuments(): Record<
       ["input", TOOL_INPUT_SCHEMAS[tool]],
       ["result", TOOL_RESULT_SCHEMAS[tool]],
     ] as const) {
-      const document = toJsonSchemaCompat(schema, {
+      const generated = toJsonSchemaCompat(schema, {
         strictUnions: true,
         target: "jsonSchema7",
         pipeStrategy: kind === "input" ? "input" : "output",
       });
+      const document =
+        kind === "result"
+          ? { ...generated, type: "object" as const }
+          : generated;
       documents[`${tool}.${kind}.schema.json`] = addNonPortableConstraints(
         tool,
         kind,
@@ -926,3 +985,5 @@ export function generateJsonSchemaDocuments(): Record<
     ),
   );
 }
+
+export const GENERATED_JSON_SCHEMA_DOCUMENTS = generateJsonSchemaDocuments();

@@ -472,6 +472,35 @@ describe("DeviceSessionClient", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps a failed takeover cleanup authoritative and blocks a new connection", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({
+      browser,
+      permissions: [...BASE_PERMISSIONS, "session.takeover"],
+    });
+    await client.connect("principal-a", connectInput());
+    browser.rejectClose = new Error("cleanup failed");
+
+    await expectClientError(
+      client.connect(
+        "principal-b",
+        connectInput({ request_id: "connect-request-2", takeover: true }),
+      ),
+      "CONNECTION_LOST",
+    );
+    await expectClientError(
+      client.connect(
+        "principal-b",
+        connectInput({ request_id: "connect-request-3" }),
+      ),
+      "CONTROL_BUSY",
+    );
+
+    expect(
+      browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
+    ).toEqual(["connect:app-session-1", "close:app-session-1"]);
+  });
+
   it("retains unknown after takeover starts even when cleanup reports not_sent", async () => {
     const browser = new FakeBrowserPlane();
     const { client } = makeClient({
@@ -502,6 +531,47 @@ describe("DeviceSessionClient", () => {
     expect(
       browser.events.filter((event) => event.kind === "connect"),
     ).toHaveLength(1);
+  });
+
+  it("keeps a failed reconnect close authoritative until a takeover proves cleanup", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({
+      browser,
+      permissions: [...BASE_PERMISSIONS, "session.takeover"],
+    });
+    const connected = await client.connect("principal-a", connectInput());
+    browser.rejectClose = new Error("reconnect close failed");
+
+    await expectClientError(
+      client.reconnect("principal-a", reconnectInput(connected.ref)),
+      "CONNECTION_LOST",
+    );
+    await expectClientError(
+      client.connect(
+        "principal-b",
+        connectInput({ request_id: "connect-request-2" }),
+      ),
+      "CONTROL_BUSY",
+    );
+    expect(
+      browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
+    ).toEqual(["connect:app-session-1", "close:app-session-1"]);
+
+    browser.rejectClose = null;
+    const recovered = await client.connect(
+      "principal-b",
+      connectInput({ request_id: "connect-request-3", takeover: true }),
+    );
+
+    expect(recovered.result.takeover_performed).toBe(true);
+    expect(
+      browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
+    ).toEqual([
+      "connect:app-session-1",
+      "close:app-session-1",
+      "close:app-session-1",
+      "connect:app-session-2",
+    ]);
   });
 
   it("rotates generation on reconnect and rejects the old generation without a plane call", async () => {

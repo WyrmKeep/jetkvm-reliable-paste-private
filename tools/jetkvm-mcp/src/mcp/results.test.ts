@@ -10,17 +10,18 @@ import type {
 } from "../domain.js";
 import { CAPABILITY_NAMES } from "../domain.js";
 import {
+  PUBLIC_ERROR_MESSAGES,
   toMcpErrorResult,
   toMcpSuccessResult,
   type AuthorizedImage,
 } from "./results.js";
 
-const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+const imageBytes = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
 const imageBase64 = Buffer.from(imageBytes).toString("base64");
 const imageSha256 = createHash("sha256").update(imageBytes).digest("hex");
 const authorizedImage: AuthorizedImage = {
   bytes: imageBytes,
-  mime_type: "image/png",
+  mime_type: "image/jpeg",
 };
 const capture: DisplayCaptureResult = {
   observation_id: "observation-1",
@@ -41,7 +42,7 @@ const capture: DisplayCaptureResult = {
   },
   image: {
     content_index: 1,
-    mime_type: "image/png",
+    mime_type: "image/jpeg",
     sha256: imageSha256,
     byte_length: imageBytes.byteLength,
   },
@@ -96,7 +97,7 @@ describe("MCP result mapping", () => {
     const mapped = toMcpSuccessResult(captureEnvelope, authorizedImage);
     expect(mapped.content).toEqual([
       { type: "text", text: JSON.stringify(captureEnvelope) },
-      { type: "image", data: imageBase64, mimeType: "image/png" },
+      { type: "image", data: imageBase64, mimeType: "image/jpeg" },
     ]);
     expect(mapped.structuredContent).toEqual(captureEnvelope);
 
@@ -117,15 +118,34 @@ describe("MCP result mapping", () => {
     expect(() =>
       toMcpSuccessResult(captureEnvelope, {
         bytes: Uint8Array.from([1, 2, 3]),
-        mime_type: "image/png",
+        mime_type: "image/jpeg",
       }),
     ).toThrow("Image content does not match result metadata.");
     expect(() =>
       toMcpSuccessResult(captureEnvelope, {
         bytes: imageBytes,
-        mime_type: "image/jpeg",
-      }),
-    ).toThrow("Image content does not match result metadata.");
+        mime_type: "image/png",
+      } as never),
+    ).toThrow("Only authorized JPEG image content is permitted.");
+  });
+
+  it("rejects PNG image content even when metadata and digest otherwise match", () => {
+    const pngEnvelope = {
+      ...captureEnvelope,
+      result: {
+        ...captureEnvelope.result,
+        image: {
+          ...captureEnvelope.result.image,
+          mime_type: "image/png" as const,
+        },
+      },
+    };
+    expect(() =>
+      toMcpSuccessResult(pngEnvelope, {
+        bytes: imageBytes,
+        mime_type: "image/png",
+      } as never),
+    ).toThrow("Only authorized JPEG image content is permitted.");
   });
 
   it("rejects image bytes for results without image metadata", () => {
@@ -202,9 +222,57 @@ describe("MCP result mapping", () => {
     expect(mapped.isError).toBe(true);
     expect(mapped.structuredContent).toEqual(envelope);
     expect(mapped.content).toEqual([
-      { type: "text", text: JSON.stringify(envelope) },
+      { type: "text", text: JSON.stringify(mapped.structuredContent) },
     ]);
     expect(JSON.stringify(mapped)).not.toContain(imageBase64);
+  });
+
+  it("replaces handler-controlled error messages with stable code-specific public text", () => {
+    const secret =
+      "https://admin:password@example.test Authorization: Bearer top-secret cookie=session";
+    const envelope: ToolError = {
+      ok: false,
+      tool: "jetkvm_input_mouse",
+      operation_id: "operation-unsafe",
+      session_id: "session-1",
+      session_generation: 1,
+      duration_ms: 3,
+      error: {
+        code: "MUTATION_OUTCOME_UNKNOWN",
+        message: secret,
+        phase: "execute",
+        outcome: "unknown",
+        verification: "none",
+        safe_to_retry: false,
+        required_next_step: "inspect_device_state_before_retry",
+        details: {
+          permission: null,
+          capability: null,
+          failed_action_index: null,
+          dispatched_action_count: 1,
+          completed_action_count: 0,
+          downstream_stage: "write",
+          expected_generation: 1,
+          actual_generation: null,
+          observation_id: "observation-1",
+        },
+      },
+    };
+
+    const mapped = toMcpErrorResult(envelope);
+    expect(mapped.structuredContent).toMatchObject({
+      error: {
+        code: "MUTATION_OUTCOME_UNKNOWN",
+        message: PUBLIC_ERROR_MESSAGES.MUTATION_OUTCOME_UNKNOWN,
+      },
+    });
+    expect(JSON.stringify(mapped)).not.toContain(secret);
+    expect(mapped.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify(mapped.structuredContent),
+      },
+    ]);
   });
 
   it("rejects error envelopes containing image or unknown evidence fields", () => {

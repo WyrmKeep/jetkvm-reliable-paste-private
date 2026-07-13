@@ -341,6 +341,28 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
+  it("ignores a delayed retired response while awaiting the current correlation id", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const ids = ["rpc-a", "rpc-b"];
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idFactory: () => ids.shift()!,
+    });
+    const first = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, displayWireResult());
+    await first;
+
+    const second = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(2);
+    const secondResult = expect(second).resolves.toMatchObject({
+      signal: { value: "present" },
+    });
+    channel.respondToWrite(0, displayWireResult());
+    channel.respondToWrite(1, displayWireResult());
+
+    await secondResult;
+  });
+
   it("rejects an out-of-range deadline before admission", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
@@ -504,21 +526,36 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
-  it("returns only an explicitly stale cached display state after binding loss", async () => {
+  it("advances known cached ages by monotonic elapsed time and preserves unknown age", async () => {
+    let nowMs = 10_000;
     const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      now: () => nowMs,
+    });
     const first = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
-    channel.respondToWrite(0, displayWireResult());
+    const wireResult = displayWireResult();
+    channel.respondToWrite(0, {
+      ...wireResult,
+      resolution: { ...wireResult.resolution, age_ms: 20 },
+      fps: {
+        ...wireResult.fps,
+        observed_at: null,
+        age_ms: null,
+        freshness: "unknown",
+        source: "none",
+      },
+    });
     await first;
+    nowMs += 1_250;
     channel.close();
 
     const cached = await adapter.readDisplayState(BINDING, deadline());
 
     expect(cached).toMatchObject({
-      signal: { freshness: "stale" },
-      resolution: { freshness: "stale" },
-      fps: { freshness: "stale" },
+      signal: { ageMs: 1_255, freshness: "stale" },
+      resolution: { ageMs: 1_270, freshness: "stale" },
+      fps: { ageMs: null, freshness: "stale" },
       qualification: "binding_lost_cached_only",
     });
     expect(channel.writes()).toHaveLength(1);

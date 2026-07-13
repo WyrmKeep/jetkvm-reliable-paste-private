@@ -28,16 +28,30 @@
   ],
   "fault_script": [
     {
-      "id": "cancel-and-partial-dispatch",
-      "after_step": "capture-mouse-observation",
+      "id": "cancel-before-mouse-write",
+      "after_step": "capture-cancel-observation",
       "boundary": "before_write",
-      "action": "Cancel one admitted request before write and interrupt a separate two-action request after its first event.",
-      "expected_effect": "The cancelled request is not_sent; the partial request is unknown with its suffix suppressed."
+      "action": "Cancel the admitted mouse request before the first downstream write.",
+      "expected_effect": "The cancelled request is not_sent with zero downstream writes and its observation reservation released."
+    },
+    {
+      "id": "interrupt-mouse-after-first-event",
+      "after_step": "capture-partial-observation",
+      "boundary": "after_write",
+      "action": "Interrupt the two-action mouse request after its first downstream event.",
+      "expected_effect": "The partial request is unknown with exact counts and its undispatched suffix suppressed."
+    },
+    {
+      "id": "validate-scroll-before-plane",
+      "after_step": "scroll-positive-bound",
+      "boundary": "before_admission",
+      "action": "Submit zero, fractional, overflow, and nonzero-horizontal scroll variants to the strict schema before observation lookup.",
+      "expected_effect": "Each invalid variant rejects the whole request with zero mouse-plane calls."
     }
   ],
   "steps": [
     {
-      "id": "capture-mouse-observation",
+      "id": "capture-cancel-observation",
       "tool": "jetkvm_display_capture",
       "call": "tools/call",
       "input": {
@@ -46,7 +60,64 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "A current unused observation for the valid cases."
+      "expect": "A fresh observation saved as opaque-observation-cancel."
+    },
+    {
+      "id": "cancel-before-write",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel",
+        "request_id": "opaque-mouse-cancel",
+        "actions": [{ "type": "move", "x": 40, "y": 50 }],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent with zero downstream writes after cancellation before write."
+    },
+    {
+      "id": "capture-partial-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh observation saved as opaque-observation-partial."
+    },
+    {
+      "id": "partial-mouse-dispatch",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-partial",
+        "request_id": "opaque-mouse-partial",
+        "actions": [
+          { "type": "move", "x": 40, "y": 50 },
+          { "type": "click", "x": 40, "y": 50, "button": "left" }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown with one dispatched and completed event and the click suffix suppressed."
+    },
+    {
+      "id": "capture-negative-scroll-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh unused observation saved as opaque-observation-negative."
     },
     {
       "id": "scroll-negative-bound",
@@ -55,7 +126,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
+        "observation_id": "opaque-observation-negative",
         "request_id": "opaque-scroll-neg",
         "actions": [
           {
@@ -68,7 +139,41 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The -127 vertical HID step is accepted."
+      "expect": "The -127 vertical HID step is accepted and consumes opaque-observation-negative."
+    },
+    {
+      "id": "reuse-consumed-negative-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-negative",
+        "request_id": "opaque-scroll-neg-reuse",
+        "actions": [
+          {
+            "type": "scroll",
+            "x": 40,
+            "y": 50,
+            "delta_y": -1
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "OBSERVATION_CONSUMED before input with zero mouse-plane calls."
+    },
+    {
+      "id": "capture-positive-scroll-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A separate fresh unused observation saved as opaque-observation-positive."
     },
     {
       "id": "scroll-positive-bound",
@@ -77,7 +182,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
+        "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-pos",
         "actions": [
           {
@@ -91,7 +196,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "The 127 vertical HID step with zero horizontal value is accepted."
+      "expect": "The 127 vertical HID step with zero horizontal value is accepted and consumes opaque-observation-positive."
     },
     {
       "id": "reject-zero-scroll",
@@ -100,7 +205,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
+        "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-zero",
         "actions": [
           {
@@ -122,7 +227,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
+        "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-frac",
         "actions": [
           {
@@ -144,7 +249,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
+        "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-over",
         "actions": [
           {
@@ -166,7 +271,7 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
+        "observation_id": "opaque-observation-positive",
         "request_id": "opaque-scroll-x",
         "actions": [
           {

@@ -333,6 +333,8 @@ const ATX_WIRE_BY_ACTION: Record<
   press_reset: { wireAction: "reset", fixedPressMs: 200 },
 };
 
+const MAX_RETIRED_CORRELATION_IDS = 256;
+
 export function mapDeviceRpcBindingToWire(
   binding: DeviceRpcBinding,
 ): DeviceRpcWireBinding {
@@ -404,11 +406,16 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
   private queueTail: Promise<void> = Promise.resolve();
   private cachedDisplay: CachedDisplayState | undefined;
   private sequence = 0;
+  private cachedDisplayAtMs: number | undefined;
+  private readonly retiredCorrelationIds = new Set<string>();
 
   public constructor(
     binding: DeviceRpcBinding,
     channel: BrowserOwnedRpcChannel,
-    private readonly options: { readonly idFactory?: () => string } = {},
+    private readonly options: {
+      readonly idFactory?: () => string;
+      readonly now?: () => number;
+    } = {},
   ) {
     assertValidBinding(binding);
     this.currentBinding = freezeBinding(binding);
@@ -431,6 +438,8 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     this.currentBinding = freezeBinding(next);
     this.channel = nextChannel;
     this.cachedDisplay = undefined;
+    this.cachedDisplayAtMs = undefined;
+    this.retiredCorrelationIds.clear();
     this.revisionAbort = new AbortController();
     publish?.();
   }
@@ -449,10 +458,14 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       this.channel.readyState === "closed" &&
       this.cachedDisplay !== undefined
     ) {
+      const elapsedMs = Math.max(
+        0,
+        Math.floor(this.now() - (this.cachedDisplayAtMs ?? this.now())),
+      );
       return {
-        signal: { ...this.cachedDisplay.signal, freshness: "stale" },
-        resolution: { ...this.cachedDisplay.resolution, freshness: "stale" },
-        fps: { ...this.cachedDisplay.fps, freshness: "stale" },
+        signal: this.staleFact(this.cachedDisplay.signal, elapsedMs),
+        resolution: this.staleFact(this.cachedDisplay.resolution, elapsedMs),
+        fps: this.staleFact(this.cachedDisplay.fps, elapsedMs),
         qualification: "binding_lost_cached_only",
       };
     }
@@ -482,6 +495,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       qualification: "current_binding",
     };
     this.cachedDisplay = mapped;
+    this.cachedDisplayAtMs = this.now();
     return mapped;
   }
 
@@ -736,12 +750,14 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       const finishError = (error: DeviceRpcError) => {
         if (settled) return;
         settled = true;
+        if (writeBegan) this.retireCorrelationId(correlationId);
         stopListening();
         reject(error);
       };
       const finishSuccess = () => {
         if (settled || !responseSeen) return;
         settled = true;
+        this.retireCorrelationId(correlationId);
         stopListening();
         resolve({ result: receivedResult, writeBegan: true });
       };
@@ -772,7 +788,12 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
             return;
           }
           const envelope = responseEnvelopeSchema.safeParse(decoded);
-          if (!envelope.success || envelope.data.id !== correlationId) {
+          if (!envelope.success) {
+            finishError(this.protocolError("MALFORMED_RESPONSE", writeBegan));
+            return;
+          }
+          if (envelope.data.id !== correlationId) {
+            if (this.retiredCorrelationIds.has(envelope.data.id)) return;
             finishError(this.protocolError("MALFORMED_RESPONSE", writeBegan));
             return;
           }
@@ -936,6 +957,29 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       writeBegan,
       false,
     );
+  }
+
+  private retireCorrelationId(correlationId: string): void {
+    if (this.retiredCorrelationIds.has(correlationId)) return;
+    this.retiredCorrelationIds.add(correlationId);
+    if (this.retiredCorrelationIds.size <= MAX_RETIRED_CORRELATION_IDS) return;
+    const oldest = this.retiredCorrelationIds.values().next().value;
+    if (oldest !== undefined) this.retiredCorrelationIds.delete(oldest);
+  }
+
+  private staleFact<T>(
+    fact: QualifiedFact<T>,
+    elapsedMs: number,
+  ): QualifiedFact<T> {
+    return {
+      ...fact,
+      ageMs: fact.ageMs === null ? null : fact.ageMs + elapsedMs,
+      freshness: "stale",
+    };
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? performance.now();
   }
 
   private mapFact<T>(fact: {

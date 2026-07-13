@@ -3,7 +3,7 @@ const SAFE_EVENT_NAME = /^[a-z][a-z0-9_.-]{0,63}$/u;
 const SENSITIVE_FIELD =
   /(?:address|authorization|authority|base64|bearer|bytes|clipboard|content|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
 const SENSITIVE_STRING =
-  /(?:\b(?:https?|wss?|file):\/\/|\bBearer\s+\S+|\bcookie\s*[:=]|\bcandidate:\d+|\ba=fingerprint:|(?:^|\r?\n)v=0(?:\r?\n|$)|data:image\/)/iu;
+  /(?:\b(?:https?|wss?|file):\/\/|\bBearer\s+\S+|\b(?:[a-z0-9_]*(?:authorization|bearer|cookie|credential|password|secret|token)[a-z0-9_]*)\s*[:=]\s*\S+|\bcandidate:\d+|\ba=fingerprint:|(?:^|\r?\n)v=0(?:\r?\n|$)|data:image\/)/iu;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -106,7 +106,7 @@ function redactValue(value: unknown, ancestors: Set<object>): unknown {
   if (value instanceof Error) {
     return {
       name: value.name,
-      message: SENSITIVE_STRING.test(value.message) ? REDACTED : value.message,
+      message: REDACTED,
     };
   }
   if (ancestors.has(value)) {

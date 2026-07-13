@@ -719,6 +719,124 @@ describe("strict canonical tool schemas", () => {
     }
   });
 
+  it("binds safety-critical error codes to exact mutation recovery claims", () => {
+    const base = {
+      ok: false as const,
+      tool: "jetkvm_input_mouse" as const,
+      operation_id: "operation-1",
+      session_id: "session-1",
+      session_generation: 1,
+      duration_ms: 1,
+      error: {
+        code: "MUTATION_OUTCOME_UNKNOWN" as const,
+        message: "The mutation outcome is unknown.",
+        phase: "execute" as const,
+        outcome: "unknown" as const,
+        verification: "none" as const,
+        safe_to_retry: false as const,
+        required_next_step: "inspect_device_state_before_retry" as const,
+        details: {
+          permission: null,
+          capability: null,
+          failed_action_index: null,
+          dispatched_action_count: 1,
+          completed_action_count: 0,
+          downstream_stage: "write" as const,
+          expected_generation: 1,
+          actual_generation: null,
+          observation_id: "observation-1",
+        },
+      },
+    };
+    const legal = [
+      base,
+      {
+        ...base,
+        error: {
+          ...base.error,
+          code: "PARTIAL_VERIFICATION",
+          phase: "verify",
+          outcome: "applied",
+          verification: "device_ack_only",
+          required_next_step: "none",
+          details: {
+            ...base.error.details,
+            downstream_stage: "verification",
+          },
+        },
+      },
+      {
+        ...base,
+        error: {
+          ...base.error,
+          code: "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+          phase: "validate",
+          outcome: "not_sent",
+          verification: "none",
+          required_next_step: "none",
+          details: {
+            ...base.error.details,
+            dispatched_action_count: null,
+            completed_action_count: null,
+            downstream_stage: "none",
+          },
+        },
+      },
+      {
+        ...base,
+        error: {
+          ...base.error,
+          code: "CONTROL_BUSY",
+          phase: "authorize",
+          outcome: "not_sent",
+          verification: "none",
+          safe_to_retry: true,
+          required_next_step: "wait_or_request_takeover",
+          details: {
+            ...base.error.details,
+            dispatched_action_count: null,
+            completed_action_count: null,
+            downstream_stage: "admission",
+          },
+        },
+      },
+    ];
+    for (const candidate of legal) {
+      expect(
+        toolErrorSchema.safeParse(candidate).success,
+        JSON.stringify(candidate.error),
+      ).toBe(true);
+    }
+
+    const illegal = [
+      { ...base.error, outcome: "not_sent" },
+      { ...base.error, safe_to_retry: true },
+      { ...base.error, phase: "authorize" },
+      {
+        ...legal[1]!.error,
+        outcome: "unknown",
+        verification: "none",
+        required_next_step: "inspect_device_state_before_retry",
+      },
+      { ...legal[1]!.error, phase: "execute" },
+      { ...legal[2]!.error, safe_to_retry: true },
+      {
+        ...legal[2]!.error,
+        required_next_step: "capture_then_retry",
+      },
+      { ...legal[2]!.error, phase: "queue" },
+      { ...legal[3]!.error, safe_to_retry: false },
+      { ...legal[3]!.error, required_next_step: "none" },
+      { ...legal[3]!.error, phase: "queue" },
+    ];
+    for (const error of illegal) {
+      expect(
+        toolErrorSchema.safeParse({ ...base, error }).success,
+        JSON.stringify(error),
+      ).toBe(false);
+    }
+  });
+
   it("preserves definitive acknowledgement after failed post-read", () => {
     expect(
       mutationStateSchema.safeParse({
@@ -880,6 +998,7 @@ describe("strict canonical tool schemas", () => {
       error: {
         ...permissionError.error,
         code: "CAPABILITY_MISSING",
+        phase: "validate",
         required_next_step: "enable_capability",
         details: {
           ...permissionError.error.details,
@@ -909,6 +1028,15 @@ describe("strict canonical tool schemas", () => {
             ...capabilityError.error.details,
             capability: "keyboard",
           },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      TOOL_RESULT_SCHEMAS.jetkvm_input_mouse.safeParse({
+        ...capabilityError,
+        error: {
+          ...capabilityError.error,
+          phase: "authorize",
         },
       }).success,
     ).toBe(false);

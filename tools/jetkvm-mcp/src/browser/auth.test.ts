@@ -95,6 +95,22 @@ describe("credential source selection", () => {
     secret.dispose();
   });
 
+  it("zeroes the exact Buffer returned by the protected file reader", () => {
+    const source = Buffer.from("file-secret\r\n");
+    const secret = loadCredentialSecret(
+      { environmentVariable: "UNSET", filePath: "/protected/credential" },
+      {
+        readEnvironment: () => undefined,
+        deleteEnvironment: () => undefined,
+        readProtectedFile: () => source,
+      },
+    );
+
+    expect(secret.useUtf8((value) => value)).toBe("file-secret");
+    expect([...source]).toEqual(new Array(source.byteLength).fill(0));
+    secret.dispose();
+  });
+
   it.each([0o640, 0o604, 0o666])("rejects credential file mode %s", (mode) => {
     const directory = mkdtempSync(join(tmpdir(), "jetkvm-auth-mode-"));
     const path = join(directory, "credential");
@@ -250,6 +266,7 @@ describe("legacy SSE HTTP security boundary", () => {
       const policy = parseOperatorConfig({
         targetUrl: "http://192.168.1.20",
         allowInsecureHttp: true,
+        allowDangerousTargetHttp: true,
         legacySse: {
           enabled: true,
           bindHost: "0.0.0.0",

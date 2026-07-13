@@ -255,7 +255,6 @@
                     "SESSION_NOT_FOUND",
                     "STALE_SESSION_GENERATION",
                     "SESSION_TAKEN_OVER",
-                    "CONTROL_BUSY",
                     "SESSION_DRAINED",
                     "DEVICE_UNREACHABLE",
                     "CONNECTION_LOST",
@@ -282,10 +281,7 @@
                     "ATX_BUSY",
                     "POWER_STATE_UNVERIFIED",
                     "CANCELLED",
-                    "DEADLINE_EXCEEDED",
-                    "MUTATION_OUTCOME_UNKNOWN",
-                    "PARTIAL_VERIFICATION",
-                    "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+                    "DEADLINE_EXCEEDED"
                   ]
                 },
                 "details": {
@@ -544,7 +540,193 @@
                   "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
                 },
                 "phase": {
-                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/phase"
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute",
+                    "verify",
+                    "cleanup"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "MUTATION_OUTCOME_UNKNOWN"
+                },
+                "details": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details"
+                },
+                "outcome": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/2/properties/outcome"
+                },
+                "verification": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/2/properties/verification"
+                },
+                "safe_to_retry": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/2/properties/safe_to_retry"
+                },
+                "required_next_step": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/2/properties/required_next_step"
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "details",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "verify"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "PARTIAL_VERIFICATION"
+                },
+                "details": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "applied"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "device_ack_only"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "details",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "validate"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+                },
+                "details": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "details",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "authorize"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "CONTROL_BUSY"
+                },
+                "details": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "wait_or_request_takeover"
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "details",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "authorize"
                 },
                 "code": {
                   "type": "string",
@@ -607,7 +789,8 @@
                   "const": "none"
                 },
                 "safe_to_retry": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "const": false
                 },
                 "required_next_step": {
                   "type": "string",
@@ -633,7 +816,8 @@
                   "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
                 },
                 "phase": {
-                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/phase"
+                  "type": "string",
+                  "const": "validate"
                 },
                 "code": {
                   "type": "string",
@@ -692,7 +876,8 @@
                   "const": "none"
                 },
                 "safe_to_retry": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "const": false
                 },
                 "required_next_step": {
                   "type": "string",
@@ -726,5 +911,6 @@
       "additionalProperties": false
     }
   ],
-  "$schema": "http://json-schema.org/draft-07/schema#"
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object"
 }

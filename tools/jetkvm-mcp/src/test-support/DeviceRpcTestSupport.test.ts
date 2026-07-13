@@ -151,23 +151,81 @@ describe("ReplayDeviceRpcAdapter", () => {
     expect(() => replay.assertExhausted()).not.toThrow();
   });
 
-  it("rejects an unexpected epoch without consuming the tape", async () => {
+  it.each([
+    ["sessionId", "session-b"],
+    ["sessionGeneration", 99],
+    ["connectionEpoch", 99],
+    ["browserChannelGeneration", 99],
+    ["extra", true],
+  ] as const)(
+    "rejects a stale %s without consuming the tape",
+    async (field, value) => {
+      const tape: SanitizedReplayTape = {
+        version: 1,
+        plane: "device_rpc",
+        exchanges: [
+          {
+            operation: "readDisplayState",
+            request: json({ ref: binding }),
+            response: json(display),
+          },
+        ],
+      };
+      const replay = new ReplayDeviceRpcAdapter(binding, tape);
+
+      await expect(
+        replay.readDisplayState({ ...binding, [field]: value }, deadline),
+      ).rejects.toMatchObject({ name: "ReplayMismatchError", index: 0 });
+      await expect(replay.readDisplayState(binding, deadline)).resolves.toEqual(
+        display,
+      );
+      expect(() => replay.assertExhausted()).not.toThrow();
+    },
+  );
+
+  it.each([
+    [{ ...binding, sessionId: "" }, "session id"],
+    [{ ...binding, sessionGeneration: 0 }, "session generation"],
+    [{ ...binding, connectionEpoch: 0 }, "connection epoch"],
+    [{ ...binding, browserChannelGeneration: 0 }, "channel generation"],
+    [{ ...binding, extra: true }, "extra constructor field"],
+  ] as const)(
+    "rejects an invalid constructor binding: %s",
+    (candidate, _description) => {
+      const tape: SanitizedReplayTape = {
+        version: 1,
+        plane: "device_rpc",
+        exchanges: [],
+      };
+
+      expect(
+        () => new ReplayDeviceRpcAdapter(candidate as DeviceRpcBinding, tape),
+      ).toThrow(/binding is invalid/i);
+    },
+  );
+
+  it("snapshots its constructor binding and never migrates to a replacement", async () => {
+    const mutableBinding = { ...binding };
     const tape: SanitizedReplayTape = {
       version: 1,
       plane: "device_rpc",
       exchanges: [
         {
-          operation: "readDisplayState",
+          operation: "readEdid",
           request: json({ ref: binding }),
-          response: json(display),
+          response: json(edid),
         },
       ],
     };
-    const replay = new ReplayDeviceRpcAdapter(binding, tape);
+    const replay = new ReplayDeviceRpcAdapter(mutableBinding, tape);
+    mutableBinding.connectionEpoch = 99;
+    mutableBinding.browserChannelGeneration = 99;
 
+    expect(replay.binding).toEqual(binding);
     await expect(
-      replay.readDisplayState({ ...binding, connectionEpoch: 99 }, deadline),
+      replay.readEdid(mutableBinding, deadline),
     ).rejects.toMatchObject({ name: "ReplayMismatchError", index: 0 });
-    expect(() => replay.assertExhausted()).toThrow(/1 replay exchange/i);
+    await expect(replay.readEdid(binding, deadline)).resolves.toEqual(edid);
+    expect(() => replay.assertExhausted()).not.toThrow();
   });
 });

@@ -27,14 +27,53 @@
   ],
   "fault_script": [
     {
-      "id": "incumbent-busy",
+      "id": "strict-schema-before-controller",
       "after_step": null,
       "boundary": "before_admission",
-      "action": "Keep the incumbent generation active and hold a queued request until its deadline case is exercised.",
-      "expected_effect": "Schema-invalid input never admits, an expired queued request releases its reservation, and a valid non-takeover connect reports busy."
+      "action": "Submit the request containing the unsupported_option field to the strict handler schema.",
+      "expected_effect": "The schema rejects the complete request before controller admission and records zero controller and plane calls."
+    },
+    {
+      "id": "expire-before-admission",
+      "after_step": "reject-strict-schema",
+      "boundary": "before_admission",
+      "action": "Advance the fake monotonic clock past the valid request deadline while its admission and request-id reservations are held.",
+      "expected_effect": "The request returns not_sent before admission and releases both the queue slot and request-id reservation."
+    },
+    {
+      "id": "incumbent-busy",
+      "after_step": "deadline-before-admission",
+      "boundary": "before_admission",
+      "action": "Keep the incumbent generation active while a valid request omits takeover.",
+      "expected_effect": "The connect reports CONTROL_BUSY without changing the incumbent generation."
     }
   ],
   "steps": [
+    {
+      "id": "reject-strict-schema",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-schema-request",
+        "takeover": false,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection before controller admission with zero controller and plane calls."
+    },
+    {
+      "id": "deadline-before-admission",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-request",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent with the queue slot and request-id reservation released for a subsequent request."
+    },
     {
       "id": "connect-without-takeover",
       "tool": "jetkvm_session_connect",
