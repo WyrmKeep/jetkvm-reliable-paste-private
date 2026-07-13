@@ -354,7 +354,7 @@ describe("DeviceRpcAdapter timing and replacement fences", () => {
     expect(nextChannel.writes()).toHaveLength(1);
     nextChannel.respondToWrite(0, displayWireResult());
     await expect(current).resolves.toMatchObject({
-      signal: { value: "present" },
+      signal: { value: "unknown", source: "none" },
     });
   });
 });
@@ -377,12 +377,12 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     channel.respondToWrite(0, displayWireResult());
 
     await expect(pending).resolves.toMatchObject({
-      signal: { value: "present", source: "cached_snapshot" },
-      resolution: { value: { width: 1920, height: 1080, refreshHz: null } },
+      signal: { value: "unknown", source: "none", freshness: "unknown" },
+      resolution: { value: null, source: "none", freshness: "unknown" },
     });
   });
 
-  it("adapts the actual flat native.VideoState snapshot and omits proxy streaming", async () => {
+  it("validates a flat native.VideoState snapshot without fabricating observation metadata", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
       observedAt: () => "2026-07-13T00:00:00.000Z",
@@ -400,25 +400,25 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
 
     await expect(pending).resolves.toEqual({
       signal: {
-        value: "no_lock",
-        observedAt: "2026-07-13T00:00:00.000Z",
-        ageMs: 0,
-        freshness: "fresh",
-        source: "cached_snapshot",
+        value: "unknown",
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+        source: "none",
       },
       resolution: {
-        value: { width: 1920, height: 1080, refreshHz: null },
-        observedAt: "2026-07-13T00:00:00.000Z",
-        ageMs: 0,
-        freshness: "fresh",
-        source: "cached_snapshot",
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+        source: "none",
       },
       fps: {
-        value: 60,
-        observedAt: "2026-07-13T00:00:00.000Z",
-        ageMs: 0,
-        freshness: "fresh",
-        source: "cached_snapshot",
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+        source: "none",
       },
       qualification: "current_binding",
     });
@@ -494,7 +494,35 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     channel.respondToWrite(0, displayWireResult());
 
     await expect(pending).resolves.toMatchObject({
-      signal: { value: "present", source: "cached_snapshot" },
+      signal: { value: "out_of_range", source: "cached_event" },
+      qualification: "current_binding",
+    });
+  });
+
+  it("ignores foreign shared-channel responses and no-params notifications", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.emitRaw(
+      JSON.stringify({ jsonrpc: "2.0", id: 17, result: { ui: true } }),
+    );
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "ui-private:1",
+        result: { ui: true },
+      }),
+    );
+    channel.emitRaw(
+      JSON.stringify({ jsonrpc: "2.0", method: "otherSessionConnected" }),
+    );
+    channel.respondToWrite(0, displayWireResult());
+
+    await expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
       qualification: "current_binding",
     });
   });
@@ -512,7 +540,7 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     const second = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(2);
     const secondResult = expect(second).resolves.toMatchObject({
-      signal: { value: "present" },
+      signal: { value: "unknown", source: "none" },
     });
     channel.respondToWrite(0, displayWireResult());
     channel.respondToWrite(1, displayWireResult());
@@ -542,11 +570,11 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     channel.respondToWrite(currentIndex, displayWireResult());
 
     await expect(current).resolves.toMatchObject({
-      signal: { value: "present" },
+      signal: { value: "unknown", source: "none" },
     });
   });
 
-  it("fails closed on a well-formed response with a foreign correlation id", async () => {
+  it("ignores a well-formed response with a foreign correlation id", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
     const pending = adapter.readDisplayState(BINDING, deadline());
@@ -559,12 +587,10 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
         result: displayWireResult(),
       }),
     );
-    const error = await pending.catch((caught) => caught);
+    channel.respondToWrite(0, displayWireResult());
 
-    expectDeviceError(error, {
-      code: "MALFORMED_RESPONSE",
-      boundary: "ack",
-      outcome: "unknown",
+    await expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
     });
   });
 
@@ -804,7 +830,7 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     );
 
     await expect(pending).resolves.toMatchObject({
-      resolution: { value: { width: Number.MAX_SAFE_INTEGER } },
+      resolution: { value: null, source: "none", freshness: "unknown" },
     });
   });
 
@@ -870,12 +896,21 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
-  it("redacts malformed downstream payloads on the read path", async () => {
+  it("fails closed and redacts malformed envelopes claiming the private adapter ID", async () => {
     const channel = new FakeDeviceRpcChannel();
-    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
     const pending = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
-    channel.emitRaw('{"credential":"super-secret","id":');
+    const correlationId = "device-rpc:adapter-a:1:1";
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "1.0",
+        id: correlationId,
+        credential: "super-secret",
+      }),
+    );
     const error = await pending.catch((caught) => caught);
 
     expectDeviceError(error, {
@@ -915,32 +950,44 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
-  it("ages every observed native.VideoState fact from the local observation time", async () => {
+  it("keeps event age and provenance across a later callback-cached poll", async () => {
     let nowMs = 10_000;
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
       now: () => nowMs,
       observedAt: () => "2026-07-13T00:00:00.000Z",
     });
+    channel.emitRaw(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "videoInputState",
+        params: displayWireResult(),
+      }),
+    );
     const first = adapter.readDisplayState(BINDING, deadline());
     await channel.waitForWrites(1);
     channel.respondToWrite(0, displayWireResult());
-    await first;
+    await expect(first).resolves.toMatchObject({
+      signal: { source: "cached_event", ageMs: 0, freshness: "fresh" },
+    });
+
     nowMs += 1_250;
+    const second = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(2);
+    channel.respondToWrite(1, displayWireResult());
+    await expect(second).resolves.toMatchObject({
+      signal: { source: "cached_event", ageMs: 1_250, freshness: "stale" },
+      resolution: { source: "cached_event", ageMs: 1_250, freshness: "stale" },
+      fps: { source: "cached_event", ageMs: 1_250, freshness: "stale" },
+      qualification: "current_binding",
+    });
+
     channel.close();
-
     const cached = await adapter.readDisplayState(BINDING, deadline());
-
     expect(cached).toMatchObject({
-      signal: { ageMs: 1_250, freshness: "stale" },
-      resolution: { ageMs: 1_250, freshness: "stale" },
-      fps: { ageMs: 1_250, freshness: "stale" },
+      signal: { source: "cached_event", ageMs: 1_250, freshness: "stale" },
       qualification: "binding_lost_cached_only",
     });
-    expect(channel.writes()).toHaveLength(1);
-    await expect(adapter.readEdid(BINDING, deadline())).rejects.toMatchObject({
-      code: "CONNECTION_LOST",
-      outcome: "not_sent",
-    });
+    expect(channel.writes()).toHaveLength(2);
   });
 });

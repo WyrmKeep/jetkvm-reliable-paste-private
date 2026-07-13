@@ -12,12 +12,16 @@ import {
 } from "../../device/DeviceRpcAdapter.js";
 import {
   MAX_OBSERVATION_AGE_MS,
+  assertBrowserCaptureArtifact,
+  type BrowserCaptureArtifact,
+  type BrowserCaptureImage,
   type BrowserConnection,
   type BrowserPlane,
   type CaptureRequest,
   type KeyboardRequest,
   type MouseRequest,
   type MutationReceipt,
+  type MonotonicClock,
   type Observation,
   type PasteReceipt,
   type PasteRequest,
@@ -33,6 +37,7 @@ import {
 
 const MAX_JSON_INTEGER = Number.MAX_SAFE_INTEGER;
 const opaqueIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
+const FROZEN_MONOTONIC_CLOCK: MonotonicClock = { now: () => 0 };
 const nonNegativeIntegerSchema = z.number().int().min(0).max(MAX_JSON_INTEGER);
 const positiveIntegerSchema = z.number().int().min(1).max(MAX_JSON_INTEGER);
 const bindingSchema = z
@@ -157,6 +162,7 @@ function bindingMatches(
 
 type ObservationLedgerEntry = {
   readonly observation: Observation;
+  readonly registeredAtMs: number;
   state: "available" | "reserved" | "consumed";
 };
 
@@ -170,7 +176,11 @@ export class FakeBrowserPlane implements BrowserPlane {
   private lastPublishedBinding?: DeviceRpcBinding;
   private closed = true;
 
-  public constructor(public readonly deviceRpc: DeviceRpcAdapter) {}
+  public constructor(
+    public readonly deviceRpc: DeviceRpcAdapter,
+    private readonly monotonicClock: MonotonicClock = FROZEN_MONOTONIC_CLOCK,
+    private readonly captureImage?: BrowserCaptureImage,
+  ) {}
 
   public loadScenario(scenario: PlaneScenario): void {
     this.scenarios.loadScenario(scenario);
@@ -245,7 +255,7 @@ export class FakeBrowserPlane implements BrowserPlane {
     ref: SessionRef,
     request: CaptureRequest,
     deadline: Deadline,
-  ): Promise<Observation> {
+  ): Promise<BrowserCaptureArtifact> {
     this.assertPublishedRef(ref);
     const result = this.requiredResult(
       "capture",
@@ -270,11 +280,22 @@ export class FakeBrowserPlane implements BrowserPlane {
     ) {
       throw new Error("Fake BrowserPlane capture result is invalid.");
     }
+    if (this.captureImage === undefined) {
+      throw new Error(
+        "Fake BrowserPlane capture requires an authorized image fixture.",
+      );
+    }
+    const artifact: BrowserCaptureArtifact = {
+      observation: parsed.data,
+      image: this.captureImage,
+    };
+    assertBrowserCaptureArtifact(artifact);
     this.observations.set(parsed.data.observationId, {
       observation: parsed.data,
+      registeredAtMs: this.readMonotonicTick(),
       state: "available",
     });
-    return parsed.data;
+    return artifact;
   }
 
   public async mouse(
@@ -414,9 +435,6 @@ export class FakeBrowserPlane implements BrowserPlane {
 
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
     this.assertPublishedRef(ref);
-    this.closed = true;
-    delete this.publishedConnection;
-    this.observations.clear();
     const result = this.scenarios.consume(
       "close",
       { ref: { ...ref } },
@@ -425,6 +443,9 @@ export class FakeBrowserPlane implements BrowserPlane {
     if (result !== undefined) {
       throw new Error("Fake BrowserPlane close result is invalid.");
     }
+    this.closed = true;
+    delete this.publishedConnection;
+    this.observations.clear();
   }
 
   private withObservation<T>(
@@ -473,6 +494,7 @@ export class FakeBrowserPlane implements BrowserPlane {
   ): void {
     const publication = this.publishedConnection;
     const observation = entry.observation;
+    const ageMs = this.observationAgeMs(entry);
     if (
       publication === undefined ||
       entry.state !== expectedState ||
@@ -480,12 +502,35 @@ export class FakeBrowserPlane implements BrowserPlane {
       observation.sessionGeneration !== ref.sessionGeneration ||
       observation.connectionEpoch !== publication.binding.connectionEpoch ||
       observation.displayGeneration !== publication.displayGeneration ||
-      observation.monotonicAgeMs > MAX_OBSERVATION_AGE_MS
+      ageMs > MAX_OBSERVATION_AGE_MS
     ) {
       throw new Error(
         "Fake BrowserPlane observation is stale, foreign, or consumed.",
       );
     }
+  }
+  private observationAgeMs(entry: ObservationLedgerEntry): number {
+    const now = this.readMonotonicTick();
+    const elapsed = now - entry.registeredAtMs;
+    const ageMs = entry.observation.monotonicAgeMs + elapsed;
+    if (
+      !Number.isSafeInteger(elapsed) ||
+      elapsed < 0 ||
+      !Number.isSafeInteger(ageMs)
+    ) {
+      throw new Error(
+        "Fake BrowserPlane monotonic observation age is invalid.",
+      );
+    }
+    return ageMs;
+  }
+
+  private readMonotonicTick(): number {
+    const tick = this.monotonicClock.now();
+    if (!Number.isSafeInteger(tick) || tick < 0) {
+      throw new Error("Fake BrowserPlane monotonic clock is invalid.");
+    }
+    return tick;
   }
 
   private parseConnection(

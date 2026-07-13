@@ -288,6 +288,88 @@ describe("structured redacting logger", () => {
     );
   });
 
+  it("redacts plain-object accessors without invoking getters", () => {
+    let getterCalls = 0;
+    const throwOnRead = (): never => {
+      getterCalls += 1;
+      throw new Error("attacker getter called");
+    };
+    const nested: Record<string, unknown> = {
+      code: "NESTED_READY",
+    };
+    Object.defineProperty(nested, "data", {
+      enumerable: true,
+      get: throwOnRead,
+    });
+    const typeProbe: Record<string, unknown> = {
+      data: "type-probe-data-secret",
+      code: "TYPE_PROBE",
+    };
+    Object.defineProperty(typeProbe, "type", {
+      enumerable: true,
+      get: throwOnRead,
+    });
+    const mimeProbe: Record<string, unknown> = {
+      data: "mime-probe-data-secret",
+      status: "ready",
+    };
+    Object.defineProperty(mimeProbe, "mimeType", {
+      enumerable: true,
+      get: throwOnRead,
+    });
+    const fields: Record<string, unknown> = {
+      status: "ready",
+      nested,
+      typeProbe,
+      mimeProbe,
+    };
+    Object.defineProperties(fields, {
+      authorization: {
+        enumerable: true,
+        get: throwOnRead,
+      },
+      safeMemo: {
+        enumerable: true,
+        get: throwOnRead,
+      },
+    });
+    const lines: string[] = [];
+
+    expect(() =>
+      createStructuredLogger({ write: (line) => lines.push(line) }).info(
+        "accessor.received",
+        fields,
+      ),
+    ).not.toThrow();
+    expect(getterCalls).toBe(0);
+    expect(lines).toHaveLength(1);
+    const record: unknown = JSON.parse(lines[0] ?? "");
+    requireRecord(record);
+    requireRecord(record.fields);
+    expect(record.fields).toEqual({
+      status: "ready",
+      nested: {
+        code: "NESTED_READY",
+        data: "[REDACTED]",
+      },
+      typeProbe: {
+        data: "[REDACTED]",
+        code: "TYPE_PROBE",
+        type: "[REDACTED]",
+      },
+      mimeProbe: {
+        data: "[REDACTED]",
+        status: "ready",
+        mimeType: "[REDACTED]",
+      },
+      authorization: "[REDACTED]",
+      safeMemo: "[REDACTED]",
+    });
+    expect(lines.join("")).not.toMatch(
+      /type-probe-data-secret|mime-probe-data-secret|attacker getter called/,
+    );
+  });
+
   it("escapes every physical and Unicode line separator before sink output", () => {
     const lines: string[] = [];
     const note = "safe\u2028logical\u2029record\ncarriage\rreturn";

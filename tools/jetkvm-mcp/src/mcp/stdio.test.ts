@@ -725,33 +725,52 @@ describe("stdio adapter", () => {
     expect(errors).toEqual([]);
   });
 
-  it("redacts raw SDK parse errors and continues with the next valid frame", async () => {
+  it("redacts malformed and schema-invalid frames from every exposed error hook", async () => {
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const collector = new JsonLineCollector(stdout);
     const errors: Error[] = [];
+    const serverErrors: Error[] = [];
     const handle = await startStdioServer(completeRegistry(), {
       stdin,
       stdout,
       onError: (error) => errors.push(error),
     });
     handles.push(handle);
-    const attackerSentinel = "PRIVATE_ATTACKER_SENTINEL";
+    handle.server.onerror = (error) => serverErrors.push(error);
+    const malformedSentinel = "PRIVATE_MALFORMED_SENTINEL";
+    const schemaSentinel = "PRIVATE_SCHEMA_SENTINEL";
 
-    stdin.write(`{"jsonrpc":"2.0","id":1,"method":${attackerSentinel}}\n`);
-    send(stdin, initialize(2));
+    stdin.write(`{"jsonrpc":"2.0","id":1,"method":${malformedSentinel}}\n`);
+    stdin.write(
+      `${JSON.stringify({
+        jsonrpc: schemaSentinel,
+        id: 2,
+        method: "tools/list",
+        params: {},
+      })}\n`,
+    );
+    send(stdin, initialize(3));
     await collector.waitForCount(1);
 
     expect(errors.map((error) => error.message)).toEqual([
       "Malformed stdio protocol frame",
+      "Malformed stdio protocol frame",
     ]);
-    expect(errors[0]?.stack).not.toContain(attackerSentinel);
+    expect(serverErrors.map((error) => error.message)).toEqual([
+      "Malformed stdio protocol frame",
+      "Malformed stdio protocol frame",
+    ]);
+    for (const error of [...errors, ...serverErrors]) {
+      expect(error.stack).not.toContain(malformedSentinel);
+      expect(error.stack).not.toContain(schemaSentinel);
+    }
     expect(collector.messages).toHaveLength(1);
     expect(collector.messages[0]).toMatchObject({
-      id: 2,
+      id: 3,
       result: expect.any(Object),
     });
-    expect(collector.rawChunks.join("")).not.toContain(attackerSentinel);
+    expect(handle.isClosed()).toBe(false);
   });
 
   it("accepts a canonical maximum-byte paste with worst-case JSON escaping", async () => {

@@ -17,6 +17,10 @@ import {
   JETKVM_TOOL_NAMES,
   type JetKvmToolName,
 } from "../domain.js";
+import type { DeviceRpcAdapter } from "../device/DeviceRpcAdapter.js";
+import { createStructuredLogger } from "../observability/logger.js";
+import { FakeBrowserPlane } from "../test-support/fakes/FakeBrowserPlane.js";
+import { toMcpSuccessResult } from "./results.js";
 import {
   MCP_SERVER_BUSY_ERROR_CODE,
   TOOL_HANDLER_GLOBAL_CAPACITY,
@@ -242,52 +246,138 @@ describe("createMcpServer", () => {
     });
   });
 
-  it("maps an authorized PNG capture end to end without duplicating image bytes", async () => {
+  it("maps a BrowserPlane capture artifact through an initialized tools/call", async () => {
     const bytes = Uint8Array.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     ]);
     const data = Buffer.from(bytes).toString("base64");
-    const envelope = {
-      ok: true as const,
-      tool: "jetkvm_display_capture" as const,
-      operation_id: "operation-png",
-      session_id: "session-1",
-      session_generation: 1,
-      duration_ms: 1,
-      result: {
-        observation_id: "observation-png",
-        connection_epoch: 1,
-        display_generation: 1,
-        frame_id: "frame-png",
-        captured_at: "2026-07-13T00:00:00.000Z",
-        source_width: 1,
-        source_height: 1,
-        image_width: 1,
-        image_height: 1,
-        rotation: 0 as const,
-        geometry: {
-          content_x: 0,
-          content_y: 0,
-          content_width: 1,
-          content_height: 1,
-        },
-        image: {
-          content_index: 1,
-          mime_type: "image/png" as const,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          byte_length: bytes.byteLength,
-        },
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const binding = {
+      sessionId: "session-1",
+      sessionGeneration: 1,
+      connectionEpoch: 1,
+      browserChannelGeneration: 1,
+    };
+    const ref = {
+      sessionId: binding.sessionId,
+      sessionGeneration: binding.sessionGeneration,
+    };
+    const adapter: DeviceRpcAdapter = {
+      binding,
+      readDisplayState: async () => {
+        throw new Error("Unexpected display-state read.");
+      },
+      readEdid: async () => {
+        throw new Error("Unexpected EDID read.");
+      },
+      performAtx: async () => {
+        throw new Error("Unexpected ATX mutation.");
       },
     };
+    const plane = new FakeBrowserPlane(adapter, undefined, {
+      mimeType: "image/png",
+      bytes,
+    });
+    plane.loadScenario({
+      version: 1,
+      steps: [
+        {
+          operation: "connect",
+          result: {
+            state: "ready",
+            ref,
+            binding,
+            connectionEpoch: binding.connectionEpoch,
+            browserChannelGeneration: binding.browserChannelGeneration,
+            displayGeneration: 1,
+          },
+        },
+        {
+          operation: "capture",
+          result: {
+            observationId: "observation-png",
+            sessionId: ref.sessionId,
+            sessionGeneration: ref.sessionGeneration,
+            connectionEpoch: binding.connectionEpoch,
+            displayGeneration: 1,
+            frameId: "frame-png",
+            capturedAt: "2026-07-13T00:00:00.000Z",
+            monotonicAgeMs: 0,
+            sourceWidth: 1,
+            sourceHeight: 1,
+            imageWidth: 1,
+            imageHeight: 1,
+            rotation: 0,
+            geometry: {
+              contentX: 0,
+              contentY: 0,
+              contentWidth: 1,
+              contentHeight: 1,
+            },
+            format: "png",
+            sha256,
+            byteLength: bytes.byteLength,
+          },
+        },
+      ],
+    });
+    const deadline = {
+      timeoutMs: 100,
+      signal: new AbortController().signal,
+    };
+    await plane.connect(ref, deadline);
+    const logLines: string[] = [];
+    const logger = createStructuredLogger({
+      write: (line) => logLines.push(line),
+      now: () => new Date("2026-07-13T00:00:00.000Z"),
+    });
     const client = await connectedClient(
       completeRegistry({
-        jetkvm_display_capture: async () => ({
-          structuredContent: envelope,
-          content: [
-            { type: "text", text: JSON.stringify(envelope) },
-            { type: "image", data, mimeType: "image/png" },
-          ],
-        }),
+        jetkvm_display_capture: async () => {
+          const artifact = await plane.capture(
+            ref,
+            { format: "png", maxWidth: 64, maxHeight: 64 },
+            deadline,
+          );
+          const observation = artifact.observation;
+          const envelope = {
+            ok: true as const,
+            tool: "jetkvm_display_capture" as const,
+            operation_id: "operation-png",
+            session_id: observation.sessionId,
+            session_generation: observation.sessionGeneration,
+            duration_ms: 1,
+            result: {
+              observation_id: observation.observationId,
+              connection_epoch: observation.connectionEpoch,
+              display_generation: observation.displayGeneration,
+              frame_id: observation.frameId,
+              captured_at: observation.capturedAt,
+              source_width: observation.sourceWidth,
+              source_height: observation.sourceHeight,
+              image_width: observation.imageWidth,
+              image_height: observation.imageHeight,
+              rotation: observation.rotation,
+              geometry: {
+                content_x: observation.geometry.contentX,
+                content_y: observation.geometry.contentY,
+                content_width: observation.geometry.contentWidth,
+                content_height: observation.geometry.contentHeight,
+              },
+              image: {
+                content_index: 1 as const,
+                mime_type: artifact.image.mimeType,
+                sha256: observation.sha256,
+                byte_length: observation.byteLength,
+              },
+            },
+          };
+          logger.info("capture.complete", { artifact });
+          return toMcpSuccessResult(envelope, {
+            bytes: artifact.image.bytes,
+            mime_type: artifact.image.mimeType,
+          });
+        },
       }),
     );
 
@@ -297,16 +387,42 @@ describe("createMcpServer", () => {
         session_id: "session-1",
         session_generation: 1,
         format: "png",
+        max_width: 64,
+        max_height: 64,
         timeout_ms: 100,
       },
     });
+    const content = result.content as CallToolResult["content"];
 
-    expect(result.content).toEqual([
-      { type: "text", text: JSON.stringify(envelope) },
+    expect(content.filter((block) => block.type === "image")).toEqual([
       { type: "image", data, mimeType: "image/png" },
     ]);
-    expect(result.structuredContent).toEqual(envelope);
-    expect(JSON.stringify(result.structuredContent)).not.toContain(data);
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      result: {
+        observation_id: "observation-png",
+        image: {
+          content_index: 1,
+          mime_type: "image/png",
+          sha256,
+          byte_length: bytes.byteLength,
+        },
+      },
+    });
+    expect(content[0]).toEqual({
+      type: "text",
+      text: JSON.stringify(result.structuredContent),
+    });
+    const structured = JSON.stringify(result.structuredContent);
+    const text = content[0]?.type === "text" ? content[0].text : "";
+    const logs = logLines.join("");
+    const planeEvents = JSON.stringify(plane.events());
+    for (const byteFreeSurface of [structured, text, logs, planeEvents]) {
+      expect(byteFreeSurface).not.toContain(data);
+      expect(byteFreeSurface).not.toContain('"bytes"');
+      expect(byteFreeSurface).not.toContain('"base64"');
+    }
+    expect(() => plane.assertExhausted()).not.toThrow();
   });
 
   it("passes only the application-owned allowlisted handler context", async () => {
@@ -1942,6 +2058,21 @@ describe("createMcpServer", () => {
         arguments: statusArguments,
       }),
     ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+    await expect(
+      clientB.callTool({
+        name: "jetkvm_session_status",
+        arguments: { ...statusArguments, session_generation: 2 },
+      }),
+    ).rejects.toMatchObject({ code: MCP_SERVER_BUSY_ERROR_CODE });
+    const distinctSessionActive = clientB.callTool({
+      name: "jetkvm_session_status",
+      arguments: { ...statusArguments, session_id: "distinct-session-id" },
+    });
+    await vi.waitFor(() =>
+      expect(signalsA.length + signalsB.length).toBe(
+        TOOL_HANDLER_PER_SESSION_CAPACITY + 1,
+      ),
+    );
 
     lifetimeA.abort();
     await vi.waitFor(() => expect(signalsA[0]?.aborted).toBe(true));
@@ -1964,7 +2095,11 @@ describe("createMcpServer", () => {
 
     lifetimeB.abort();
     replacementLifetime.abort();
-    await Promise.allSettled([activeB, replacementActive]);
+    await Promise.allSettled([
+      activeB,
+      distinctSessionActive,
+      replacementActive,
+    ]);
   });
 
   it("keeps close pending until aborted handlers finish cleanup and release admission", async () => {

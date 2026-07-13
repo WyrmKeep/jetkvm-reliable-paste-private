@@ -661,6 +661,10 @@ export async function startStdioServer(
 
   try {
     await server.connect(transport);
+    const sdkTransportErrorHandler = transport.onerror;
+    transport.onerror = () => {
+      sdkTransportErrorHandler?.(new Error("Malformed stdio protocol frame"));
+    };
     gate.start();
   } catch (error) {
     await close();

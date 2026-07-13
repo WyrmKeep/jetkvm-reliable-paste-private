@@ -172,7 +172,7 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     ref: DeviceRpcBinding,
     deadline: Deadline,
   ): Promise<CachedDisplayState> {
-    this.validateDeadline(deadline);
+    this.validateDeadline(deadline, 30_000);
     this.validateRef(ref);
     const response = this.replay.consume("readDisplayState", {
       ref: { ...ref },
@@ -187,7 +187,7 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     ref: DeviceRpcBinding,
     deadline: Deadline,
   ): Promise<QualifiedEdidRead> {
-    this.validateDeadline(deadline);
+    this.validateDeadline(deadline, 30_000);
     this.validateRef(ref);
     const response = this.replay.consume("readEdid", { ref: { ...ref } });
     const parsed = edidSchema.safeParse(response);
@@ -201,7 +201,7 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     request: { readonly requestId: string; readonly action: AtxAction },
     deadline: Deadline,
   ): Promise<AtxWireReceipt> {
-    this.validateDeadline(deadline);
+    this.validateDeadline(deadline, 60_000);
     this.validateRef(ref);
     const response = this.replay.consume("performAtx", {
       ref: { ...ref },
@@ -236,11 +236,15 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     }
   }
 
-  private validateDeadline(deadline: Deadline): void {
-    if (deadline.signal.aborted)
-      throw new Error("Replay adapter call was cancelled before admission.");
-    if (!Number.isSafeInteger(deadline.timeoutMs) || deadline.timeoutMs < 100) {
+  private validateDeadline(deadline: Deadline, maximumMs: number): void {
+    if (
+      !Number.isSafeInteger(deadline.timeoutMs) ||
+      deadline.timeoutMs < 1 ||
+      deadline.timeoutMs > maximumMs
+    ) {
       throw new Error("Replay adapter deadline is invalid.");
     }
+    if (deadline.signal.aborted)
+      throw new Error("Replay adapter call was cancelled before admission.");
   }
 }

@@ -483,7 +483,8 @@ type ReplayErrorCode =
   | "BINDING_REPLACED"
   | "WRITE_REJECTED"
   | "DUPLICATE_RESPONSE"
-  | "DOWNSTREAM_ERROR";
+  | "DOWNSTREAM_ERROR"
+  | "INCOMPATIBLE_DOWNSTREAM";
 type ReplayErrorBoundary =
   | "admission"
   | "queue"
@@ -931,6 +932,15 @@ const ERROR_RULES = {
     verification: "none",
     counts: "zero",
   },
+  incompatibleDownstreamAdmission: {
+    code: "INCOMPATIBLE_DOWNSTREAM",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
   duplicateResponseAck: {
     code: "DUPLICATE_RESPONSE",
     boundary: "ack",
@@ -1158,6 +1168,7 @@ const deviceRpcReadErrorSchema = replayErrorSchema(
 const deviceRpcAtxErrorSchema = replayErrorSchema(false, [
   ...deviceRpcCommonErrorRules,
   ERROR_RULES.invalidRequestAdmission,
+  ERROR_RULES.incompatibleDownstreamAdmission,
 ]);
 
 type ReplayResponseCorrelation = (

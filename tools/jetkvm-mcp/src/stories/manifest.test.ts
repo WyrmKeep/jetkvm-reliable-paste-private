@@ -977,6 +977,36 @@ describe("reviewed story branch execution", () => {
     );
   });
 
+  it("requires every partial-verification mutation to have an exact immediate fault arm, call, and clear", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const misplacedInitialArm = structuredClone(stories);
+    const initialArm = misplacedInitialArm[16]!.fault_script.find(
+      ({ id }) => id === "arm-power-with-post-read-failure",
+    )!;
+    initialArm.after_step = "restore-and-prove-after-power-post-read-failure";
+    expect(() => validateAcceptanceStories(misplacedInitialArm)).toThrow(
+      /partial-verification.*arm.*call.*clear|partial verification.*bracket/i,
+    );
+
+    for (const clearId of [
+      "clear-power-with-post-read-failure",
+      "clear-partial-verification-jetkvm-session-connect",
+      "clear-partial-verification-jetkvm-session-reconnect",
+      "clear-partial-verification-jetkvm-input-keyboard",
+      "clear-partial-verification-jetkvm-input-mouse",
+      "clear-partial-verification-jetkvm-input-paste",
+      "clear-partial-verification-jetkvm-power-control",
+    ]) {
+      const missingClear = structuredClone(stories);
+      missingClear[16]!.fault_script = missingClear[16]!.fault_script.filter(
+        ({ id }) => id !== clearId,
+      );
+      expect(() => validateAcceptanceStories(missingClear), clearId).toThrow(
+        /partial-verification.*arm.*call.*clear|partial verification.*bracket/i,
+      );
+    }
+  });
+
   it("rejects applied connect and reconnect calls with impossible session lifecycle state", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     for (const [storyIndex, retireId, reconnectId] of [
@@ -992,9 +1022,19 @@ describe("reviewed story branch execution", () => {
       ],
     ] as const) {
       const activeIncumbent = structuredClone(stories);
-      activeIncumbent[storyIndex]!.steps = activeIncumbent[
-        storyIndex
-      ]!.steps.filter(({ id }) => id !== retireId);
+      const lifecycleStory = activeIncumbent[storyIndex]!;
+      const retireIndex = lifecycleStory.steps.findIndex(
+        ({ id }) => id === retireId,
+      );
+      const precedingStepId = lifecycleStory.steps[retireIndex - 1]!.id;
+      for (const fault of lifecycleStory.fault_script) {
+        if (fault.after_step === retireId) {
+          fault.after_step = precedingStepId;
+        }
+      }
+      lifecycleStory.steps = lifecycleStory.steps.filter(
+        ({ id }) => id !== retireId,
+      );
       expect(
         () => validateAcceptanceStories(activeIncumbent),
         `${activeIncumbent[storyIndex]!.id}:connect`,

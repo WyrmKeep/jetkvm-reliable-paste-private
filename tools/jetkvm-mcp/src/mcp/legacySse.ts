@@ -211,6 +211,7 @@ export class LegacySseAdapter {
         void this.handleRequest(request, response);
       },
     );
+    this.#installExpectationHandlers(server);
     installAbsoluteHeaderDeadline(
       server,
       this.#securityPolicy.requestHeaderTimeoutMs,
@@ -234,6 +235,7 @@ export class LegacySseAdapter {
         void this.handleRequest(request, response);
       },
     );
+    this.#installExpectationHandlers(server);
     installAbsoluteTlsHandshakeDeadline(server, handshakeTimeout);
     installAbsoluteHeaderDeadline(server, handshakeTimeout, "https");
     return this.#proveAndAttachServer(
@@ -242,6 +244,15 @@ export class LegacySseAdapter {
       handshakeTimeout,
       handshakeTimeout,
     );
+  }
+
+  #installExpectationHandlers(server: LegacySseNodeServer): void {
+    server.on("checkContinue", (request, response) => {
+      void this.#handleRequest(request, response, "continue");
+    });
+    server.on("checkExpectation", (request, response) => {
+      void this.#handleRequest(request, response, "unsupported");
+    });
   }
 
   attachServer(server: LegacySseNodeServer): void {
@@ -387,6 +398,14 @@ export class LegacySseAdapter {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
+    await this.#handleRequest(request, response, "none");
+  }
+
+  async #handleRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    expectation: "none" | "continue" | "unsupported",
+  ): Promise<void> {
     try {
       if (!this.#admitRouteAttempt()) {
         sendPreBodyRejection(request, response, 429, "Too Many Requests");
@@ -424,6 +443,10 @@ export class LegacySseAdapter {
       const expectedMethod = isSseRoute ? "GET" : "POST";
       const principal = this.#authorize(request, expectedMethod, response);
       if (principal === undefined) return;
+      if (expectation === "unsupported") {
+        sendPreBodyRejection(request, response, 417, "Expectation Failed");
+        return;
+      }
       if (request.method !== expectedMethod) {
         sendPreBodyRejection(request, response, 405, "Method Not Allowed");
         return;
@@ -447,6 +470,7 @@ export class LegacySseAdapter {
         await this.#openStream(response, principal);
         return;
       }
+      if (expectation === "continue") response.writeContinue();
       await this.#handlePost(request, response, url, principal);
     } catch {
       this.#onDiagnostic?.({ code: "unexpected_error" });
@@ -1059,7 +1083,10 @@ function installAbsoluteHeaderDeadline(
     (server as HttpsServer).on("secureConnection", registerSocket);
   }
 
-  server.prependListener("request", (request, response) => {
+  const admitHeaders = (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): void => {
     const socket = request.socket;
     const state = states.get(socket);
     if (state === undefined) {
@@ -1086,7 +1113,10 @@ function installAbsoluteHeaderDeadline(
     };
     response.once("finish", settleRequest);
     response.once("close", settleRequest);
-  });
+  };
+  server.prependListener("request", admitHeaders);
+  server.prependListener("checkContinue", admitHeaders);
+  server.prependListener("checkExpectation", admitHeaders);
 }
 
 function installAbsoluteTlsHandshakeDeadline(

@@ -29,11 +29,11 @@ class FakeChild extends EventEmitter {
     this.stderr = new FakeStream();
     this.stdinWriteCount = 0;
     this.stdin = {
-      write: () => {
+      write: (chunk) => {
         this.stdinWriteCount += 1;
-        this.onStdinWrite?.();
+        this.onStdinWrite?.(chunk);
       },
-      end() {},
+      end: () => this.onStdinEnd?.(),
     };
     this.killSignals = [];
     this.autoCloseOnKill = true;
@@ -130,6 +130,149 @@ for (const [modulePath, exportName] of [
     );
   });
 }
+
+const INSTALLED_TOOL_NAMES = [
+  "jetkvm_display_capture",
+  "jetkvm_display_status",
+  "jetkvm_input_keyboard",
+  "jetkvm_input_mouse",
+  "jetkvm_input_paste",
+  "jetkvm_input_release",
+  "jetkvm_power_control",
+  "jetkvm_session_connect",
+  "jetkvm_session_reconnect",
+  "jetkvm_session_status",
+];
+
+function successfulStdioChild(stderrChunks) {
+  const child = new FakeChild();
+  let input = "";
+  const respond = (message) => {
+    child.stdout.emit("data", `${JSON.stringify(message)}\n`);
+  };
+  child.onStdinWrite = (chunk) => {
+    input += chunk;
+    while (true) {
+      const newline = input.indexOf("\n");
+      if (newline < 0) return;
+      const line = input.slice(0, newline);
+      input = input.slice(newline + 1);
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (message.method === "initialize") {
+        respond({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { protocolVersion: "2025-11-25" },
+        });
+      } else if (message.method === "tools/list") {
+        respond({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            tools: INSTALLED_TOOL_NAMES.map((name) => ({ name })),
+          },
+        });
+      } else if (message.method === "tools/call" && message.id !== 4) {
+        respond({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { structuredContent: { ok: true } },
+        });
+      }
+    }
+  };
+  child.onStdinEnd = () => {
+    queueMicrotask(() => {
+      child.emit("exit", 0, null);
+      setTimeout(() => {
+        for (const chunk of stderrChunks) child.stderr.emit("data", chunk);
+        child.stdout.emit("end");
+        child.stderr.emit("end");
+        child.emit("close", 0, null);
+      }, 1);
+    });
+  };
+  return child;
+}
+
+test("normal stdio waits for final stderr after child exit", async () => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  const child = successfulStdioChild([
+    "jetkvm-mcp: malformed stdio protocol frame\n",
+  ]);
+  let cleanupCount = 0;
+
+  await runInstalledStdioProtocolSmoke({
+    prepareInstalledPackageImpl: async () =>
+      installedFixture(async () => {
+        cleanupCount += 1;
+      }),
+    spawnImpl: () => child,
+    writeFileImpl: async () => {},
+    responseDeadlineMs: 20,
+    childCleanupDeadlineMs: 20,
+    largeIdSuffixBytes: 32,
+  });
+
+  assert.deepEqual(child.killSignals, []);
+  assert.equal(cleanupCount, 1);
+});
+
+test("normal stdio fails closed on late extra, overflow, or mismatched stderr", async (t) => {
+  const { runInstalledStdioProtocolSmoke } =
+    await import("./installed-stdio-protocol-smoke.mjs");
+  for (const scenario of [
+    {
+      name: "late extra",
+      chunks: [
+        "jetkvm-mcp: malformed stdio protocol frame\n",
+        "late diagnostic\n",
+      ],
+      code: "INSTALLED_STDIO_DIAGNOSTIC_MISMATCH",
+      stderrByteLimit: 64 * 1024,
+    },
+    {
+      name: "overflow",
+      chunks: ["diagnostic flood"],
+      code: "INSTALLED_STDIO_STDERR_LIMIT",
+      stderrByteLimit: 8,
+    },
+    {
+      name: "mismatch",
+      chunks: ["jetkvm-mcp: different diagnostic\n"],
+      code: "INSTALLED_STDIO_DIAGNOSTIC_MISMATCH",
+      stderrByteLimit: 64 * 1024,
+    },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const child = successfulStdioChild(scenario.chunks);
+      let cleanupCount = 0;
+      await assert.rejects(
+        runInstalledStdioProtocolSmoke({
+          prepareInstalledPackageImpl: async () =>
+            installedFixture(async () => {
+              cleanupCount += 1;
+            }),
+          spawnImpl: () => child,
+          writeFileImpl: async () => {},
+          responseDeadlineMs: 20,
+          childCleanupDeadlineMs: 20,
+          largeIdSuffixBytes: 32,
+          stderrByteLimit: scenario.stderrByteLimit,
+        }),
+        (error) => error?.code === scenario.code,
+      );
+      assert.deepEqual(child.killSignals, []);
+      assert.equal(cleanupCount, 1);
+    });
+  }
+});
 
 test("stdio runner rejects deterministic early exit after awaiting child close", async () => {
   const { runInstalledStdioProtocolSmoke } =

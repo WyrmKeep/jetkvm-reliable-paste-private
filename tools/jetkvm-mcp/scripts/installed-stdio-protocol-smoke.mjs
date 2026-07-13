@@ -80,6 +80,10 @@ export class JsonLineCollector {
     this.#failure.resolve(error);
   }
 
+  throwIfFailed() {
+    if (this.#failureError !== undefined) throw this.#failureError;
+  }
+
   async waitFor(count) {
     if (this.#failureError !== undefined) throw this.#failureError;
     if (this.messages.length >= count) return;
@@ -351,6 +355,7 @@ export async function runInstalledStdioProtocolSmoke({
   collectorLimits = DEFAULT_COLLECTOR_LIMITS,
   stderrByteLimit = INSTALLED_STDIO_STDERR_BYTES,
   childCleanupDeadlineMs = 5_000,
+  largeIdSuffixBytes = INSTALLED_STDIO_LARGE_ID_SUFFIX_BYTES,
 } = {}) {
   return withInstalledPackage(
     "stdio",
@@ -396,6 +401,7 @@ await handle.closed;
         const terminated = Promise.withResolvers();
         const exited = Promise.withResolvers();
         const closed = Promise.withResolvers();
+        const stderrEnded = Promise.withResolvers();
         childCloseOutcome = closed.promise;
         const collector = new JsonLineCollector({
           termination: terminated.promise,
@@ -424,6 +430,9 @@ await handle.closed;
           }
           stderrBytes = nextBytes;
           stderr += chunk;
+        };
+        const onStderrEnd = () => {
+          stderrEnded.resolve();
         };
         const onStdoutEnd = () => {
           collector.end();
@@ -457,6 +466,7 @@ await handle.closed;
         const onStdinError = () => {};
         child.stdout.on("data", onStdoutData);
         child.stderr.on("data", onStderrData);
+        child.stderr.once("end", onStderrEnd);
         child.stdout.once("end", onStdoutEnd);
         child.stdout.once("error", onStdoutError);
         child.once("exit", onChildExit);
@@ -466,6 +476,7 @@ await handle.closed;
         detachChildListeners = () => {
           child.stdout.off("data", onStdoutData);
           child.stderr.off("data", onStderrData);
+          child.stderr.off("end", onStderrEnd);
           child.stdout.off("end", onStdoutEnd);
           child.stdout.off("error", onStdoutError);
           child.off("exit", onChildExit);
@@ -523,9 +534,7 @@ await handle.closed;
         await collector.waitFor(3);
         assert.equal(collector.messages[2].result.structuredContent.ok, true);
 
-        const largeRequestId = `0:${"i".repeat(
-          INSTALLED_STDIO_LARGE_ID_SUFFIX_BYTES,
-        )}`;
+        const largeRequestId = `0:${"i".repeat(largeIdSuffixBytes)}`;
         const largeControlFrame = JSON.stringify({
           jsonrpc: "2.0",
           id: largeRequestId,
@@ -535,7 +544,9 @@ await handle.closed;
             arguments: { request_id: "success", timeout_ms: 100 },
           },
         });
-        assert.ok(Buffer.byteLength(largeControlFrame, "utf8") > 1_800_000);
+        assert.ok(
+          Buffer.byteLength(largeControlFrame, "utf8") > largeIdSuffixBytes,
+        );
         assert.ok(
           Buffer.byteLength(largeControlFrame, "utf8") <= 2 * 1024 * 1024,
         );
@@ -570,13 +581,20 @@ await handle.closed;
         );
 
         child.stdin.end();
-        const exit = await waitForChildExit(
+        const exit = await waitForNoReaderShutdown(
           exited.promise,
+          Promise.race([stderrEnded.promise, closed.promise]),
           collector.failure,
           responseDeadlineMs,
         );
+        collector.throwIfFailed();
+        if (stderr !== "jetkvm-mcp: malformed stdio protocol frame\n") {
+          throw new InstalledStdioProtocolError(
+            "INSTALLED_STDIO_DIAGNOSTIC_MISMATCH",
+            "Installed stdio diagnostic did not match",
+          );
+        }
         assert.deepEqual(exit, { code: 0, signal: null });
-        assert.equal(stderr, "jetkvm-mcp: malformed stdio protocol frame\n");
         console.log("installed stdio protocol smoke ok");
       } catch (error) {
         protocolFailed = true;

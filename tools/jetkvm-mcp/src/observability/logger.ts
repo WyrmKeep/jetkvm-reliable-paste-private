@@ -213,11 +213,27 @@ function redactValue(
       return redactedArray;
     }
 
-    const redactData = isEncodedBinaryDataContainer(value);
-    const errorRecord = isErrorRecord(value, errorContext);
+    let descriptors: Record<string, PropertyDescriptor>;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(value);
+    } catch {
+      return REDACTED;
+    }
+    const redactData = isEncodedBinaryDataContainer(descriptors);
+    const errorRecord = isErrorRecord(descriptors, errorContext);
     const effectiveErrorContext = errorContext || errorRecord;
     const redacted = Object.create(null) as Record<string, unknown>;
-    for (const [key, nested] of Object.entries(value)) {
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key];
+      if (descriptor === undefined || descriptor.enumerable !== true) {
+        continue;
+      }
+      if (!("value" in descriptor)) {
+        redacted[key] = REDACTED;
+        continue;
+      }
+
+      const nested: unknown = descriptor.value;
       const normalizedKey = normalizeFieldName(key);
       if (
         (key === "data" && redactData) ||
@@ -284,15 +300,18 @@ function isSafeErrorContextString(
   );
 }
 
-function isErrorRecord(value: object, errorContext: boolean): boolean {
-  if (!isPlainObject(value)) {
-    return false;
-  }
-
+function isErrorRecord(
+  descriptors: Readonly<Record<string, PropertyDescriptor>>,
+  errorContext: boolean,
+): boolean {
   let diagnosticFieldCount = 0;
   let hasName = false;
   let hasStack = false;
-  for (const key of Object.keys(value)) {
+  for (const key of Object.keys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (descriptor === undefined || descriptor.enumerable !== true) {
+      continue;
+    }
     const normalizedKey = normalizeFieldName(key);
     if (isErrorDiagnosticField(normalizedKey)) {
       diagnosticFieldCount += 1;
@@ -358,12 +377,22 @@ function normalizeFieldName(key: string): string {
   return key.replace(/[^a-z0-9]/giu, "").toLowerCase();
 }
 
-function isEncodedBinaryDataContainer(value: object): boolean {
-  if (!Object.hasOwn(value, "data")) {
+function isEncodedBinaryDataContainer(
+  descriptors: Readonly<Record<string, PropertyDescriptor>>,
+): boolean {
+  if (descriptors.data === undefined) {
     return false;
   }
-  const type = "type" in value ? value.type : undefined;
-  const mimeType = "mimeType" in value ? value.mimeType : undefined;
+  const typeDescriptor = descriptors.type;
+  const mimeTypeDescriptor = descriptors.mimeType;
+  if (
+    (typeDescriptor !== undefined && !("value" in typeDescriptor)) ||
+    (mimeTypeDescriptor !== undefined && !("value" in mimeTypeDescriptor))
+  ) {
+    return true;
+  }
+  const type: unknown = typeDescriptor?.value;
+  const mimeType: unknown = mimeTypeDescriptor?.value;
   return (
     type === "image" ||
     type === "Buffer" ||

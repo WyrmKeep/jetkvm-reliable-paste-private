@@ -348,6 +348,183 @@ describe("ReplayDeviceRpcAdapter", () => {
     },
   );
 
+  it("round-trips the exact ATX incompatible-downstream admission tuple", async () => {
+    const incompatible = {
+      code: "INCOMPATIBLE_DOWNSTREAM",
+      boundary: "admission",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+    } as const;
+    const replay = new ReplayDeviceRpcAdapter(binding, {
+      version: 1,
+      plane: "device_rpc",
+      exchanges: [
+        {
+          operation: "performAtx",
+          request: json({
+            ref: binding,
+            request: { requestId: "power-a", action: "press_power" },
+          }),
+          error: incompatible,
+        },
+      ],
+    });
+
+    await expect(
+      replay.performAtx(
+        binding,
+        { requestId: "power-a", action: "press_power" },
+        deadline,
+      ),
+    ).rejects.toMatchObject(incompatible);
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it.each([
+    ["boundary", "queue"],
+    ["outcome", "unknown"],
+    ["writeBegan", true],
+    ["acknowledged", true],
+    ["verification", "device_ack_only"],
+    ["safeToRetry", false],
+    ["requiredNextStep", "none"],
+  ] as const)(
+    "rejects incompatible-downstream with noncanonical %s",
+    (field, value) => {
+      expect(
+        () =>
+          new ReplayDeviceRpcAdapter(binding, {
+            version: 1,
+            plane: "device_rpc",
+            exchanges: [
+              {
+                operation: "performAtx",
+                request: json({
+                  ref: binding,
+                  request: {
+                    requestId: "power-a",
+                    action: "press_power",
+                  },
+                }),
+                error: {
+                  code: "INCOMPATIBLE_DOWNSTREAM",
+                  boundary: "admission",
+                  outcome: "not_sent",
+                  writeBegan: false,
+                  acknowledged: false,
+                  verification: "none",
+                  [field]: value,
+                },
+              },
+            ],
+          }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    },
+  );
+
+  it.each(["readDisplayState", "readEdid"] as const)(
+    "rejects incompatible-downstream for non-ATX operation %s",
+    (operation) => {
+      expect(
+        () =>
+          new ReplayDeviceRpcAdapter(binding, {
+            version: 1,
+            plane: "device_rpc",
+            exchanges: [
+              {
+                operation,
+                request: json({ ref: binding }),
+                error: {
+                  code: "INCOMPATIBLE_DOWNSTREAM",
+                  boundary: "admission",
+                  outcome: "not_sent",
+                  writeBegan: false,
+                  acknowledged: false,
+                  verification: "none",
+                },
+              },
+            ],
+          }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    },
+  );
+
+  it("admits a 1 ms internal deadline for every operation", async () => {
+    const replay = new ReplayDeviceRpcAdapter(binding, {
+      version: 1,
+      plane: "device_rpc",
+      exchanges: [
+        {
+          operation: "readDisplayState",
+          request: json({ ref: binding }),
+          response: json(display),
+        },
+        {
+          operation: "readEdid",
+          request: json({ ref: binding }),
+          response: json(edid),
+        },
+        {
+          operation: "performAtx",
+          request: json({
+            ref: binding,
+            request: { requestId: "power-a", action: "press_power" },
+          }),
+          response: json(atx),
+        },
+      ],
+    });
+    const oneMillisecond = {
+      timeoutMs: 1,
+      signal: new AbortController().signal,
+    };
+
+    await expect(
+      replay.readDisplayState(binding, oneMillisecond),
+    ).resolves.toEqual(display);
+    await expect(replay.readEdid(binding, oneMillisecond)).resolves.toEqual(
+      edid,
+    );
+    await expect(
+      replay.performAtx(
+        binding,
+        { requestId: "power-a", action: "press_power" },
+        oneMillisecond,
+      ),
+    ).resolves.toEqual(atx);
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid internal deadline %s before consuming replay",
+    async (timeoutMs) => {
+      const replay = new ReplayDeviceRpcAdapter(binding, {
+        version: 1,
+        plane: "device_rpc",
+        exchanges: [
+          {
+            operation: "readEdid",
+            request: json({ ref: binding }),
+            response: json(edid),
+          },
+        ],
+      });
+      const invalidDeadline = {
+        timeoutMs,
+        signal: new AbortController().signal,
+      };
+
+      await expect(replay.readEdid(binding, invalidDeadline)).rejects.toThrow(
+        /deadline/i,
+      );
+      expect(() => replay.assertExhausted()).toThrow(/1 replay exchange/i);
+      await expect(replay.readEdid(binding, deadline)).resolves.toEqual(edid);
+      expect(() => replay.assertExhausted()).not.toThrow();
+    },
+  );
+
   it("snapshots its constructor binding and never migrates to a replacement", async () => {
     const mutableBinding = { ...binding };
     const tape: SanitizedReplayTape = {

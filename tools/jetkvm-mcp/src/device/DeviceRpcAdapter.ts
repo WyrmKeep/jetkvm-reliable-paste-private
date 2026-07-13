@@ -240,7 +240,7 @@ const eventEnvelopeSchema = z
   .object({
     jsonrpc: z.literal("2.0"),
     method: z.string().min(1),
-    params: z.unknown(),
+    params: z.unknown().optional(),
   })
   .strict();
 
@@ -426,16 +426,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       this.channel.readyState === "closed" &&
       this.cachedDisplay !== undefined
     ) {
-      const elapsedMs = Math.max(
-        0,
-        Math.floor(this.now() - (this.cachedDisplayAtMs ?? this.now())),
-      );
-      return {
-        signal: this.staleFact(this.cachedDisplay.signal, elapsedMs),
-        resolution: this.staleFact(this.cachedDisplay.resolution, elapsedMs),
-        fps: this.staleFact(this.cachedDisplay.fps, elapsedMs),
-        qualification: "binding_lost_cached_only",
-      };
+      return this.cachedDisplayResult("binding_lost_cached_only");
     }
     const expectedRevision = this.revision;
     const expectedChannel = this.channel;
@@ -449,10 +440,9 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     const parsed = nativeVideoStateSchema.safeParse(result);
     if (!parsed.success) throw this.protocolError("MALFORMED_RESPONSE", true);
     this.validateReadContinuation(ref, expectedRevision, expectedChannel);
-    const mapped = this.mapVideoState(parsed.data, "cached_snapshot");
-    this.cachedDisplay = mapped;
-    this.cachedDisplayAtMs = this.now();
-    return mapped;
+    return this.cachedDisplay === undefined
+      ? this.unobservedDisplay()
+      : this.cachedDisplayResult("current_binding");
   }
 
   public async readEdid(
@@ -712,13 +702,6 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     try {
       decoded = JSON.parse(rawPayload) as unknown;
     } catch {
-      const pending = this.pendingExchange;
-      if (pending !== undefined) {
-        this.finishExchangeError(
-          pending,
-          this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
-        );
-      }
       return;
     }
 
@@ -727,12 +710,22 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       if (event.data.method === "videoInputState") {
         const state = nativeVideoStateSchema.safeParse(event.data.params);
         if (state.success) {
-          this.cachedDisplay = this.mapVideoState(state.data, "cached_event");
+          this.cachedDisplay = this.mapVideoState(state.data);
           this.cachedDisplayAtMs = this.now();
         }
       }
       return;
     }
+
+    if (
+      typeof decoded !== "object" ||
+      decoded === null ||
+      Array.isArray(decoded)
+    ) {
+      return;
+    }
+    const candidateId = (decoded as Record<string, unknown>).id;
+    if (!this.isOwnedCorrelationId(candidateId)) return;
 
     const pending = this.pendingExchange;
     if (pending === undefined || pending.settled) return;
@@ -942,6 +935,15 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     );
   }
 
+  private isOwnedCorrelationId(candidate: unknown): candidate is string {
+    return (
+      typeof candidate === "string" &&
+      candidate.startsWith(
+        `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:`,
+      )
+    );
+  }
+
   private isIssuedNoncurrentCorrelationId(
     candidate: string,
     issuedPrefix: string,
@@ -959,22 +961,61 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     );
   }
 
-  private staleFact<T>(
-    fact: QualifiedFact<T>,
-    elapsedMs: number,
-  ): QualifiedFact<T> {
-    if (fact.source === "none" || fact.observedAt === null) {
-      return {
-        ...fact,
+  private cachedDisplayResult(
+    qualification: CachedDisplayState["qualification"],
+  ): CachedDisplayState {
+    const elapsedMs = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      Math.max(
+        0,
+        Math.floor(this.now() - (this.cachedDisplayAtMs ?? this.now())),
+      ),
+    );
+    const cached = this.cachedDisplay;
+    if (cached === undefined) return this.unobservedDisplay();
+    const ageFact = <T>(fact: QualifiedFact<T>): QualifiedFact<T> => ({
+      ...fact,
+      ageMs:
+        fact.ageMs === null
+          ? null
+          : Math.min(Number.MAX_SAFE_INTEGER, fact.ageMs + elapsedMs),
+      freshness:
+        qualification === "binding_lost_cached_only" || elapsedMs > 0
+          ? "stale"
+          : fact.freshness,
+    });
+    return {
+      signal: ageFact(cached.signal),
+      resolution: ageFact(cached.resolution),
+      fps: ageFact(cached.fps),
+      qualification,
+    };
+  }
+
+  private unobservedDisplay(): CachedDisplayState {
+    return {
+      signal: {
+        value: "unknown",
         observedAt: null,
         ageMs: null,
         freshness: "unknown",
-      };
-    }
-    return {
-      ...fact,
-      ageMs: fact.ageMs === null ? null : fact.ageMs + elapsedMs,
-      freshness: "stale",
+        source: "none",
+      },
+      resolution: {
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+        source: "none",
+      },
+      fps: {
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+        source: "none",
+      },
+      qualification: "current_binding",
     };
   }
 
@@ -988,7 +1029,6 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
 
   private mapVideoState(
     state: z.infer<typeof nativeVideoStateSchema>,
-    source: Exclude<FactSource, "none">,
   ): CachedDisplayState {
     const observedAt = this.observationTimestamp();
     const fact = <T>(value: T): QualifiedFact<T> => ({
@@ -996,7 +1036,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       observedAt,
       ageMs: 0,
       freshness: "fresh",
-      source,
+      source: "cached_event",
     });
     const signal: NativeSignal = state.ready
       ? "present"

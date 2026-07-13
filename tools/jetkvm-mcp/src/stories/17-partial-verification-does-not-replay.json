@@ -36,11 +36,102 @@
   ],
   "fault_script": [
     {
-      "id": "fail-post-ack-read",
-      "after_step": "restore-and-prove-after-power-post-read-failure",
+      "id": "arm-power-with-post-read-failure",
+      "after_step": "establish-partial-verification-atx-session",
       "boundary": "during_verification",
-      "action": "After each linked mutation with a legal partial-verification branch receives a definitive acknowledgement, fail its optional verification or post-operation read.",
-      "expected_effect": "For each applicable linked mutation, the applied acknowledgement is preserved as device_ack_only and the mutation is not replayed. Emergency input release is reviewed as not applicable: legal success requires every correlated drain, producer, paste, lease, keyboard, and pointer proof and is applied/device_state_verified; missing release proof is unknown/none with the gate closed, safe_to_retry false, and required_next_step release_then_reconnect_then_capture."
+      "action": "Arm a one-shot post-acknowledgement LED read failure for only power-with-post-read-failure after its definitive serial acknowledgement.",
+      "expected_effect": "The initial power call remains applied/device_ack_only with its unavailable or stale LED fact and zero replay."
+    },
+    {
+      "id": "clear-power-with-post-read-failure",
+      "after_step": "power-with-post-read-failure",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the initial power post-read fault after its one linked call while retaining the definitive acknowledgement.",
+      "expected_effect": "No initial LED read fault reaches ATX baseline restoration or the matrix cases."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-session-connect",
+      "after_step": "retire-partial-session-before-connect",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-session-connect.",
+      "expected_effect": "The connect call remains applied/device_ack_only, publishes its exact structured result, and is not replayed."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-session-connect",
+      "after_step": "partial-verification-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the connect post-read fault after its one linked call while retaining its successful result.",
+      "expected_effect": "No connect verification fault reaches result binding or reconnect."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-session-reconnect",
+      "after_step": "bind-partial-connect-result",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-session-reconnect.",
+      "expected_effect": "The reconnect call remains applied/device_ack_only, publishes its exact successor, and is not replayed."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-session-reconnect",
+      "after_step": "partial-verification-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the reconnect post-read fault after its one linked call while retaining its successful successor.",
+      "expected_effect": "No reconnect verification fault reaches successor binding or fresh capture."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-input-keyboard",
+      "after_step": "capture-partial-keyboard-observation",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-input-keyboard.",
+      "expected_effect": "The keyboard call remains applied/device_ack_only with exact counts and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-input-keyboard",
+      "after_step": "partial-verification-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the keyboard post-read fault after its one linked call while retaining its definitive acknowledgement.",
+      "expected_effect": "No keyboard verification fault reaches the independent mouse case."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-input-mouse",
+      "after_step": "capture-partial-mouse-observation",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-input-mouse.",
+      "expected_effect": "The mouse call remains applied/device_ack_only with exact counts and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-input-mouse",
+      "after_step": "partial-verification-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the mouse post-read fault after its one linked call while retaining its definitive acknowledgement.",
+      "expected_effect": "No mouse verification fault reaches the independent paste case."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-input-paste",
+      "after_step": "capture-partial-paste-observation",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-input-paste.",
+      "expected_effect": "The paste call remains applied/device_ack_only with exact counts and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-input-paste",
+      "after_step": "partial-verification-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the paste post-read fault after its one linked call while retaining its definitive acknowledgement.",
+      "expected_effect": "No paste verification fault reaches the independent power case."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-power-control",
+      "after_step": "prove-partial-verification-power-baseline",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement LED read failure for only partial-verification-jetkvm-power-control after its definitive serial acknowledgement.",
+      "expected_effect": "The matrix power call remains applied/device_ack_only with its separately qualified LED fact and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-power-control",
+      "after_step": "partial-verification-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the matrix power post-read fault after its one linked call while retaining the definitive acknowledgement.",
+      "expected_effect": "No matrix LED read fault survives final ATX baseline restoration and reproof."
     }
   ],
   "steps": [

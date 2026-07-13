@@ -735,11 +735,11 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:partial-verification",
-    applicable: linkedForTools(
+    applicable: linkedForToolsWithPerToolFault(
       [T.connect, T.reconnect, T.keyboard, T.mouse, T.paste, T.power],
       16,
       "partial-verification",
-      "fail-post-ack-read",
+      "arm-partial-verification",
       "assertion-2",
     ),
     not_applicable: {
@@ -1642,6 +1642,47 @@ function assertOneShotFaultBrackets(
       ) {
         throw new Error(
           `Story ${story.id} one-shot fault ${fault.id} must bracket exactly one linked call with an immediate ordered clear`,
+        );
+      }
+    }
+  }
+}
+
+function assertPartialVerificationFaultBrackets(
+  stories: readonly AcceptanceStory[],
+): void {
+  for (const story of stories) {
+    if (!story.requirements.includes("branch:partial-verification")) {
+      continue;
+    }
+    const stepIndexById = new Map(
+      story.steps.map((step, index) => [step.id, index]),
+    );
+    for (const call of story.steps) {
+      if (call.tool === null || MUTATION_TOOL_LOOKUP[call.tool] !== true) {
+        continue;
+      }
+      const callIndex = stepIndexById.get(call.id)!;
+      const previousStepId =
+        callIndex === 0 ? null : story.steps[callIndex - 1]!.id;
+      const armId = `arm-${call.id}`;
+      const clearId = `clear-${call.id}`;
+      const armIndex = story.fault_script.findIndex(({ id }) => id === armId);
+      const arm = story.fault_script[armIndex];
+      const clear = story.fault_script[armIndex + 1];
+      if (
+        armIndex < 0 ||
+        arm === undefined ||
+        arm.after_step !== previousStepId ||
+        arm.boundary !== "during_verification" ||
+        !/\bone-shot\b/i.test(arm.action) ||
+        clear === undefined ||
+        clear.id !== clearId ||
+        clear.after_step !== call.id ||
+        clear.boundary !== "during_cleanup"
+      ) {
+        throw new Error(
+          `Story ${story.id} partial-verification call ${call.id} must have an exact immediate arm, call, and clear bracket`,
         );
       }
     }
@@ -2799,6 +2840,7 @@ export function validateAcceptanceStories(
   assertDeclaredRequirementCallLinks(stories, matrix);
   assertReadResponseEnvelopes(stories);
   assertOneShotFaultBrackets(stories, matrix);
+  assertPartialVerificationFaultBrackets(stories);
   assertAtxBindingLossCases(stories);
   assertClosedGenerationRecovery(stories);
   assertFixtureRecoveryTransitions(stories);

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { KeyboardAction, MouseAction, PhysicalKey } from "../domain.js";
 import type {
   Deadline,
@@ -7,6 +9,10 @@ import type {
 } from "../device/DeviceRpcAdapter.js";
 
 export const MAX_OBSERVATION_AGE_MS = 30_000;
+
+export interface MonotonicClock {
+  now(): number;
+}
 
 export interface BrowserConnection {
   readonly state: "ready";
@@ -50,6 +56,51 @@ export interface Observation {
   readonly format: "jpeg" | "png";
   readonly sha256: string;
   readonly byteLength: number;
+}
+export type BrowserCaptureMimeType = "image/jpeg" | "image/png";
+
+export interface BrowserCaptureImage {
+  readonly mimeType: BrowserCaptureMimeType;
+  readonly bytes: Uint8Array;
+}
+
+export interface BrowserCaptureArtifact {
+  /** Canonical serializable metadata; image bytes never belong in Observation. */
+  readonly observation: Observation;
+  /** Authorized image content for the MCP image block only. */
+  readonly image: BrowserCaptureImage;
+}
+
+export function assertBrowserCaptureArtifact(
+  artifact: BrowserCaptureArtifact,
+): void {
+  const imageKeys = Object.keys(artifact.image).sort();
+  if (
+    imageKeys.length !== 2 ||
+    imageKeys[0] !== "bytes" ||
+    imageKeys[1] !== "mimeType"
+  ) {
+    throw new Error(
+      "Browser capture image must contain only authorized MIME and bytes.",
+    );
+  }
+  if (!(artifact.image.bytes instanceof Uint8Array)) {
+    throw new Error("Browser capture image bytes are invalid.");
+  }
+  const expectedMimeType =
+    artifact.observation.format === "jpeg" ? "image/jpeg" : "image/png";
+  if (artifact.image.mimeType !== expectedMimeType) {
+    throw new Error("Browser capture artifact format and MIME do not match.");
+  }
+  if (artifact.observation.byteLength !== artifact.image.bytes.byteLength) {
+    throw new Error("Browser capture artifact byte length does not match.");
+  }
+  const sha256 = createHash("sha256")
+    .update(artifact.image.bytes)
+    .digest("hex");
+  if (artifact.observation.sha256 !== sha256) {
+    throw new Error("Browser capture artifact SHA-256 does not match.");
+  }
 }
 
 export interface MouseRequest {
@@ -114,7 +165,7 @@ export interface BrowserPlane {
     ref: SessionRef,
     request: CaptureRequest,
     deadline: Deadline,
-  ): Promise<Observation>;
+  ): Promise<BrowserCaptureArtifact>;
   mouse(
     ref: SessionRef,
     request: MouseRequest,

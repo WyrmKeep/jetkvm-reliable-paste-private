@@ -376,20 +376,14 @@ function sessionAdmissionKey(
   principalId: string | null,
   input: unknown,
 ): string | null {
-  if (
-    !isRecord(input) ||
-    typeof input.session_id !== "string" ||
-    typeof input.session_generation !== "number"
-  ) {
+  if (!isRecord(input) || typeof input.session_id !== "string") {
     return null;
   }
   return createHash("sha256")
-    .update("jetkvm-mcp:handler-session:v1\u0000", "utf8")
+    .update("jetkvm-mcp:handler-session:v2\u0000", "utf8")
     .update(principalId ?? "anonymous", "utf8")
     .update("\u0000", "utf8")
     .update(input.session_id, "utf8")
-    .update("\u0000", "utf8")
-    .update(String(input.session_generation), "utf8")
     .digest("hex");
 }
 function canonicalRequestId(requestId: string | number): string {

@@ -12,12 +12,16 @@ import {
 } from "../../device/DeviceRpcAdapter.js";
 import {
   MAX_OBSERVATION_AGE_MS,
+  assertBrowserCaptureArtifact,
+  type BrowserCaptureArtifact,
+  type BrowserCaptureImage,
   type BrowserConnection,
   type BrowserPlane,
   type CaptureRequest,
   type KeyboardRequest,
   type MouseRequest,
   type MutationReceipt,
+  type MonotonicClock,
   type Observation,
   type PasteReceipt,
   type PasteRequest,
@@ -32,6 +36,7 @@ import {
 } from "./SanitizedReplayTape.js";
 
 const MAX_JSON_INTEGER = Number.MAX_SAFE_INTEGER;
+const FROZEN_MONOTONIC_CLOCK: MonotonicClock = { now: () => 0 };
 const nonNegativeIntegerSchema = z.number().int().min(0).max(MAX_JSON_INTEGER);
 const positiveIntegerSchema = z.number().int().min(1).max(MAX_JSON_INTEGER);
 const requestIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
@@ -150,9 +155,13 @@ export interface ReplayDeviceRpcAdapterReplacement {
     recordedBinding: DeviceRpcBinding,
   ): DeviceRpcAdapter | Promise<DeviceRpcAdapter>;
 }
+export type BrowserReplayImageResolver = (
+  observation: Observation,
+) => BrowserCaptureImage | Promise<BrowserCaptureImage>;
 
 type ObservationLedgerEntry = {
   readonly observation: Observation;
+  readonly registeredAtMs: number;
   state: "available" | "reserved" | "consumed";
 };
 
@@ -170,7 +179,9 @@ export class BrowserPlaneReplay implements BrowserPlane {
   public constructor(
     deviceRpc: DeviceRpcAdapter,
     tape: SanitizedReplayTape,
+    private readonly resolveCaptureImage: BrowserReplayImageResolver,
     private readonly replaceDeviceRpc?: ReplayDeviceRpcAdapterReplacement,
+    private readonly monotonicClock: MonotonicClock = FROZEN_MONOTONIC_CLOCK,
   ) {
     this.currentDeviceRpc = deviceRpc;
     this.replay = new SanitizedReplayCursor(tape, "browser");
@@ -267,7 +278,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
     ref: SessionRef,
     request: CaptureRequest,
     deadline: Deadline,
-  ): Promise<Observation> {
+  ): Promise<BrowserCaptureArtifact> {
     this.validateDeadline(deadline);
     this.assertPublishedRef(ref);
     if (
@@ -316,11 +327,17 @@ export class BrowserPlaneReplay implements BrowserPlane {
         "Replay capture response does not match the published connection, geometry, or format.",
       );
     }
+    const artifact: BrowserCaptureArtifact = {
+      observation: parsed.data,
+      image: await this.resolveCaptureImage(parsed.data),
+    };
+    assertBrowserCaptureArtifact(artifact);
     this.observations.set(parsed.data.observationId, {
       observation: parsed.data,
+      registeredAtMs: this.readMonotonicTick(),
       state: "available",
     });
-    return parsed.data;
+    return artifact;
   }
 
   public async mouse(
@@ -423,12 +440,12 @@ export class BrowserPlaneReplay implements BrowserPlane {
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
     this.validateDeadline(deadline);
     this.assertPublishedRef(ref);
-    this.closed = true;
-    delete this.publishedConnection;
-    this.observations.clear();
     const response = this.replay.consume("close", { ref: { ...ref } });
     if (response !== null)
       throw new Error("Replay close response must be null.");
+    this.closed = true;
+    delete this.publishedConnection;
+    this.observations.clear();
   }
 
   private async consumeReceipt<
@@ -509,6 +526,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
   ): void {
     const publication = this.publishedConnection;
     const observation = entry.observation;
+    const ageMs = this.observationAgeMs(entry);
     if (
       publication === undefined ||
       entry.state !== expectedState ||
@@ -516,12 +534,36 @@ export class BrowserPlaneReplay implements BrowserPlane {
       observation.sessionGeneration !== ref.sessionGeneration ||
       observation.connectionEpoch !== publication.binding.connectionEpoch ||
       observation.displayGeneration !== publication.displayGeneration ||
-      observation.monotonicAgeMs > MAX_OBSERVATION_AGE_MS
+      ageMs > MAX_OBSERVATION_AGE_MS
     ) {
       throw new Error(
         "Replay BrowserPlane observation is stale, foreign, or consumed.",
       );
     }
+  }
+
+  private observationAgeMs(entry: ObservationLedgerEntry): number {
+    const now = this.readMonotonicTick();
+    const elapsed = now - entry.registeredAtMs;
+    const ageMs = entry.observation.monotonicAgeMs + elapsed;
+    if (
+      !Number.isSafeInteger(elapsed) ||
+      elapsed < 0 ||
+      !Number.isSafeInteger(ageMs)
+    ) {
+      throw new Error(
+        "Replay BrowserPlane monotonic observation age is invalid.",
+      );
+    }
+    return ageMs;
+  }
+
+  private readMonotonicTick(): number {
+    const tick = this.monotonicClock.now();
+    if (!Number.isSafeInteger(tick) || tick < 0) {
+      throw new Error("Replay BrowserPlane monotonic clock is invalid.");
+    }
+    return tick;
   }
 
   private assertPublishedRef(ref: SessionRef): void {

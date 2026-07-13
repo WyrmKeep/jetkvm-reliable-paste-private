@@ -537,6 +537,257 @@ describe("legacy SSE adapter", () => {
     },
   );
 
+  it.each(["http", "https"] as const)(
+    "admits Expect requests through security before interim bytes over %s",
+    async (scheme) => {
+      const targetSecret = DisposableSecret.fromUtf8("expect-target");
+      const credential = activateIndependentLegacySseBearerCredential(
+        targetSecret,
+        {
+          principalId: PRINCIPAL,
+          secret: DisposableSecret.fromUtf8(TOKEN),
+        },
+      );
+      const policy = parseLegacySsePolicy({
+        enabled: true,
+        scheme,
+        bindHost: "127.0.0.1",
+        hostAuthorities: [AUTHORITY],
+        allowedOrigins: [ORIGIN],
+        bearerEnvironmentVariable: "JETKVM_TEST_SSE_BEARER",
+        ...(scheme === "http"
+          ? {
+              allowPlaintextHttp: true,
+            }
+          : {}),
+      });
+      const adapter = new LegacySseAdapter({
+        handlerRegistry: completeRegistry(),
+        securityPolicy: policy,
+        bearerCredential: credential,
+      });
+      const server =
+        scheme === "http"
+          ? adapter.createHttpServer()
+          : adapter.createHttpsServer({
+              key: TEST_TLS_KEY,
+              cert: TEST_TLS_CERT,
+            });
+      const port = await listenOnLoopback(server);
+      let owner: Socket | undefined;
+
+      const connectClient = async (): Promise<Socket> => {
+        if (scheme === "http") return connectRaw(port);
+        const socket = connectTls({
+          host: "127.0.0.1",
+          port,
+          rejectUnauthorized: false,
+        });
+        const secured = Promise.withResolvers<void>();
+        socket.once("secureConnect", secured.resolve);
+        socket.once("error", secured.reject);
+        await secured.promise;
+        return socket;
+      };
+
+      try {
+        owner = await connectClient();
+        let ownerWire = "";
+        owner.on("data", (chunk: Buffer) => {
+          ownerWire += chunk.toString("utf8");
+        });
+        owner.write(
+          [
+            "GET /sse HTTP/1.1",
+            ...Object.entries(authorizedHeaders()).map(
+              ([name, value]) => `${name}: ${value}`,
+            ),
+            "Connection: keep-alive",
+            "",
+            "",
+          ].join("\r\n"),
+        );
+        await vi.waitFor(
+          () => {
+            expect(ownerWire).toContain("event: endpoint");
+          },
+          { interval: 5, timeout: 500 },
+        );
+        const endpoint = ownerWire.match(
+          /data: (\/messages\?sessionId=[^\r\n]+)/,
+        )?.[1];
+        expect(endpoint).toBeDefined();
+
+        const body = JSON.stringify({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+        });
+        const issue = async (
+          method: "GET" | "POST",
+          expectation: "100-continue" | "unsupported-expectation",
+          identity: "missing" | "forbidden" | "valid",
+        ): Promise<string> => {
+          const socket = await connectClient();
+          let observed = "";
+          socket.on("data", (chunk: Buffer) => {
+            observed += chunk.toString("utf8");
+          });
+          const closed = waitForSocketClose(socket, 1_000);
+          socket.write(
+            [
+              `${method} ${method === "GET" ? "/sse" : endpoint} HTTP/1.1`,
+              `Host: ${
+                identity === "forbidden" ? "attacker.example.test" : AUTHORITY
+              }`,
+              `Origin: ${ORIGIN}`,
+              "X-JetKVM-CSRF: 1",
+              ...(identity === "missing"
+                ? []
+                : [`Authorization: Bearer ${TOKEN}`]),
+              `Expect: ${expectation}`,
+              ...(method === "POST"
+                ? [
+                    "Content-Type: application/json",
+                    `Content-Length: ${Buffer.byteLength(body)}`,
+                  ]
+                : []),
+              "Connection: close",
+              "",
+              "",
+            ].join("\r\n"),
+          );
+
+          if (
+            identity === "valid" &&
+            expectation === "100-continue" &&
+            method === "POST"
+          ) {
+            await vi.waitFor(
+              () => {
+                expect(observed).toContain("HTTP/1.1 100 Continue\r\n\r\n");
+              },
+              { interval: 5, timeout: 500 },
+            );
+            socket.write(body);
+          } else if (
+            identity === "valid" &&
+            expectation === "100-continue" &&
+            method === "GET"
+          ) {
+            await vi.waitFor(
+              () => {
+                expect(observed).toContain("event: endpoint");
+              },
+              { interval: 5, timeout: 500 },
+            );
+            socket.destroy();
+          }
+          return closed;
+        };
+
+        for (const method of ["GET", "POST"] as const) {
+          for (const expectation of [
+            "100-continue",
+            "unsupported-expectation",
+          ] as const) {
+            const missing = await issue(method, expectation, "missing");
+            expect(missing).toMatch(/^HTTP\/1\.1 401 Unauthorized\r\n/);
+            expect(missing).not.toContain("HTTP/1.1 100 Continue");
+
+            const forbidden = await issue(method, expectation, "forbidden");
+            expect(forbidden).toMatch(/^HTTP\/1\.1 403 Forbidden\r\n/);
+            expect(forbidden).not.toContain("HTTP/1.1 100 Continue");
+
+            const accepted = await issue(method, expectation, "valid");
+            if (expectation === "unsupported-expectation") {
+              expect(accepted).toMatch(
+                /^HTTP\/1\.1 417 Expectation Failed\r\n/,
+              );
+              expect(accepted.endsWith("Expectation Failed")).toBe(true);
+              expect(accepted).not.toContain("HTTP/1.1 100 Continue");
+            } else if (method === "GET") {
+              expect(accepted).toMatch(/^HTTP\/1\.1 200 OK\r\n/);
+              expect(accepted).toContain("event: endpoint");
+              expect(accepted).not.toContain("HTTP/1.1 100 Continue");
+            } else {
+              expect(accepted.match(/HTTP\/1\.1 100 Continue/g)).toHaveLength(
+                1,
+              );
+              expect(accepted).toContain("\r\n\r\nHTTP/1.1 202 Accepted\r\n");
+            }
+          }
+        }
+
+        const getWithBody = await connectClient();
+        const getWithBodyClosed = waitForSocketClose(getWithBody, 500);
+        getWithBody.write(
+          [
+            "GET /sse HTTP/1.1",
+            ...Object.entries(authorizedHeaders()).map(
+              ([name, value]) => `${name}: ${value}`,
+            ),
+            "Expect: 100-continue",
+            "Content-Length: 2",
+            "Connection: close",
+            "",
+            "",
+          ].join("\r\n"),
+        );
+        const rejectedGetBody = await getWithBodyClosed;
+        expect(rejectedGetBody).toMatch(/^HTTP\/1\.1 400 Bad Request\r\n/);
+        expect(rejectedGetBody.endsWith("Request body not allowed")).toBe(true);
+        expect(rejectedGetBody).not.toContain("HTTP/1.1 100 Continue");
+      } finally {
+        owner?.destroy();
+        await adapter.close();
+        await closeServer(server);
+        credential.secret.dispose();
+        targetSecret.dispose();
+      }
+    },
+  );
+
+  it("counts each Expect event once against the global route ceiling", async () => {
+    const value = await startAdapter({
+      policy: { routeAttemptRateLimit: 2 },
+    });
+    const port = Number(new URL(value.baseUrl).port);
+    const path = "/messages?sessionId=00000000-0000-4000-8000-000000000000";
+    const exchange = async (
+      expectation: string,
+      authenticated: boolean,
+    ): Promise<string> => {
+      const socket = await connectRaw(port);
+      const closed = waitForSocketClose(socket, 500);
+      socket.write(
+        [
+          `POST ${path} HTTP/1.1`,
+          `Host: ${AUTHORITY}`,
+          `Origin: ${ORIGIN}`,
+          "X-JetKVM-CSRF: 1",
+          ...(authenticated ? [`Authorization: Bearer ${TOKEN}`] : []),
+          `Expect: ${expectation}`,
+          "Content-Type: application/json",
+          "Content-Length: 2",
+          "Connection: close",
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      return closed;
+    };
+
+    const unauthenticated = await exchange("100-continue", false);
+    expect(unauthenticated).toMatch(/^HTTP\/1\.1 401 Unauthorized\r\n/);
+    expect(unauthenticated).not.toContain("HTTP/1.1 100 Continue");
+    expect(await exchange("unsupported-expectation", true)).toMatch(
+      /^HTTP\/1\.1 417 Expectation Failed\r\n/,
+    );
+    const limited = await exchange("100-continue", true);
+    expect(limited).toMatch(/^HTTP\/1\.1 429 Too Many Requests\r\n/);
+    expect(limited).not.toContain("HTTP/1.1 100 Continue");
+  });
+
   it.each([
     ["Host", "hOsT", "attacker.example.test"],
     ["Origin", "oRiGiN", "https://attacker.example.test"],
