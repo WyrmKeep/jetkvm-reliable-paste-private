@@ -32,6 +32,8 @@ function displayWireResult(overrides: Record<string, unknown> = {}) {
 }
 
 const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
+const SHARED_CHANNEL_MAX_CODE_UNITS = SHARED_CHANNEL_MAX_UTF8_BYTES;
+const OVERSIZED_CORRELATION_PREFIX_CODE_UNITS = 1_024;
 
 function correlationIdForWrite(
   channel: FakeDeviceRpcChannel,
@@ -69,6 +71,31 @@ function displayResponsePayloadAtUtf8Bytes(
     throw new Error("Payload byte sizing failed.");
   }
   return payload;
+}
+
+function emitRawMeasuringOversizedWork(
+  channel: FakeDeviceRpcChannel,
+  payload: string,
+): {
+  readonly byteLengthCalls: number;
+  readonly charCodeAtCalls: number;
+  readonly parseCalls: number;
+} {
+  const byteLength = vi.spyOn(Buffer, "byteLength");
+  const charCodeAt = vi.spyOn(String.prototype, "charCodeAt");
+  const parse = vi.spyOn(JSON, "parse");
+  try {
+    channel.emitRaw(payload);
+    return {
+      byteLengthCalls: byteLength.mock.calls.length,
+      charCodeAtCalls: charCodeAt.mock.calls.length,
+      parseCalls: parse.mock.calls.length,
+    };
+  } finally {
+    byteLength.mockRestore();
+    charCodeAt.mockRestore();
+    parse.mockRestore();
+  }
 }
 
 const EDID_BLOCK_BYTES = 128;
@@ -779,13 +806,14 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(
       SHARED_CHANNEL_MAX_UTF8_BYTES,
     );
+    expect(payload.length).toBeLessThanOrEqual(SHARED_CHANNEL_MAX_CODE_UNITS);
 
-    const parse = vi.spyOn(JSON, "parse");
-    channel.emitRaw(payload);
-    const parseCalls = parse.mock.calls.length;
-    parse.mockRestore();
+    const work = emitRawMeasuringOversizedWork(channel, payload);
 
-    expect(parseCalls).toBe(0);
+    expect(work).toMatchObject({ byteLengthCalls: 1, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
     channel.respondToWrite(0, displayWireResult());
     await expect(pending).resolves.toMatchObject({
       signal: { source: "none", freshness: "unknown" },
@@ -808,19 +836,108 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(
       SHARED_CHANNEL_MAX_UTF8_BYTES,
     );
+    expect(payload.length).toBeGreaterThan(SHARED_CHANNEL_MAX_CODE_UNITS);
 
-    const parse = vi.spyOn(JSON, "parse");
-    channel.emitRaw(payload);
-    const parseCalls = parse.mock.calls.length;
-    parse.mockRestore();
+    const work = emitRawMeasuringOversizedWork(channel, payload);
     const error = await outcome;
 
-    expect(parseCalls).toBe(0);
+    expect(work).toMatchObject({ byteLengthCalls: 0, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
     expectDeviceError(error, {
       code: "MALFORMED_RESPONSE",
       boundary: "ack",
       outcome: "unknown",
     });
+  });
+
+  it("ignores a giant frame whose current id occurs after the bounded prefix", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    const result = expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+    await channel.waitForWrites(1);
+    const correlationId = correlationIdForWrite(channel, 0);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+      id: correlationId,
+    });
+    expect(payload.length).toBeGreaterThan(SHARED_CHANNEL_MAX_CODE_UNITS);
+
+    const work = emitRawMeasuringOversizedWork(channel, payload);
+
+    expect(work).toMatchObject({ byteLengthCalls: 0, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
+    channel.respondToWrite(0, displayWireResult());
+    await result;
+  });
+
+  it("ignores a giant numeric-id frame without scanning beyond the bounded prefix", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 17,
+      result: "x".repeat(SHARED_CHANNEL_MAX_CODE_UNITS),
+    });
+    expect(payload.length).toBeGreaterThan(SHARED_CHANNEL_MAX_CODE_UNITS);
+
+    const work = emitRawMeasuringOversizedWork(channel, payload);
+
+    expect(work).toMatchObject({ byteLengthCalls: 0, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
+    channel.respondToWrite(0, displayWireResult());
+    await expect(pending).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+  });
+
+  it("ignores an oversized multibyte retired id while a newer response succeeds", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {
+      idNamespace: "adapter-a",
+    });
+    const first = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    const retiredId = correlationIdForWrite(channel, 0);
+    channel.respondToWrite(0, displayWireResult());
+    await first;
+
+    const current = adapter.readDisplayState(BINDING, deadline());
+    const result = expect(current).resolves.toMatchObject({
+      signal: { source: "none", freshness: "unknown" },
+    });
+    await channel.waitForWrites(2);
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: retiredId,
+      result: "é".repeat(SHARED_CHANNEL_MAX_CODE_UNITS / 2),
+    });
+    expect(payload.length).toBeLessThanOrEqual(SHARED_CHANNEL_MAX_CODE_UNITS);
+    expect(Buffer.byteLength(payload, "utf8")).toBeGreaterThan(
+      SHARED_CHANNEL_MAX_UTF8_BYTES,
+    );
+
+    const work = emitRawMeasuringOversizedWork(channel, payload);
+
+    expect(work).toMatchObject({ byteLengthCalls: 1, parseCalls: 0 });
+    expect(work.charCodeAtCalls).toBeLessThanOrEqual(
+      OVERSIZED_CORRELATION_PREFIX_CODE_UNITS * 4,
+    );
+    channel.respondToWrite(1, displayWireResult());
+    await result;
   });
 
   it("parses a correlated frame exactly at the shared-channel UTF-8 byte ceiling", async () => {

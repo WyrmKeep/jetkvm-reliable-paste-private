@@ -494,7 +494,9 @@ export class LegacySseAdapter {
 
   close(): Promise<void> {
     if (this.#closePromise !== undefined) return this.#closePromise;
-    this.#closePromise = this.#performClose();
+    const completion = Promise.withResolvers<void>();
+    this.#closePromise = completion.promise;
+    void this.#performClose().then(completion.resolve, completion.reject);
     return this.#closePromise;
   }
 
@@ -592,22 +594,24 @@ export class LegacySseAdapter {
         idleTimer: undefined,
       };
       transport.onclose = () => {
-        if (!this.#removeEntry(sessionId, entry!, "transport_closed")) return;
-        void this.#retireServer(entry!);
+        void this.#retireRoutingEntry(sessionId, entry!, "transport_closed");
       };
       this.#entries.set(sessionId, entry);
       this.#refreshIdleTimer(sessionId, entry);
       await server.connect(transport);
     } catch (error) {
-      if (entry !== undefined) {
-        this.#removeEntry(transport!.sessionId, entry);
-      } else {
+      const retirement =
+        entry === undefined
+          ? undefined
+          : this.#retireRoutingEntry(transport!.sessionId, entry);
+      if (entry === undefined) {
         cleanupWriter?.();
         this.#releaseAdmission(admission);
       }
       if (transport !== undefined) {
         await transport.close().catch(() => undefined);
       }
+      await retirement;
       throw error;
     }
   }
@@ -986,18 +990,38 @@ export class LegacySseAdapter {
   }
 
   async #expireEntry(sessionId: string, entry: RoutingEntry): Promise<void> {
-    if (!this.#removeEntry(sessionId, entry, "transport_closed")) return;
-    await this.#retireServer(entry);
+    await this.#retireRoutingEntry(sessionId, entry, "transport_closed");
   }
 
-  #retireServer(entry: RoutingEntry): Promise<void> {
-    const retirement = entry.server.close().catch(() => {
-      this.#onDiagnostic?.({ code: "unexpected_error" });
-    });
+  #retireRoutingEntry(
+    sessionId: string,
+    entry: RoutingEntry,
+    diagnostic?: "transport_closed",
+  ): Promise<void> | undefined {
+    if (this.#entries.get(sessionId) !== entry) return undefined;
+
+    const completion = Promise.withResolvers<void>();
+    const retirement = completion.promise;
     this.#retiringServerCloses.add(retirement);
-    void retirement.then(() => {
+    const settle = () => {
       this.#retiringServerCloses.delete(retirement);
-    });
+      completion.resolve();
+    };
+    if (!this.#removeEntry(sessionId, entry, diagnostic)) {
+      settle();
+      return retirement;
+    }
+
+    void Promise.resolve()
+      .then(() => entry.server.close())
+      .then(settle, () => {
+        try {
+          this.#onDiagnostic?.({ code: "unexpected_error" });
+        } finally {
+          settle();
+        }
+      })
+      .catch(() => undefined);
     return retirement;
   }
 
@@ -1019,13 +1043,19 @@ export class LegacySseAdapter {
     return true;
   }
 
+  async #awaitRetirementQuiescence(): Promise<void> {
+    while (this.#retiringServerCloses.size !== 0) {
+      await Promise.all([...this.#retiringServerCloses]);
+    }
+  }
+
   async #performClose(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     const entries = [...this.#entries.entries()];
     const activePosts = [...this.#activePostLifecycles];
     for (const [sessionId, entry] of entries) {
-      this.#removeEntry(sessionId, entry);
+      void this.#retireRoutingEntry(sessionId, entry);
     }
     for (const lifecycle of activePosts) {
       lifecycle.request.pause();
@@ -1041,11 +1071,8 @@ export class LegacySseAdapter {
     this.#postRateWindowStartedAt = undefined;
     this.#postRateByPrincipal.clear();
     this.#postRateBySession.clear();
-    for (const [, entry] of entries) {
-      void this.#retireServer(entry);
-    }
     await Promise.all([
-      ...this.#retiringServerCloses,
+      this.#awaitRetirementQuiescence(),
       ...activePosts.map(({ settled }) => settled),
     ]);
     if (

@@ -2796,7 +2796,7 @@ describe("BrowserPlaneReplay", () => {
       true,
     ],
   ] as const)(
-    "drains same-generation replay input after %s release until reconnect",
+    "synchronously drains same-generation replay input after %s release until reconnect",
     async (_caseName, terminal, rejects) => {
       class BoundReplayAdapter extends ReplayAdapter {
         public constructor(public override readonly binding: DeviceRpcBinding) {
@@ -2850,12 +2850,52 @@ describe("BrowserPlaneReplay", () => {
         },
       );
       await publishReplayObservation(replay);
+      const captureRejection = (promise: Promise<unknown>): Promise<unknown> =>
+        promise.then(
+          (value) => value,
+          (error: unknown) => error,
+        );
 
       const releasing = replay.release(
         ref,
         { requestId: "release-request" },
         deadline,
       );
+      const immediateInputErrors = [
+        captureRejection(
+          replay.mouse(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "mouse-after-release",
+              actions: [{ type: "move", x: 1, y: 1 }],
+            },
+            deadline,
+          ),
+        ),
+        captureRejection(
+          replay.keyboard(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "keyboard-after-release",
+              actions: [{ type: "key_press", key: "KeyA" }],
+            },
+            deadline,
+          ),
+        ),
+        captureRejection(
+          replay.paste(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "paste-after-release",
+              text: "A",
+            },
+            deadline,
+          ),
+        ),
+      ];
       if (rejects) {
         await expect(releasing).rejects.toMatchObject({
           outcome: "unknown",
@@ -2866,17 +2906,11 @@ describe("BrowserPlaneReplay", () => {
           generationDrained: true,
         });
       }
-      await expect(
-        replay.mouse(
-          ref,
-          {
-            observationId: "observation-a",
-            requestId: "request-after-release",
-            actions: [{ type: "move", x: 1, y: 1 }],
-          },
-          deadline,
-        ),
-      ).rejects.toThrow(/drained/i);
+      for (const immediateInputError of immediateInputErrors) {
+        await expect(immediateInputError).resolves.toMatchObject({
+          message: expect.stringMatching(/drained/i),
+        });
+      }
 
       await replay.reconnect(ref, deadline);
       await expect(
@@ -2891,6 +2925,147 @@ describe("BrowserPlaneReplay", () => {
       expect(() => replay.assertExhausted()).not.toThrow();
     },
   );
+
+  it("blocks reentrant input until a definitive not_sent release reopens admission", async () => {
+    const captureOutcome = (promise: Promise<unknown>): Promise<unknown> =>
+      promise.then(
+        (value) => value,
+        (error: unknown) => error,
+      );
+    let inputDuringRelease: Promise<unknown> | undefined;
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        {
+          operation: "release",
+          request: browserMutationRequests.release,
+          error: {
+            code: "CONNECTION_LOST",
+            boundary: "send",
+            outcome: "not_sent",
+            writeBegan: false,
+            acknowledged: false,
+            verification: "none",
+            ...replayRecovery("CONNECTION_LOST", "not_sent"),
+            dispatchedCount: 0,
+            completedCount: 0,
+          },
+        },
+        {
+          operation: "mouse",
+          request: {
+            ref,
+            request: {
+              observationId: "observation-a",
+              requestId: "mouse-after-not-sent",
+              actions: [{ type: "move", x: 1, y: 1 }],
+            },
+          },
+          response: browserMutationReceipt("mouse-after-not-sent"),
+        },
+      ]),
+      resolveReplayImage,
+    );
+    await publishReplayObservation(replay);
+
+    const reentrantReleaseRequest = {
+      requestId: "release-request",
+      toJSON: () => {
+        inputDuringRelease = captureOutcome(
+          replay.mouse(
+            ref,
+            {
+              observationId: "observation-a",
+              requestId: "mouse-during-release",
+              actions: [{ type: "move", x: 1, y: 1 }],
+            },
+            deadline,
+          ),
+        );
+        return { requestId: "release-request" };
+      },
+    };
+    const releasing = captureOutcome(
+      replay.release(ref, reentrantReleaseRequest, deadline),
+    );
+    const inputAfterRelease = captureOutcome(
+      replay.mouse(
+        ref,
+        {
+          observationId: "observation-a",
+          requestId: "mouse-after-not-sent",
+          actions: [{ type: "move", x: 1, y: 1 }],
+        },
+        deadline,
+      ),
+    );
+
+    if (inputDuringRelease === undefined) {
+      throw new Error("Release request serialization did not run.");
+    }
+    await expect(inputDuringRelease).resolves.toMatchObject({
+      message: expect.stringMatching(/drained/i),
+    });
+    await expect(releasing).resolves.toMatchObject({
+      outcome: "not_sent",
+      writeBegan: false,
+    });
+    await expect(inputAfterRelease).resolves.toMatchObject({
+      requestId: "mouse-after-not-sent",
+      outcome: "applied",
+    });
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
+
+  it("drains after consuming a malformed release receipt", async () => {
+    const captureOutcome = (promise: Promise<unknown>): Promise<unknown> =>
+      promise.then(
+        (value) => value,
+        (error: unknown) => error,
+      );
+    const replay = new BrowserPlaneReplay(
+      new ReplayAdapter(),
+      browserTape([
+        ...runtimeBrowserPrelude(),
+        {
+          operation: "release",
+          request: browserMutationRequests.release,
+          response: {
+            ...browserReleaseReceipt("release-request"),
+            generationDrained: false,
+          },
+        },
+        { operation: "close", request: { ref }, response: null },
+      ]),
+      resolveReplayImage,
+    );
+    await publishReplayObservation(replay);
+
+    const releaseFailure = captureOutcome(
+      replay.release(ref, { requestId: "release-request" }, deadline),
+    );
+    const inputAfterFailure = captureOutcome(
+      replay.mouse(
+        ref,
+        {
+          observationId: "observation-a",
+          requestId: "mouse-after-malformed-release",
+          actions: [{ type: "move", x: 1, y: 1 }],
+        },
+        deadline,
+      ),
+    );
+
+    await expect(releaseFailure).resolves.toMatchObject({
+      message: expect.stringMatching(/receipt correlation/i),
+    });
+    await expect(inputAfterFailure).resolves.toMatchObject({
+      message: expect.stringMatching(/drained/i),
+    });
+    await expect(replay.close(ref, deadline)).resolves.toBeUndefined();
+    expect(() => replay.assertExhausted()).not.toThrow();
+  });
 
   it("consumes calls in exact order and rejects an unexpected operation", async () => {
     const replay = new BrowserPlaneReplay(

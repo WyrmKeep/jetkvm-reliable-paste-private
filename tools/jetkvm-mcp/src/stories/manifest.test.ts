@@ -1018,6 +1018,79 @@ describe("reviewed story branch execution", () => {
     }
   });
 
+  it("treats a same-request release for another session or generation as a fresh mutation in Stories 9, 10, 13, 19, and 21", async () => {
+    const canonical = await loadAcceptanceStories(storiesDirectory);
+    const requiredStoryIds: Readonly<Record<string, true>> = Object.freeze({
+      [CANONICAL_STORY_IDS[8]]: true,
+      [CANONICAL_STORY_IDS[9]]: true,
+      [CANONICAL_STORY_IDS[12]]: true,
+      [CANONICAL_STORY_IDS[18]]: true,
+      [CANONICAL_STORY_IDS[20]]: true,
+    });
+    const coveredStoryIds = new Set<string>();
+
+    for (const {
+      storyIndex,
+      releaseIndex,
+      label,
+    } of generationClosingReleaseCoordinates(canonical)) {
+      const originalStory = canonical[storyIndex]!;
+      if (requiredStoryIds[originalStory.id] !== true) {
+        continue;
+      }
+      coveredStoryIds.add(originalStory.id);
+      const originalRelease = originalStory.steps[releaseIndex]!;
+      expect(originalRelease.input.request_id, label).toEqual(
+        expect.any(String),
+      );
+
+      for (const [variant, changedIdentity] of [
+        [
+          "different-session",
+          {
+            session_id: `${String(originalRelease.input.session_id)}-different`,
+          },
+        ],
+        [
+          "different-generation",
+          {
+            session_generation:
+              Number(originalRelease.input.session_generation) + 1,
+          },
+        ],
+      ] as const) {
+        const malformed = structuredClone(canonical);
+        const story = malformed[storyIndex]!;
+        const release = story.steps[releaseIndex]!;
+        release.expect =
+          "The release is applied under its contract-defined terminal result.";
+        const mutationId = `${variant}-same-request-after-${release.id}`;
+        story.steps.splice(releaseIndex + 1, 0, {
+          ...structuredClone(release),
+          id: mutationId,
+          input: {
+            ...release.input,
+            ...changedIdentity,
+          },
+        });
+
+        expect(
+          () => validateAcceptanceStories(malformed),
+          `${label} ${variant}`,
+        ).toThrow(
+          new RegExp(
+            `generation-closing release.*later mutation ${mutationId}`,
+            "i",
+          ),
+        );
+      }
+    }
+
+    expect([...coveredStoryIds].sort()).toEqual(
+      Object.keys(requiredStoryIds).sort(),
+    );
+  });
+
   it("rejects deleting any declared successor recovery after a generation-closing release", async () => {
     const canonical = await loadAcceptanceStories(storiesDirectory);
     const recoveryCases: string[] = [];

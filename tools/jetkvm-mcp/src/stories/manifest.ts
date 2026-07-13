@@ -1951,20 +1951,15 @@ function assertGenerationClosingReleaseRecovery(
         ) {
           continue;
         }
-        if (isExactRequestReplay(release, later)) {
-          continue;
-        }
-        if (
-          later.tool === release.tool &&
-          typeof release.input.request_id === "string" &&
-          later.input.request_id === release.input.request_id
-        ) {
-          continue;
-        }
-
         const reusesClosedGeneration =
           later.input.session_id === closedSessionId &&
           later.input.session_generation === closedGeneration;
+        if (isExactRequestReplay(release, later)) {
+          continue;
+        }
+        if (isSameRequest(release, later) && reusesClosedGeneration) {
+          continue;
+        }
         if (
           !hasRecovery &&
           later.tool === T.reconnect &&

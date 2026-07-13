@@ -10,6 +10,7 @@ import { connect, type AddressInfo, type Socket } from "node:net";
 import type { Server as HttpsServer } from "node:https";
 import { connect as connectTls, type TLSSocket } from "node:tls";
 
+import { Server as McpSdkServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -393,6 +394,19 @@ async function waitForSocketClose(
   });
   return completed.promise;
 }
+function replaceNextMcpServerClose(close: () => Promise<void>): void {
+  const connect = McpSdkServer.prototype.connect;
+  vi.spyOn(McpSdkServer.prototype, "connect").mockImplementationOnce(
+    async function (
+      this: McpSdkServer,
+      transport: Parameters<McpSdkServer["connect"]>[0],
+    ): Promise<void> {
+      await connect.call(this, transport);
+      this.close = close;
+    },
+  );
+}
+
 beforeEach(() => {
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
@@ -4048,80 +4062,150 @@ describe("legacy SSE adapter", () => {
     stream.response.destroy();
   });
 
-  it("awaits retiring stream cleanup after the routing entry is removed", async () => {
-    const entered = Promise.withResolvers<void>();
-    const aborted = Promise.withResolvers<void>();
-    const cleanup = Promise.withResolvers<void>();
-    const handler = vi.fn(
-      async (
-        _input: unknown,
-        context: { signal: AbortSignal },
-      ): Promise<CallToolResult> => {
-        entered.resolve();
-        if (!context.signal.aborted) {
-          const signalAborted = Promise.withResolvers<void>();
-          context.signal.addEventListener(
-            "abort",
-            () => signalAborted.resolve(),
-            { once: true },
-          );
-          await signalAborted.promise;
-        }
-        aborted.resolve();
-        await cleanup.promise;
-        return businessError("jetkvm_session_connect");
-      },
-    );
-    const value = await startAdapter({
-      handlerRegistry: completeRegistry({ jetkvm_session_connect: handler }),
-    });
-    const stream = await openSse(value.baseUrl);
-    const initialized = await post(
-      value.baseUrl,
-      stream.endpoint,
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-11-25",
-          capabilities: {},
-          clientInfo: { name: "retiring-close-test", version: "1.0.0" },
+  it.each([
+    ["transport", "abort"],
+    ["transport", "transport_closed diagnostic"],
+    ["adapter", "abort"],
+  ] as const)(
+    "awaits stream retirement when %s close cleanup reenters from the %s hook",
+    async (closeSource, reentrySource) => {
+      const entered = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<void>();
+      const cleanup = Promise.withResolvers<void>();
+      let value: RunningAdapter;
+      let reentrantClose: Promise<void> | undefined;
+      const handler = vi.fn(
+        async (
+          _input: unknown,
+          context: { signal: AbortSignal },
+        ): Promise<CallToolResult> => {
+          entered.resolve();
+          const onAbort = () => {
+            if (reentrySource === "abort") {
+              reentrantClose = value.adapter.close();
+            }
+            aborted.resolve();
+          };
+          if (context.signal.aborted) {
+            onAbort();
+          } else {
+            const signalAborted = Promise.withResolvers<void>();
+            context.signal.addEventListener(
+              "abort",
+              () => {
+                onAbort();
+                signalAborted.resolve();
+              },
+              { once: true },
+            );
+            await signalAborted.promise;
+          }
+          await cleanup.promise;
+          return businessError("jetkvm_session_connect");
         },
-      }),
-    );
-    expect(initialized.status).toBe(202);
-    await stream.nextFrame();
-    const called = await post(
-      value.baseUrl,
-      stream.endpoint,
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        method: "tools/call",
-        params: {
-          name: "jetkvm_session_connect",
-          arguments: { request_id: "retiring-close", timeout_ms: 60_000 },
+      );
+      value = await startAdapter({
+        handlerRegistry: completeRegistry({ jetkvm_session_connect: handler }),
+        onDiagnostic: (event) => {
+          if (
+            reentrySource === "transport_closed diagnostic" &&
+            event.code === "transport_closed"
+          ) {
+            reentrantClose = value.adapter.close();
+          }
         },
-      }),
-    );
-    expect(called.status).toBe(202);
-    await entered.promise;
+      });
+      const stream = await openSse(value.baseUrl);
+      const initialized = await post(
+        value.baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "retiring-close-test", version: "1.0.0" },
+          },
+        }),
+      );
+      expect(initialized.status).toBe(202);
+      await stream.nextFrame();
+      const called = await post(
+        value.baseUrl,
+        stream.endpoint,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: "jetkvm_session_connect",
+            arguments: { request_id: "retiring-close", timeout_ms: 60_000 },
+          },
+        }),
+      );
+      expect(called.status).toBe(202);
+      await entered.promise;
 
-    stream.response.destroy();
-    await aborted.promise;
-    let closeSettled = false;
-    const close = value.adapter.close();
-    void close.then(() => {
-      closeSettled = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(closeSettled).toBe(false);
+      const initiatingClose =
+        closeSource === "adapter"
+          ? value.adapter.close()
+          : (stream.response.destroy(), undefined);
+      await aborted.promise;
+      expect(reentrantClose).toBeDefined();
+      expect(value.adapter.close()).toBe(reentrantClose);
+      if (initiatingClose !== undefined) {
+        expect(reentrantClose).toBe(initiatingClose);
+      }
+      let closeSettled = false;
+      void reentrantClose!.then(() => {
+        closeSettled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closeSettled).toBe(false);
 
-    cleanup.resolve();
-    await close;
-    expect(closeSettled).toBe(true);
-  });
+      cleanup.resolve();
+      await reentrantClose;
+      expect(closeSettled).toBe(true);
+    },
+  );
+
+  it.each(["throws synchronously", "rejects"] as const)(
+    "reports and settles a retirement when server close %s",
+    async (failureMode) => {
+      const closeError = new Error(`test server close ${failureMode}`);
+      replaceNextMcpServerClose(
+        failureMode === "throws synchronously"
+          ? () => {
+              throw closeError;
+            }
+          : () => Promise.reject(closeError),
+      );
+      const diagnostics: string[] = [];
+      let value: RunningAdapter;
+      let reentrantClose: Promise<void> | undefined;
+      const diagnosed = Promise.withResolvers<void>();
+      value = await startAdapter({
+        onDiagnostic: (event) => {
+          diagnostics.push(event.code);
+          if (event.code !== "unexpected_error") return;
+          reentrantClose = value.adapter.close();
+          diagnosed.resolve();
+        },
+      });
+      const stream = await openSse(value.baseUrl);
+
+      stream.response.destroy();
+      await diagnosed.promise;
+      expect(reentrantClose).toBeDefined();
+      await expect(reentrantClose).resolves.toBeUndefined();
+      expect(value.adapter.close()).toBe(reentrantClose);
+      expect(diagnostics.filter((code) => code === "unexpected_error")).toEqual(
+        ["unexpected_error"],
+      );
+    },
+  );
 
   it("rejects a declared body larger than 2 MiB without dispatch", async () => {
     const handler = vi.fn(async (_input: unknown) =>

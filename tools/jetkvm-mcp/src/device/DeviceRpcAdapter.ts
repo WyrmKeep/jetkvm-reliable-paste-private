@@ -10,7 +10,10 @@ export interface Deadline {
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
 }
-export const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CANONICAL_OPAQUE_ID_MAX_CODE_UNITS = 128;
+export const OPAQUE_ID_PATTERN = new RegExp(
+  `^[A-Za-z0-9][A-Za-z0-9._:-]{0,${CANONICAL_OPAQUE_ID_MAX_CODE_UNITS - 1}}$`,
+);
 
 export function isCanonicalOpaqueId(value: unknown): value is string {
   return typeof value === "string" && OPAQUE_ID_PATTERN.test(value);
@@ -289,6 +292,10 @@ const atxActionSchema = z.enum(["press_power", "hold_power", "press_reset"]);
 const CORRELATION_ID_PREFIX = "device-rpc";
 // Accommodates the 64 KiB maximum EDID hex result with over 15x envelope headroom.
 const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
+// Any string over this equal code-unit ceiling is necessarily over the UTF-8 ceiling.
+const SHARED_CHANNEL_MAX_CODE_UNITS = SHARED_CHANNEL_MAX_UTF8_BYTES;
+// Covers a maximum canonical ID encoded entirely as six-code-unit JSON escapes.
+const OVERSIZED_CORRELATION_PREFIX_CODE_UNITS = 1_024;
 
 function findJsonStringEnd(payload: string, start: number): number {
   for (let index = start + 1; index < payload.length; index += 1) {
@@ -309,7 +316,6 @@ function jsonStringTokenMatches(
   start: number,
   end: number,
   target: string,
-  prefixOnly: boolean,
 ): boolean {
   let targetIndex = 0;
   for (let index = start + 1; index < end; ) {
@@ -363,15 +369,89 @@ function jsonStringTokenMatches(
       return false;
     }
     targetIndex += 1;
-    if (prefixOnly && targetIndex === target.length) return true;
   }
   return targetIndex === target.length;
 }
 
-function oversizedPayloadClaimsOwnedCorrelation(
+function decodeCanonicalOpaqueId(
   payload: string,
-  ownedPrefix: string,
+  start: number,
+  end: number,
+): string | undefined {
+  let value = "";
+  for (let index = start + 1; index < end; ) {
+    let code = payload.charCodeAt(index);
+    index += 1;
+    if (code === 0x5c) {
+      if (index >= end) return undefined;
+      const escape = payload.charCodeAt(index);
+      index += 1;
+      if (escape === 0x75) {
+        if (index + 4 > end) return undefined;
+        code = 0;
+        for (let offset = 0; offset < 4; offset += 1) {
+          const hex = payload.charCodeAt(index + offset);
+          const nibble =
+            hex >= 0x30 && hex <= 0x39
+              ? hex - 0x30
+              : hex >= 0x41 && hex <= 0x46
+                ? hex - 0x41 + 10
+                : hex >= 0x61 && hex <= 0x66
+                  ? hex - 0x61 + 10
+                  : -1;
+          if (nibble < 0) return undefined;
+          code = code * 16 + nibble;
+        }
+        index += 4;
+      } else if (escape === 0x22 || escape === 0x5c || escape === 0x2f) {
+        code = escape;
+      } else {
+        return undefined;
+      }
+    }
+    const valueIndex = value.length;
+    const alphaNumeric =
+      (code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a);
+    if (
+      valueIndex >= CANONICAL_OPAQUE_ID_MAX_CODE_UNITS ||
+      (!alphaNumeric &&
+        (valueIndex === 0 ||
+          (code !== 0x2e && code !== 0x3a && code !== 0x5f && code !== 0x2d)))
+    ) {
+      return undefined;
+    }
+    value += String.fromCharCode(code);
+  }
+  return value.length > 0 ? value : undefined;
+}
+
+function isIssuedNoncurrentCorrelationId(
+  candidate: string,
+  issuedPrefix: string,
+  currentSequence: number,
 ): boolean {
+  const correlationPrefix = `${issuedPrefix}:`;
+  if (!candidate.startsWith(correlationPrefix)) return false;
+  const sequenceText = candidate.slice(correlationPrefix.length);
+  const candidateSequence = Number(sequenceText);
+  return (
+    Number.isSafeInteger(candidateSequence) &&
+    candidateSequence >= 1 &&
+    String(candidateSequence) === sequenceText &&
+    candidateSequence < currentSequence
+  );
+}
+
+type OversizedCorrelationClassification = "current" | "retired" | "other";
+
+function classifyOversizedPayloadPrefix(
+  payload: string,
+  currentId: string,
+  issuedPrefix: string,
+  currentSequence: number,
+): OversizedCorrelationClassification {
   let index = 0;
   while (
     index < payload.length &&
@@ -382,19 +462,16 @@ function oversizedPayloadClaimsOwnedCorrelation(
   ) {
     index += 1;
   }
-  if (payload.charCodeAt(index) !== 0x7b) return false;
+  if (payload.charCodeAt(index) !== 0x7b) return "other";
   index += 1;
   let depth = 1;
-  let claimsOwnedCorrelation = false;
+  let classification: OversizedCorrelationClassification = "other";
   while (index < payload.length && depth > 0) {
     const code = payload.charCodeAt(index);
     if (code === 0x22) {
       const end = findJsonStringEnd(payload, index);
-      if (end < 0) return claimsOwnedCorrelation;
-      if (
-        depth === 1 &&
-        jsonStringTokenMatches(payload, index, end, "id", false)
-      ) {
+      if (end < 0) return classification;
+      if (depth === 1 && jsonStringTokenMatches(payload, index, end, "id")) {
         let valueStart = end + 1;
         while (
           valueStart < payload.length &&
@@ -418,18 +495,26 @@ function oversizedPayloadClaimsOwnedCorrelation(
           }
           if (payload.charCodeAt(valueStart) === 0x22) {
             const valueEnd = findJsonStringEnd(payload, valueStart);
-            if (valueEnd < 0) return claimsOwnedCorrelation;
-            claimsOwnedCorrelation = jsonStringTokenMatches(
+            if (valueEnd < 0) return classification;
+            const candidate = decodeCanonicalOpaqueId(
               payload,
               valueStart,
               valueEnd,
-              ownedPrefix,
-              true,
             );
+            if (candidate === currentId) return "current";
+            if (
+              candidate !== undefined &&
+              isIssuedNoncurrentCorrelationId(
+                candidate,
+                issuedPrefix,
+                currentSequence,
+              )
+            ) {
+              classification = "retired";
+            }
             index = valueEnd + 1;
             continue;
           }
-          claimsOwnedCorrelation = false;
         }
       }
       index = end + 1;
@@ -439,7 +524,7 @@ function oversizedPayloadClaimsOwnedCorrelation(
     else if (code === 0x7d || code === 0x5d) depth -= 1;
     index += 1;
   }
-  return claimsOwnedCorrelation;
+  return classification;
 }
 
 export function mapDeviceRpcBindingToWire(
@@ -891,20 +976,24 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     rawPayload: string,
   ): void {
     if (source !== this.channel || sourceRevision !== this.revision) return;
-    if (Buffer.byteLength(rawPayload, "utf8") > SHARED_CHANNEL_MAX_UTF8_BYTES) {
+    const oversized =
+      rawPayload.length > SHARED_CHANNEL_MAX_CODE_UNITS ||
+      Buffer.byteLength(rawPayload, "utf8") > SHARED_CHANNEL_MAX_UTF8_BYTES;
+    if (oversized) {
       const pending = this.pendingExchange;
-      if (
-        pending !== undefined &&
-        !pending.settled &&
-        oversizedPayloadClaimsOwnedCorrelation(
-          rawPayload,
-          `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:`,
-        )
-      ) {
-        this.finishExchangeError(
-          pending,
-          this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+      if (pending !== undefined && !pending.settled) {
+        const classification = classifyOversizedPayloadPrefix(
+          rawPayload.slice(0, OVERSIZED_CORRELATION_PREFIX_CODE_UNITS),
+          pending.correlationId,
+          pending.correlationPrefix,
+          pending.correlationSequence,
         );
+        if (classification === "current") {
+          this.finishExchangeError(
+            pending,
+            this.protocolError("MALFORMED_RESPONSE", pending.writeBegan),
+          );
+        }
       }
       return;
     }
@@ -961,7 +1050,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     }
     if (envelope.data.id !== pending.correlationId) {
       if (
-        this.isIssuedNoncurrentCorrelationId(
+        isIssuedNoncurrentCorrelationId(
           envelope.data.id,
           pending.correlationPrefix,
           pending.correlationSequence,
@@ -1151,23 +1240,6 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       candidate.startsWith(
         `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:`,
       )
-    );
-  }
-
-  private isIssuedNoncurrentCorrelationId(
-    candidate: string,
-    issuedPrefix: string,
-    currentSequence: number,
-  ): boolean {
-    const correlationPrefix = `${issuedPrefix}:`;
-    if (!candidate.startsWith(correlationPrefix)) return false;
-    const sequenceText = candidate.slice(correlationPrefix.length);
-    const candidateSequence = Number(sequenceText);
-    return (
-      Number.isSafeInteger(candidateSequence) &&
-      candidateSequence >= 1 &&
-      String(candidateSequence) === sequenceText &&
-      candidateSequence < currentSequence
     );
   }
 

@@ -191,6 +191,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
   private lifecycleAbort = new AbortController();
   private reconnectingRef?: SessionRef;
   private generationDrained = false;
+  private releaseAdmissionClosed = false;
 
   public constructor(
     deviceRpc: DeviceRpcAdapter,
@@ -491,31 +492,38 @@ export class BrowserPlaneReplay implements BrowserPlane {
     });
   }
 
-  public async release(
+  public release(
     ref: SessionRef,
     request: ReleaseRequest,
     deadline: Deadline,
   ): Promise<ReleaseReceipt> {
+    let admittedPosition: number | undefined;
     try {
-      const receipt = await this.consumeReceipt(
+      this.validateDeadline(deadline);
+      this.assertPublishedRef(ref);
+      this.releaseAdmissionClosed = true;
+      admittedPosition = this.replay.position;
+      const receipt = this.consumeAdmittedReceipt(
         "release",
         ref,
         request,
-        deadline,
         releaseReceiptSchema,
         1,
       );
       this.drainPublishedGeneration();
-      return receipt;
+      return Promise.resolve(receipt);
     } catch (error) {
-      if (
-        error instanceof ReplayRecordedError &&
-        error.writeBegan &&
-        error.outcome !== "not_sent"
-      ) {
-        this.drainPublishedGeneration();
+      if (admittedPosition !== undefined) {
+        this.releaseAdmissionClosed = false;
+        const definitiveNotSent =
+          error instanceof ReplayRecordedError &&
+          error.outcome === "not_sent" &&
+          !error.writeBegan;
+        if (this.replay.position !== admittedPosition && !definitiveNotSent) {
+          this.drainPublishedGeneration();
+        }
       }
-      throw error;
+      return Promise.reject(error);
     }
   }
 
@@ -614,8 +622,54 @@ export class BrowserPlaneReplay implements BrowserPlane {
     schema: z.ZodType<T>,
     expectedCount: number,
   ): Promise<T> {
+    return this.consumeReceiptSynchronously(
+      operation,
+      ref,
+      request,
+      deadline,
+      schema,
+      expectedCount,
+    );
+  }
+
+  private consumeReceiptSynchronously<
+    T extends {
+      readonly requestId: string;
+      readonly dispatchedCount: number;
+      readonly completedCount: number;
+    },
+  >(
+    operation: "mouse" | "keyboard" | "release",
+    ref: SessionRef,
+    request: MouseRequest | KeyboardRequest | ReleaseRequest,
+    deadline: Deadline,
+    schema: z.ZodType<T>,
+    expectedCount: number,
+  ): T {
     this.validateDeadline(deadline);
     this.assertPublishedRef(ref);
+    return this.consumeAdmittedReceipt(
+      operation,
+      ref,
+      request,
+      schema,
+      expectedCount,
+    );
+  }
+
+  private consumeAdmittedReceipt<
+    T extends {
+      readonly requestId: string;
+      readonly dispatchedCount: number;
+      readonly completedCount: number;
+    },
+  >(
+    operation: "mouse" | "keyboard" | "release",
+    ref: SessionRef,
+    request: MouseRequest | KeyboardRequest | ReleaseRequest,
+    schema: z.ZodType<T>,
+    expectedCount: number,
+  ): T {
     const response = this.replay.consume(operation, {
       ref: { ...ref },
       request: JSON.parse(JSON.stringify(request)) as JsonValue,
@@ -729,7 +783,10 @@ export class BrowserPlaneReplay implements BrowserPlane {
     ) {
       throw new Error("Replay BrowserPlane has no published connection.");
     }
-    if (this.generationDrained && !allowDrained) {
+    if (
+      (this.generationDrained || this.releaseAdmissionClosed) &&
+      !allowDrained
+    ) {
       throw new Error("Replay BrowserPlane generation input is drained.");
     }
   }
@@ -764,6 +821,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
   }
 
   private drainPublishedGeneration(): void {
+    this.releaseAdmissionClosed = false;
     if (this.lifecycleState !== "published") return;
     this.observations.clear();
     this.generationDrained = true;
@@ -776,6 +834,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
     this.lifecycleAbort = new AbortController();
     this.lifecycleToken += 1;
     this.lifecycleState = state;
+    this.releaseAdmissionClosed = false;
     return this.lifecycleToken;
   }
 
