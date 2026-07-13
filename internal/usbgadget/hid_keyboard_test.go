@@ -32,11 +32,13 @@ func requireNoAutoReleaseTimer(t *testing.T, g *UsbGadget, key byte) {
 	require.Nil(t, g.kbdAutoReleaseTimers[key])
 }
 
-func requireAutoReleaseTimer(t *testing.T, g *UsbGadget, key byte) {
+func requireAutoReleaseTimer(t *testing.T, g *UsbGadget, key byte) *keyboardAutoReleaseTimer {
 	t.Helper()
 	g.kbdAutoReleaseLock.Lock()
 	defer g.kbdAutoReleaseLock.Unlock()
-	require.NotNil(t, g.kbdAutoReleaseTimers[key])
+	timer := g.kbdAutoReleaseTimers[key]
+	require.NotNil(t, timer)
+	return timer
 }
 
 func TestConcurrentKeypressReportAndClearUseSingleKeyboardMutex(t *testing.T) {
@@ -146,4 +148,138 @@ func TestClearKeyboardStateCancelsTimersAndWritesClearReport(t *testing.T) {
 	requireKeysDownState(t, reports[0], 0, []byte{0, 0, 0, 0, 0, 0})
 	requireKeysDownState(t, g.GetKeysDownState(), 0, []byte{0, 0, 0, 0, 0, 0})
 	requireNoAutoReleaseTimer(t, g, 0x04)
+}
+
+func startAutoReleaseCallbackBlockedBeforeKeyboardLock(
+	t *testing.T,
+	g *UsbGadget,
+	key byte,
+) (release func(), done <-chan struct{}) {
+	t.Helper()
+
+	callbackStarted := make(chan struct{})
+	continueCallback := make(chan struct{})
+	callbackDone := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseCallback := func() {
+		releaseOnce.Do(func() { close(continueCallback) })
+	}
+	t.Cleanup(releaseCallback)
+	g.beforeAutoReleaseKeyboardLock = func() {
+		close(callbackStarted)
+		<-continueCallback
+	}
+
+	timer := &keyboardAutoReleaseTimer{}
+	timer.timer = time.AfterFunc(0, func() {
+		defer close(callbackDone)
+		g.performAutoRelease(key, timer)
+	})
+	g.kbdAutoReleaseLock.Lock()
+	g.kbdAutoReleaseTimers[key] = timer
+	g.kbdAutoReleaseLock.Unlock()
+
+	<-callbackStarted
+	return releaseCallback, callbackDone
+}
+
+func TestAutoReleaseCallbackBeforeClearWritesReleaseThenClear(t *testing.T) {
+	g := newKeyboardTestGadget(t)
+	const key = byte(0x04)
+	g.keysDownState = KeysDownState{
+		Keys: []byte{key, 0, 0, 0, 0, 0},
+	}
+
+	var reports []KeysDownState
+	g.keyboardWriteFunc = func(modifier byte, keys []byte) error {
+		reports = append(reports, KeysDownState{Modifier: modifier, Keys: append([]byte(nil), keys...)})
+		return nil
+	}
+
+	releaseCallback, callbackDone := startAutoReleaseCallbackBlockedBeforeKeyboardLock(t, g, key)
+	releaseCallback()
+	<-callbackDone
+	require.Len(t, reports, 1)
+	requireKeysDownState(t, g.GetKeysDownState(), 0, []byte{0, 0, 0, 0, 0, 0})
+	requireNoAutoReleaseTimer(t, g, key)
+
+	require.NoError(t, g.ClearKeyboardState())
+	require.Len(t, reports, 2)
+	requireKeysDownState(t, reports[0], 0, []byte{0, 0, 0, 0, 0, 0})
+	requireKeysDownState(t, reports[1], 0, []byte{0, 0, 0, 0, 0, 0})
+	requireNoAutoReleaseTimer(t, g, key)
+}
+
+func TestClearKeyboardStateWinsOverFiredAutoReleaseCallback(t *testing.T) {
+	g := newKeyboardTestGadget(t)
+	const key = byte(0x04)
+	g.keysDownState = KeysDownState{
+		Keys: []byte{key, 0, 0, 0, 0, 0},
+	}
+
+	var reports []KeysDownState
+	g.keyboardWriteFunc = func(modifier byte, keys []byte) error {
+		reports = append(reports, KeysDownState{Modifier: modifier, Keys: append([]byte(nil), keys...)})
+		return nil
+	}
+
+	releaseCallback, callbackDone := startAutoReleaseCallbackBlockedBeforeKeyboardLock(t, g, key)
+
+	require.NoError(t, g.ClearKeyboardState())
+	require.Len(t, reports, 1)
+	requireNoAutoReleaseTimer(t, g, key)
+	releaseCallback()
+	<-callbackDone
+
+	require.Len(t, reports, 1)
+	requireKeysDownState(t, reports[0], 0, []byte{0, 0, 0, 0, 0, 0})
+	requireKeysDownState(t, g.GetKeysDownState(), 0, []byte{0, 0, 0, 0, 0, 0})
+	requireNoAutoReleaseTimer(t, g, key)
+}
+
+func TestFiredAutoReleaseCallbackCannotConsumeReplacementTimer(t *testing.T) {
+	g := newKeyboardTestGadget(t)
+	const key = byte(0x04)
+	g.keysDownState = KeysDownState{
+		Keys: []byte{key, 0, 0, 0, 0, 0},
+	}
+
+	var reports []KeysDownState
+	g.keyboardWriteFunc = func(modifier byte, keys []byte) error {
+		reports = append(reports, KeysDownState{Modifier: modifier, Keys: append([]byte(nil), keys...)})
+		return nil
+	}
+
+	releaseOldCallback, oldCallbackDone := startAutoReleaseCallbackBlockedBeforeKeyboardLock(t, g, key)
+
+	require.NoError(t, g.ClearKeyboardState())
+	require.Len(t, reports, 1)
+	requireKeysDownState(t, reports[0], 0, []byte{0, 0, 0, 0, 0, 0})
+	requireNoAutoReleaseTimer(t, g, key)
+
+	var replacementCallback func()
+	g.autoReleaseAfterFunc = func(_ time.Duration, callback func()) *time.Timer {
+		replacementCallback = callback
+		return time.NewTimer(time.Hour)
+	}
+	require.NoError(t, g.KeypressReport(key, true))
+	replacementTimer := requireAutoReleaseTimer(t, g, key)
+	require.Len(t, reports, 2)
+	requireKeysDownState(t, reports[1], 0, []byte{key, 0, 0, 0, 0, 0})
+
+	releaseOldCallback()
+	<-oldCallbackDone
+
+	require.Len(t, reports, 2, "stale callback must not write a release")
+	requireKeysDownState(t, g.GetKeysDownState(), 0, []byte{key, 0, 0, 0, 0, 0})
+	require.Same(t, replacementTimer, requireAutoReleaseTimer(t, g, key))
+
+	g.beforeAutoReleaseKeyboardLock = nil
+	require.NotNil(t, replacementCallback)
+	replacementCallback()
+
+	require.Len(t, reports, 3)
+	requireKeysDownState(t, reports[2], 0, []byte{0, 0, 0, 0, 0, 0})
+	requireKeysDownState(t, g.GetKeysDownState(), 0, []byte{0, 0, 0, 0, 0, 0})
+	requireNoAutoReleaseTimer(t, g, key)
 }

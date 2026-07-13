@@ -1,0 +1,70 @@
+name: JetKVM MCP foundation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/*.yml"
+      - "*.go"
+      - "tools/jetkvm-mcp/**"
+      - "internal/**/*.go"
+      - "go.mod"
+      - "go.sum"
+  push:
+    paths:
+      - ".github/workflows/*.yml"
+      - "*.go"
+      - "tools/jetkvm-mcp/**"
+      - "internal/**/*.go"
+      - "go.mod"
+      - "go.sum"
+
+permissions:
+  contents: read
+
+jobs:
+  mcp:
+    name: MCP package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/jetkvm-mcp
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.23.1"
+          cache: "npm"
+          cache-dependency-path: "tools/jetkvm-mcp/package-lock.json"
+      - name: Assert Node.js version
+        run: test "$(node --version)" = "v22.23.1"
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Vitest and node:test suites
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build package
+        run: npm run build
+      - name: Test installed lease runner
+        run: npm run test:installed-lease
+      - name: Verify package dry run and allowlist
+        run: npm run package:check
+
+  foundation-go:
+    name: Foundation Go race tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.1"
+          cache: true
+          cache-dependency-path: "go.sum"
+      - name: Create empty resource directory
+        run: mkdir -p static && touch static/.gitkeep
+      - name: Run host-safe race tests
+        run: go test -race -tags=hosttest . ./internal/controlsession ./internal/usbgadget

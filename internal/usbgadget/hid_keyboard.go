@@ -163,6 +163,13 @@ func (u *UsbGadget) SetOnKeepAliveReset(f func()) {
 // DefaultAutoReleaseDuration is the default duration for auto-release of a key.
 const DefaultAutoReleaseDuration = 100 * time.Millisecond
 
+// keyboardAutoReleaseTimer is a unique identity for one scheduled release.
+// A replacement always gets a new instance so a fired callback can prove it
+// still owns the map entry before releasing the key.
+type keyboardAutoReleaseTimer struct {
+	timer *time.Timer
+}
+
 func isKeyboardModifierKey(key byte) bool {
 	_, exists := KeyCodeToMaskMap[key]
 	return exists
@@ -176,16 +183,22 @@ func (u *UsbGadget) scheduleAutoRelease(key byte) {
 	u.kbdAutoReleaseLock.Lock()
 	defer unlockWithLog(&u.kbdAutoReleaseLock, u.log, "autoRelease scheduled")
 
-	if u.kbdAutoReleaseTimers[key] != nil {
-		u.kbdAutoReleaseTimers[key].Stop()
+	if timer := u.kbdAutoReleaseTimers[key]; timer != nil {
+		timer.timer.Stop()
 	}
 
 	// TODO: make this configurable
 	// We currently hardcode the duration to 100ms
 	// However, it should be the same as the duration of the keep-alive reset called baseExtension.
-	u.kbdAutoReleaseTimers[key] = time.AfterFunc(100*time.Millisecond, func() {
-		u.performAutoRelease(key)
+	afterFunc := time.AfterFunc
+	if u.autoReleaseAfterFunc != nil {
+		afterFunc = u.autoReleaseAfterFunc
+	}
+	timer := &keyboardAutoReleaseTimer{}
+	timer.timer = afterFunc(100*time.Millisecond, func() {
+		u.performAutoRelease(key, timer)
 	})
+	u.kbdAutoReleaseTimers[key] = timer
 }
 
 func (u *UsbGadget) cancelAutoRelease(key byte) {
@@ -193,8 +206,7 @@ func (u *UsbGadget) cancelAutoRelease(key byte) {
 	defer unlockWithLog(&u.kbdAutoReleaseLock, u.log, "autoRelease cancelled")
 
 	if timer := u.kbdAutoReleaseTimers[key]; timer != nil {
-		timer.Stop()
-		u.kbdAutoReleaseTimers[key] = nil
+		timer.timer.Stop()
 		delete(u.kbdAutoReleaseTimers, key)
 
 		// Reset keep-alive timing when key is released
@@ -210,7 +222,7 @@ func (u *UsbGadget) cancelAllAutoReleaseTimers() {
 
 	for key, timer := range u.kbdAutoReleaseTimers {
 		if timer != nil {
-			timer.Stop()
+			timer.timer.Stop()
 		}
 		delete(u.kbdAutoReleaseTimers, key)
 	}
@@ -224,22 +236,35 @@ func (u *UsbGadget) DelayAutoReleaseWithDuration(resetDuration time.Duration) {
 
 	for _, timer := range u.kbdAutoReleaseTimers {
 		if timer != nil {
-			timer.Reset(resetDuration)
+			timer.timer.Reset(resetDuration)
 		}
 	}
 }
 
-func (u *UsbGadget) performAutoRelease(key byte) {
-	u.kbdAutoReleaseLock.Lock()
+func (u *UsbGadget) performAutoRelease(key byte, expected *keyboardAutoReleaseTimer) {
+	if u.beforeAutoReleaseKeyboardLock != nil {
+		u.beforeAutoReleaseKeyboardLock()
+	}
 
-	if u.kbdAutoReleaseTimers[key] == nil {
+	// Match the keyboard -> auto-release lock order used by KeypressReport and
+	// ClearKeyboardState. Once the keyboard lock is held, timer validation and
+	// the release report form one serialized transaction.
+	u.keyboardLock.Lock()
+	defer u.keyboardLock.Unlock()
+
+	u.kbdAutoReleaseLock.Lock()
+	timer := u.kbdAutoReleaseTimers[key]
+	if timer == nil {
 		u.log.Warn().Uint8("key", key).Msg("autoRelease timer not found")
 		u.kbdAutoReleaseLock.Unlock()
 		return
 	}
+	if timer != expected {
+		u.kbdAutoReleaseLock.Unlock()
+		return
+	}
 
-	u.kbdAutoReleaseTimers[key].Stop()
-	u.kbdAutoReleaseTimers[key] = nil
+	timer.timer.Stop()
 	delete(u.kbdAutoReleaseTimers, key)
 	u.kbdAutoReleaseLock.Unlock()
 
@@ -258,7 +283,8 @@ func (u *UsbGadget) performAutoRelease(key byte) {
 		return
 	}
 
-	_, err := u.keypressReport(key, false)
+	_, err := u.keypressReportLocked(key, false)
+	u.resetUserInputTime()
 	if err != nil {
 		u.log.Warn().Uint8("key", key).Msg("failed to release key")
 	}
@@ -559,15 +585,6 @@ func (u *UsbGadget) keypressReportLocked(key byte, press bool) (KeysDownState, e
 		return state, err
 	}
 	return u.UpdateKeysDown(modifier, keys), nil
-}
-
-func (u *UsbGadget) keypressReport(key byte, press bool) (KeysDownState, error) {
-	defer u.resetUserInputTime()
-
-	u.keyboardLock.Lock()
-	defer u.keyboardLock.Unlock()
-
-	return u.keypressReportLocked(key, press)
 }
 
 func (u *UsbGadget) KeypressReport(key byte, press bool) error {

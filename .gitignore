@@ -3,6 +3,7 @@ static/*
 .idea
 .DS_Store
 .claude/
+.worktrees/
 
 .cache
 .vite
@@ -13,6 +14,8 @@ node_modules
 tools/paste-harness/hidtype/hidtype
 tools/paste-harness/artifacts/
 tools/paste-harness/ledger.jsonl
+
+tools/jetkvm-mcp/dist/
 
 # generated during the build process
 #internal/native/include
