@@ -678,6 +678,7 @@ interface PendingExchange {
   writeBegan: boolean;
   writeState: "pending" | "written" | "rejected";
   deferredError: DeviceRpcError | undefined;
+  closeObservedDuringWrite: boolean;
   receivedResult: unknown;
 }
 
@@ -987,6 +988,7 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         writeBegan: false,
         writeState: "pending",
         deferredError: undefined,
+        closeObservedDuringWrite: false,
         receivedResult: undefined,
       };
       this.pendingExchange = exchange;
@@ -1007,7 +1009,11 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         this.finishExchangeError(
           exchange,
           new DeviceRpcError(
-            replaced ? "BINDING_REPLACED" : "WRITE_REJECTED",
+            replaced
+              ? "BINDING_REPLACED"
+              : exchange.closeObservedDuringWrite
+                ? "CONNECTION_LOST"
+                : "WRITE_REJECTED",
             "send",
             "not_sent",
             false,
@@ -1196,6 +1202,9 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     if (source !== this.channel || sourceRevision !== this.revision) return;
     const pending = this.pendingExchange;
     if (pending === undefined) return;
+    if (pending.writeState === "pending") {
+      pending.closeObservedDuringWrite = true;
+    }
     const replaced =
       pending.expectedRevision !== this.revision ||
       pending.expectedChannel !== this.channel ||

@@ -795,6 +795,89 @@ describe("DeviceRpcAdapter timing and replacement fences", () => {
     });
   });
 
+  it("preserves a synchronous channel close when write returns false", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: () => channel.close(),
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const error = await adapter
+      .readDisplayState(BINDING, deadline())
+      .catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "CONNECTION_LOST",
+      boundary: "send",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+    });
+  });
+
+  it("preserves a synchronous channel close when write throws", async () => {
+    let channel!: FakeDeviceRpcChannel;
+    channel = new FakeDeviceRpcChannel({
+      beforeWrite: () => {
+        channel.close();
+        throw new Error("write failed");
+      },
+    });
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const error = await adapter
+      .readDisplayState(BINDING, deadline())
+      .catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "CONNECTION_LOST",
+      boundary: "send",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+    });
+  });
+
+  it.each([
+    ["response-first", "DOWNSTREAM_ERROR"],
+    ["close-first", "CONNECTION_LOST"],
+  ] as const)(
+    "preserves first terminal ordering for a written reentrant %s close",
+    async (order, expectedCode) => {
+      const channel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+      const write = vi.spyOn(channel, "write").mockImplementation((payload) => {
+        const request = JSON.parse(payload) as { id: string };
+        const emitError = () =>
+          channel.emitRaw(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              error: { code: -32_000, message: "downstream" },
+            }),
+          );
+        if (order === "response-first") {
+          emitError();
+          channel.close();
+        } else {
+          channel.close();
+          emitError();
+        }
+        return { written: true };
+      });
+      const error = await adapter
+        .readDisplayState(BINDING, deadline())
+        .catch((caught) => caught);
+
+      expectDeviceError(error, {
+        code: expectedCode,
+        boundary: "ack",
+        outcome: "unknown",
+        writeBegan: true,
+        acknowledged: false,
+      });
+      write.mockRestore();
+    },
+  );
+
   it("classifies replacement after write and before acknowledgement as unknown", async () => {
     const oldChannel = new FakeDeviceRpcChannel();
     const nextChannel = new FakeDeviceRpcChannel();
