@@ -250,7 +250,7 @@ class ThrowingWritable extends Writable {
 
 async function waitForImmediateSettlement(): Promise<void> {
   const settled = Promise.withResolvers<void>();
-  setImmediate(settled.resolve).unref();
+  setImmediate(settled.resolve);
   await settled.promise;
 }
 
