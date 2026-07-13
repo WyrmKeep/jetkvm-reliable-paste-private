@@ -138,7 +138,7 @@ func NewTestGadget(clock func() time.Time) *UsbGadget {
 	logger := zerolog.Nop()
 	return &UsbGadget{
 		keysDownState:         KeysDownState{Modifier: 0, Keys: []byte{0, 0, 0, 0, 0, 0}},
-		kbdAutoReleaseTimers:  make(map[byte]*time.Timer),
+		kbdAutoReleaseTimers:  make(map[byte]*keyboardAutoReleaseTimer),
 		writeHealthClock:      clock,
 		log:                   &logger,
 		logSuppressionCounter: make(map[string]int),

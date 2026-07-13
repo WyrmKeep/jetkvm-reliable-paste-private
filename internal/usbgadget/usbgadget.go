@@ -73,8 +73,9 @@ type UsbGadget struct {
 	keysDownState KeysDownState // keyboard dynamic state (modifier keys and pressed keys)
 
 	kbdAutoReleaseLock            sync.Mutex
-	kbdAutoReleaseTimers          map[byte]*time.Timer
-	beforeAutoReleaseKeyboardLock func() // deterministic test seam; nil in production
+	kbdAutoReleaseTimers          map[byte]*keyboardAutoReleaseTimer
+	autoReleaseAfterFunc          func(time.Duration, func()) *time.Timer // injectable timer factory for deterministic tests
+	beforeAutoReleaseKeyboardLock func()                                  // deterministic test seam; nil in production
 
 	keyboardStateLock   sync.Mutex
 	keyboardStateCtx    context.Context
@@ -148,7 +149,7 @@ func newUsbGadget(name string, configMap map[string]gadgetConfigItem, enabledDev
 		keyboardStateCancel:  keyboardCancel,
 		keyboardState:        0,
 		keysDownState:        KeysDownState{Modifier: 0, Keys: []byte{0, 0, 0, 0, 0, 0}}, // must be initialized to hidKeyBufferSize (6) zero bytes
-		kbdAutoReleaseTimers: make(map[byte]*time.Timer),
+		kbdAutoReleaseTimers: make(map[byte]*keyboardAutoReleaseTimer),
 		enabledDevices:       *enabledDevices,
 		lastUserInput:        time.Now(),
 		log:                  logger,
@@ -179,10 +180,10 @@ func (u *UsbGadget) Close() error {
 	u.kbdAutoReleaseLock.Lock()
 	for _, timer := range u.kbdAutoReleaseTimers {
 		if timer != nil {
-			timer.Stop()
+			timer.timer.Stop()
 		}
 	}
-	u.kbdAutoReleaseTimers = make(map[byte]*time.Timer)
+	u.kbdAutoReleaseTimers = make(map[byte]*keyboardAutoReleaseTimer)
 	u.kbdAutoReleaseLock.Unlock()
 
 	// Close HID files
