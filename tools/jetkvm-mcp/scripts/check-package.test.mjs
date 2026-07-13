@@ -35,6 +35,7 @@ test("rejects files outside the production allowlist", () => {
 
 for (const forbiddenPath of [
   "dist/deviceLease.test.js",
+  "dist/test-support/fakes/FakeBrowserPlane.js",
   "dist/fixtures/session.json",
   "dist/debug/controller.json",
   "dist/trace.json",

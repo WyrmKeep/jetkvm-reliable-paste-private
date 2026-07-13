@@ -1,0 +1,505 @@
+{
+  "id": "display-status-cached-freshness-and-streaming-omission",
+  "title": "Display status preserves per-fact freshness across adapter loss",
+  "requirements": [
+    "branch:per-fact-status-provenance",
+    "branch:device-rpc-adapter-mid-flight-loss",
+    "contract:cached-display-qualification"
+  ],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "Snapshot and event caches contain deliberately unequal signal, resolution, and FPS observation times; the harness can pause exactly one call after its binding-checked RPC write and before its response.",
+      "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked call in an independent case-owned ready session with a unique four-part adapter binding, request identifier, and separately captured fresh observation when required.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "arm-unequal-display-fact-provenance",
+      "after_step": null,
+      "boundary": "before_admission",
+      "action": "For only status-with-unequal-facts, seed signal, resolution, and FPS cache records with deliberately unequal sources, observation times, ages, and freshness classifications.",
+      "expected_effect": "The one linked display-status read returns each fact with its own exact source, time, age, and freshness rather than a unified health timestamp."
+    },
+    {
+      "id": "clear-unequal-display-fact-provenance",
+      "after_step": "status-with-unequal-facts",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the unequal-fact seed injector after its one linked display-status call while retaining that call's returned evidence.",
+      "expected_effect": "No later call inherits the seed injector; the following binding-loss case begins from its separately configured qualified cache."
+    },
+    {
+      "id": "lose-binding-during-read",
+      "after_step": "status-with-unequal-facts",
+      "boundary": "during_verification",
+      "action": "Arm one-shot shared DeviceRpcAdapter binding loss for only session-status-after-binding-loss after its binding-checked read write and before its response.",
+      "expected_effect": "The qualified cache read returns explicit per-fact stale or unknown provenance, or a CONNECTION_LOST read envelope with outcome null, safe_to_retry true, and reconnect_then_capture guidance."
+    },
+    {
+      "id": "clear-rebind-after-qualified-cache-read",
+      "after_step": "session-status-after-binding-loss",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the qualified-cache binding-loss injector, close its case-owned adapter and browser resources, and provision opaque-session-adapter-loss-display-capture generation 8 with a new four-part binding.",
+      "expected_effect": "No cache-read fault or old binding reaches the display-capture case."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "after_step": "session-status-after-binding-loss",
+      "boundary": "during_verification",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-display-capture after its binding-checked read write and before its response.",
+      "expected_effect": "The display-capture read returns CONNECTION_LOST with outcome null, safe_to_retry true, reconnect_then_capture guidance, and no mutation or replay."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the display-capture loss injector, retire its generation-8 browser and adapter, restore the fixture baseline, and provision opaque-session-adapter-loss-display-status generation 9 with a new four-part binding.",
+      "expected_effect": "No display-capture fault, browser, channel, adapter, or generation reaches the display-status case."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "boundary": "during_verification",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-display-status after its binding-checked read write and before its response.",
+      "expected_effect": "The display-status read returns independently qualified stale cached facts or CONNECTION_LOST with outcome null, safe_to_retry true, and reconnect_then_capture guidance."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the display-status loss injector, retire its generation-9 browser and adapter, restore the fixture baseline, provision opaque-session-adapter-loss-input-keyboard generation 10 with a new four-part binding, and capture opaque-observation-device-rpc-adapter-mid-flight-loss-input-keyboard.",
+      "expected_effect": "No display-status fault or binding reaches the keyboard case, which begins ready with its own fresh observation."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard after exactly one downstream action write and before acknowledgement.",
+      "expected_effect": "The keyboard mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, dispatched_action_count 1, completed_action_count 0, and zero replay writes."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the keyboard loss injector; inspect, emergency-release, and close its generation-10 case; restore the fixture baseline; provision opaque-session-adapter-loss-input-mouse generation 11 with a new four-part binding; and capture opaque-observation-device-rpc-adapter-mid-flight-loss-input-mouse.",
+      "expected_effect": "The closed generation-10 mutation gate and its observation are retired before the independent mouse case starts."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse after exactly one downstream action write and before acknowledgement.",
+      "expected_effect": "The mouse mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, dispatched_action_count 1, completed_action_count 0, and zero replay writes."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the mouse loss injector; inspect, emergency-release, and close its generation-11 case; restore the fixture baseline; provision opaque-session-adapter-loss-input-paste generation 12 with a new four-part binding; and capture opaque-observation-device-rpc-adapter-mid-flight-loss-input-paste.",
+      "expected_effect": "The closed generation-11 mutation gate and its observation are retired before the independent paste case starts."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-input-paste after its first character event is dispatched and before any correlated completion.",
+      "expected_effect": "The paste mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, dispatched_count 1, completed_count 0, thirteen suppressed suffix characters, and zero replay writes."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the paste loss injector; inspect, emergency-release, stop and join the paste producer, and close its generation-12 case; restore the fixture baseline; and provision opaque-session-adapter-loss-input-release generation 13 with a new four-part binding.",
+      "expected_effect": "The closed generation-12 mutation gate, producer, and observation are retired before the independent release case starts."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-input-release after exactly one downstream release write and before zero-state acknowledgement.",
+      "expected_effect": "The release mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, one downstream write, and zero replay writes while its gate remains closed."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the release loss injector, independently prove zero held input, close its generation-13 case, restore the fixture baseline, and provision opaque-session-adapter-loss-power-control generation 14 with a new four-part binding.",
+      "expected_effect": "The drained or closed generation-13 state is retired before the independent power case starts."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "after_step": "recover-after-device-rpc-adapter-release-loss",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-power-control after exactly one ATX request write and before acknowledgement.",
+      "expected_effect": "The ATX mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, one downstream write, and zero replay writes."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the ATX loss injector; inspect and emergency-release generation 14; restore and prove the recorded ATX-observable baseline; close its case-owned browser and adapter; then restore a no-incumbent fixture for the connect case.",
+      "expected_effect": "No unknown ATX state, closed mutation gate, or prior binding reaches the independent session-connect case."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-session-connect after its connection write begins and before ready-session publication.",
+      "expected_effect": "The connect mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, and zero automatic reconnect or replay."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the connect loss injector; resolve and close any ambiguous case-owned connection; restore the fixture baseline; and provision opaque-session-adapter-loss-session-reconnect generation 15 with a new four-part binding.",
+      "expected_effect": "No ambiguous connect ownership, browser, channel, adapter, or request reaches the independent reconnect case."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "boundary": "after_write",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect after its reconnect write begins and before successor publication.",
+      "expected_effect": "The reconnect mutation returns CONNECTION_LOST, unknown, safe_to_retry false, inspect_device_state_before_retry, and zero automatic reconnect or replay."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the reconnect loss injector; resolve and close its attempted successor and generation-15 case; restore the fixture baseline; and provision opaque-session-adapter-loss-session-status generation 16 with a new four-part binding.",
+      "expected_effect": "No reconnect ambiguity, stale generation, browser, channel, or adapter reaches the independent session-status case."
+    },
+    {
+      "id": "arm-device-rpc-adapter-mid-flight-loss-jetkvm-session-status",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "boundary": "during_verification",
+      "action": "Arm one-shot binding replacement for only device-rpc-adapter-mid-flight-loss-jetkvm-session-status after its binding-checked read write and before its response.",
+      "expected_effect": "The session-status read returns explicitly stale or unknown cached facts, or CONNECTION_LOST with outcome null, safe_to_retry true, and reconnect_then_capture guidance."
+    },
+    {
+      "id": "clear-rebind-device-rpc-adapter-mid-flight-loss-jetkvm-session-status",
+      "after_step": "device-rpc-adapter-mid-flight-loss-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the session-status loss injector, close its generation-16 case-owned browser and adapter, and restore the fixture baseline.",
+      "expected_effect": "No adapter-loss injector, case-owned generation, browser, channel, or binding survives the matrix."
+    }
+  ],
+  "steps": [
+    {
+      "id": "status-with-unequal-facts",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-display-status-cache",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Signal, resolution, and FPS return independent source, time, age, and freshness values."
+    },
+    {
+      "id": "session-status-after-binding-loss",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-display-status-cache",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Status returns explicitly stale or unknown cached facts with independent provenance, or a CONNECTION_LOST read envelope with outcome null, safe_to_retry true, and reconnect_then_capture guidance."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-display-capture",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST read error with outcome null, safe_to_retry true, reconnect_then_capture guidance, one old-binding read write, zero new-binding writes, and no mutation or replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-display-status",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Independent stale cached qualification or a CONNECTION_LOST read error with outcome null, safe_to_retry true, reconnect_then_capture guidance, and zero mutation or replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-input-keyboard",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-device-rpc-adapter-mid-flight-loss-input-keyboard",
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, dispatched_action_count 1, completed_action_count 0, a closed generation-10 mutation gate, and zero replay writes."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-input-mouse",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-device-rpc-adapter-mid-flight-loss-input-mouse",
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, dispatched_action_count 1, completed_action_count 0, a closed generation-11 mutation gate, and zero replay writes."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-input-paste",
+        "session_generation": 12,
+        "observation_id": "opaque-observation-device-rpc-adapter-mid-flight-loss-input-paste",
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, dispatched_count 1, completed_count 0, thirteen suppressed suffix characters, a closed generation-12 mutation gate, and zero replay writes."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-input-release",
+        "session_generation": 13,
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, one release write, a closed generation-13 mutation gate, and zero replay writes."
+    },
+    {
+      "id": "recover-after-device-rpc-adapter-release-loss",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-adapter-loss-input-release",
+        "closed_generation": 13,
+        "next_session_id": "opaque-session-adapter-loss-power-control",
+        "next_generation": 14,
+        "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "Retire the closed generation-13 release case, prove the fresh generation-14 power case ready, and restore and prove the recorded ATX baseline before the independently faulted power call."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-power-control",
+        "session_generation": 14,
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, exactly one ATX write, a closed generation-14 mutation gate, and zero replay writes."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, no ready-session publication, and zero automatic reconnect or replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-session-reconnect",
+        "session_generation": 15,
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONNECTION_LOST with unknown outcome, safe_to_retry false, inspect_device_state_before_retry, no successor publication, and zero automatic reconnect or replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-adapter-loss-session-status",
+        "session_generation": 16,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Explicitly stale or unknown cached facts, or a CONNECTION_LOST read error with outcome null, safe_to_retry true, reconnect_then_capture guidance, and zero mutation or replay."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:per-fact-status-provenance",
+      "assertion": "Signal, resolution, and FPS retain independent sources, times, ages, and freshness while proxy streaming is absent."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:device-rpc-adapter-mid-flight-loss",
+      "assertion": "Each of the ten linked tools runs in its own ready case as arm one-shot adapter loss, invoke exactly one call, then unconditionally clear, retire, restore, and rebind. Reads use CONNECTION_LOST outcome-null retry guidance or explicit cached qualification; post-write mutations use unknown, safe_to_retry false, inspect-before-retry, exact counts, closed gates, and zero replay."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "contract:cached-display-qualification",
+      "assertion": "A cache read after channel loss is returned only with explicit per-fact stale freshness; an unobserved fact is none, null, and unknown, and every later case uses a unique current four-part binding rather than a closed or stale generation."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:per-fact-status-provenance",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:device-rpc-adapter-mid-flight-loss",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "contract:cached-display-qualification",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

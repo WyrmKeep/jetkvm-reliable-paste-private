@@ -1,0 +1,467 @@
+{
+  "id": "partial-verification-does-not-replay",
+  "title": "Partial verification preserves definitive acknowledgement without replay",
+  "requirements": ["branch:partial-verification"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect"
+  ],
+  "environments": ["fake", "replay"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The ATX sequence returns a definitive correlated serial receipt and the separate cached LED post-read can fail.",
+      "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness records lifecycle state through structured establish, retire, connect-result, and reconnect-result fixtures; every input call consumes a separately captured fresh observation from the exact current successor generation.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "arm-power-with-post-read-failure",
+      "after_step": "establish-partial-verification-atx-session",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement LED read failure for only power-with-post-read-failure after its definitive serial acknowledgement.",
+      "expected_effect": "The initial power call remains applied/device_ack_only with its unavailable or stale LED fact and zero replay."
+    },
+    {
+      "id": "clear-power-with-post-read-failure",
+      "after_step": "power-with-post-read-failure",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the initial power post-read fault after its one linked call while retaining the definitive acknowledgement.",
+      "expected_effect": "No initial LED read fault reaches ATX baseline restoration or the matrix cases."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-session-connect",
+      "after_step": "retire-partial-session-before-connect",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-session-connect.",
+      "expected_effect": "The connect call remains applied/device_ack_only, publishes its exact structured result, and is not replayed."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-session-connect",
+      "after_step": "partial-verification-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the connect post-read fault after its one linked call while retaining its successful result.",
+      "expected_effect": "No connect verification fault reaches result binding or reconnect."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-session-reconnect",
+      "after_step": "bind-partial-connect-result",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-session-reconnect.",
+      "expected_effect": "The reconnect call remains applied/device_ack_only, publishes its exact successor, and is not replayed."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-session-reconnect",
+      "after_step": "partial-verification-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the reconnect post-read fault after its one linked call while retaining its successful successor.",
+      "expected_effect": "No reconnect verification fault reaches successor binding or fresh capture."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-input-keyboard",
+      "after_step": "capture-partial-keyboard-observation",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-input-keyboard.",
+      "expected_effect": "The keyboard call remains applied/device_ack_only with exact counts and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-input-keyboard",
+      "after_step": "partial-verification-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the keyboard post-read fault after its one linked call while retaining its definitive acknowledgement.",
+      "expected_effect": "No keyboard verification fault reaches the independent mouse case."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-input-mouse",
+      "after_step": "capture-partial-mouse-observation",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-input-mouse.",
+      "expected_effect": "The mouse call remains applied/device_ack_only with exact counts and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-input-mouse",
+      "after_step": "partial-verification-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the mouse post-read fault after its one linked call while retaining its definitive acknowledgement.",
+      "expected_effect": "No mouse verification fault reaches the independent paste case."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-input-paste",
+      "after_step": "capture-partial-paste-observation",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement verification-read failure for only partial-verification-jetkvm-input-paste.",
+      "expected_effect": "The paste call remains applied/device_ack_only with exact counts and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-input-paste",
+      "after_step": "partial-verification-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the paste post-read fault after its one linked call while retaining its definitive acknowledgement.",
+      "expected_effect": "No paste verification fault reaches the independent power case."
+    },
+    {
+      "id": "arm-partial-verification-jetkvm-power-control",
+      "after_step": "prove-partial-verification-power-baseline",
+      "boundary": "during_verification",
+      "action": "Arm a one-shot post-acknowledgement LED read failure for only partial-verification-jetkvm-power-control after its definitive serial acknowledgement.",
+      "expected_effect": "The matrix power call remains applied/device_ack_only with its separately qualified LED fact and zero replay."
+    },
+    {
+      "id": "clear-partial-verification-jetkvm-power-control",
+      "after_step": "partial-verification-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the matrix power post-read fault after its one linked call while retaining the definitive acknowledgement.",
+      "expected_effect": "No matrix LED read fault survives final ATX baseline restoration and reproof."
+    }
+  ],
+  "steps": [
+    {
+      "id": "establish-partial-verification-atx-session",
+      "tool": null,
+      "call": "acceptance-fixture/session/establish-ready",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "session_state": "ready"
+      },
+      "timeout_ms": 1000,
+      "expect": "The structured fixture establishes opaque-session generation 7 as the sole ready lifecycle session for the acknowledged ATX case."
+    },
+    {
+      "id": "power-with-post-read-failure",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request",
+        "timeout_ms": 1000,
+        "action": "press_reset"
+      },
+      "timeout_ms": 1000,
+      "expect": "applied with device_ack_only and a separate unavailable or stale LED fact."
+    },
+    {
+      "id": "restore-and-prove-after-power-post-read-failure",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "press_reset",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the acknowledged power call and failed LED post-read, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before arming the next linked partial-verification case."
+    },
+    {
+      "id": "retire-partial-session-before-connect",
+      "tool": null,
+      "call": "acceptance-fixture/session/retire-and-prove-no-incumbent",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "retire_session": true,
+        "require_no_incumbent": true,
+        "next_case": "partial-verification-jetkvm-session-connect"
+      },
+      "timeout_ms": 30000,
+      "expect": "After generation-7 ATX baseline restoration and reproof, the fixture retires the session and structurally proves no incumbent before takeover:false connect."
+    },
+    {
+      "id": "partial-verification-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-partial-verification-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_session_connect, publishing opaque-partial-verification-session generation 8 with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "bind-partial-connect-result",
+      "tool": null,
+      "call": "acceptance-fixture/session/bind-success-result",
+      "input": {
+        "source_step": "partial-verification-jetkvm-session-connect",
+        "source_outcome": "applied",
+        "returned_session_id": "opaque-partial-verification-session",
+        "returned_session_generation": 8,
+        "returned_session_state": "ready",
+        "next_case": "partial-verification-jetkvm-session-reconnect"
+      },
+      "timeout_ms": 1000,
+      "expect": "The structured connect result binds the exact returned session identity and generation for the next reconnect call."
+    },
+    {
+      "id": "partial-verification-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 8,
+        "request_id": "opaque-partial-verification-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_session_reconnect, replacing generation 8 with opaque-partial-verification-session generation 9 and preserving device_ack_only verification after the post-acknowledgement read fails, with zero replay and fresh_capture_required true."
+    },
+    {
+      "id": "bind-partial-reconnect-result",
+      "tool": null,
+      "call": "acceptance-fixture/session/bind-success-result",
+      "input": {
+        "source_step": "partial-verification-jetkvm-session-reconnect",
+        "source_outcome": "applied",
+        "predecessor_session_id": "opaque-partial-verification-session",
+        "predecessor_session_generation": 8,
+        "returned_session_id": "opaque-partial-verification-session",
+        "returned_session_generation": 9,
+        "returned_session_state": "ready",
+        "fresh_capture_required": true,
+        "next_case": "capture-partial-keyboard-observation"
+      },
+      "timeout_ms": 1000,
+      "expect": "The structured reconnect result binds the exact returned successor identity and generation and requires new observations."
+    },
+    {
+      "id": "capture-partial-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh generation-9 observation reserved as opaque-observation-partial-verification-input-keyboard."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-partial-verification-input-keyboard",
+        "request_id": "opaque-partial-verification-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_keyboard with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "capture-partial-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh generation-9 observation reserved as opaque-observation-partial-verification-input-mouse."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-partial-verification-input-mouse",
+        "request_id": "opaque-partial-verification-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_mouse with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "capture-partial-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh generation-9 observation reserved as opaque-observation-partial-verification-input-paste."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-partial-verification-input-paste",
+        "request_id": "opaque-partial-verification-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_paste with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "prove-partial-verification-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/prove-ready-baseline",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "binding_id": "opaque-partial-atx-binding-generation-9",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 1000,
+      "expect": "The restored ATX-observable baseline, active extension, serial readiness, and exact current generation-9 binding are proven immediately before the matrix power call."
+    },
+    {
+      "id": "partial-verification-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "request_id": "opaque-partial-verification-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_power_control with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "restore-and-prove-after-partial-power",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-partial-verification-session",
+        "session_generation": 9,
+        "binding_id": "opaque-partial-atx-binding-generation-9",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the final matrix power acknowledgement and failed optional post-read, restore the recorded ATX-observable baseline and re-prove the active extension, serial readiness, baseline, and exact current binding."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-2",
+      "requirement": "branch:partial-verification",
+      "assertion": "For each applicable mutation, a definitive applied acknowledgement remains device_ack_only when its optional post-read verification fails and is never replayed; connect runs only after structured no-incumbent proof, reconnect consumes the exact returned connect identity and generation, later input uses fresh observations from the returned successor, and every ATX call retains final baseline restoration and reproof."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-2",
+      "requirement": "branch:partial-verification",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

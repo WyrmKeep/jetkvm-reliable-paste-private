@@ -1,0 +1,626 @@
+{
+  "id": "reconnect-requires-new-channel-observations",
+  "title": "Reconnect requires a new browser-owned channel and invalidates the old adapter",
+  "requirements": [
+    "branch:reconnect-evidence",
+    "branch:shared-device-rpc-adapter-binding",
+    "branch:device-rpc-adapter-replacement",
+    "contract:reconnect-channel-observations"
+  ],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The ready session exposes one browser-owned RPC channel and the exact same generation-bound adapter instance to both planes.",
+      "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness executes one ordered state machine: every linked call uses the current case-owned session generation and four-part bundle, input calls consume a separately captured current-generation observation, and connect/reconnect transitions publish the exact identities used by later steps.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "replace-one-shared-adapter",
+      "after_step": "reconnect-with-new-channel",
+      "boundary": "during_verification",
+      "action": "For each shared-binding call, verify the exact current four-part session/generation/connection/channel bundle published by the immediately preceding state transition and the one Browser-owned adapter identity. For each replacement call, inject only the invalidated prior four-part binding at the adapter or bundle-inspection boundary while the public input remains current.",
+      "expected_effect": "Browser-only calls remain on BrowserPlane with zero DeviceRpcAdapter method calls; display-state and ATX calls alone invoke the adapter; session calls inspect or publish bundle identity; every old binding is rejected or explicitly qualified without a direct or second channel."
+    }
+  ],
+  "steps": [
+    {
+      "id": "reconnect-with-new-channel",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-channel-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Success only after new WebRTC, RPC, HID, connection epoch, and browser-channel generation observations."
+    },
+    {
+      "id": "inspect-replacement-channel",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The new generation reports one current browser channel and fresh_capture_required true."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane returns the linked fresh decoded frame with zero DeviceRpcAdapter method calls while the fixture proves the exact current adapter identity and sole Browser/WebRTC channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "NativeControlPlane invokes readDisplayState exactly once through the exact current Browser-owned DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "capture-shared-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Immediately before keyboard input, BrowserPlane captures fresh opaque-observation-shared-keyboard-8 with zero DeviceRpcAdapter method calls."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-shared-keyboard-8",
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane applies the physical keyboard event using current opaque-observation-shared-keyboard-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
+    },
+    {
+      "id": "capture-shared-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-shared-mouse-8 after keyboard input with zero DeviceRpcAdapter method calls."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-shared-mouse-8",
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane applies the mouse event using current opaque-observation-shared-mouse-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
+    },
+    {
+      "id": "capture-shared-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-shared-paste-8 after mouse input with zero DeviceRpcAdapter method calls."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-shared-paste-8",
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane applies the Reliable Paste request using current opaque-observation-shared-paste-8; it makes zero DeviceRpcAdapter method calls while the exact shared adapter and sole channel identities remain unchanged."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "NativeControlPlane invokes setATXPowerAction exactly once through the exact current Browser-owned DeviceRpcAdapter and sole RPC channel, returning applied/device_ack_only with a correlated power-short 200 ms serial receipt, separately qualified cached LED evidence, zero host-state proof, and zero direct or second channel."
+    },
+    {
+      "id": "restore-and-prove-after-shared-power",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "binding_id": "opaque-shared-atx-binding-generation-8",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "Immediately after the shared power call, restore the recorded ATX-observable baseline and re-prove the active extension, serial readiness, baseline, and exact current binding before the session-connect case."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane drains and acknowledges the current input generation with zero held state and zero DeviceRpcAdapter method calls; the exact shared adapter and sole channel identities remain unchanged."
+    },
+    {
+      "id": "prepare-shared-session-connect-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session",
+        "closed_generation": 8,
+        "next_tool": "jetkvm_session_connect",
+        "require_no_incumbent": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "The generation-8 input and ATX case is retired with its baseline proven, and the fixture proves no incumbent before the shared session-connect call."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-shared-device-rpc-adapter-binding-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "SessionService publishes opaque-session-shared-connect generation 9 with one Browser-owned WebRTC RPC channel and the exact same adapter object in the Browser and native bundle; this evidence does not claim an adapter method invocation."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 9,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "SessionService invalidates generation 9 before publishing opaque-session-shared-connect generation 10 with a new Browser/WebRTC channel and exact shared adapter identity; this evidence does not claim an adapter method invocation."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "SessionService reads the current generation-10 bundle and reports the exact one-channel/one-adapter identities without claiming an adapter method invocation or direct channel."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane returns the linked fresh decoded frame with zero DeviceRpcAdapter method calls; the fixture separately proves the invalidated old four-part binding is not published or used."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The injected old four-part binding is rejected or explicitly qualified at readDisplayState admission while the public session remains generation 10; no direct or second channel is created."
+    },
+    {
+      "id": "capture-replacement-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Immediately before keyboard input, BrowserPlane captures fresh opaque-observation-replacement-keyboard-10 with zero DeviceRpcAdapter method calls."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-replacement-keyboard-10",
+        "request_id": "opaque-device-rpc-adapter-replacement-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane applies the keyboard event using current opaque-observation-replacement-keyboard-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
+    },
+    {
+      "id": "capture-replacement-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-replacement-mouse-10 after keyboard input with zero DeviceRpcAdapter method calls."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-replacement-mouse-10",
+        "request_id": "opaque-device-rpc-adapter-replacement-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane applies the mouse event using current opaque-observation-replacement-mouse-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
+    },
+    {
+      "id": "capture-replacement-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane captures fresh opaque-observation-replacement-paste-10 after mouse input with zero DeviceRpcAdapter method calls."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "observation_id": "opaque-observation-replacement-paste-10",
+        "request_id": "opaque-device-rpc-adapter-replacement-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane applies the Reliable Paste request using current opaque-observation-replacement-paste-10 with zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "request_id": "opaque-device-rpc-adapter-replacement-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The injected old four-part binding fails setATXPowerAction at adapter admission with public CONNECTION_LOST/not_sent, verification none, zero ATX transport writes, zero replay, and the current generation-10 bundle unchanged."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-shared-connect",
+        "session_generation": 10,
+        "request_id": "opaque-device-rpc-adapter-replacement-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "BrowserPlane drains and acknowledges generation 10 with zero held state and zero DeviceRpcAdapter method calls; the fixture separately proves the old bundle remains invalid and the current bundle identity is unchanged."
+    },
+    {
+      "id": "prepare-replacement-session-connect-case",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session-shared-connect",
+        "closed_generation": 10,
+        "next_tool": "jetkvm_session_connect",
+        "require_no_incumbent": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 30000,
+      "expect": "Generation 10 is authoritatively drained and retired, the recorded ATX-observable baseline is proven, and no incumbent remains before the replacement session-connect case."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-device-rpc-adapter-replacement-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "SessionService refuses to publish the injected old four-part binding and instead publishes opaque-session-replacement-connect generation 11 with one current Browser-owned channel and exact shared adapter identity; this evidence does not claim an adapter method invocation."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-replacement-connect",
+        "session_generation": 11,
+        "request_id": "opaque-device-rpc-adapter-replacement-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "SessionService invalidates generation 11 and the injected old four-part binding before publishing opaque-session-replacement-connect generation 12 with one new Browser-owned channel and exact shared adapter identity; this evidence does not claim an adapter method invocation."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-replacement-connect",
+        "session_generation": 12,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "SessionService reads only the current generation-12 bundle; the invalidated old four-part binding remains unpublished and no adapter method, direct channel, or second channel is invoked."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:reconnect-evidence",
+      "assertion": "Reconnect requires new WebRTC, RPC, HID, and browser-channel generation evidence; restart or quiesce alone fails."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:shared-device-rpc-adapter-binding",
+      "assertion": "BrowserPlane exclusively owns capture, keyboard, mouse, paste, and release; display status and ATX alone invoke the same Browser-owned DeviceRpcAdapter through one RPC channel; SessionService verifies or publishes the exact shared bundle identity with no bypass."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:device-rpc-adapter-replacement",
+      "assertion": "Public calls always use the current produced generation and fresh observations; the old four-part binding is injected only at the adapter or bundle boundary, is invalid before new publication, and makes zero stale ATX writes."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:reconnect-channel-observations",
+      "assertion": "No second browser, peer connection, data channel, signaling flow, direct native bypass, or raw method dispatch exists."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:reconnect-evidence",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:shared-device-rpc-adapter-binding",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:device-rpc-adapter-replacement",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:reconnect-channel-observations",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

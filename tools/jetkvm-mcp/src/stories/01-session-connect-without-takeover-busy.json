@@ -1,0 +1,825 @@
+{
+  "id": "session-connect-without-takeover-busy",
+  "title": "Connect without takeover preserves an incumbent owner",
+  "requirements": [
+    "branch:strict-schema-rejection",
+    "branch:deadline-before-admission",
+    "branch:busy-without-takeover"
+  ],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "A healthy incumbent device session owns the configured device and takeover is omitted.",
+      "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "strict-schema-before-controller",
+      "after_step": null,
+      "boundary": "before_admission",
+      "action": "Submit each tool-specific request with an unsupported_option field to its strict handler schema.",
+      "expected_effect": "Every tool rejects the complete request before handler, controller, adapter, or plane admission with zero downstream calls."
+    },
+    {
+      "id": "expire-before-admission",
+      "after_step": "reject-strict-schema",
+      "boundary": "before_admission",
+      "action": "For each tool-specific valid request, advance the fake monotonic clock past its deadline while its admission reservations are held.",
+      "expected_effect": "Every request returns not_sent before admission and releases its queue and request reservations."
+    },
+    {
+      "id": "clear-expired-deadline",
+      "after_step": "deadline-before-admission",
+      "boundary": "during_cleanup",
+      "action": "Clear the deterministic deadline injection while preserving the incumbent generation and the normalized request input.",
+      "expected_effect": "The next call with the same request identifier and normalized input reaches ordinary ownership admission rather than an in-flight or idempotency branch."
+    },
+    {
+      "id": "incumbent-busy",
+      "after_step": "deadline-before-admission",
+      "boundary": "before_admission",
+      "action": "Keep the incumbent generation active while a valid request omits takeover.",
+      "expected_effect": "The connect reports CONTROL_BUSY without changing the incumbent generation."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-display-capture",
+      "after_step": "reject-strict-schema-jetkvm-session-status",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_display_capture only.",
+      "expected_effect": "The read call returns DEADLINE_EXCEEDED at phase queue with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage none; internal evidence records zero admissions and zero downstream writes."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-display-capture",
+      "after_step": "deadline-before-admission-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_display_capture deadline injector.",
+      "expected_effect": "No later tool call inherits the jetkvm_display_capture deadline fault."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-display-status",
+      "after_step": "deadline-before-admission-jetkvm-display-capture",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_display_status only.",
+      "expected_effect": "The read call returns DEADLINE_EXCEEDED at phase queue with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage none; internal evidence records zero admissions and zero downstream writes."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-display-status",
+      "after_step": "deadline-before-admission-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_display_status deadline injector.",
+      "expected_effect": "No later tool call inherits the jetkvm_display_status deadline fault."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-input-keyboard",
+      "after_step": "deadline-before-admission-jetkvm-display-status",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_input_keyboard only.",
+      "expected_effect": "The next jetkvm_input_keyboard call expires before admission with zero downstream calls."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-input-keyboard",
+      "after_step": "deadline-before-admission-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_keyboard deadline injector while preserving its request and observation reservations for retry.",
+      "expected_effect": "The same normalized keyboard request can retry through ordinary admission."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-input-mouse",
+      "after_step": "retry-deadline-before-admission-jetkvm-input-keyboard",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_input_mouse only.",
+      "expected_effect": "The next jetkvm_input_mouse call expires before admission with zero downstream calls."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-input-mouse",
+      "after_step": "deadline-before-admission-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_mouse deadline injector while preserving its request and observation reservations for retry.",
+      "expected_effect": "The same normalized mouse request can retry through ordinary admission."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-input-paste",
+      "after_step": "retry-deadline-before-admission-jetkvm-input-mouse",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_input_paste only.",
+      "expected_effect": "The next jetkvm_input_paste call expires before admission with zero downstream calls."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-input-paste",
+      "after_step": "deadline-before-admission-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_paste deadline injector while preserving its request and observation reservations for retry.",
+      "expected_effect": "The same normalized paste request can retry through ordinary admission."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-input-release",
+      "after_step": "retry-deadline-before-admission-jetkvm-input-paste",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_input_release only.",
+      "expected_effect": "The next jetkvm_input_release call expires before admission with zero downstream calls."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-input-release",
+      "after_step": "deadline-before-admission-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_release deadline injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized release request can retry through ordinary admission."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-power-control",
+      "after_step": "recover-after-applied-deadline-release",
+      "boundary": "before_admission",
+      "action": "Arm the jetkvm_power_control-only injector and advance the fake monotonic clock beyond the call's 1000ms deadline before controller admission.",
+      "expected_effect": "The 1000ms request expires deterministically before admission as DEADLINE_EXCEEDED/not_sent with zero controller, adapter, or ATX writes; its request reservation is released."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-power-control",
+      "after_step": "deadline-before-admission-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_power_control deadline injector while preserving the exact normalized request for a new-deadline retry.",
+      "expected_effect": "The same 1000ms normalized power request receives a fresh deadline, reaches ordinary admission, completes the fixed 200ms press_power pulse, and cannot inherit the expired deadline."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-session-connect",
+      "after_step": "restore-reprove-atx-after-deadline-power-retry",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_session_connect only.",
+      "expected_effect": "The next jetkvm_session_connect call expires before admission with zero downstream calls."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-session-connect",
+      "after_step": "deadline-before-admission-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_session_connect deadline injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized connect request can retry through ordinary ownership admission."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-session-reconnect",
+      "after_step": "retry-deadline-before-admission-jetkvm-session-connect",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_session_reconnect only.",
+      "expected_effect": "The next jetkvm_session_reconnect call expires before admission with zero downstream calls."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-session-reconnect",
+      "after_step": "deadline-before-admission-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_session_reconnect deadline injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized reconnect request can retry through ordinary ownership admission."
+    },
+    {
+      "id": "expire-before-admission-jetkvm-session-status",
+      "after_step": "retry-deadline-before-admission-jetkvm-session-reconnect",
+      "boundary": "before_admission",
+      "action": "Arm the deterministic deadline-before-admission injector for jetkvm_session_status only.",
+      "expected_effect": "The read call returns DEADLINE_EXCEEDED at phase queue with outcome null, verification none, safe_to_retry true, required_next_step none, and downstream_stage none; internal evidence records zero admissions and zero downstream writes."
+    },
+    {
+      "id": "clear-expired-deadline-jetkvm-session-status",
+      "after_step": "deadline-before-admission-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_session_status deadline injector.",
+      "expected_effect": "No later tool call inherits the jetkvm_session_status deadline fault."
+    }
+  ],
+  "steps": [
+    {
+      "id": "reject-strict-schema",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-schema-request",
+        "takeover": false,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection before controller admission with zero controller and plane calls."
+    },
+    {
+      "id": "deadline-before-admission",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-request",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent with the queue slot and request-id reservation released for a subsequent request."
+    },
+    {
+      "id": "retry-expired-connect-request",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-request",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "CONTROL_BUSY from ordinary ownership admission, proving the expired queue slot and request-id reservation were released."
+    },
+    {
+      "id": "connect-without-takeover",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-connect-request",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONTROL_BUSY with the incumbent generation unchanged."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_display_capture before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_display_status before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-reject-strict-schema-input-keyboard",
+        "request_id": "opaque-reject-strict-schema-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_keyboard before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-reject-strict-schema-input-mouse",
+        "request_id": "opaque-reject-strict-schema-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_mouse before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-reject-strict-schema-input-paste",
+        "request_id": "opaque-reject-strict-schema-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_paste before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reject-strict-schema-input-release",
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_release before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reject-strict-schema-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_power_control before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-reject-strict-schema-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_session_connect before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reject-strict-schema-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_session_reconnect before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_session_status before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "DEADLINE_EXCEEDED read ToolError with phase queue, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage none. Separately, ordered harness evidence records admission count 0, accepted downstream write count 0, no BrowserPlane call, and no image block."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "DEADLINE_EXCEEDED read ToolError with phase queue, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage none. Separately, ordered harness evidence records admission count 0, accepted downstream write count 0, and no BrowserPlane call."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-keyboard",
+        "request_id": "opaque-deadline-before-admission-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_keyboard before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-keyboard",
+        "request_id": "opaque-deadline-before-admission-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "applied through ordinary admission after the deadline fault is cleared, proving the keyboard request and observation reservations were released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-mouse",
+        "request_id": "opaque-deadline-before-admission-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_mouse before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-mouse",
+        "request_id": "opaque-deadline-before-admission-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "applied through ordinary admission after the deadline fault is cleared, proving the mouse request and observation reservations were released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-paste",
+        "request_id": "opaque-deadline-before-admission-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_paste before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-paste",
+        "request_id": "opaque-deadline-before-admission-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "applied through ordinary admission after the deadline fault is cleared, proving the paste request and observation reservations were released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-deadline-before-admission-input-release",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_release before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-deadline-before-admission-input-release",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "The exact result-produced assertion is outcome applied with generation_drained true; ordinary admission after the deadline fault is cleared also proves the release request reservation was released."
+    },
+    {
+      "id": "recover-after-applied-deadline-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-for-next-tool",
+      "input": {
+        "closed_session_id": "opaque-session",
+        "closed_generation": 7,
+        "next_session_id": "opaque-session-08",
+        "next_generation": 8,
+        "next_tool": "jetkvm_power_control",
+        "reprove_session_ready": true,
+        "restore_atx_baseline": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect and bind the generation 8 successor, then re-prove ready session state and the recorded ATX baseline before the next power call."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "request_id": "opaque-deadline-before-admission-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DEADLINE_EXCEEDED mutation ToolError with phase queue, outcome not_sent, verification none, safe_to_retry true, required_next_step none, null public action counts, and details.downstream_stage none. Separately, the fake clock expires the 1000ms deadline before admission and ordered evidence records controller admission count 0, adapter request count 0, and ATX write count 0."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "request_id": "opaque-deadline-before-admission-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The same normalized request and request_id receive a new 1000ms deadline after fault clear, reach ordinary admission, complete the fixed 200ms press_power pulse once, and return an applied non-retryable result."
+    },
+    {
+      "id": "restore-reprove-atx-after-deadline-power-retry",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-reprove",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "restore_serial": true,
+        "restore_extension": true,
+        "restore_observable_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Restore and re-prove the ATX serial binding, extension state, and recorded observable baseline before arming the session-connect deadline cell."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-before-admission-session-connect",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_session_connect before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-before-admission-session-connect",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "CONTROL_BUSY from ordinary ownership admission after the deadline fault is cleared, proving the connect request reservation was released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "request_id": "opaque-deadline-before-admission-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_session_reconnect before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "retry-deadline-before-admission-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "request_id": "opaque-deadline-before-admission-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "CONTROL_BUSY from ordinary ownership admission after the deadline fault is cleared, proving the reconnect request reservation was released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "DEADLINE_EXCEEDED read ToolError with phase queue, outcome null, verification none, safe_to_retry true, required_next_step none, and details.downstream_stage none. Separately, ordered harness evidence records admission count 0, accepted downstream write count 0, and no BrowserPlane call."
+    },
+    {
+      "id": "reconnect-without-takeover",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "request_id": "opaque-reconnect-busy-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONTROL_BUSY with the incumbent generation unchanged when reconnect omits takeover."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:strict-schema-rejection",
+      "assertion": "Schema-invalid input is rejected before controller admission and records zero controller and plane calls."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:deadline-before-admission",
+      "assertion": "Each linked mutation call runs under its compatible deadline-before-admission fault and returns not_sent; the three read calls return DEADLINE_EXCEEDED with outcome null and verification none. Separate harness evidence proves zero admissions and zero downstream writes, each one-shot fault is cleared, and every mutation retries the same normalized input to ordinary applied or CONTROL_BUSY handling. The power pair uses identical 1000ms inputs: the first fake deadline is expired before admission, while the fresh retry deadline permits exactly one fixed 200ms press_power pulse."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:busy-without-takeover",
+      "assertion": "A connect without takeover returns CONTROL_BUSY and leaves the incumbent generation unchanged."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:strict-schema-rejection",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:deadline-before-admission",
+      "field": "requirement_result",
+      "source": "The focused deadline assertions and ordered fake/replay events, including the power call's 1000ms pre-admission expiry, zero ATX writes, fresh 1000ms retry deadline, and exactly one completed 200ms press_power pulse.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:busy-without-takeover",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Unconditionally restore the recorded ATX-observable baseline after the cleared-fault power retry may have written.",
+      "assertion": "The recorded ATX-observable baseline is restored before the next story.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

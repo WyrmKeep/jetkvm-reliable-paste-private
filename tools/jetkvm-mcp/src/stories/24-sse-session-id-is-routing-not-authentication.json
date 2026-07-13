@@ -1,0 +1,600 @@
+{
+  "id": "sse-session-id-is-routing-not-authentication",
+  "title": "SSE session identifiers route but never authenticate",
+  "requirements": [
+    "branch:sse-routing-close",
+    "contract:sse-routing-not-authentication"
+  ],
+  "tools": ["jetkvm_session_status"],
+  "environments": ["fake", "replay"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "Two opaque authenticated principals have deterministic, independent active, close-target, expiry-target, cross-principal, and inactive-stream SSE routing entries plus body-limit controls.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "provision-independent-routing-entries",
+      "after_step": "open-routing-entry",
+      "boundary": "transport_route",
+      "action": "Provision distinct synthetic close-target, expiry-target, and inactive-stream entries for opaque-principal-a plus a cross-principal entry for opaque-principal-b; do not create the unknown identifier.",
+      "expected_effect": "Each case has its own routing identifier and lifecycle; no unknown, closed, expired, or cross-principal result can stand in for another."
+    },
+    {
+      "id": "close-dedicated-routing-entry",
+      "after_step": "post-unknown-routing-id",
+      "boundary": "transport_route",
+      "action": "Close only routing identifier 22222222-2222-4222-8222-222222222222 and remove its principal binding before the next POST.",
+      "expected_effect": "The dedicated closed identifier returns the same 404 Not Found response as the independently exercised unknown identifier while other entries remain active."
+    },
+    {
+      "id": "expire-dedicated-routing-entry",
+      "after_step": "post-closed-routing-id",
+      "boundary": "transport_route",
+      "action": "Advance the fake monotonic clock past the idle deadline only for routing identifier 33333333-3333-4333-8333-333333333333 and run its normal expiry cleanup.",
+      "expected_effect": "The dedicated expired identifier returns the same 404 Not Found response as unknown and closed identifiers while other entries remain active."
+    },
+    {
+      "id": "disconnect-inactive-stream-after-routing",
+      "after_step": "post-accepted-message",
+      "boundary": "transport_route",
+      "action": "Arm a one-shot close for routing identifier 55555555-5555-4555-8555-555555555555 after the next POST completes routing lookup and before the installed SDK handles the parsed message.",
+      "expected_effect": "The installed SDK writes exactly one 500 SSE connection not established response and the adapter makes no second write."
+    },
+    {
+      "id": "clear-disconnect-inactive-stream-after-routing",
+      "after_step": "post-inactive-sdk-stream",
+      "boundary": "during_cleanup",
+      "action": "Clear the consumed one-shot inactive-stream close injection before duplicate close and server shutdown.",
+      "expected_effect": "No later routing or cleanup operation inherits the inactive-stream fault; ordinary idempotent close and shutdown execute from the recovered fixture state."
+    }
+  ],
+  "steps": [
+    {
+      "id": "open-routing-entry",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "GET",
+        "route": "/sse",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "routing_id": "11111111-1111-4111-8111-111111111111"
+      },
+      "timeout_ms": 1000,
+      "expect": "HTTP 200 text/event-stream plus endpoint /messages?sessionId=11111111-1111-4111-8111-111111111111."
+    },
+    {
+      "id": "post-missing-routing-id",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId_state": "missing",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Bad Request and Connection: close before routing lookup, body read, or dispatch."
+    },
+    {
+      "id": "post-malformed-routing-id",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "malformed-routing-id",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Bad Request and Connection: close before routing lookup, body read, or dispatch."
+    },
+    {
+      "id": "post-unknown-routing-id",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "00000000-0000-4000-8000-000000000000",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 404 with body Not Found and Connection: close; body read and dispatch counts are zero."
+    },
+    {
+      "id": "post-closed-routing-id",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "22222222-2222-4222-8222-222222222222",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 404 with body Not Found and Connection: close, indistinguishable from the independent unknown case; body read and dispatch counts are zero."
+    },
+    {
+      "id": "post-expired-routing-id",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "33333333-3333-4333-8333-333333333333",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 404 with body Not Found and Connection: close, indistinguishable from the independent unknown and closed cases; body read and dispatch counts are zero."
+    },
+    {
+      "id": "post-cross-principal-routing-id",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "44444444-4444-4444-8444-444444444444",
+        "routing_owner": "opaque-principal-b",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 404 with body Not Found and Connection: close, indistinguishable from the independent unknown, closed, and expired cases; body read and dispatch counts are zero."
+    },
+    {
+      "id": "post-invalid-media-type",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json; charset=utf-8",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Invalid Content-Type and Connection: close before body read or dispatch."
+    },
+    {
+      "id": "post-declared-body-overflow",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json",
+        "content_length": 2097153,
+        "body_fixture": "body-not-read"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Request body too large and Connection: close; body read count 0 and dispatch count 0."
+    },
+    {
+      "id": "post-streamed-body-overflow",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json",
+        "content_length_state": "absent",
+        "transfer_encoding": "chunked",
+        "streamed_body_bytes": 2097153,
+        "body_fixture": "streamed-overflow"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Request body too large and Connection: close when the first byte beyond 2 MiB arrives; dispatch count 0."
+    },
+    {
+      "id": "post-invalid-utf8-body",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json",
+        "body_fixture": "invalid-utf8-jsonrpc"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Invalid UTF-8 after the bounded read; dispatch count 0 and no Connection: close header."
+    },
+    {
+      "id": "post-invalid-json-body",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json",
+        "body_fixture": "invalid-json"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Invalid JSON after the bounded read; dispatch count 0 and no Connection: close header."
+    },
+    {
+      "id": "post-invalid-jsonrpc-message",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json",
+        "body_fixture": "invalid-jsonrpc-message"
+      },
+      "timeout_ms": 1000,
+      "expect": "Adapter-owned HTTP 400 with body Invalid JSON-RPC message after the bounded read; dispatch count 0 and no Connection: close header."
+    },
+    {
+      "id": "post-accepted-message",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "content_type": "application/json",
+        "jsonrpc_method": "tools/call",
+        "tool_name": "jetkvm_session_status",
+        "body_size_state": "within-limit"
+      },
+      "timeout_ms": 1000,
+      "expect": "SDK-owned HTTP 202 with body Accepted after exactly one parsed-message dispatch to the active bound transport."
+    },
+    {
+      "id": "post-inactive-sdk-stream",
+      "tool": null,
+      "call": "legacy-sse/http",
+      "input": {
+        "method": "POST",
+        "route": "/messages",
+        "authentication_state": "valid",
+        "security_policy_state": "valid",
+        "principal": "opaque-principal-a",
+        "sessionId": "55555555-5555-4555-8555-555555555555",
+        "content_type": "application/json",
+        "body_fixture": "valid-jsonrpc-notification"
+      },
+      "timeout_ms": 1000,
+      "expect": "Exactly one SDK-owned HTTP 500 with body SSE connection not established and no adapter second write after headers."
+    },
+    {
+      "id": "close-routing-entry",
+      "tool": null,
+      "call": "legacy-sse/close",
+      "input": {
+        "sessionId": "11111111-1111-4111-8111-111111111111",
+        "close_callbacks": 2,
+        "server_shutdown": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Duplicate close and server shutdown remove each remaining routing entry and principal binding exactly once, make no second response write, and leave the explicit device session independent."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assert-open-routing-entry-200",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "open-routing-entry returns HTTP 200 and the exact synthetic endpoint routing identifier."
+    },
+    {
+      "id": "assert-missing-routing-id-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-missing-routing-id returns exactly 400 Bad Request with Connection: close before lookup or body dispatch."
+    },
+    {
+      "id": "assert-malformed-routing-id-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-malformed-routing-id independently returns exactly 400 Bad Request with Connection: close before lookup or body dispatch."
+    },
+    {
+      "id": "assert-unknown-routing-id-404",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-unknown-routing-id independently returns exactly 404 Not Found with Connection: close."
+    },
+    {
+      "id": "assert-closed-routing-id-404",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-closed-routing-id independently returns the same 404 Not Found body and close semantics as unknown."
+    },
+    {
+      "id": "assert-expired-routing-id-404",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-expired-routing-id independently returns the same 404 Not Found body and close semantics as unknown and closed."
+    },
+    {
+      "id": "assert-cross-principal-routing-id-404",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-cross-principal-routing-id independently returns the same 404 Not Found body and close semantics without transferring principal binding."
+    },
+    {
+      "id": "assert-invalid-media-type-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-invalid-media-type returns exactly 400 Invalid Content-Type with Connection: close and zero body dispatch."
+    },
+    {
+      "id": "assert-declared-body-overflow-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-declared-body-overflow returns exactly 400 Request body too large with Connection: close, zero body reads, and zero dispatches."
+    },
+    {
+      "id": "assert-streamed-body-overflow-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-streamed-body-overflow independently returns exactly 400 Request body too large with Connection: close and zero dispatches."
+    },
+    {
+      "id": "assert-invalid-utf8-body-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-invalid-utf8-body returns exactly 400 Invalid UTF-8 with zero dispatches and no Connection: close header."
+    },
+    {
+      "id": "assert-invalid-json-body-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-invalid-json-body independently returns exactly 400 Invalid JSON with zero dispatches and no Connection: close header."
+    },
+    {
+      "id": "assert-invalid-jsonrpc-message-400",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-invalid-jsonrpc-message independently returns exactly 400 Invalid JSON-RPC message with zero dispatches and no Connection: close header."
+    },
+    {
+      "id": "assert-accepted-message-202",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-accepted-message returns exactly 202 Accepted after one bounded parse and one dispatch."
+    },
+    {
+      "id": "assert-inactive-sdk-stream-500",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "post-inactive-sdk-stream preserves exactly one SDK-owned 500 SSE connection not established response with no second write."
+    },
+    {
+      "id": "assert-idempotent-routing-close",
+      "requirement": "branch:sse-routing-close",
+      "assertion": "close-routing-entry removes each entry and principal binding once across duplicate callbacks and server shutdown without closing the device session."
+    },
+    {
+      "id": "assert-routing-id-never-authenticates",
+      "requirement": "contract:sse-routing-not-authentication",
+      "assertion": "Across all independent cases, a routing identifier grants no authentication, authorization, ownership, principal transfer, or device-session identity."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-open-routing-entry-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "open-routing-entry: 200 text/event-stream with the exact synthetic endpoint identifier.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-missing-routing-id-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-missing-routing-id: 400 Bad Request, Connection: close, zero lookup/read/dispatch.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-malformed-routing-id-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-malformed-routing-id: independent 400 Bad Request, Connection: close, zero lookup/read/dispatch.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-unknown-routing-id-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-unknown-routing-id: 404 Not Found, Connection: close, zero body read/dispatch.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-closed-routing-id-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-closed-routing-id: independent 404 Not Found with the same close semantics.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-expired-routing-id-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-expired-routing-id: independent 404 Not Found with the same close semantics.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-cross-principal-routing-id-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-cross-principal-routing-id: independent 404 Not Found with the same close semantics and no principal transfer.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-invalid-media-type-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-invalid-media-type: 400 Invalid Content-Type, Connection: close, zero body read/dispatch.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-declared-body-overflow-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-declared-body-overflow: 400 Request body too large, Connection: close, zero body reads/dispatches.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-streamed-body-overflow-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-streamed-body-overflow: independent 400 Request body too large, Connection: close, zero dispatches.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-invalid-utf8-body-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-invalid-utf8-body: 400 Invalid UTF-8, zero dispatches, no Connection: close header.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-invalid-json-body-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-invalid-json-body: independent 400 Invalid JSON, zero dispatches, no Connection: close header.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-invalid-jsonrpc-message-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-invalid-jsonrpc-message: independent 400 Invalid JSON-RPC message, zero dispatches, no Connection: close header.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-accepted-message-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-accepted-message: 202 Accepted after one bounded parse and one dispatch.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-inactive-sdk-stream-http",
+      "requirement": "branch:sse-routing-close",
+      "field": "http_status",
+      "source": "post-inactive-sdk-stream: exactly one SDK-owned 500 SSE connection not established response and zero adapter second writes.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-idempotent-routing-close",
+      "requirement": "branch:sse-routing-close",
+      "field": "count",
+      "source": "close-routing-entry: one removal per entry and principal binding across two callbacks and server shutdown.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-routing-id-never-authenticates",
+      "requirement": "contract:sse-routing-not-authentication",
+      "field": "outcome",
+      "source": "All independent routing cases retain the authenticated principal boundary and device-session independence.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

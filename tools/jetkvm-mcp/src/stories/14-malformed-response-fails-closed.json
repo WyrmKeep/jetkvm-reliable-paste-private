@@ -1,0 +1,1001 @@
+{
+  "id": "malformed-response-fails-closed",
+  "title": "Malformed downstream responses fail closed at the proven boundary",
+  "requirements": ["branch:malformed-downstream-response"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
+  "environments": ["fake", "replay"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The adapter can return malformed read data before mutation and malformed ATX data after a proven wire write.",
+      "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "arm-malformed-before-write-jetkvm-display-capture",
+      "after_step": null,
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_display_capture.",
+      "expected_effect": "The read fails as DOWNSTREAM_MALFORMED_RESPONSE before any downstream request."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-display-capture",
+      "after_step": "malformed-before-write-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write capture fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-display-capture",
+      "after_step": "recover-after-malformed-before-write-jetkvm-display-capture",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_display_capture.",
+      "expected_effect": "The read request is sent and its malformed response fails closed with outcome null."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-display-capture",
+      "after_step": "malformed-after-write-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write capture fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-display-status",
+      "after_step": "recover-after-malformed-after-write-jetkvm-display-capture",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_display_status.",
+      "expected_effect": "The read fails as DOWNSTREAM_MALFORMED_RESPONSE before any downstream request."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-display-status",
+      "after_step": "malformed-before-write-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write display-status fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-display-status",
+      "after_step": "recover-after-malformed-before-write-jetkvm-display-status",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_display_status.",
+      "expected_effect": "The read request is sent and its malformed response fails closed with outcome null."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-display-status",
+      "after_step": "malformed-after-write-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write display-status fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-input-keyboard",
+      "after_step": "recover-after-malformed-after-write-jetkvm-display-status",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_input_keyboard.",
+      "expected_effect": "The mutation is not_sent with zero downstream requests."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-input-keyboard",
+      "after_step": "malformed-before-write-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write keyboard fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-input-keyboard",
+      "after_step": "recover-after-malformed-before-write-jetkvm-input-keyboard",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_input_keyboard.",
+      "expected_effect": "The mutation is unknown with exact one-action prefix counts and no replay."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-input-keyboard",
+      "after_step": "malformed-after-write-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write keyboard fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-input-mouse",
+      "after_step": "recover-after-malformed-after-write-jetkvm-input-keyboard",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_input_mouse.",
+      "expected_effect": "The mutation is not_sent with zero downstream requests."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-input-mouse",
+      "after_step": "malformed-before-write-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write mouse fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-input-mouse",
+      "after_step": "recover-after-malformed-before-write-jetkvm-input-mouse",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_input_mouse.",
+      "expected_effect": "The mutation is unknown with exact one-action prefix counts and no replay."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-input-mouse",
+      "after_step": "malformed-after-write-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write mouse fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-input-paste",
+      "after_step": "recover-after-malformed-after-write-jetkvm-input-mouse",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_input_paste.",
+      "expected_effect": "The mutation is not_sent with zero downstream requests."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-input-paste",
+      "after_step": "malformed-before-write-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write paste fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-input-paste",
+      "after_step": "recover-after-malformed-before-write-jetkvm-input-paste",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_input_paste.",
+      "expected_effect": "The mutation is unknown after one accepted request and is never replayed."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-input-paste",
+      "after_step": "malformed-after-write-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write paste fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-input-release",
+      "after_step": "recover-after-malformed-after-write-jetkvm-input-paste",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_input_release.",
+      "expected_effect": "The mutation is not_sent with zero downstream requests."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-input-release",
+      "after_step": "malformed-before-write-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write release fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-input-release",
+      "after_step": "recover-after-malformed-before-write-jetkvm-input-release",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_input_release.",
+      "expected_effect": "The mutation is unknown after one accepted request and is never replayed."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-input-release",
+      "after_step": "malformed-after-write-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write release fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-power-control",
+      "after_step": "recover-after-malformed-after-write-jetkvm-input-release",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_power_control.",
+      "expected_effect": "The mutation is not_sent with zero ATX writes."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-power-control",
+      "after_step": "malformed-before-write-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write power fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-power-control",
+      "after_step": "recover-after-malformed-before-write-jetkvm-power-control",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_power_control.",
+      "expected_effect": "The mutation is unknown after one ATX write and is never replayed."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-power-control",
+      "after_step": "malformed-after-write-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write power fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-session-connect",
+      "after_step": "recover-after-malformed-after-write-jetkvm-power-control",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_session_connect.",
+      "expected_effect": "The connect is not_sent with zero downstream requests."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-session-connect",
+      "after_step": "malformed-before-write-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write connect fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-session-connect",
+      "after_step": "recover-after-malformed-before-write-jetkvm-session-connect",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_session_connect.",
+      "expected_effect": "The connect is unknown after one accepted request and is never replayed."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-session-connect",
+      "after_step": "malformed-after-write-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write connect fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-session-reconnect",
+      "after_step": "recover-after-malformed-after-write-jetkvm-session-connect",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_session_reconnect.",
+      "expected_effect": "The reconnect is not_sent with zero downstream requests."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-session-reconnect",
+      "after_step": "malformed-before-write-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write reconnect fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-session-reconnect",
+      "after_step": "recover-after-malformed-before-write-jetkvm-session-reconnect",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_session_reconnect.",
+      "expected_effect": "The reconnect is unknown after one accepted request and is never replayed."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-session-reconnect",
+      "after_step": "malformed-after-write-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write reconnect fault without reopening the unknown gate.",
+      "expected_effect": "No later case inherits this fault and no replay occurs."
+    },
+    {
+      "id": "arm-malformed-before-write-jetkvm-session-status",
+      "after_step": "recover-after-malformed-after-write-jetkvm-session-reconnect",
+      "boundary": "before_write",
+      "action": "Arm one malformed-before-request fault for jetkvm_session_status.",
+      "expected_effect": "The read fails as DOWNSTREAM_MALFORMED_RESPONSE before any downstream request."
+    },
+    {
+      "id": "clear-malformed-before-write-jetkvm-session-status",
+      "after_step": "malformed-before-write-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write session-status fault.",
+      "expected_effect": "No later case inherits this fault."
+    },
+    {
+      "id": "arm-malformed-after-write-jetkvm-session-status",
+      "after_step": "recover-after-malformed-before-write-jetkvm-session-status",
+      "boundary": "after_write",
+      "action": "Arm one malformed-after-request fault for jetkvm_session_status.",
+      "expected_effect": "The read request is sent and its malformed response fails closed with outcome null."
+    },
+    {
+      "id": "clear-malformed-after-write-jetkvm-session-status",
+      "after_step": "malformed-after-write-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the post-write session-status fault.",
+      "expected_effect": "The story leaves no malformed-response fault armed."
+    }
+  ],
+  "steps": [
+    {
+      "id": "malformed-before-write-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-07",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE read ToolError with phase execute, outcome null, verification none, safe_to_retry false, required_next_step reconnect_then_capture, and details.downstream_stage admission. Separately, adapter evidence records downstream request count 0, accepted write count 0, and no image block."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-display-capture",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-07",
+        "next_session_id": "opaque-session-08",
+        "next_generation": 8,
+        "next_case": "malformed-after-write-jetkvm-display-capture",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear and rebind before the post-write capture case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-08",
+        "session_generation": 8,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE read ToolError with phase execute, outcome null, verification none, safe_to_retry false, required_next_step reconnect_then_capture, and details.downstream_stage acknowledgement. Separately, adapter evidence records downstream request count 1, malformed response count 1, zero replay writes, and no image block."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-display-capture",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-08",
+        "next_session_id": "opaque-session-09",
+        "next_generation": 9,
+        "next_case": "malformed-before-write-jetkvm-display-status",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, and rebind before the next tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-09",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE read ToolError with phase execute, outcome null, verification none, safe_to_retry false, required_next_step reconnect_then_capture, and details.downstream_stage admission. Separately, adapter evidence records downstream request count 0 and accepted write count 0."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-display-status",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-09",
+        "next_session_id": "opaque-session-10",
+        "next_generation": 10,
+        "next_case": "malformed-after-write-jetkvm-display-status",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear and rebind before the post-write status case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-10",
+        "session_generation": 10,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE read ToolError with phase execute, outcome null, verification none, safe_to_retry false, required_next_step reconnect_then_capture, and details.downstream_stage acknowledgement. Separately, adapter evidence records downstream request count 1, malformed response count 1, and zero replay writes."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-display-status",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-10",
+        "next_session_id": "opaque-session-11",
+        "next_generation": 11,
+        "next_case": "malformed-before-write-jetkvm-input-keyboard",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-11"
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, reconnect, and capture a fresh keyboard observation before the next tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-11",
+        "session_generation": 11,
+        "observation_id": "opaque-observation-11",
+        "request_id": "opaque-malformed-pre-keyboard",
+        "actions": [{ "type": "key_press", "key": "Enter" }],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry false, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests or writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-input-keyboard",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-11",
+        "next_session_id": "opaque-session-12",
+        "next_generation": 12,
+        "next_case": "malformed-after-write-jetkvm-input-keyboard",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-12"
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear, rebind, and capture a fresh keyboard observation before the post-write case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-12",
+        "session_generation": 12,
+        "observation_id": "opaque-observation-12",
+        "request_id": "opaque-malformed-post-keyboard",
+        "actions": [{ "type": "key_press", "key": "Enter" }],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, details.failed_action_index 0, details.dispatched_action_count 1, details.completed_action_count 0, and details.downstream_stage acknowledgement. The suffix and automatic replay are suppressed."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-input-keyboard",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-12",
+        "next_session_id": "opaque-session-13",
+        "next_generation": 13,
+        "next_case": "malformed-before-write-jetkvm-input-mouse",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-13"
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, reconnect, and capture a fresh mouse observation before the next tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-13",
+        "session_generation": 13,
+        "observation_id": "opaque-observation-13",
+        "request_id": "opaque-malformed-pre-mouse",
+        "actions": [{ "type": "move", "x": 40, "y": 50 }],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry false, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests or writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-input-mouse",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-13",
+        "next_session_id": "opaque-session-14",
+        "next_generation": 14,
+        "next_case": "malformed-after-write-jetkvm-input-mouse",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-14"
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear, rebind, and capture a fresh mouse observation before the post-write case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-14",
+        "session_generation": 14,
+        "observation_id": "opaque-observation-14",
+        "request_id": "opaque-malformed-post-mouse",
+        "actions": [{ "type": "move", "x": 40, "y": 50 }],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, details.failed_action_index 0, details.dispatched_action_count 1, details.completed_action_count 0, and details.downstream_stage acknowledgement. The suffix and automatic replay are suppressed."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-input-mouse",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-14",
+        "next_session_id": "opaque-session-15",
+        "next_generation": 15,
+        "next_case": "malformed-before-write-jetkvm-input-paste",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-15"
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, reconnect, and capture a fresh paste observation before the next tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-15",
+        "session_generation": 15,
+        "observation_id": "opaque-observation-15",
+        "request_id": "opaque-malformed-pre-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry false, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests or writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-input-paste",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-15",
+        "next_session_id": "opaque-session-16",
+        "next_generation": 16,
+        "next_case": "malformed-after-write-jetkvm-input-paste",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": true,
+        "next_observation_id": "opaque-observation-16"
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear, rebind, and capture a fresh paste observation before the post-write case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-16",
+        "session_generation": 16,
+        "observation_id": "opaque-observation-16",
+        "request_id": "opaque-malformed-post-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate remains closed; adapter evidence records one request, one malformed response, and zero replay writes."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-input-paste",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-16",
+        "next_session_id": "opaque-session-17",
+        "next_generation": 17,
+        "next_case": "malformed-before-write-jetkvm-input-release",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, and reconnect before the next tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-17",
+        "session_generation": 17,
+        "request_id": "opaque-malformed-pre-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry false, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests or writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-input-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-17",
+        "next_session_id": "opaque-session-18",
+        "next_generation": 18,
+        "next_case": "malformed-after-write-jetkvm-input-release",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear and rebind before the post-write release case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-18",
+        "session_generation": 18,
+        "request_id": "opaque-malformed-post-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate remains closed; adapter evidence records one request, one malformed response, and zero replay writes."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-input-release",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-18",
+        "next_session_id": "opaque-session-19",
+        "next_generation": 19,
+        "next_case": "malformed-before-write-jetkvm-power-control",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, reconnect, and restore and re-prove the ATX baseline before the next tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-19",
+        "session_generation": 19,
+        "request_id": "opaque-malformed-pre-power",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry false, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests and zero ATX writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-power-control",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-19",
+        "next_session_id": "opaque-session-20",
+        "next_generation": 20,
+        "next_case": "malformed-after-write-jetkvm-power-control",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear, rebind, and restore and re-prove the ATX baseline before the post-write power case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-20",
+        "session_generation": 20,
+        "request_id": "opaque-malformed-post-power",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate remains closed; adapter evidence records one ATX write, one malformed response, and zero replay writes."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-power-control",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-20",
+        "prepare_unowned_connect": true,
+        "next_case": "malformed-before-write-jetkvm-session-connect",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false,
+        "restore_atx_baseline": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect and restore and re-prove the ATX baseline, then close the old session and prepare an unowned connect state, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-malformed-pre-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase connect, outcome not_sent, verification none, safe_to_retry false, required_next_step none, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests or writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-session-connect",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "prepare_unowned_connect": true,
+        "next_case": "malformed-after-write-jetkvm-session-connect",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear and re-prove an unowned connect state before the post-write connect case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-malformed-post-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase connect, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate remains closed; adapter evidence records one connect request, one malformed response, and zero replay writes."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-session-connect",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "next_session_id": "opaque-session-23",
+        "next_generation": 23,
+        "next_case": "malformed-before-write-jetkvm-session-reconnect",
+        "inspect_session_publication": true,
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect and clean uncertain connect publication, then establish a new current owned session, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-23",
+        "session_generation": 23,
+        "request_id": "opaque-malformed-pre-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome not_sent, verification none, safe_to_retry false, required_next_step reconnect_then_capture, null public action counts, and details.downstream_stage admission. Adapter evidence records zero downstream requests or writes."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-session-reconnect",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-23",
+        "next_session_id": "opaque-session-24",
+        "next_generation": 24,
+        "next_case": "malformed-after-write-jetkvm-session-reconnect",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear and rebind before the post-write reconnect case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-24",
+        "session_generation": 24,
+        "request_id": "opaque-malformed-post-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE mutation ToolError with phase execute, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, null public action counts, and details.downstream_stage acknowledgement. The unknown gate remains closed; adapter evidence records one reconnect request, one malformed response, and zero replay writes."
+    },
+    {
+      "id": "recover-after-malformed-after-write-jetkvm-session-reconnect",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-24",
+        "next_session_id": "opaque-session-25",
+        "next_generation": 25,
+        "next_case": "malformed-before-write-jetkvm-session-status",
+        "inspect_device_state": true,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Inspect, release, and reconnect before the final read tool, with zero replay."
+    },
+    {
+      "id": "malformed-before-write-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-25",
+        "session_generation": 25,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE read ToolError with phase execute, outcome null, verification none, safe_to_retry false, required_next_step reconnect_then_capture, and details.downstream_stage admission. Separately, adapter evidence records downstream request count 0 and accepted write count 0."
+    },
+    {
+      "id": "recover-after-malformed-before-write-jetkvm-session-status",
+      "tool": null,
+      "call": "acceptance-fixture/session/recover-malformed-case",
+      "input": {
+        "closed_session_id": "opaque-session-25",
+        "next_session_id": "opaque-session-26",
+        "next_generation": 26,
+        "next_case": "malformed-after-write-jetkvm-session-status",
+        "inspect_device_state": false,
+        "emergency_release": true,
+        "capture_fresh_observation": false
+      },
+      "timeout_ms": 1000,
+      "expect": "Clear and rebind before the post-write session-status case, with zero replay."
+    },
+    {
+      "id": "malformed-after-write-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session-26",
+        "session_generation": 26,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DOWNSTREAM_MALFORMED_RESPONSE read ToolError with phase execute, outcome null, verification none, safe_to_retry false, required_next_step reconnect_then_capture, and details.downstream_stage acknowledgement. Separately, adapter evidence records downstream request count 1, malformed response count 1, and zero replay writes."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:malformed-downstream-response",
+      "assertion": "Each tool executes one malformed-before-request and one malformed-after-request case under separate one-shot faults. Mutations return exact not_sent then unknown envelopes; reads return DOWNSTREAM_MALFORMED_RESPONSE with outcome null and verification none at both boundaries."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:malformed-downstream-response",
+      "assertion": "Separate adapter telemetry proves zero requests and writes in every pre-boundary case, and one request plus one malformed response and zero replay writes in every post-boundary case."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:malformed-downstream-response",
+      "assertion": "Every one-shot fault is cleared before executable rebind or inspect-release-reconnect recovery establishes the next current session, required fresh observation, and restored ATX baseline."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:malformed-downstream-response",
+      "field": "requirement_result",
+      "source": "The schema-validated read and mutation ToolError envelopes from each explicit ordered fake or replay call.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:malformed-downstream-response",
+      "field": "artifact_hash",
+      "source": "Ordered adapter telemetry separately proving pre/post request boundaries, zero replay, and completed clear-and-recovery transitions.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

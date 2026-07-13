@@ -1,0 +1,1913 @@
+{
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "tool": {
+          "type": "string",
+          "const": "jetkvm_input_release"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "session_id": {
+          "$ref": "#/anyOf/0/properties/operation_id"
+        },
+        "session_generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "$ref": "#/anyOf/0/properties/operation_id"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "applied",
+                "already_applied"
+              ]
+            },
+            "verification": {
+              "type": "string",
+              "const": "device_state_verified"
+            },
+            "safe_to_retry": {
+              "type": "boolean",
+              "const": false
+            },
+            "required_next_step": {
+              "type": "string",
+              "const": "none"
+            },
+            "mutation_gate_closed": {
+              "type": "boolean",
+              "const": true
+            },
+            "deferred_producers_joined": {
+              "type": "boolean",
+              "const": true
+            },
+            "paste_terminal": {
+              "type": "string",
+              "enum": [
+                "cancelled",
+                "inactive"
+              ]
+            },
+            "ordinary_leases_zero": {
+              "type": "boolean",
+              "const": true
+            },
+            "keyboard_zero": {
+              "type": "boolean",
+              "const": true
+            },
+            "pointer_zero": {
+              "type": "boolean",
+              "const": true
+            },
+            "generation_drained": {
+              "type": "boolean",
+              "const": true
+            }
+          },
+          "required": [
+            "request_id",
+            "outcome",
+            "verification",
+            "safe_to_retry",
+            "required_next_step",
+            "mutation_gate_closed",
+            "deferred_producers_joined",
+            "paste_terminal",
+            "ordinary_leases_zero",
+            "keyboard_zero",
+            "pointer_zero",
+            "generation_drained"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "ok",
+        "tool",
+        "operation_id",
+        "session_id",
+        "session_generation",
+        "duration_ms",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": false
+        },
+        "operation_id": {
+          "$ref": "#/anyOf/0/properties/operation_id"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "$ref": "#/anyOf/0/properties/operation_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_generation": {
+          "anyOf": [
+            {
+              "$ref": "#/anyOf/0/properties/duration_ms"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "$ref": "#/anyOf/0/properties/duration_ms"
+        },
+        "tool": {
+          "type": "string",
+          "const": "jetkvm_input_release"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "authorize"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "PERMISSION_DENIED"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "grant_permission"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "string",
+                      "const": "input.release"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "number",
+                          "const": 0
+                        }
+                      ]
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "expected_generation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "actual_generation": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observation_id": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/operation_id"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "validate"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "CAPABILITY_MISSING"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "enable_capability"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "string",
+                      "const": "input_release"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "validate"
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "CONFIG_INVALID",
+                    "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "connect"
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "AUTH_FAILED",
+                    "AUTH_EXPIRED",
+                    "UNSUPPORTED_UI_VERSION",
+                    "FIRMWARE_INCOMPATIBLE",
+                    "BROWSER_UNSUPPORTED"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "admission"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "connect"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "AUTH_RATE_LIMITED"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "admission"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "authorize"
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "OBSERVE_ONLY",
+                    "SAFETY_DENIED"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "validate"
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "SESSION_NOT_FOUND",
+                    "STALE_SESSION_GENERATION"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "reconnect_then_capture"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "admission"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "connect"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "DEVICE_UNREACHABLE"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "admission"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "validate",
+                    "queue",
+                    "connect",
+                    "execute"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "SESSION_TAKEN_OVER",
+                    "SESSION_DRAINED"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "reconnect_then_capture"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "admission",
+                        "write"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute",
+                    "verify",
+                    "cleanup"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "SESSION_TAKEN_OVER",
+                    "SESSION_DRAINED"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "release_then_reconnect_then_capture"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dispatched_action_count": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "completed_action_count": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "write",
+                        "acknowledgement",
+                        "verification"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "CONNECTION_LOST"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "reconnect_then_capture"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "admission",
+                        "write"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute",
+                    "verify",
+                    "cleanup"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "CONNECTION_LOST"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "inspect_device_state_before_retry"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/completed_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "write",
+                        "acknowledgement",
+                        "verification"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "DOWNSTREAM_MALFORMED_RESPONSE"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "reconnect_then_capture"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "admission",
+                        "write"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute",
+                    "verify",
+                    "cleanup"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "DOWNSTREAM_MALFORMED_RESPONSE"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "inspect_device_state_before_retry"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/completed_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "write",
+                        "acknowledgement",
+                        "verification"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "queue",
+                    "connect",
+                    "execute"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "CANCELLED",
+                    "DEADLINE_EXCEEDED"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "admission",
+                        "write"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute",
+                    "verify",
+                    "cleanup"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "CANCELLED",
+                    "DEADLINE_EXCEEDED"
+                  ]
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "inspect_device_state_before_retry"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/completed_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "write",
+                        "acknowledgement",
+                        "verification"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "queue"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "ADMISSION_CAPACITY_EXCEEDED"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "none"
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "connect",
+                    "execute",
+                    "verify",
+                    "cleanup"
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "const": "MUTATION_OUTCOME_UNKNOWN"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "inspect_device_state_before_retry"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/completed_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "enum": [
+                        "write",
+                        "acknowledgement",
+                        "verification"
+                      ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "operation_id",
+        "session_id",
+        "session_generation",
+        "duration_ms",
+        "tool",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object"
+}

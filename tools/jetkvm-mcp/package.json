@@ -17,11 +17,18 @@
   "scripts": {
     "test": "vitest run && node --test scripts/*.test.mjs",
     "test:task1": "vitest run src/domain.test.ts src/errors.test.ts src/runtimePolicy.test.ts src/deviceLease.test.ts src/deviceLeaseRunner.test.ts",
+    "test:phase2": "vitest run src/config.test.ts src/domain.test.ts src/errors.test.ts src/browser/auth.test.ts src/observability/logger.test.ts src/mcp/toolCatalogue.test.ts src/mcp/schemas.test.ts src/mcp/results.test.ts src/mcp/server.test.ts src/mcp/stdio.test.ts src/mcp/legacySse.test.ts src/session/deviceSessionClient.test.ts src/idempotency/RequestLedger.test.ts src/device/DeviceRpcAdapter.test.ts src/test-support/PlaneSeams.test.ts src/test-support/DeviceRpcTestSupport.test.ts src/test-support/ReplayPlanes.test.ts src/stories/manifest.test.ts && node --test scripts/check-docs-consistency.test.mjs",
     "test:device-go-runner": "node --test scripts/run-device-go-tests.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
     "device-lease:run": "node dist/deviceLeaseRunner.js",
     "test:installed-lease": "npm run build && node scripts/installed-device-lease-smoke.mjs",
+    "stories:validate": "vitest run src/stories/manifest.test.ts",
+    "schemas:check": "node scripts/generate-schemas.mjs --check",
+    "docs:check": "node scripts/check-docs-consistency.mjs",
+    "smoke:installed-contracts": "npm run build && node scripts/installed-contracts-smoke.mjs",
+    "smoke:installed-stdio-protocol": "npm run build && node scripts/installed-stdio-protocol-smoke.mjs",
+    "smoke:installed-sse-protocol": "npm run build && node scripts/installed-sse-protocol-smoke.mjs",
     "package:check": "npm run build && node scripts/check-package.mjs"
   },
   "dependencies": {
@@ -34,6 +41,7 @@
     "playwright": "1.57.0",
     "prettier": "3.7.4",
     "typescript": "5.9.3",
-    "vitest": "4.1.5"
+    "vitest": "4.1.5",
+    "zod-to-json-schema": "3.25.2"
   }
 }

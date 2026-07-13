@@ -1,0 +1,354 @@
+{
+  "id": "atx-extension-serialization-idempotency-and-nonproof",
+  "title": "ATX gates, serializes, fences replacement, and never proves host state",
+  "requirements": [
+    "branch:atx-gate-and-serialization",
+    "branch:atx-acknowledgement-semantics",
+    "branch:device-rpc-adapter-mid-flight-loss",
+    "contract:atx-idempotent-nonproof"
+  ],
+  "tools": ["jetkvm_power_control"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "ATX extension and serial readiness can be gated; one request-ledger reservation and full-sequence mutex are observable.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "atx-prewrite-binding-loss",
+      "after_step": "restore-and-prove-prewrite-baseline",
+      "boundary": "before_write",
+      "action": "Arm one pre-send binding-loss call after extension and serial preflight; after the handler captures generation 7's Browser-owned shared WebRTC/RPC adapter binding, replace the current bundle before adapter admission and before any setATXPowerAction transport write, then disarm the injector.",
+      "expected_effect": "The adapter records STALE_BINDING at admission with outcome not_sent, writeBegan false, acknowledged false, verification none, and setATXPowerAction write count 0; the public call maps the stale connection to CONNECTION_LOST in phase execute at downstream_stage admission with safe_to_retry true and required_next_step reconnect_then_capture."
+    },
+    {
+      "id": "atx-midflight-binding-loss",
+      "after_step": "restore-and-prove-postwrite-baseline",
+      "boundary": "after_write",
+      "action": "Arm one post-write binding-loss call; after the acceptance fixture records the serial ON write and exactly one setATXPowerAction transport write has begun on generation 8, lose the channel and invalidate that Browser-owned shared WebRTC/RPC adapter bundle before serial OFF or a correlated complete receipt, then disarm the injector.",
+      "expected_effect": "The fixture boundary record is serial ON 1 and OFF 0, while the adapter and public call record CONNECTION_LOST at acknowledgement with outcome unknown, writeBegan true, acknowledged false, verification none, phase execute, downstream_stage acknowledgement, safe_to_retry false, required_next_step inspect_device_state_before_retry, setATXPowerAction write count 1, a closed ATX gate, and no replay or host-state claim."
+    }
+  ],
+  "steps": [
+    {
+      "id": "prove-serialized-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/prove-ready-baseline",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline",
+        "reset_case_write_counts": true
+      },
+      "timeout_ms": 1000,
+      "expect": "The recorded baseline, active extension, serial readiness, one current Browser-owned shared WebRTC/RPC adapter bundle, and setATXPowerAction write count 0 are proven."
+    },
+    {
+      "id": "serialized-power-short",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-atx-serialized",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "outcome applied, verification device_ack_only, serial_sequence_completed true, exactly one setATXPowerAction write whose device receipt proves the full ON and OFF serial sequence under one mutex with exact 200 ms timing, and no target-host state claim."
+    },
+    {
+      "id": "repeat-power-short",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-atx-serialized",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "outcome already_applied with the cached device_ack_only result, zero additional setATXPowerAction writes, cumulative case-local setATXPowerAction write count still 1, and no host-state claim."
+    },
+    {
+      "id": "restore-and-prove-prewrite-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline",
+        "reset_case_write_counts": true
+      },
+      "timeout_ms": 30000,
+      "expect": "The fixture restores and proves the recorded baseline, active extension, serial readiness, and generation 7 binding with the case-local setATXPowerAction write count reset to zero before the pre-write fault."
+    },
+    {
+      "id": "power-before-write-binding-loss",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-atx-prewrite-loss",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Internal STALE_BINDING at admission maps to public CONNECTION_LOST in phase execute at downstream_stage admission with outcome not_sent, verification none, safe_to_retry true, required_next_step reconnect_then_capture, writeBegan false, acknowledged false, setATXPowerAction write count 0, failed_action_index null, dispatched_action_count null, completed_action_count null, and no host-state claim."
+    },
+    {
+      "id": "repeat-power-before-write-binding-loss",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-atx-prewrite-loss",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The request ledger returns the original not_sent result for the same request and digest with zero additional setATXPowerAction writes; cumulative fault-call write count remains 0 and the stale binding writes 0."
+    },
+    {
+      "id": "recover-prewrite-binding-and-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/session/reconnect-capture-and-restore-atx",
+      "input": {
+        "session_id": "opaque-session",
+        "closed_session_generation": 7,
+        "replacement_session_generation": 8,
+        "invalidated_binding_id": "opaque-atx-binding-generation-7",
+        "replacement_binding_id": "opaque-atx-binding-generation-8",
+        "recorded_baseline": "safe-atx-baseline",
+        "extension": "atx-power",
+        "serial_ready": true
+      },
+      "timeout_ms": 30000,
+      "expect": "The old bundle remains invalid and writes zero; reconnect and fresh capture publish exactly one Browser-owned shared WebRTC/RPC replacement bundle for generation 8, then restore and prove the ATX baseline, extension, and serial readiness."
+    },
+    {
+      "id": "power-after-prewrite-recovery",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-atx-prewrite-recovered",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A new request on the proven generation 8 replacement binding is applied with device_ack_only, serial_sequence_completed true, exactly one setATXPowerAction write with a complete ON/OFF device receipt, and zero writes on the invalidated generation 7 binding."
+    },
+    {
+      "id": "restore-and-prove-postwrite-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "binding_id": "opaque-atx-binding-generation-8",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline",
+        "reset_case_write_counts": true
+      },
+      "timeout_ms": 30000,
+      "expect": "The fixture restores and proves the recorded baseline, active extension, serial readiness, and generation 8 binding with the case-local setATXPowerAction write count reset to zero before the post-write fault."
+    },
+    {
+      "id": "power-after-on-binding-loss",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-atx-after-on-loss",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The fixture records serial ON 1 and OFF 0 before CONNECTION_LOST at acknowledgement; the public envelope has phase execute, downstream_stage acknowledgement, outcome unknown, verification none, safe_to_retry false, required_next_step inspect_device_state_before_retry, failed_action_index null, dispatched_action_count null, and completed_action_count null. The adapter evidence is writeBegan true, acknowledged false, and setATXPowerAction write count 1; no serial_sequence_completed success field, replay, or host-state claim is allowed, and the ATX gate is closed."
+    },
+    {
+      "id": "repeat-power-after-on-binding-loss",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-atx-after-on-loss",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The request ledger retains and returns the original unknown result for the same request and digest without replay; zero additional setATXPowerAction writes leave the cumulative fault-call write count at 1, and the invalidated binding writes 0."
+    },
+    {
+      "id": "recover-postwrite-binding-and-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/session/inspect-reconnect-capture-and-restore-atx",
+      "input": {
+        "session_id": "opaque-session",
+        "closed_session_generation": 8,
+        "replacement_session_generation": 9,
+        "invalidated_binding_id": "opaque-atx-binding-generation-8",
+        "replacement_binding_id": "opaque-atx-binding-generation-9",
+        "recorded_baseline": "safe-atx-baseline",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "retain_fault_call_counts": true
+      },
+      "timeout_ms": 30000,
+      "expect": "While retaining the device lease and the unknown fault evidence, inspect and reconcile ATX state, perform bounded release cleanup, reconnect and fresh-capture generation 9, publish exactly one shared replacement bundle only after invalidating generation 8, and restore and prove the baseline, extension, and serial readiness."
+    },
+    {
+      "id": "power-after-postwrite-recovery",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 9,
+        "request_id": "opaque-atx-postwrite-recovered",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A new request ID on the proven generation 9 replacement binding is applied with device_ack_only, serial_sequence_completed true, exactly one setATXPowerAction write with a complete ON/OFF device receipt, zero writes on either invalidated binding, and no host-state claim."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:atx-gate-and-serialization",
+      "assertion": "ATX checks extension and serial readiness, reserves the request identifier, holds one full-sequence mutex, and uses fixed timing."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:atx-acknowledgement-semantics",
+      "assertion": "ATX acknowledgement proves serial completion only; cached LED facts remain separate and no host state is claimed."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:device-rpc-adapter-mid-flight-loss",
+      "assertion": "The distinct pre-send call records internal STALE_BINDING/admission, public not_sent, writeBegan false, acknowledged false, and zero setATXPowerAction writes; the distinct after-ON call records CONNECTION_LOST/acknowledgement, unknown, writeBegan true, acknowledged false, and one setATXPowerAction write. Same-request repeats return the retained result with zero additional writes, invalidated bindings write zero, and recovery precedes any new request."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:atx-idempotent-nonproof",
+      "assertion": "A definitive repeated request is already_applied with zero second write, a not_sent or unknown repeated request retains its exact original outcome with zero second write, serial completion is at most device_ack_only, cached LED facts remain separate, and no result claims target-host state."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:atx-gate-and-serialization",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:atx-acknowledgement-semantics",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:device-rpc-adapter-mid-flight-loss",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:atx-idempotent-nonproof",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

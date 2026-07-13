@@ -1,0 +1,231 @@
+{
+  "id": "session-reconnect-invalidates-observations",
+  "title": "Reconnect invalidates every prior observation",
+  "requirements": [
+    "branch:stale-session-generation",
+    "branch:post-reconnect-input-without-capture",
+    "contract:reconnect-invalidates-observations"
+  ],
+  "tools": [
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_session_reconnect"
+  ],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "A ready generation has a consumed-safe current observation and reconnect permission.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "publish-new-generation",
+      "after_step": "reconnect-session",
+      "boundary": "after_acknowledgement",
+      "action": "Publish proven generation 8 while retaining distinct generation-7 and prior-observation fixtures for ordered negative calls.",
+      "expected_effect": "The generation-7 call returns STALE_SESSION_GENERATION; generation-8 input using prior observations returns only the canonical fresh-capture error, all before input dispatch."
+    }
+  ],
+  "steps": [
+    {
+      "id": "reconnect-session",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A new ready generation with fresh_capture_required true."
+    },
+    {
+      "id": "input-with-stale-generation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-stale-generation-mouse",
+        "request_id": "opaque-stale-generation-mouse",
+        "actions": [
+          {
+            "type": "click",
+            "x": 12,
+            "y": 18,
+            "button": "left"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION with zero input-plane calls."
+    },
+    {
+      "id": "input-with-old-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-old-observation-mouse-input-mouse",
+        "request_id": "opaque-old-observation-mouse-input-mouse",
+        "actions": [
+          {
+            "type": "click",
+            "x": 12,
+            "y": 18,
+            "button": "left"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The canonical fresh-capture-required or STALE_OBSERVATION error with zero mouse-plane calls."
+    },
+    {
+      "id": "keyboard-with-old-observation",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-old-observation-keyboard-input-keyboard",
+        "request_id": "opaque-old-observation-keyboard-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_OBSERVATION or fresh-capture-required before input with zero keyboard-plane calls."
+    },
+    {
+      "id": "paste-with-old-observation",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-old-observation-paste-input-paste",
+        "request_id": "opaque-old-observation-paste-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_OBSERVATION or fresh-capture-required before input with zero paste-plane calls."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:stale-session-generation",
+      "assertion": "The distinct generation-7 mouse call returns STALE_SESSION_GENERATION and records zero downstream writes."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:post-reconnect-input-without-capture",
+      "assertion": "Each generation-8 mouse, keyboard, and paste call using a prior-generation observation returns only the canonical fresh-capture or STALE_OBSERVATION error with zero input-plane calls."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "contract:reconnect-invalidates-observations",
+      "assertion": "Every generation-7 observation remains invalid after generation 8 is published."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:stale-session-generation",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:post-reconnect-input-without-capture",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "contract:reconnect-invalidates-observations",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

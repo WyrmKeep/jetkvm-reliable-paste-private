@@ -1,0 +1,480 @@
+{
+  "id": "power-three-semantic-actions",
+  "title": "Power exposes exactly three fixed semantic ATX actions",
+  "requirements": [
+    "branch:definitive-acknowledgement",
+    "contract:three-semantic-atx-actions"
+  ],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect"
+  ],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The ATX extension is active, serial readiness is proven, and the safe power baseline is recorded.",
+      "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness records lifecycle state through structured establish, retire, connect-result, and reconnect-result fixtures; every input call consumes a separately captured fresh observation from the exact current successor generation.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "fixed-atx-sequence",
+      "after_step": null,
+      "boundary": "before_write",
+      "action": "Drive each applicable mutation through its definitive acknowledgement boundary; before every ATX call, execute the fixture proof for the recorded baseline, active atx-power extension, serial readiness, and current Browser-owned binding.",
+      "expected_effect": "Every linked mutation returns applied with the exact acknowledgement and verification strength; press_power, hold_power, and press_reset use exact 200 ms, 5000 ms, and 200 ms sequencing with restoration and renewed readiness proof between cases."
+    }
+  ],
+  "steps": [
+    {
+      "id": "establish-definitive-atx-session",
+      "tool": null,
+      "call": "acceptance-fixture/session/establish-ready",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "session_state": "ready"
+      },
+      "timeout_ms": 1000,
+      "expect": "The structured fixture establishes opaque-session generation 7 as the sole ready lifecycle session for the three ATX semantic cases."
+    },
+    {
+      "id": "prove-press-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/prove-ready-baseline",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 1000,
+      "expect": "The recorded ATX-observable baseline, active atx-power extension, serial readiness, and current Browser-owned binding are proven immediately before press_power."
+    },
+    {
+      "id": "press-power",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-short",
+        "timeout_ms": 1000,
+        "action": "press_power"
+      },
+      "timeout_ms": 1000,
+      "expect": "power-short uses exactly 200 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "restore-and-prove-hold-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After press_power, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before hold_power."
+    },
+    {
+      "id": "hold-power",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-long",
+        "timeout_ms": 10000,
+        "action": "hold_power"
+      },
+      "timeout_ms": 10000,
+      "expect": "power-long holds for exactly 5000 ms and returns a correlated serial receipt within the bounded 10000 ms deadline."
+    },
+    {
+      "id": "restore-and-prove-reset-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "hold_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the exact 5000 ms hold completes within its 10000 ms tool deadline, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding before press_reset."
+    },
+    {
+      "id": "press-reset",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reset",
+        "timeout_ms": 1000,
+        "action": "press_reset"
+      },
+      "timeout_ms": 1000,
+      "expect": "reset uses exactly 200 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "restore-and-prove-post-reset-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "binding_id": "opaque-atx-binding-generation-7",
+        "prior_action": "press_reset",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After press_reset, the fixture restores the recorded ATX-observable baseline and re-proves the active extension, serial readiness, baseline, and current binding."
+    },
+    {
+      "id": "retire-definitive-session-before-connect",
+      "tool": null,
+      "call": "acceptance-fixture/session/retire-and-prove-no-incumbent",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "retire_session": true,
+        "require_no_incumbent": true,
+        "next_case": "definitive-acknowledgement-jetkvm-session-connect"
+      },
+      "timeout_ms": 30000,
+      "expect": "After final generation-7 ATX baseline restoration and reproof, the fixture retires the session and structurally proves no incumbent before takeover:false connect."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-definitive-acknowledgement-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied/device_ack_only for jetkvm_session_connect, publishing opaque-definitive-acknowledgement-session generation 8 with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "bind-definitive-connect-result",
+      "tool": null,
+      "call": "acceptance-fixture/session/bind-success-result",
+      "input": {
+        "source_step": "definitive-acknowledgement-jetkvm-session-connect",
+        "source_outcome": "applied",
+        "returned_session_id": "opaque-definitive-acknowledgement-session",
+        "returned_session_generation": 8,
+        "returned_session_state": "ready",
+        "next_case": "definitive-acknowledgement-jetkvm-session-reconnect"
+      },
+      "timeout_ms": 1000,
+      "expect": "The structured connect result binds the exact returned session identity and generation for the next reconnect call."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 8,
+        "request_id": "opaque-definitive-acknowledgement-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied/device_ack_only for jetkvm_session_reconnect, replacing generation 8 with opaque-definitive-acknowledgement-session generation 9 and fresh_capture_required true."
+    },
+    {
+      "id": "bind-definitive-reconnect-result",
+      "tool": null,
+      "call": "acceptance-fixture/session/bind-success-result",
+      "input": {
+        "source_step": "definitive-acknowledgement-jetkvm-session-reconnect",
+        "source_outcome": "applied",
+        "predecessor_session_id": "opaque-definitive-acknowledgement-session",
+        "predecessor_session_generation": 8,
+        "returned_session_id": "opaque-definitive-acknowledgement-session",
+        "returned_session_generation": 9,
+        "returned_session_state": "ready",
+        "fresh_capture_required": true,
+        "next_case": "capture-definitive-keyboard-observation"
+      },
+      "timeout_ms": 1000,
+      "expect": "The structured reconnect result binds the exact returned successor identity and generation and requires new observations."
+    },
+    {
+      "id": "capture-definitive-keyboard-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh generation-9 observation reserved as opaque-observation-definitive-acknowledgement-input-keyboard."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-definitive-acknowledgement-input-keyboard",
+        "request_id": "opaque-definitive-acknowledgement-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_keyboard with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "capture-definitive-mouse-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh generation-9 observation reserved as opaque-observation-definitive-acknowledgement-input-mouse."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-definitive-acknowledgement-input-mouse",
+        "request_id": "opaque-definitive-acknowledgement-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_mouse with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "capture-definitive-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh generation-9 observation reserved as opaque-observation-definitive-acknowledgement-input-paste."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-definitive-acknowledgement-input-paste",
+        "request_id": "opaque-definitive-acknowledgement-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_paste with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "prove-definitive-power-baseline",
+      "tool": null,
+      "call": "acceptance-fixture/atx/prove-ready-baseline",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "binding_id": "opaque-definitive-atx-binding-generation-9",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 1000,
+      "expect": "The restored ATX-observable baseline, active extension, serial readiness, and current binding remain proven immediately before the matrix definitive-acknowledgement power call."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "request_id": "opaque-definitive-acknowledgement-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_power_control with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "restore-and-prove-after-definitive-power",
+      "tool": null,
+      "call": "acceptance-fixture/atx/restore-and-prove",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "binding_id": "opaque-definitive-atx-binding-generation-9",
+        "prior_action": "press_power",
+        "extension": "atx-power",
+        "serial_ready": true,
+        "recorded_baseline": "safe-atx-baseline"
+      },
+      "timeout_ms": 30000,
+      "expect": "After the final matrix power acknowledgement, restore the recorded ATX-observable baseline and re-prove the active extension, serial readiness, baseline, and exact current binding."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-definitive-acknowledgement-session",
+        "session_generation": 9,
+        "request_id": "opaque-definitive-acknowledgement-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_release with its exact acknowledgement and verification strength."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:definitive-acknowledgement",
+      "assertion": "Every linked mutation uses an explicitly derived lifecycle state: connect runs only after no-incumbent proof, reconnect consumes the exact returned connect identity and generation, and later calls use the returned successor with fresh observations before inputs; each correlated acknowledgement remains applied with its exact verification strength."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "contract:three-semantic-atx-actions",
+      "assertion": "The ordered press_power, hold_power, and press_reset cases each start only after the recorded ATX baseline, active extension, serial readiness, and current binding are proven; the harness restores and re-proves those facts after every case, exact timings remain 200 ms, 5000 ms, and 200 ms, and no fourth action, caller-supplied duration, delay, repeat, pin, level, GPIO operation, or arbitrary sequence is accepted."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:definitive-acknowledgement",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "contract:three-semantic-atx-actions",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

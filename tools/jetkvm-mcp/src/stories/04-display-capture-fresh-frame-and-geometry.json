@@ -1,0 +1,170 @@
+{
+  "id": "display-capture-fresh-frame-and-geometry",
+  "title": "Display capture returns a fresh immutable frame geometry",
+  "requirements": [
+    "branch:capability-missing",
+    "branch:cleanup-failure",
+    "contract:fresh-frame-geometry"
+  ],
+  "tools": ["jetkvm_display_capture"],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The decoded stream is healthy and the display-capture capability can be enabled or removed deterministically.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "remove-display-capture-capability",
+      "after_step": "capture-fresh-frame",
+      "boundary": "before_admission",
+      "action": "Set display_capture=false for the next jetkvm_display_capture call while preserving the owned session and its generation.",
+      "expected_effect": "The read ToolError is CAPABILITY_MISSING at phase validate with outcome null, verification none, safe_to_retry false, required_next_step enable_capability, details.capability display_capture, details.downstream_stage none, and zero BrowserPlane capture calls."
+    },
+    {
+      "id": "post-capture-cleanup-failure",
+      "after_step": "capture-fresh-frame",
+      "boundary": "during_cleanup",
+      "action": "After the successful capture case, force browser cleanup to report a bounded failure without altering image evidence.",
+      "expected_effect": "The cleanup error remains visible and no restoration is fabricated; the capability-absent case makes no capture call."
+    }
+  ],
+  "steps": [
+    {
+      "id": "capture-fresh-frame",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A newly decoded frame, opaque observation identifier, immutable source geometry, and one authorized image block."
+    },
+    {
+      "id": "capture-without-display-capability",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING read ToolError with phase validate, outcome null, verification none, safe_to_retry false, required_next_step enable_capability, details.permission null, details.capability display_capture, details.failed_action_index null, details.dispatched_action_count null, details.completed_action_count null, and details.downstream_stage none. Separately, ordered harness evidence records exactly zero BrowserPlane capture calls."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:capability-missing",
+      "assertion": "With display_capture=false, the explicit capture call returns CAPABILITY_MISSING at phase validate with outcome null, verification none, safe_to_retry false, required_next_step enable_capability, details.capability display_capture, details.downstream_stage none, and exactly zero BrowserPlane capture calls."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:cleanup-failure",
+      "assertion": "Cleanup failure retains cleanup-phase evidence and does not fabricate restoration."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "contract:fresh-frame-geometry",
+      "assertion": "The frame is newer than request admission, aspect ratio is preserved without crop or upscale, and image bytes occur only in the MCP image content block."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:capability-missing",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:cleanup-failure",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "contract:fresh-frame-geometry",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}

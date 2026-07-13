@@ -123,7 +123,7 @@ flowchart LR
 
 For each published device-session generation, the registry injects the exact same `DeviceRpcAdapter` instance into BrowserPlane and NativeControlPlane. That adapter is sourced from the one Browser-owned WebRTC session; no plane may create a second WebRTC connection, data channel, or direct native bypass. It exposes no raw method-name/string dispatch and no general JSON-RPC escape hatch—only typed allowlisted read-only display/EDID calls and semantic ATX calls. NativeControlPlane remains owner of meaning, authorization, freshness, serialization, idempotency, and result qualification; the shared adapter owns only channel binding, generation fencing, typed wire translation, and correlated send/response boundaries.
 
-Every adapter call carries session ID, session generation, connection epoch, and browser channel generation. The adapter checks all four at admission and immediately before send, rejects a stale/replaced binding with zero downstream calls, and rejects or classifies an in-flight replacement at the actual pre/post-write boundary. A cached display observation may still be returned explicitly as stale after channel loss; a fresh EDID read or ATX mutation requires the current live binding.
+Every adapter call carries session ID, session generation, connection epoch, and browser channel generation. The adapter checks all four at admission and immediately before send, rejects a stale/replaced binding with zero downstream calls, and rejects or classifies an in-flight replacement at the actual pre/post-write boundary. Within one `sessionId`, replacement is componentwise monotonic: `sessionGeneration`, `connectionEpoch`, and `browserChannelGeneration` must each be nondecreasing and at least one must strictly increase. An equal tuple or any component rollback is rejected before invalidating or publishing either channel, leaving the old binding and channel usable. A different server-issued `sessionId` begins a new takeover lineage and may reset all three numeric components. A cached display observation may still be returned explicitly as stale after channel loss; a fresh EDID read or ATX mutation requires the current live binding.
 
 Emergency release is a BrowserPlane responsibility at the public boundary, but it invokes the session-bound firmware `quiesceAndZero` primitive. The server injects the authoritative Go manager generation; browser channel generation is never treated as firmware generation.
 
@@ -145,13 +145,32 @@ type DeviceRpcBinding = SessionRef & {
   browserChannelGeneration: number;
 };
 
+interface BrowserConnection {
+  readonly state: "ready";
+  readonly ref: SessionRef;
+  readonly binding: DeviceRpcBinding;
+  readonly connectionEpoch: number;
+  readonly browserChannelGeneration: number;
+  readonly displayGeneration: number;
+  readonly deviceRpc: DeviceRpcAdapter;
+}
+
 interface DeviceRpcAdapter {
   readonly binding: DeviceRpcBinding;
-  readDisplayState(ref: DeviceRpcBinding, deadline: Deadline): Promise<CachedDisplayState>;
-  readEdid(ref: DeviceRpcBinding, deadline: Deadline): Promise<QualifiedEdidRead>;
+  readDisplayState(
+    ref: DeviceRpcBinding,
+    deadline: Deadline,
+  ): Promise<CachedDisplayState>;
+  readEdid(
+    ref: DeviceRpcBinding,
+    deadline: Deadline,
+  ): Promise<QualifiedEdidRead>;
   performAtx(
     ref: DeviceRpcBinding,
-    request: { requestId: string; action: "press_power" | "hold_power" | "press_reset" },
+    request: {
+      requestId: string;
+      action: "press_power" | "hold_power" | "press_reset";
+    },
     deadline: Deadline,
   ): Promise<AtxWireReceipt>;
 }
@@ -168,20 +187,51 @@ interface ReplayDeviceRpcAdapter extends DeviceRpcAdapter {
 }
 
 interface BrowserPlane {
+  readonly deviceRpc: DeviceRpcAdapter;
   connect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
   reconnect(ref: SessionRef, deadline: Deadline): Promise<BrowserConnection>;
-  capture(ref: SessionRef, request: CaptureRequest, deadline: Deadline): Promise<Observation>;
-  mouse(ref: SessionRef, request: MouseRequest, deadline: Deadline): Promise<MutationReceipt>;
-  keyboard(ref: SessionRef, request: KeyboardRequest, deadline: Deadline): Promise<MutationReceipt>;
-  paste(ref: SessionRef, request: PasteRequest, deadline: Deadline): Promise<PasteReceipt>;
-  release(ref: SessionRef, request: ReleaseRequest, deadline: Deadline): Promise<ReleaseReceipt>;
+  capture(
+    ref: SessionRef,
+    request: CaptureRequest,
+    deadline: Deadline,
+  ): Promise<BrowserCaptureArtifact>;
+  mouse(
+    ref: SessionRef,
+    request: MouseRequest,
+    deadline: Deadline,
+  ): Promise<MutationReceipt>;
+  keyboard(
+    ref: SessionRef,
+    request: KeyboardRequest,
+    deadline: Deadline,
+  ): Promise<MutationReceipt>;
+  paste(
+    ref: SessionRef,
+    request: PasteRequest,
+    deadline: Deadline,
+  ): Promise<PasteReceipt>;
+  release(
+    ref: SessionRef,
+    request: ReleaseRequest,
+    deadline: Deadline,
+  ): Promise<ReleaseReceipt>;
   close(ref: SessionRef, deadline: Deadline): Promise<void>;
 }
 
 interface NativeControlPlane {
-  sessionStatus(ref: SessionRef, deadline: Deadline): Promise<NativeSessionStatus>;
-  displayStatus(ref: SessionRef, deadline: Deadline): Promise<NativeDisplayStatus>;
-  powerControl(ref: SessionRef, request: PowerRequest, deadline: Deadline): Promise<PowerReceipt>;
+  sessionStatus(
+    ref: SessionRef,
+    deadline: Deadline,
+  ): Promise<NativeSessionStatus>;
+  displayStatus(
+    ref: SessionRef,
+    deadline: Deadline,
+  ): Promise<NativeDisplayStatus>;
+  powerControl(
+    ref: SessionRef,
+    request: PowerRequest,
+    deadline: Deadline,
+  ): Promise<PowerReceipt>;
 }
 
 type SessionPlaneBundle = {
@@ -308,31 +358,50 @@ There is no existing unified reconnect or native restart acknowledgement to reus
 
 Capture records decoded metadata, then waits for `requestVideoFrameCallback` to advance `presentedFrames` or `mediaTime` after capture begins. It draws that exact frame. No advancement before the deadline returns `VIDEO_STALLED`.
 
-An `Observation` contains:
+An `Observation` is byte-free canonical metadata. Authorized image bytes are carried separately in a `BrowserCaptureArtifact`:
 
 ```ts
-type Observation = {
-  observationId: string;
-  sessionId: string;
-  sessionGeneration: number;
-  connectionEpoch: number;
-  displayGeneration: number;
-  frameId: string;
-  capturedAt: string;
-  monotonicAgeMs: number;
-  sourceWidth: number;
-  sourceHeight: number;
-  imageWidth: number;
-  imageHeight: number;
-  rotation: 0 | 90 | 180 | 270;
-  geometry: RenderedContentGeometry;
-  format: "jpeg" | "png";
-  sha256: string;
-  byteLength: number;
-};
+interface ObservationGeometry {
+  readonly contentX: number;
+  readonly contentY: number;
+  readonly contentWidth: number;
+  readonly contentHeight: number;
+}
+
+interface Observation {
+  readonly observationId: string;
+  readonly sessionId: string;
+  readonly sessionGeneration: number;
+  readonly connectionEpoch: number;
+  readonly displayGeneration: number;
+  readonly frameId: string;
+  readonly capturedAt: string;
+  readonly monotonicAgeMs: number;
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
+  readonly imageWidth: number;
+  readonly imageHeight: number;
+  readonly rotation: 0 | 90 | 180 | 270;
+  readonly geometry: ObservationGeometry;
+  readonly format: "jpeg" | "png";
+  readonly sha256: string;
+  readonly byteLength: number;
+}
+
+type BrowserCaptureMimeType = "image/jpeg" | "image/png";
+
+interface BrowserCaptureImage {
+  readonly mimeType: BrowserCaptureMimeType;
+  readonly bytes: Uint8Array;
+}
+
+interface BrowserCaptureArtifact {
+  readonly observation: Observation;
+  readonly image: BrowserCaptureImage;
+}
 ```
 
-Image bytes appear only in the MCP `content[]` image block referenced by the structured result. They never appear in structured JSON, text results, logs, errors, reports, replays, or evidence.
+Image bytes appear only in `BrowserCaptureImage.bytes` and the authorized MCP `content[]` image block referenced by the structured result. They never appear in `Observation`, structured JSON, text results, logs, errors, reports, replays, or evidence.
 
 ### 6.2 Reservation, consumption, and invalidation
 
@@ -356,26 +425,36 @@ Every successful mouse, keyboard, or paste mutation attempts a fresh post-operat
 - Stdout contains MCP protocol frames only.
 - Logs and diagnostics use stderr and remain field-aware and redacted.
 - Startup assertions run before any stdout write, browser launch, listener, credential read, or device contact.
-- Stdio EOF initiates process cleanup, but the transport identity is still not a hardware ownership identity.
+- Stdio accepts at most 2 MiB per newline-delimited input frame, bounds the aggregate accepted output queue to 16 MiB, and closes after 10 seconds of output backpressure.
+- Normal EOF and explicit close perform idempotent cleanup; they never exit the process or destroy stdin/stdout. Injected or shared streams likewise never force process exit or destroy their underlying streams.
+- Output queue overflow or write timeout forces `exit(1)` only when the transport streams are exactly `process.stdin` and `process.stdout`, and only after idempotent close plus a bounded stderr diagnostic flush. This exceptional process-owned-stream path is required because Node pipe `WriteWrap` operations cannot be cancelled.
+- The stdio transport identity is never a hardware ownership identity and never substitutes for application `session_id` plus `session_generation`.
 
 ### 7.2 Legacy HTTP/SSE
 
 Legacy SSE is enabled only by an explicit `serve-sse` operator choice. The MCP HTTP adapter—not the JetKVM UI server and not deprecated per-transport header options—owns the complete boundary:
 
-- Authentication, authorization, exact Host validation, and Origin/anti-CSRF policy run in MCP HTTP middleware on **both** `GET /sse` and `POST /messages` before transport creation, transport lookup, or body dispatch. The transport's header options cannot protect `GET /sse` and are not the primary control.
+- Authentication, authorization, exact Host validation, and Origin/anti-CSRF policy run in MCP HTTP middleware on **both** `GET /sse` and `POST /messages` before transport creation, transport lookup, or body dispatch. Missing Host is deliberately classified there, preserving 401 for bearer failure and 403 after successful authentication. The transport's header options cannot protect `GET /sse` and are not the primary control.
 - `GET /sse` creates one SDK 1.29 `SSEServerTransport("/messages", response)`, stores it under its generated UUID routing key, and opens `text/event-stream` with `Cache-Control: no-cache, no-transform` and `Connection: keep-alive`.
 - Its first frame is exactly `event: endpoint` with `/messages?sessionId=<uuid>` as data. Server JSON-RPC frames are exactly `event: message` with one JSON value as data.
 - `sessionId` is only an opaque map key. It is never authentication, authorization, a device-session ID, or hardware ownership evidence. Authentication occurs before lookup; the map entry is additionally principal-bound.
-- `POST /messages?sessionId=<uuid>` requires one `application/json` JSON-RPC message and a maximum 1 MiB body. The adapter parses once and passes that parsed body to `handlePostMessage`; it never lets two body readers race.
+- A global route-attempt rate ceiling runs before authentication, routing, and media validation. Authenticated global and principal stream/POST ceilings remain in force; each POST session rate and concurrency bucket is keyed by the authenticated principal plus the opaque routing key, so one principal cannot consume another principal's bucket even when guessing the same UUID.
+- Project-owned `checkContinue` and `checkExpectation` handlers send every `Expect` request through that same single route-attempt and Host/authentication/Origin/anti-CSRF admission before any interim bytes. An admitted `POST` with `Expect: 100-continue` receives exactly one 100 response before the bounded body path; an admitted `GET` receives no interim response and retains normal GET/body rules. Other expectations receive a fixed 417 only after admission. Rejected authentication or Host policy receives the canonical 401/403 without a 100 response.
+- `POST /messages?sessionId=<uuid>` requires one `application/json` JSON-RPC message and a maximum 2 MiB body. The adapter parses once and passes that parsed body to `handlePostMessage`; it never lets two body readers race.
 - Missing or malformed `sessionId` returns adapter-owned 400; unknown, closed, expired, or cross-principal routing returns adapter-owned 404 without revealing which condition; invalid media type/body/message returns 400; an accepted message returns 202. Authentication/authorization failures use the common MCP HTTP 401/403 policy before these routing statuses. If `handlePostMessage` finds that the GET-created SSE response is no longer active, installed SDK 1.29 writes 500 `SSE connection not established` and throws; the adapter catch checks `headersSent`/`writableEnded`, preserves that response, and never writes a second status or body. Any other pre-header internal POST failure returns one redacted 500.
 - A close removes the map entry and principal binding exactly once, while tolerating the SDK close callback more than once. Server shutdown closes all transports and empties the map. There is no legacy transport resumption API.
 - If the SSE stream closes between lookup and `handlePostMessage`, the adapter preserves the SDK's already-written response, does not attempt a second response, and reports transport closure through redacted diagnostics.
 - Keepalive comments carry no application data. Header, connection, idle, write, and total operation deadlines are bounded.
+- The HTTP parser is constructed and attached with immutable `maxHeaderSize = 16 KiB` and `insecureHTTPParser = false`; the project-owned HTTPS constructor ignores caller attempts to enlarge or relax either bound. Incomplete TLS handshakes expire by an absolute deadline no later than the configured header deadline. A separate absolute per-connection request-header deadline starts at HTTP socket acceptance or completed TLS handshake and starts fresh after each keep-alive response, rather than relying on Node's periodic header sweep.
+- Request bodies grow geometrically only as bytes arrive and retain no attacker-sized chunk list. Reservations are atomic across fixed 64 MiB adapter-wide, 16 MiB per-principal, and 4 MiB per-SSE-session ceilings; failure reserves no scope, and every completion, rejection, socket close, or adapter close releases all scopes. Each original `IncomingMessage` chunk is zeroed in `onData` `finally`, and every private coalescing allocation is zeroed before replacement or release, including over-limit and capacity-rejection paths.
+- The default and minimum configured serialized SSE response ceiling is 14 MiB, leaving headroom under the fixed 16 MiB per-stream queue ceiling. Queued response reservations are atomic across fixed 64 MiB adapter-wide, 16 MiB per-principal, and 16 MiB per-stream ceilings, are released on write completion, drain, close, or error, and capacity failure closes only the offending stream without recursively writing an error.
+- Handler admission uses the original registry as a stable adapter-wide key, so the global, principal, and application-session execution ceilings cannot be multiplied by opening more SSE streams. A stream lifetime signal cancels every handler carried by that stream, including a request whose JSON-RPC ID was reused.
+- Adapter close destroys every active POST socket, aborts body reads and stream handlers, and resolves only after POST, body-memory, handler-admission, and queued-response reservations have completed their `finally` cleanup.
 - Transport close cancels only requests carried by that transport; it does not transfer, create, reconnect, take over, or silently destroy a device session.
 
 The listener binds `127.0.0.1` by default. Every request on both routes validates `Host` against the configured public/listen authority. Loopback rejects a mismatched `Origin` when one is present. Non-loopback binding additionally requires explicit enablement, authentication independent of JetKVM credentials, exact Host and Origin allowlists, anti-CSRF protection, no wildcard credentialed CORS, and bounded rate/concurrency. An absent Origin is rejected for non-loopback requests.
 
-Plain HTTP is allowed only through explicit operator opt-in and emits a persistent warning. Non-loopback plaintext requires a second explicit dangerous-network opt-in. HTTPS uses system certificate validation with no insecure bypass. LAN addresses, Tailscale-routed addresses, and HTTPS names are operator configuration, not discovery or authorization signals.
+Plain HTTP is allowed only through explicit operator opt-in and emits exactly one fixed redacted stderr warning, `legacy SSE plaintext transport enabled`, when the listener starts. Non-loopback plaintext requires a second explicit dangerous-network opt-in. HTTPS uses system certificate validation with no insecure bypass. LAN addresses, Tailscale-routed addresses, and HTTPS names are operator configuration, not discovery or authorization signals.
 
 The JetKVM device URL and credentials are process configuration. They never appear in tool inputs and cannot be selected by the model. Configuration precedence is non-secret CLI options, environment, then safe defaults. Secrets are supplied through a protected file or secret environment source; conflicts fail closed and secrets never appear on the command line.
 
@@ -387,12 +466,12 @@ All input and output roots set `additionalProperties:false`. Nested objects do t
 
 `timeout_ms` is required on every tool:
 
-| Tool class | Minimum | Maximum |
-|---|---:|---:|
-| status/read | 100 ms | 30,000 ms |
-| connect/reconnect/capture | 100 ms | 60,000 ms |
-| mouse/keyboard/release/power | 100 ms | 60,000 ms |
-| paste | 100 ms | 300,000 ms |
+| Tool class                   | Minimum |    Maximum |
+| ---------------------------- | ------: | ---------: |
+| status/read                  |  100 ms |  30,000 ms |
+| connect/reconnect/capture    |  100 ms |  60,000 ms |
+| mouse/keyboard/release/power |  100 ms |  60,000 ms |
+| paste                        |  100 ms | 300,000 ms |
 
 The server may impose a lower operator-configured maximum. One monotonic deadline covers queue wait, plane calls, downstream acknowledgement, verification, and post-operation capture. Subsystems receive remaining time, never a reset timeout.
 
@@ -400,9 +479,16 @@ All opaque IDs are 1–128 printable ASCII characters matching `^[A-Za-z0-9][A-Z
 
 ```ts
 type PermissionName =
-  | "session.connect" | "session.status" | "session.reconnect" | "session.takeover"
-  | "display.capture" | "display.status"
-  | "input.mouse" | "input.keyboard" | "input.paste" | "input.release"
+  | "session.connect"
+  | "session.status"
+  | "session.reconnect"
+  | "session.takeover"
+  | "display.capture"
+  | "display.status"
+  | "input.mouse"
+  | "input.keyboard"
+  | "input.paste"
+  | "input.release"
   | "power.control";
 
 type CapabilitySnapshot = {
@@ -428,8 +514,8 @@ type Success<T> = {
   ok: true;
   tool: JetKvmToolName;
   operation_id: string;
-  session_id: string | null;
-  session_generation: number | null;
+  session_id: string;
+  session_generation: number;
   duration_ms: number;
   result: T;
 };
@@ -456,6 +542,7 @@ type MutationState = {
 ```
 
 `applied` means a definitive correlated device acknowledgement was received. It does not claim the target application accepted input. `device_state_verified` requires an independent post-action device read matching the intended state. `device_ack_only` is limited to a definitive correlated device acknowledgement. `none` makes no verification claim.
+All success envelopes carry a non-null application session identity. Session-bound tools must echo the validated input `session_id` and generation. Connect publishes the newly issued identity. Reconnect preserves the input `session_id`, publishes the successor generation, and sets the envelope generation equal to `result.new_session_generation`. Every mutation success payload echoes the validated `request_id`.
 
 ### 8.3 Common execution error
 
@@ -470,7 +557,14 @@ type ToolError = {
   error: {
     code: ErrorCode;
     message: string;
-    phase: "validate" | "authorize" | "queue" | "connect" | "execute" | "verify" | "cleanup";
+    phase:
+      | "validate"
+      | "authorize"
+      | "queue"
+      | "connect"
+      | "execute"
+      | "verify"
+      | "cleanup";
     outcome: "applied" | "already_applied" | "not_sent" | "unknown" | null;
     verification: "device_state_verified" | "device_ack_only" | "none";
     safe_to_retry: boolean;
@@ -481,7 +575,12 @@ type ToolError = {
       failed_action_index: number | null;
       dispatched_action_count: number | null;
       completed_action_count: number | null;
-      downstream_stage: "none" | "admission" | "write" | "acknowledgement" | "verification";
+      downstream_stage:
+        | "none"
+        | "admission"
+        | "write"
+        | "acknowledgement"
+        | "verification";
       expected_generation: number | null;
       actual_generation: number | null;
       observation_id: string | null;
@@ -502,10 +601,11 @@ Stable error families include:
 - display/observation: `VIDEO_UNAVAILABLE`, `VIDEO_STALLED`, `FRAME_TIMEOUT`, `STALE_OBSERVATION`, `OBSERVATION_CONSUMED`, `DISPLAY_CHANGED`, `EDID_READ_FAILED`, `DISPLAY_STATUS_STALE`;
 - input/paste: `INVALID_COORDINATE`, `INVALID_KEY`, `UNSUPPORTED_SCROLL_AXIS`, `PASTE_BUSY`, `PASTE_REJECTED`, `PASTE_FAILED`, `PASTE_CANCELLED`, `EVENT_GAP`;
 - power: `POWER_ACTION_REJECTED`, `ATX_EXTENSION_INACTIVE`, `ATX_SERIAL_UNAVAILABLE`, `ATX_BUSY`, `POWER_STATE_UNVERIFIED`;
-- generic mutation: `CANCELLED`, `DEADLINE_EXCEEDED`, `MUTATION_OUTCOME_UNKNOWN`, `PARTIAL_VERIFICATION`;
+- generic mutation: `CANCELLED`, `DEADLINE_EXCEEDED`, `ADMISSION_CAPACITY_EXCEEDED`, `MUTATION_OUTCOME_UNKNOWN`, `PARTIAL_VERIFICATION`;
 - idempotency: `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`.
 
 Permission and capability errors name the exact missing permission/capability in `details`, use `not_sent` for mutations, and select `grant_permission` or `enable_capability` as the required next step.
+`SESSION_NOT_FOUND` and `STALE_SESSION_GENERATION` are `not_sent`, non-retryable until recovery, and require `reconnect_then_capture`. `ADMISSION_CAPACITY_EXCEEDED` is mutation-only, including connect and reconnect: phase `queue`, outcome `not_sent`, verification `none`, `safe_to_retry:true`, required next step `none`, null-or-zero action counts, and downstream stage `none`. It means the bounded request ledger rejected admission before any downstream write; it never substitutes for `MUTATION_OUTCOME_UNKNOWN`.
 
 ### 8.4 Idempotency, disconnect timing, and cancellation
 
@@ -516,17 +616,18 @@ Every mutation requires a client-generated `request_id`. Session-bound IDs are s
 - Same ID with a different digest returns `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT` without dispatch.
 - An `unknown` result is retained as unknown. Reuse never replays it.
 - Cache loss never permits the server to infer that an operation was not sent.
+- A full bounded request ledger returns `ADMISSION_CAPACITY_EXCEEDED` without dispatch; retrying the same request ID after capacity becomes available is safe.
 
 Timing classification is mandatory:
 
-| Boundary | Outcome | Retry rule |
-|---|---|---|
-| validation/authorization/queue failure before downstream write | `not_sent` | safe only after the named prerequisite |
-| cancellation or disconnect before transport write | `not_sent` | may retry with same current observation if its reservation was released |
-| downstream write began, no definitive correlated acknowledgement | `unknown` | never automatically retry; inspect, release/reconnect, and capture |
-| definitive acknowledgement received, post-read unavailable | `applied` | do not replay; verification is `device_ack_only` |
-| definitive acknowledgement and independent matching read | `applied` | do not replay; verification is `device_state_verified` |
-| duplicate definitive request | `already_applied` | do not replay |
+| Boundary                                                         | Outcome           | Retry rule                                                              |
+| ---------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
+| validation/authorization/queue failure before downstream write   | `not_sent`        | safe only after the named prerequisite                                  |
+| cancellation or disconnect before transport write                | `not_sent`        | may retry with same current observation if its reservation was released |
+| downstream write began, no definitive correlated acknowledgement | `unknown`         | never automatically retry; inspect, release/reconnect, and capture      |
+| definitive acknowledgement received, post-read unavailable       | `applied`         | do not replay; verification is `device_ack_only`                        |
+| definitive acknowledgement and independent matching read         | `applied`         | do not replay; verification is `device_state_verified`                  |
+| duplicate definitive request                                     | `already_applied` | do not replay                                                           |
 
 MCP cancellation and timeout propagate through the coordinator and planes. Queued work is removed. Active work stops at the first safe boundary. After any possible write, cancellation is an unknown outcome unless a definitive correlated acknowledgement already establishes `applied`. Background completion may refine internal cleanup but never silently changes the result already returned to the caller.
 
@@ -556,7 +657,7 @@ type Result = MutationState & {
 };
 ```
 
-The server issues the output `session_id` and generation in the common envelope. It uses only the operator-configured URL/credential. Required permission is `session.connect`; `takeover:true` additionally requires `session.takeover`. Capability or compatibility failure returns the precise missing item. Connect never steals unless both explicit takeover and permission are present.
+The server issues the output `session_id` and generation in the common envelope. It uses only the operator-configured URL/credential. Required permission is `session.connect`; `takeover:true` additionally requires `session.takeover`. Connect-time auth, UI, firmware, browser, WebRTC, or reachability compatibility failures use their precise dedicated error codes (`AUTH_FAILED`, `UNSUPPORTED_UI_VERSION`, `FIRMWARE_INCOMPATIBLE`, `BROWSER_UNSUPPORTED`, or the applicable connection error), because those prerequisites are not `CapabilityName` snapshot keys. `CAPABILITY_MISSING` is not a legal connect error. Connect never steals unless both explicit takeover and permission are present.
 
 Connect is an idempotent mutation. Reusing the same connect `request_id` and normalized input returns the same issued session with `already_applied`; it never creates or takes over a second session.
 
@@ -578,7 +679,14 @@ type ObservedFact<T> = {
 };
 
 type Result = {
-  state: "connecting" | "ready" | "degraded" | "drained" | "taken_over" | "closing" | "failed";
+  state:
+    | "connecting"
+    | "ready"
+    | "degraded"
+    | "drained"
+    | "taken_over"
+    | "closing"
+    | "failed";
   connection_epoch: number;
   display_generation: number;
   dispatch_generation: number;
@@ -592,7 +700,9 @@ type Result = {
   hid: "ready" | "not_ready" | "unknown";
   decoded_video: "ready" | "stalled" | "unavailable" | "unknown";
   native_capture_facts: {
-    signal: ObservedFact<"present" | "no_signal" | "no_lock" | "out_of_range" | "unknown">;
+    signal: ObservedFact<
+      "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown"
+    >;
     resolution: ObservedFact<{ width: number; height: number } | null>;
     fps: ObservedFact<number | null>;
   };
@@ -610,7 +720,7 @@ type Result = {
 };
 ```
 
-Read-only and required permission `session.status`. RPC reachability, native-process availability, WebRTC, HID, decoded-video state, and each native capture fact remain separate; the adapter never collapses them into unified health. Signal, resolution, and FPS each carry their own provenance, observation time, age, and freshness because they may come from different observations: synchronous `getVideoState` cache reads use `cached_snapshot`, while asynchronous `videoInputState` updates use `cached_event`. They are never assigned a shared timestamp/freshness tuple. `source:"none"` requires `observed_at:null`, `age_ms:null`, `freshness:"unknown"`, and an unknown/null value. The omitted proxy `streaming` value is not trustworthy. Unknown facts are never inferred. No credentials, cookies, SDP, ICE, input text, or stack traces appear.
+Read-only and required permission `session.status`. RPC reachability, native-process availability, WebRTC, HID, decoded-video state, and each native capture fact remain separate; the adapter never collapses them into unified health. Before any valid `videoInputState` event, every native capture fact uses `source:"none"`, `freshness:"unknown"`, `observed_at:null`, and `age_ms:null`, with signal `"unknown"` and resolution/FPS `null`. `getVideoState` validates state only and never creates `cached_snapshot`. A valid `videoInputState` event wins every concurrent or later poll, and fact age derives from that event's recorded timestamp. Such facts use `cached_event`; they are never assigned poll receipt time or fabricated hardware-acquisition time. The omitted proxy `streaming` value is not trustworthy. Unknown facts are never inferred. No credentials, cookies, SDP, ICE, input text, or stack traces appear.
 
 ### 9.3 `jetkvm_session_reconnect`
 
@@ -633,7 +743,9 @@ type Result = MutationState & {
 };
 ```
 
-Required permission is `session.reconnect`; takeover additionally requires `session.takeover`. Reconnect closes/quiesces the old generation before publishing the new one and never replays an interrupted mutation. All old observations become stale. Input is blocked until a fresh capture on the new generation.
+`new_session_generation` is strictly greater than `previous_session_generation`; the previous value equals the validated input generation, the result `request_id` equals the validated input request ID, and the common envelope generation equals the new value. These relational invariants are enforced at the runtime and MCP call boundaries because draft JSON Schema cannot compare arbitrary sibling numeric values.
+
+Required permission is `session.reconnect`; takeover additionally requires `session.takeover`. Reconnect-time auth, UI, firmware, browser, WebRTC, or reachability compatibility failures use the same precise dedicated codes as connect; `CAPABILITY_MISSING` is not legal because those prerequisites are not `CapabilityName` snapshot keys. Reconnect closes/quiesces the old generation before publishing the new one and never replays an interrupted mutation. All old observations become stale. Input is blocked until a fresh capture on the new generation.
 
 The result is not inferred from automatic native-process restart, successful input quiesce, takeover cleanup, or an ICE close. It requires new WebRTC/RPC/HID/browser-channel observations from the new generation.
 
@@ -667,7 +779,7 @@ type Result = {
     content_height: number;
   };
   image: {
-    content_index: number;
+    content_index: 1;
     mime_type: "image/jpeg" | "image/png";
     sha256: string;
     byte_length: number;
@@ -675,7 +787,7 @@ type Result = {
 };
 ```
 
-Read-only, required permission `display.capture`, required capability `display_capture`. JPEG preserves aspect ratio, does not crop or upscale, defaults to quality 88, and is limited to 2 MiB before base64. Capture is the only way to establish an input observation fence.
+Read-only, required permission `display.capture`, required capability `display_capture`. Both formats preserve aspect ratio, do not crop or upscale. JPEG defaults to quality 88 and is limited to 2 MiB before base64. PNG is limited to 8 MiB before base64 so the lossless 1920×1080 RGBA8 path and every transport remain explicitly bounded. Capture is the only way to establish an input observation fence.
 
 ### 9.5 `jetkvm_display_status`
 
@@ -721,7 +833,9 @@ type EdidResult =
     };
 
 type Result = {
-  signal: ObservedFact<"present" | "no_signal" | "no_lock" | "out_of_range" | "unknown">;
+  signal: ObservedFact<
+    "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown"
+  >;
   native_resolution: ObservedFact<{
     width: number;
     height: number;
@@ -732,7 +846,7 @@ type Result = {
 };
 ```
 
-Read-only, required permission `display.status`, and required capability `display_status`. The base tool does **not** require `edid_read`: when absent it succeeds with the exact `unsupported` EDID branch. Signal, resolution, and FPS each have independent time/age/freshness/provenance; a `getVideoState` cache read is `cached_snapshot`, a `videoInputState` callback is `cached_event`, and the adapter may select different sources/times for different facts. It never exposes or trusts proxy `streaming`. When `edid_read` is present, EDID uses only read-only `VIDIOC_G_EDID`. A proven successful read with no EDID uses `unavailable`; a proven read with bytes uses `available`. Open/ioctl/cgo failure returns `EDID_READ_FAILED`, never either successful branch. Until the lower-layer cgo failure is propagated, the adapter must return that error rather than infer empty success.
+Read-only, required permission `display.status`, and required capability `display_status`. The base tool does **not** require `edid_read`: when absent it succeeds with the exact `unsupported` EDID branch. Signal, resolution, and FPS have independent time/age/freshness/provenance. Until the first valid `videoInputState` event they remain canonical `none`/unknown/null facts; thereafter the event supplies `cached_event` provenance and its recorded timestamp supplies age. A concurrent or later validation-only `getVideoState` poll never replaces that event or creates `cached_snapshot`. The adapter never exposes or trusts proxy `streaming`. When `edid_read` is present, EDID uses only read-only `VIDIOC_G_EDID`. A proven successful read with no EDID uses `unavailable`; a proven read with bytes uses `available`. Open/ioctl/cgo failure returns `EDID_READ_FAILED`, never either successful branch. Until the lower-layer cgo failure is propagated, the adapter must return that error rather than infer empty success.
 
 ### 9.6 `jetkvm_input_mouse`
 
@@ -740,8 +854,17 @@ Read-only, required permission `display.status`, and required capability `displa
 type MouseAction =
   | { type: "move"; x: number; y: number }
   | { type: "click"; x: number; y: number; button: "left" | "middle" | "right" }
-  | { type: "double_click"; x: number; y: number; button: "left" | "middle" | "right" }
-  | { type: "drag"; button: "left" | "middle" | "right"; path: Array<{ x: number; y: number }> }
+  | {
+      type: "double_click";
+      x: number;
+      y: number;
+      button: "left" | "middle" | "right";
+    }
+  | {
+      type: "drag";
+      button: "left" | "middle" | "right";
+      path: Array<{ x: number; y: number }>;
+    }
   | { type: "scroll"; x: number; y: number; delta_y: number; delta_x?: 0 }; // delta_y: integer -127..127 excluding 0
 
 type Input = {
@@ -760,25 +883,105 @@ type Result = MutationState & {
 };
 ```
 
+On success both counts are positive, equal, and exactly `actions.length`. An unknown post-write error identifies the first uncompleted action with `failed_action_index === completed_action_count` and `dispatched_action_count === completed_action_count + 1`; counts are bounded by the validated action list and no suffix action is dispatched. Applied partial-verification errors have null failed index and equal positive full-request counts.
+
 Required permission `input.mouse`, capabilities `mouse` and absolute pointer mode. Coordinates are fenced to the observation. The whole request validates before reservation or any plane call. Drag releases in cleanup. `delta_y` is signed integer HID wheel steps with JSON Schema minimum -127, maximum 127, and `not: { const: 0 }`; fractional, zero, underflow, overflow, and nonzero horizontal scroll reject the entire request with zero plane calls and zero input.
 
 ### 9.7 `jetkvm_input_keyboard`
 
 ```ts
-type Letter = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z";
+type Letter =
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "L"
+  | "M"
+  | "N"
+  | "O"
+  | "P"
+  | "Q"
+  | "R"
+  | "S"
+  | "T"
+  | "U"
+  | "V"
+  | "W"
+  | "X"
+  | "Y"
+  | "Z";
 type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
-type FunctionNumber = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12";
+type FunctionNumber =
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9"
+  | "10"
+  | "11"
+  | "12";
 type PhysicalKey =
-  | `Key${Letter}` | `Digit${Digit}` | `F${FunctionNumber}` | `Numpad${Digit}`
-  | "Escape" | "Tab" | "CapsLock" | "Space" | "Enter" | "Backspace"
-  | "Insert" | "Delete" | "Home" | "End" | "PageUp" | "PageDown"
-  | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "PrintScreen"
-  | "ScrollLock" | "Pause" | "NumLock" | "NumpadAdd" | "NumpadSubtract"
-  | "NumpadMultiply" | "NumpadDivide" | "NumpadDecimal" | "NumpadEnter"
-  | "Minus" | "Equal" | "BracketLeft" | "BracketRight" | "Backslash"
-  | "Semicolon" | "Quote" | "Backquote" | "Comma" | "Period" | "Slash"
-  | "ShiftLeft" | "ShiftRight" | "ControlLeft" | "ControlRight"
-  | "AltLeft" | "AltRight" | "MetaLeft" | "MetaRight" | "ContextMenu";
+  | `Key${Letter}`
+  | `Digit${Digit}`
+  | `F${FunctionNumber}`
+  | `Numpad${Digit}`
+  | "Escape"
+  | "Tab"
+  | "CapsLock"
+  | "Space"
+  | "Enter"
+  | "Backspace"
+  | "Insert"
+  | "Delete"
+  | "Home"
+  | "End"
+  | "PageUp"
+  | "PageDown"
+  | "ArrowUp"
+  | "ArrowDown"
+  | "ArrowLeft"
+  | "ArrowRight"
+  | "PrintScreen"
+  | "ScrollLock"
+  | "Pause"
+  | "NumLock"
+  | "NumpadAdd"
+  | "NumpadSubtract"
+  | "NumpadMultiply"
+  | "NumpadDivide"
+  | "NumpadDecimal"
+  | "NumpadEnter"
+  | "Minus"
+  | "Equal"
+  | "BracketLeft"
+  | "BracketRight"
+  | "Backslash"
+  | "Semicolon"
+  | "Quote"
+  | "Backquote"
+  | "Comma"
+  | "Period"
+  | "Slash"
+  | "ShiftLeft"
+  | "ShiftRight"
+  | "ControlLeft"
+  | "ControlRight"
+  | "AltLeft"
+  | "AltRight"
+  | "MetaLeft"
+  | "MetaRight"
+  | "ContextMenu";
 
 type KeyboardAction =
   | { type: "key_down"; key: PhysicalKey }
@@ -803,6 +1006,8 @@ type Result = MutationState & {
 };
 ```
 
+On success both counts are positive, equal, and exactly `actions.length`. Unknown post-write and applied partial-verification errors use the same exact prefix/full-request count rules as mouse.
+
 Required permission `input.keyboard`, capability `keyboard`. This tool accepts physical keys only: there is no text, character, typing, insertion, script, or command field. Unknown keys and impossible transitions fail before dispatch. Modifiers press in listed order and release in reverse order. The held-state ledger supports ordinary cleanup; emergency release is authoritative.
 
 ### 9.8 `jetkvm_input_paste`
@@ -821,9 +1026,9 @@ type Result = MutationState & {
   original_byte_count: number;
   normalized_byte_count: number;
   normalized_sha256: string;
-  accepted_at: string | null;
-  completed_at: string | null;
-  terminal_state: "succeeded" | "failed" | "cancelled" | "unknown";
+  accepted_at: string;
+  completed_at: string;
+  terminal_state: "succeeded";
   measured_chars_per_second: number | null;
   post_capture: DisplayCaptureResult | null;
 };
@@ -834,6 +1039,7 @@ Required permission `input.paste`, capabilities `reliable_paste` and current det
 Normalization strips one leading UTF-8 BOM, converts CRLF and lone CR to LF, then NFC-normalizes. Limits, hashes, progress, and evidence use normalized UTF-8 bytes while reporting both counts. Before acceptance, the controller requires an unused current observation, healthy decoded stream, current channel generation, lifecycle `ready`, and configured/effective keyboard-layout equality.
 
 Only correlated monotonic events for the operation and channel count. Success requires `submitted -> active -> succeeded`. Event gaps, missing active, duplicate/out-of-order terminal events, capability downgrade, disconnect, unmount, or timeout after acceptance produce unknown outcome and close mutation. Queue drain does not prove target-application acceptance.
+Therefore `ok:true` requires the correlated `succeeded` terminal state and non-null acceptance and completion observations. Failed, cancelled, missing, or unknown lifecycle evidence is an error result, never a success envelope.
 
 ### 9.9 `jetkvm_input_release`
 
@@ -876,35 +1082,43 @@ type Result = MutationState & {
   wire_action: "power-short" | "power-long" | "reset";
   fixed_press_ms: 200 | 5000;
   serial_sequence_completed: boolean;
-  atx_led_observation: {
-    power: boolean | null;
-    hdd: boolean | null;
-    observed_at: string | null;
-    freshness: "fresh" | "stale" | "unknown";
-  };
+  atx_led_observation:
+    | {
+        power: boolean | null;
+        hdd: boolean | null;
+        observed_at: string;
+        freshness: "fresh" | "stale";
+      }
+    | {
+        power: null;
+        hdd: null;
+        observed_at: null;
+        freshness: "unknown";
+      };
 };
 ```
 
 Required permission `power.control`, capability `power_control`. The adapter additionally requires active `atx-power` extension and serial readiness, holds a single ATX mutex across the complete ON/sleep/OFF sequence, and reserves the request-id before the first write. It maps `press_power` to `power-short`/200 ms, `hold_power` to `power-long`/5000 ms, and `press_reset` to `reset`/200 ms. No duration, delay, repeat, pin, level, or arbitrary sequence is accepted.
 
 A definitive receipt means only that the local serial ON and OFF writes completed. The asynchronous cached ATX LED observation is reported separately with time/freshness and is not correlated host-state proof. Therefore current ATX success uses at most `device_ack_only`, never `device_state_verified`. Failure of OFF after ON is unknown, closes the ATX gate, performs bounded best-effort release cleanup, and is never replayed. Disconnect after the first write without a complete receipt is likewise unknown.
+Fresh and stale ATX observations always carry their observation timestamp. The unknown branch represents no observation and therefore carries null LED values and a null timestamp.
 
 ## 10. Permission and capability matrix
 
 Every handler performs authorization before capability probing that could disclose unavailable device details, then rechecks session generation immediately before downstream work.
 
-| Tool | Required permission | Required capability |
-|---|---|---|
-| `jetkvm_session_connect` | `session.connect`; optional `session.takeover` | compatible auth/UI/WebRTC |
-| `jetkvm_session_status` | `session.status` | native status |
-| `jetkvm_session_reconnect` | `session.reconnect`; optional `session.takeover` | compatible auth/UI/WebRTC |
-| `jetkvm_display_capture` | `display.capture` | display capture |
-| `jetkvm_display_status` | `display.status` | display status; optional EDID read |
-| `jetkvm_input_mouse` | `input.mouse` | mouse and absolute pointer |
-| `jetkvm_input_keyboard` | `input.keyboard` | physical keyboard |
-| `jetkvm_input_paste` | `input.paste` | deterministic Reliable Paste |
-| `jetkvm_input_release` | `input.release` | generation-bound release |
-| `jetkvm_power_control` | `power.control` | ATX control |
+| Tool                       | Required permission                              | Required capability                |
+| -------------------------- | ------------------------------------------------ | ---------------------------------- |
+| `jetkvm_session_connect`   | `session.connect`; optional `session.takeover`   | compatible auth/UI/WebRTC          |
+| `jetkvm_session_status`    | `session.status`                                 | native status                      |
+| `jetkvm_session_reconnect` | `session.reconnect`; optional `session.takeover` | compatible auth/UI/WebRTC          |
+| `jetkvm_display_capture`   | `display.capture`                                | display capture                    |
+| `jetkvm_display_status`    | `display.status`                                 | display status; optional EDID read |
+| `jetkvm_input_mouse`       | `input.mouse`                                    | mouse and absolute pointer         |
+| `jetkvm_input_keyboard`    | `input.keyboard`                                 | physical keyboard                  |
+| `jetkvm_input_paste`       | `input.paste`                                    | deterministic Reliable Paste       |
+| `jetkvm_input_release`     | `input.release`                                  | generation-bound release           |
+| `jetkvm_power_control`     | `power.control`                                  | ATX control                        |
 
 Permission denial and capability absence are never treated as no-op success. Required next steps tell the operator to grant the named permission or enable/upgrade the named capability.
 
@@ -963,46 +1177,50 @@ Required named stories include:
 22. `atx-extension-serialization-idempotency-and-nonproof`
 23. `sse-get-and-post-share-http-security-boundary`
 24. `sse-session-id-is-routing-not-authentication`
-The shared `DeviceRpcAdapter` has no separate story ID. Story 21 owns single-channel injection, old-binding invalidation, and new-generation replacement proof; story 19 owns cached/stale display behavior across binding loss; story 22 owns stale and mid-flight ATX fencing with pre/post-write outcome classification. The three §11.2 behavior rows are mandatory assertions within those canonical stories.
+    The shared `DeviceRpcAdapter` has no separate story ID. Story 21 owns single-channel injection, old-binding invalidation, and new-generation replacement proof; story 19 owns cached/stale display behavior across binding loss; story 22 owns stale and mid-flight ATX fencing with pre/post-write outcome classification. The three §11.2 behavior rows are mandatory assertions within those canonical stories.
 
 ### 11.2 Every-handler branch matrix
 
 Every public handler must have a manifest-linked unit/adapter assertion for every applicable branch:
 
-| Branch | Required assertion |
-|---|---|
-| strict schema rejection | no controller/plane call |
-| permission denied | actionable `PERMISSION_DENIED`, no capability disclosure, no write |
-| capability missing | actionable `CAPABILITY_MISSING`, no mutation |
-| deadline before admission | `not_sent`, queue/reservation released |
-| cancellation before write | `not_sent`, zero downstream writes |
-| disconnect before write | `not_sent`, safe retry classification |
-| disconnect after write | `unknown`, gate closes, zero replay |
-| malformed downstream response | fail closed; `not_sent` or `unknown` according to write boundary |
-| stale session generation | `STALE_SESSION_GENERATION`, zero downstream writes |
-| busy without takeover | `CONTROL_BUSY`, incumbent unchanged |
-| authorized takeover | old generation quiesced before new publish |
-| unauthorized takeover | permission error, incumbent unchanged |
-| definitive acknowledgement | `applied` with exact verification strength |
-| duplicate same request/digest | cached definitive result, zero second write |
-| duplicate changed digest | idempotency error, zero second write |
-| partial verification | applied acknowledgement preserved; no replay |
-| partial multi-event dispatch | unknown with exact counts; suffix suppressed |
-| post-reconnect input without capture | stale/fresh-capture error, zero input |
-| cleanup failure | error evidence retained, no fabricated restoration |
-| per-fact status provenance | signal/resolution/FPS independently select `cached_snapshot`, `cached_event`, or `none`; unequal times/ages remain unequal; proxy streaming omitted |
-| EDID capability absent | base display status succeeds with strict `unsupported`/capability-absent/null branch |
-| EDID successful empty | strict `unavailable`/read-completed/no-EDID/null branch |
-| EDID lower-layer failure | `EDID_READ_FAILED`; no empty, unavailable, or available success |
-| reconnect evidence | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected |
-| ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing |
-| ATX acknowledgement semantics | serial completion only; cached LED fact separate; no host-state proof |
-| SSE route security | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup |
-| SSE routing/close | sessionId never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers |
-| shared DeviceRpcAdapter binding | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel |
-| DeviceRpcAdapter replacement | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes |
-| DeviceRpcAdapter mid-flight loss | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay |
-| scroll validation | integer HID wheel steps -127..127 excluding zero accepted; fraction/zero/overflow/nonzero-X rejects whole request with zero plane calls |
+| Branch                               | Required assertion                                                                                                                                                                                                                              |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| strict schema rejection              | no controller/plane call                                                                                                                                                                                                                        |
+| permission denied                    | actionable `PERMISSION_DENIED`, no capability disclosure, no write                                                                                                                                                                              |
+| capability missing                   | actionable `CAPABILITY_MISSING`, no mutation; applicable only when the tool's §10 requirement is a `CapabilityName` snapshot key—connect/reconnect compatibility failures instead use their dedicated precise codes                             |
+| deadline before admission            | `not_sent`, queue/reservation released                                                                                                                                                                                                          |
+| cancellation before write            | `not_sent`, zero downstream writes                                                                                                                                                                                                              |
+| disconnect before write              | `not_sent`, safe retry classification                                                                                                                                                                                                           |
+| disconnect after write               | `unknown`, gate closes, zero replay                                                                                                                                                                                                             |
+| malformed downstream response        | fail closed; `not_sent` or `unknown` according to write boundary                                                                                                                                                                                |
+| stale session generation             | `STALE_SESSION_GENERATION`, zero downstream writes                                                                                                                                                                                              |
+| busy without takeover                | `CONTROL_BUSY`, incumbent unchanged                                                                                                                                                                                                             |
+| authorized takeover                  | old generation quiesced before new publish                                                                                                                                                                                                      |
+| unauthorized takeover                | permission error, incumbent unchanged                                                                                                                                                                                                           |
+| definitive acknowledgement           | `applied` with exact verification strength                                                                                                                                                                                                      |
+| duplicate same request/digest        | cached definitive result, zero second write                                                                                                                                                                                                     |
+| duplicate changed digest             | idempotency error, zero second write                                                                                                                                                                                                            |
+| partial verification                 | applied acknowledgement preserved; no replay                                                                                                                                                                                                    |
+| partial multi-event dispatch         | unknown with exact counts; suffix suppressed                                                                                                                                                                                                    |
+| post-reconnect input without capture | stale/fresh-capture error, zero input                                                                                                                                                                                                           |
+| cleanup failure                      | error evidence retained, no fabricated restoration                                                                                                                                                                                              |
+| per-fact status provenance           | before a valid `videoInputState` event use `none`/unknown/null; valid events use `cached_event`, win concurrent/later `getVideoState` validation polls, and retain event-derived age; no `cached_snapshot` fabrication; proxy streaming omitted |
+| EDID capability absent               | base display status succeeds with strict `unsupported`/capability-absent/null branch                                                                                                                                                            |
+| EDID successful empty                | strict `unavailable`/read-completed/no-EDID/null branch                                                                                                                                                                                         |
+| EDID lower-layer failure             | `EDID_READ_FAILED`; no empty, unavailable, or available success                                                                                                                                                                                 |
+| reconnect evidence                   | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected                                                                                                                                                          |
+| ATX gate and serialization           | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing                                                                                                                                                 |
+| ATX acknowledgement semantics        | serial completion only; cached LED fact separate; no host-state proof                                                                                                                                                                           |
+| SSE route security                   | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup                                                                                                                                                           |
+| SSE routing/close                    | sessionId never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers                                                                                              |
+| shared DeviceRpcAdapter binding      | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel                                                                                                                                                      |
+| DeviceRpcAdapter replacement         | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes                                                                                                                               |
+| DeviceRpcAdapter mid-flight loss     | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay                                                                                                                                            |
+| scroll validation                    | integer HID wheel steps -127..127 excluding zero accepted; fraction/zero/overflow/nonzero-X rejects whole request with zero plane calls                                                                                                         |
+
+Phase authority is explicit and machine-readable. Phase 2 owns the unchanged 24-story inventory and the 10×32 matrix, validates every applicable story/step/fault/assertion link, and reserves each stable `focused_assertion_id`; a cell carries `focused_assertion_phase_2_status: "reserved"` plus `focused_assertion_owner_phase: "phase_3" | "phase_4" | "phase_5"`. Phase 2 validates reservation uniqueness and ownership only: it exposes no owning-phase or release registration gate, and no reservation satisfies a later phase or release gate. Phase 3 owns future input/display assertions, Phase 4 owns future session/power assertions, and Phase 5 owns future shared-transport/system assertions. An owning phase may introduce a registration validator only when the gate consumes an execution-produced result set keyed by exact assertion ID and cross-checks each result against an existing focused test file, its exact test identity, and the matrix owner phase. File existence alone is insufficient. Until that evidence exists, the validator is deferred to the owning implementation phase and the corresponding gate remains unsatisfied; filename regexes, path-shaped strings, reserved IDs, named-but-unexecuted tests, skips, and fabricated no-op assertions are never approval evidence.
+
+Deadline-before-admission and cancellation-before-write coverage is executable only when each linked tool call names its own compatible deterministic fault. The validator requires that fault to be armed immediately after the preceding serialized story step, remain active through the linked call, and be cleared immediately after that call before another tool is armed. Where a mutation cell claims request or observation reservation release, the cleared-fault retry immediately reuses the same normalized input and its tool-unique request ID. A cleared fault, a fault for another tool, or a prose label without this ordering never satisfies the cell.
 
 Input handlers additionally cover stale/consumed/foreign observations, display change before and after first dispatch, invalid coordinates/keys, held-state cleanup, post-operation capture failure, and whole-request scroll rejection before any plane call. Paste additionally covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release additionally races every deferred producer and ordinary writer. Power covers all three actions and no fourth value.
 
@@ -1060,14 +1278,14 @@ Documentation examples must execute against fake or replay adapters in CI. No ex
 
 Work lands through exactly six sequential branches/PRs:
 
-| Phase | Branch | Deliverable |
-|---:|---|---|
-| 1 | `feat/jetkvm-mcp-foundation` | Preserved Node package/domain/device lease; Go generation manager, dispatch leases, quiesce/zero, takeover and ICE fencing; strict shared result/error/idempotency types |
-| 2 | `feat/jetkvm-mcp-transport-api` | Exact ten schemas and adapter handlers; complete strict 24-story manifest; stdio; legacy `/sse` + `/messages`; auth/Host/Origin/security; transport-independent session registry; single-session DeviceRpcAdapter lifecycle/injection/generation fencing; fake/replay bases |
-| 3 | `feat/jetkvm-mcp-input-display` | BrowserPlane capture/observation fences, mouse including exact HID wheel validation, physical keyboard, Reliable Paste near 91 chars/s, emergency release, plus NativeControlPlane status/display semantics, per-fact cached freshness, and qualified optional read-only EDID over the injected adapter |
-| 4 | `feat/jetkvm-mcp-power-session` | Explicit connect/status/reconnect/takeover with new-channel proof and serialized/idempotent exact-timing ATX semantics over the injected adapter, with no host-state claim |
-| 5 | `feat/jetkvm-mcp-system-e2e-docs` | Manifest-driven every-handler branch matrix, fake/replay/transport/browser E2E, generated/checked docs, packaging and required CI |
-| 6 | `feat/jetkvm-mcp-hardware-release` | Serialized live stories, privacy-safe evidence, per-story restore gates, exact-candidate manifest, clean-install verification, tag and GitHub release assets |
+| Phase | Branch                             | Deliverable                                                                                                                                                                                                                                                                                             |
+| ----: | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|     1 | `feat/jetkvm-mcp-foundation`       | Preserved Node package/domain/device lease; Go generation manager, dispatch leases, quiesce/zero, takeover and ICE fencing; strict shared result/error/idempotency types                                                                                                                                |
+|     2 | `feat/jetkvm-mcp-transport-api`    | Exact ten schemas and adapter handlers; complete strict 24-story manifest; stdio; legacy `/sse` + `/messages`; auth/Host/Origin/security; transport-independent session registry; single-session DeviceRpcAdapter lifecycle/injection/generation fencing; fake/replay bases                             |
+|     3 | `feat/jetkvm-mcp-input-display`    | BrowserPlane capture/observation fences, mouse including exact HID wheel validation, physical keyboard, Reliable Paste near 91 chars/s, emergency release, plus NativeControlPlane status/display semantics, per-fact cached freshness, and qualified optional read-only EDID over the injected adapter |
+|     4 | `feat/jetkvm-mcp-power-session`    | Explicit connect/status/reconnect/takeover with new-channel proof and serialized/idempotent exact-timing ATX semantics over the injected adapter, with no host-state claim                                                                                                                              |
+|     5 | `feat/jetkvm-mcp-system-e2e-docs`  | Manifest-driven every-handler branch matrix, fake/replay/transport/browser E2E, generated/checked docs, packaging and required CI                                                                                                                                                                       |
+|     6 | `feat/jetkvm-mcp-hardware-release` | Serialized live stories, privacy-safe evidence, per-story restore gates, exact-candidate manifest, clean-install verification, tag and GitHub release assets                                                                                                                                            |
 
 ### 13.1 Mandatory gate for every phase
 

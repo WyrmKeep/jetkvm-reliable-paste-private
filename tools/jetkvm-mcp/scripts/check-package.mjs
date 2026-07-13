@@ -25,6 +25,7 @@ const FORBIDDEN_SEGMENTS = new Set([
   "__tests__",
   "test",
   "tests",
+  "test-support",
   "fixture",
   "fixtures",
   "debug",

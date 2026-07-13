@@ -1,0 +1,373 @@
+{
+  "id": "reliable-paste-91cps-correlated-terminal",
+  "title": "Reliable Paste sustains nominal pacing with correlated terminal events",
+  "requirements": [
+    "branch:cancellation-before-write",
+    "branch:disconnect-after-write",
+    "branch:partial-multi-event-dispatch",
+    "contract:reliable-paste-correlated-terminal"
+  ],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
+  "environments": ["fake", "replay", "live"],
+  "preconditions": [
+    {
+      "id": "outer-device-lease",
+      "description": "The harness holds the inherited device-keyed lease before any device or fixture access.",
+      "required": true
+    },
+    {
+      "id": "safe-baseline",
+      "description": "The harness recorded session generation, display, layout, lock state, ATX-observable state, browser identity, and fixture identity.",
+      "required": true
+    },
+    {
+      "id": "scenario-ready",
+      "description": "The configured and effective keyboard layouts match, decoded video is healthy, and Reliable Paste lifecycle is ready.",
+      "required": true
+    }
+  ],
+  "fault_script": [
+    {
+      "id": "cancel-before-paste-acceptance",
+      "after_step": "capture-cancel-observation",
+      "boundary": "before_write",
+      "action": "Arm a one-shot cancellation for paste-cancel-before-acceptance before the paste operation is accepted.",
+      "expected_effect": "The call is not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and its request reservation released."
+    },
+    {
+      "id": "clear-cancel-before-paste-acceptance",
+      "after_step": "paste-cancel-before-acceptance",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the paste cancellation injector after its one linked call.",
+      "expected_effect": "No later paste call inherits the cancellation fault; the released request reservation and ready generation 7 remain available."
+    },
+    {
+      "id": "disconnect-after-paste-write",
+      "after_step": "capture-disconnect-observation",
+      "boundary": "after_write",
+      "action": "Arm a one-shot channel loss for paste-disconnect-after-write immediately after exactly one paste event is dispatched and before any correlated completion.",
+      "expected_effect": "The call is unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
+    },
+    {
+      "id": "clear-disconnect-after-paste-write",
+      "after_step": "paste-disconnect-after-write",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the one-shot channel-loss injector without reopening the closed generation-7 mutation gate.",
+      "expected_effect": "No later call inherits the channel-loss fault; generation 7 remains closed until the explicit inspect, release, and reconnect recovery sequence publishes generation 8."
+    },
+    {
+      "id": "paste-boundary-sequence",
+      "after_step": "capture-paste-observation",
+      "boundary": "after_write",
+      "action": "Arm a one-shot partial dispatch for submit-reliable-paste after exactly two of fourteen character events are dispatched but only the first completes, then suppress the suffix.",
+      "expected_effect": "The call is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
+    },
+    {
+      "id": "clear-paste-boundary-sequence",
+      "after_step": "submit-reliable-paste",
+      "boundary": "during_cleanup",
+      "action": "Unconditionally clear the partial-dispatch injector without reopening the closed generation-8 mutation gate.",
+      "expected_effect": "No later call inherits the partial-dispatch fault; generation 8 remains closed until explicit inspect, release, and reconnect recovery publishes generation 9."
+    }
+  ],
+  "steps": [
+    {
+      "id": "capture-cancel-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh unused observation reserved as opaque-observation-paste-cancel-before-acceptance."
+    },
+    {
+      "id": "paste-cancel-before-acceptance",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-paste-cancel-before-acceptance",
+        "request_id": "opaque-request-paste-cancel-before-acceptance",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and the request reservation released."
+    },
+    {
+      "id": "capture-disconnect-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh unused observation reserved as opaque-observation-paste-disconnect-after-write."
+    },
+    {
+      "id": "paste-disconnect-after-write",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-paste-disconnect-after-write",
+        "request_id": "opaque-request-paste-disconnect-after-write",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
+    },
+    {
+      "id": "inspect-disconnect-after-write-unknown",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Read-only inspection preserves the paste request's unknown outcome and confirms generation 7 has a closed mutation gate without replaying any character event."
+    },
+    {
+      "id": "release-disconnect-after-write-unknown",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request-release-after-paste-disconnect-unknown",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Generation-correlated emergency release drains and joins the ambiguous paste producer, proves zero held input, and does not reopen generation 7 or replay the paste."
+    },
+    {
+      "id": "reconnect-disconnect-after-write-unknown",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-request-reconnect-after-paste-disconnect-unknown",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect retires generation 7 and publishes ready generation 8 with a new browser-owned channel, RPC binding, and fresh_capture_required true."
+    },
+    {
+      "id": "capture-paste-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh unused observation reserved as opaque-observation-paste-partial-dispatch."
+    },
+    {
+      "id": "submit-reliable-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-paste-partial-dispatch",
+        "request_id": "opaque-request-paste-partial-dispatch",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
+    },
+    {
+      "id": "inspect-partial-paste-unknown",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Read-only inspection preserves the partial paste's unknown outcome and exact counts while confirming generation 8 has a closed mutation gate and no suffix replay."
+    },
+    {
+      "id": "release-partial-paste-unknown",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-request-release-after-partial-paste-unknown",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Generation-correlated emergency release drains and joins the partial paste producer, proves zero held input, and neither dispatches the suppressed suffix nor reopens generation 8."
+    },
+    {
+      "id": "reconnect-partial-paste-unknown",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "request_id": "opaque-request-reconnect-after-partial-paste-unknown",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "Reconnect retires generation 8 and publishes ready generation 9 with a new browser-owned channel, RPC binding, and fresh_capture_required true."
+    },
+    {
+      "id": "capture-correlated-terminal-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 9,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh unused observation reserved as opaque-observation-paste-correlated-terminal."
+    },
+    {
+      "id": "submit-correlated-terminal-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 9,
+        "observation_id": "opaque-observation-paste-correlated-terminal",
+        "request_id": "opaque-request-paste-correlated-terminal",
+        "text": "FixturePaste91",
+        "timeout_ms": 10000
+      },
+      "timeout_ms": 10000,
+      "expect": "Exactly fourteen submitted, active, and succeeded character events correlate monotonically to this request and measured pacing is reported at nominal 91 cps."
+    }
+  ],
+  "pass": [
+    {
+      "id": "assertion-1",
+      "requirement": "branch:cancellation-before-write",
+      "assertion": "Cancellation before paste acceptance is not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and a released request reservation."
+    },
+    {
+      "id": "assertion-2",
+      "requirement": "branch:disconnect-after-write",
+      "assertion": "Disconnect after exactly one paste event is dispatched is unknown with dispatched_count 1, completed_count 0, a closed generation-7 mutation gate, and zero replay writes; inspection and emergency release precede reconnect to generation 8."
+    },
+    {
+      "id": "assertion-3",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "assertion": "Partial paste dispatch in fresh generation 8 is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes; inspection and emergency release precede reconnect to generation 9."
+    },
+    {
+      "id": "assertion-4",
+      "requirement": "contract:reliable-paste-correlated-terminal",
+      "assertion": "Only the distinct fault-free generation-9 call, using a newly captured generation-9 observation, proves all fourteen correlated submitted-active-succeeded characters completed at measured nominal pacing; no error branch claims target-application acceptance."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "evidence-1",
+      "requirement": "branch:cancellation-before-write",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-2",
+      "requirement": "branch:disconnect-after-write",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-3",
+      "requirement": "branch:partial-multi-event-dispatch",
+      "field": "requirement_result",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    },
+    {
+      "id": "evidence-4",
+      "requirement": "contract:reliable-paste-correlated-terminal",
+      "field": "artifact_hash",
+      "source": "The linked focused assertion and ordered fake, replay, or live event record.",
+      "retention": "release_manifest"
+    }
+  ],
+  "restore": [
+    {
+      "id": "release-input",
+      "action": "Invoke generation-correlated emergency input release when a session exists.",
+      "assertion": "No held key, button, wheel producer, macro, or paste producer remains.",
+      "always": true
+    },
+    {
+      "id": "stop-paste",
+      "action": "Stop and join any Reliable Paste producer.",
+      "assertion": "Reliable Paste is inactive and its correlated producer is joined.",
+      "always": true
+    },
+    {
+      "id": "zero-held-input",
+      "action": "Verify the fixture reports zero held keys and buttons.",
+      "assertion": "Held keyboard and pointer state is empty.",
+      "always": true
+    },
+    {
+      "id": "close-story-session",
+      "action": "Close only the device session created by this story and its browser resources.",
+      "assertion": "No story-owned browser, channel, or device session remains.",
+      "always": true
+    },
+    {
+      "id": "reset-fixture",
+      "action": "Clear deterministic faults and restore the recorded fixture baseline.",
+      "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    }
+  ],
+  "privacy": [
+    {
+      "id": "privacy-safe-evidence",
+      "rule": "Persist only allowlisted opaque identifiers, sanitized versions, counts, durations, hashes, outcomes, verification, and restoration results.",
+      "prohibited": [
+        "bearer_tokens",
+        "cookies",
+        "credentials",
+        "headers",
+        "lease_proofs",
+        "network_topology",
+        "raw_payloads",
+        "screenshots",
+        "sdp_ice",
+        "secrets",
+        "serial_edid",
+        "stack_traces",
+        "target_contents"
+      ],
+      "always": true
+    }
+  ]
+}
