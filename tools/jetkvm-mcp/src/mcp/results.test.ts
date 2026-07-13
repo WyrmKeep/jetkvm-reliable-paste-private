@@ -111,7 +111,7 @@ describe("MCP result mapping", () => {
     expect(JSON.stringify(mapped.content[1])).toContain(imageBase64);
   });
 
-  it("requires and verifies authorized image bytes when result metadata references them", () => {
+  it("requires exact authorized image metadata and canonical MIME", () => {
     expect(() => toMcpSuccessResult(captureEnvelope)).toThrow(
       "Image content is required by result metadata.",
     );
@@ -125,11 +125,37 @@ describe("MCP result mapping", () => {
       toMcpSuccessResult(captureEnvelope, {
         bytes: imageBytes,
         mime_type: "image/png",
-      } as never),
-    ).toThrow("Only authorized JPEG image content is permitted.");
+      }),
+    ).toThrow("Image content does not match result metadata.");
+    for (const image of [
+      { ...capture.image, sha256: "0".repeat(64) },
+      { ...capture.image, byte_length: imageBytes.byteLength + 1 },
+    ]) {
+      expect(() =>
+        toMcpSuccessResult(
+          {
+            ...captureEnvelope,
+            result: { ...captureEnvelope.result, image },
+          },
+          authorizedImage,
+        ),
+      ).toThrow("Image content does not match result metadata.");
+    }
+    expect(() =>
+      toMcpSuccessResult(
+        {
+          ...captureEnvelope,
+          result: {
+            ...captureEnvelope.result,
+            image: { ...capture.image, content_index: 0 },
+          },
+        } as never,
+        authorizedImage,
+      ),
+    ).toThrow("Invalid tool success envelope.");
   });
 
-  it("rejects PNG image content even when metadata and digest otherwise match", () => {
+  it("maps authorized PNG content with exact digest, length, index, and isolation", () => {
     const pngEnvelope = {
       ...captureEnvelope,
       result: {
@@ -140,12 +166,17 @@ describe("MCP result mapping", () => {
         },
       },
     };
-    expect(() =>
-      toMcpSuccessResult(pngEnvelope, {
-        bytes: imageBytes,
-        mime_type: "image/png",
-      } as never),
-    ).toThrow("Only authorized JPEG image content is permitted.");
+    const mapped = toMcpSuccessResult(pngEnvelope, {
+      bytes: imageBytes,
+      mime_type: "image/png",
+    });
+
+    expect(mapped.content).toEqual([
+      { type: "text", text: JSON.stringify(pngEnvelope) },
+      { type: "image", data: imageBase64, mimeType: "image/png" },
+    ]);
+    expect(mapped.structuredContent).toEqual(pngEnvelope);
+    expect(JSON.stringify(mapped.structuredContent)).not.toContain(imageBase64);
   });
 
   it("rejects image bytes for results without image metadata", () => {

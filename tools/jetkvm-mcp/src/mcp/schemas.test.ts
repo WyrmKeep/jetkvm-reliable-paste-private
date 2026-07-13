@@ -11,6 +11,8 @@ import {
   type CapabilitySnapshot,
   type JetKvmToolName,
 } from "../domain.js";
+import { ERROR_CODES, type ErrorCode } from "../errors.js";
+
 import {
   SCHEMA_FILE_NAMES,
   TOOL_INPUT_SCHEMAS,
@@ -624,98 +626,466 @@ describe("strict canonical tool schemas", () => {
     }
   });
 
-  it("enforces every mutation-error outcome/verification/retry/next-step combination", () => {
+  it("enforces the exhaustive mutation error code-class table", () => {
+    type Policy = {
+      readonly phase:
+        | "validate"
+        | "authorize"
+        | "queue"
+        | "connect"
+        | "execute"
+        | "verify"
+        | "cleanup";
+      readonly outcome: "applied" | "already_applied" | "not_sent" | "unknown";
+      readonly verification:
+        | "device_state_verified"
+        | "device_ack_only"
+        | "none";
+      readonly safe_to_retry: boolean;
+      readonly required_next_step:
+        | "none"
+        | "capture_then_retry"
+        | "reconnect_then_capture"
+        | "release_then_reconnect_then_capture"
+        | "inspect_device_state_before_retry"
+        | "wait_or_request_takeover"
+        | "grant_permission"
+        | "enable_capability";
+      readonly downstream_stage:
+        | "none"
+        | "admission"
+        | "write"
+        | "acknowledgement"
+        | "verification";
+    };
+    const applied = {
+      phase: "verify",
+      outcome: "applied",
+      verification: "device_ack_only",
+      safe_to_retry: false,
+      required_next_step: "none",
+      downstream_stage: "verification",
+    } as const satisfies Policy;
+    const unknown = {
+      phase: "execute",
+      outcome: "unknown",
+      verification: "none",
+      safe_to_retry: false,
+      required_next_step: "inspect_device_state_before_retry",
+      downstream_stage: "write",
+    } as const satisfies Policy;
+    const releaseUnknown = {
+      ...unknown,
+      required_next_step: "release_then_reconnect_then_capture",
+    } as const satisfies Policy;
+    const notSent = {
+      phase: "validate",
+      outcome: "not_sent",
+      verification: "none",
+      safe_to_retry: false,
+      required_next_step: "none",
+      downstream_stage: "none",
+    } as const satisfies Policy;
+    const retryableNotSent = {
+      ...notSent,
+      safe_to_retry: true,
+    } as const satisfies Policy;
+    const policies = {
+      CONFIG_INVALID: [notSent],
+      AUTH_FAILED: [
+        { ...notSent, phase: "connect", downstream_stage: "admission" },
+      ],
+      AUTH_RATE_LIMITED: [
+        {
+          ...retryableNotSent,
+          phase: "connect",
+          downstream_stage: "admission",
+        },
+      ],
+      AUTH_EXPIRED: [
+        { ...notSent, phase: "connect", downstream_stage: "admission" },
+      ],
+      PERMISSION_DENIED: [
+        {
+          ...notSent,
+          phase: "authorize",
+          required_next_step: "grant_permission",
+        },
+      ],
+      OBSERVE_ONLY: [{ ...notSent, phase: "authorize" }],
+      SAFETY_DENIED: [{ ...notSent, phase: "authorize" }],
+      CAPABILITY_MISSING: [
+        { ...notSent, required_next_step: "enable_capability" },
+      ],
+      UNSUPPORTED_UI_VERSION: [
+        { ...notSent, phase: "connect", downstream_stage: "admission" },
+      ],
+      FIRMWARE_INCOMPATIBLE: [
+        { ...notSent, phase: "connect", downstream_stage: "admission" },
+      ],
+      BROWSER_UNSUPPORTED: [
+        { ...notSent, phase: "connect", downstream_stage: "admission" },
+      ],
+      SESSION_NOT_FOUND: [{ ...notSent, downstream_stage: "admission" }],
+      STALE_SESSION_GENERATION: [{ ...notSent, downstream_stage: "admission" }],
+      SESSION_TAKEN_OVER: [
+        {
+          ...notSent,
+          phase: "execute",
+          required_next_step: "reconnect_then_capture",
+          downstream_stage: "admission",
+        },
+        releaseUnknown,
+      ],
+      CONTROL_BUSY: [
+        {
+          ...retryableNotSent,
+          phase: "authorize",
+          required_next_step: "wait_or_request_takeover",
+          downstream_stage: "admission",
+        },
+      ],
+      SESSION_DRAINED: [
+        {
+          ...notSent,
+          phase: "execute",
+          required_next_step: "reconnect_then_capture",
+          downstream_stage: "admission",
+        },
+        releaseUnknown,
+      ],
+      DEVICE_UNREACHABLE: [
+        {
+          ...retryableNotSent,
+          phase: "connect",
+          downstream_stage: "admission",
+        },
+      ],
+      CONNECTION_LOST: [
+        {
+          ...retryableNotSent,
+          phase: "execute",
+          required_next_step: "reconnect_then_capture",
+          downstream_stage: "write",
+        },
+        unknown,
+      ],
+      DOWNSTREAM_MALFORMED_RESPONSE: [
+        {
+          ...notSent,
+          phase: "execute",
+          required_next_step: "reconnect_then_capture",
+          downstream_stage: "write",
+        },
+        unknown,
+      ],
+      VIDEO_UNAVAILABLE: [
+        { ...retryableNotSent, required_next_step: "capture_then_retry" },
+      ],
+      VIDEO_STALLED: [
+        { ...retryableNotSent, required_next_step: "capture_then_retry" },
+      ],
+      FRAME_TIMEOUT: [],
+      STALE_OBSERVATION: [
+        {
+          ...retryableNotSent,
+          required_next_step: "capture_then_retry",
+        },
+      ],
+      OBSERVATION_CONSUMED: [
+        {
+          ...retryableNotSent,
+          required_next_step: "capture_then_retry",
+        },
+      ],
+      DISPLAY_CHANGED: [
+        {
+          ...retryableNotSent,
+          required_next_step: "capture_then_retry",
+        },
+        releaseUnknown,
+      ],
+      EDID_READ_FAILED: [],
+      DISPLAY_STATUS_STALE: [],
+      INVALID_COORDINATE: [notSent],
+      INVALID_KEY: [notSent],
+      UNSUPPORTED_SCROLL_AXIS: [notSent],
+      PASTE_BUSY: [{ ...retryableNotSent, phase: "queue" }],
+      PASTE_REJECTED: [{ ...notSent, phase: "execute" }],
+      PASTE_FAILED: [releaseUnknown],
+      PASTE_CANCELLED: [releaseUnknown],
+      EVENT_GAP: [releaseUnknown],
+      POWER_ACTION_REJECTED: [{ ...notSent, phase: "execute" }],
+      ATX_EXTENSION_INACTIVE: [notSent],
+      ATX_SERIAL_UNAVAILABLE: [
+        {
+          ...retryableNotSent,
+          phase: "execute",
+          downstream_stage: "write",
+        },
+        unknown,
+      ],
+      ATX_BUSY: [{ ...retryableNotSent, phase: "queue" }],
+      POWER_STATE_UNVERIFIED: [
+        applied,
+        { ...applied, outcome: "already_applied" },
+      ],
+      CANCELLED: [{ ...retryableNotSent, phase: "queue" }, unknown],
+      DEADLINE_EXCEEDED: [{ ...retryableNotSent, phase: "queue" }, unknown],
+      MUTATION_OUTCOME_UNKNOWN: [unknown],
+      PARTIAL_VERIFICATION: [
+        applied,
+        { ...applied, outcome: "already_applied" },
+      ],
+      REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT: [notSent],
+    } as const satisfies Record<ErrorCode, readonly Policy[]>;
+
+    const toolsByCode: Partial<Record<ErrorCode, JetKvmToolName>> = {
+      SESSION_NOT_FOUND: "jetkvm_session_reconnect",
+      STALE_SESSION_GENERATION: "jetkvm_session_reconnect",
+      SESSION_TAKEN_OVER: "jetkvm_session_reconnect",
+      CONTROL_BUSY: "jetkvm_session_connect",
+      SESSION_DRAINED: "jetkvm_session_reconnect",
+      INVALID_KEY: "jetkvm_input_keyboard",
+      PASTE_BUSY: "jetkvm_input_paste",
+      PASTE_REJECTED: "jetkvm_input_paste",
+      PASTE_FAILED: "jetkvm_input_paste",
+      PASTE_CANCELLED: "jetkvm_input_paste",
+      EVENT_GAP: "jetkvm_input_paste",
+      POWER_ACTION_REJECTED: "jetkvm_power_control",
+      ATX_EXTENSION_INACTIVE: "jetkvm_power_control",
+      ATX_SERIAL_UNAVAILABLE: "jetkvm_power_control",
+      ATX_BUSY: "jetkvm_power_control",
+      POWER_STATE_UNVERIFIED: "jetkvm_power_control",
+    };
+
+    const candidate = (code: ErrorCode, policy: Policy) => ({
+      ok: false,
+      tool: toolsByCode[code] ?? "jetkvm_input_mouse",
+      operation_id: "operation-1",
+      session_id: "session-1",
+      session_generation: 1,
+      duration_ms: 1,
+      error: {
+        code,
+        message: "Canonical public error.",
+        phase: policy.phase,
+        outcome: policy.outcome,
+        verification: policy.verification,
+        safe_to_retry: policy.safe_to_retry,
+        required_next_step: policy.required_next_step,
+        details: {
+          permission:
+            code === "PERMISSION_DENIED" ? ("input.mouse" as const) : null,
+          capability: code === "CAPABILITY_MISSING" ? ("mouse" as const) : null,
+          failed_action_index: null,
+          dispatched_action_count: policy.outcome === "unknown" ? 1 : null,
+          completed_action_count: policy.outcome === "unknown" ? 0 : null,
+          downstream_stage: policy.downstream_stage,
+          expected_generation: null,
+          actual_generation: null,
+          observation_id: null,
+        },
+      },
+    });
     const outcomes = [
       "applied",
       "already_applied",
       "not_sent",
       "unknown",
-      null,
     ] as const;
-    const verifications = [
-      "device_state_verified",
-      "device_ack_only",
-      "none",
-    ] as const;
-    const nextSteps = [
-      "none",
-      "capture_then_retry",
-      "reconnect_then_capture",
-      "release_then_reconnect_then_capture",
-      "inspect_device_state_before_retry",
-      "wait_or_request_takeover",
-      "grant_permission",
-      "enable_capability",
-    ] as const;
-    for (const outcome of outcomes) {
-      for (const verification of verifications) {
-        for (const safe_to_retry of [false, true] as const) {
-          for (const required_next_step of nextSteps) {
-            const definitive =
-              outcome === "applied" || outcome === "already_applied";
-            const genericRecovery =
-              required_next_step !== "grant_permission" &&
-              required_next_step !== "enable_capability";
-            const legal =
-              outcome === null
-                ? false
-                : definitive
-                  ? verification !== "none" &&
-                    !safe_to_retry &&
-                    required_next_step === "none"
-                  : outcome === "unknown"
-                    ? verification === "none" &&
-                      !safe_to_retry &&
-                      (required_next_step ===
-                        "inspect_device_state_before_retry" ||
-                        required_next_step ===
-                          "release_then_reconnect_then_capture")
-                    : verification === "none" &&
-                      genericRecovery &&
-                      required_next_step !==
-                        "inspect_device_state_before_retry" &&
-                      required_next_step !==
-                        "release_then_reconnect_then_capture";
-            const candidate = {
-              ok: false,
-              tool: "jetkvm_input_mouse",
-              operation_id: "operation-1",
-              session_id: "session-1",
-              session_generation: 1,
-              duration_ms: 1,
-              error: {
-                code: "CONNECTION_LOST",
-                message: "Connection lost.",
-                phase: "execute",
-                outcome,
-                verification,
-                safe_to_retry,
-                required_next_step,
-                details: {
-                  permission: null,
-                  capability: null,
-                  failed_action_index: null,
-                  dispatched_action_count: null,
-                  completed_action_count: null,
-                  downstream_stage: "none",
-                  expected_generation: null,
-                  actual_generation: null,
-                  observation_id: null,
-                },
-              },
-            };
-            expect(
-              toolErrorSchema.safeParse(candidate).success,
-              JSON.stringify({
-                outcome,
-                verification,
-                safe_to_retry,
-                required_next_step,
-              }),
-            ).toBe(legal);
-          }
+
+    expect(Object.keys(policies).sort()).toEqual([...ERROR_CODES].sort());
+    for (const code of ERROR_CODES) {
+      const allowed = policies[code];
+      for (const policy of allowed) {
+        expect(
+          toolErrorSchema.safeParse(candidate(code, policy)).success,
+          `${code} ${JSON.stringify(policy)}`,
+        ).toBe(true);
+        const valid = candidate(code, policy);
+        const invalidErrors = [
+          {
+            ...valid.error,
+            verification:
+              policy.verification === "none" ? "device_ack_only" : "none",
+          },
+          { ...valid.error, safe_to_retry: !policy.safe_to_retry },
+          {
+            ...valid.error,
+            required_next_step:
+              policy.required_next_step === "none"
+                ? "grant_permission"
+                : "none",
+          },
+        ];
+        if (policy.outcome === "not_sent") {
+          invalidErrors.push({
+            ...valid.error,
+            details: {
+              ...valid.error.details,
+              dispatched_action_count: 1,
+            },
+          });
+        }
+        for (const error of invalidErrors) {
+          expect(
+            toolErrorSchema.safeParse({ ...valid, error }).success,
+            `${code} must reject ${JSON.stringify(error)}`,
+          ).toBe(false);
         }
       }
+      for (const outcome of outcomes) {
+        if (allowed.some((policy) => policy.outcome === outcome)) continue;
+        const fallback =
+          outcome === "applied" || outcome === "already_applied"
+            ? { ...applied, outcome }
+            : outcome === "unknown"
+              ? unknown
+              : notSent;
+        expect(
+          toolErrorSchema.safeParse(candidate(code, fallback)).success,
+          `${code} must reject ${outcome}`,
+        ).toBe(false);
+      }
+    }
+    for (const [code, tool] of [
+      ["INVALID_KEY", "jetkvm_input_mouse"],
+      ["ATX_BUSY", "jetkvm_input_keyboard"],
+      ["PASTE_FAILED", "jetkvm_power_control"],
+      ["CONTROL_BUSY", "jetkvm_input_mouse"],
+      ["STALE_SESSION_GENERATION", "jetkvm_session_connect"],
+      ["POWER_STATE_UNVERIFIED", "jetkvm_input_mouse"],
+      ["VIDEO_UNAVAILABLE", "jetkvm_power_control"],
+    ] as const) {
+      const policy = policies[code][0]!;
+      expect(
+        toolErrorSchema.safeParse({ ...candidate(code, policy), tool }).success,
+        `${tool} must reject ${code}`,
+      ).toBe(false);
+    }
+    for (const code of [
+      "MUTATION_OUTCOME_UNKNOWN",
+      "CONNECTION_LOST",
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+    ] as const) {
+      const policy = policies[code].find(
+        ({ outcome }) => outcome === "unknown",
+      )!;
+      const connectPhase = candidate(code, policy);
+      connectPhase.tool = "jetkvm_session_reconnect";
+      connectPhase.error.phase = "connect";
+      connectPhase.error.details.downstream_stage = "acknowledgement";
+      expect(
+        toolErrorSchema.safeParse(connectPhase).success,
+        `${code} connect/acknowledgement`,
+      ).toBe(true);
+      expect(
+        toolErrorSchema.safeParse({
+          ...connectPhase,
+          error: {
+            ...connectPhase.error,
+            details: {
+              ...connectPhase.error.details,
+              downstream_stage: "admission",
+            },
+          },
+        }).success,
+        `${code} unknown cannot be admission-stage`,
+      ).toBe(false);
+    }
+
+    const malformedNotSent = candidate(
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+      policies.DOWNSTREAM_MALFORMED_RESPONSE.find(
+        ({ outcome }) => outcome === "not_sent",
+      )!,
+    );
+    malformedNotSent.tool = "jetkvm_session_connect";
+    malformedNotSent.error.phase = "connect";
+    malformedNotSent.error.details.downstream_stage = "admission";
+    malformedNotSent.error.required_next_step = "none";
+    expect(toolErrorSchema.safeParse(malformedNotSent).success).toBe(true);
+  });
+
+  it("uses dedicated compatibility codes for connect and reconnect", () => {
+    const compatibilityCodes = [
+      "AUTH_FAILED",
+      "UNSUPPORTED_UI_VERSION",
+      "FIRMWARE_INCOMPATIBLE",
+      "BROWSER_UNSUPPORTED",
+      "DEVICE_UNREACHABLE",
+    ] as const;
+    for (const tool of [
+      "jetkvm_session_connect",
+      "jetkvm_session_reconnect",
+    ] as const) {
+      for (const code of compatibilityCodes) {
+        const error = {
+          ok: false,
+          tool,
+          operation_id: "operation-connect",
+          session_id: "session-1",
+          session_generation: 1,
+          duration_ms: 1,
+          error: {
+            code,
+            message: "The connection is not compatible.",
+            phase: "connect",
+            outcome: "not_sent",
+            verification: "none",
+            safe_to_retry: code === "DEVICE_UNREACHABLE",
+            required_next_step: "none",
+            details: {
+              permission: null,
+              capability: null,
+              failed_action_index: null,
+              dispatched_action_count: null,
+              completed_action_count: null,
+              downstream_stage: "admission",
+              expected_generation: null,
+              actual_generation: null,
+              observation_id: null,
+            },
+          },
+        };
+        expect(
+          TOOL_RESULT_SCHEMAS[tool].safeParse(error).success,
+          `${tool} ${code}`,
+        ).toBe(true);
+      }
+
+      const unrelatedCapabilityError = {
+        ok: false,
+        tool,
+        operation_id: "operation-connect",
+        session_id: "session-1",
+        session_generation: 1,
+        duration_ms: 1,
+        error: {
+          code: "CAPABILITY_MISSING",
+          message: "A capability is missing.",
+          phase: "validate",
+          outcome: "not_sent",
+          verification: "none",
+          safe_to_retry: false,
+          required_next_step: "enable_capability",
+          details: {
+            permission: null,
+            capability: "power_control",
+            failed_action_index: null,
+            dispatched_action_count: null,
+            completed_action_count: null,
+            downstream_stage: "none",
+            expected_generation: null,
+            actual_generation: null,
+            observation_id: null,
+          },
+        },
+      };
+      expect(
+        TOOL_RESULT_SCHEMAS[tool].safeParse(unrelatedCapabilityError).success,
+      ).toBe(false);
     }
   });
 
@@ -784,6 +1154,7 @@ describe("strict canonical tool schemas", () => {
       },
       {
         ...base,
+        tool: "jetkvm_session_connect",
         error: {
           ...base.error,
           code: "CONTROL_BUSY",
@@ -1140,28 +1511,32 @@ describe("strict canonical tool schemas", () => {
     ).toBe(true);
   });
 
-  it("caps JPEG bytes without imposing the JPEG limit on PNG", () => {
-    const oversized = 2 * 1024 * 1024 + 1;
-    expect(
-      TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse({
-        ...captureResult,
-        image: {
-          ...captureResult.image,
-          mime_type: "image/jpeg",
-          byte_length: oversized,
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse({
-        ...captureResult,
-        image: {
-          ...captureResult.image,
-          mime_type: "image/png",
-          byte_length: oversized,
-        },
-      }).success,
-    ).toBe(true);
+  it("caps JPEG at 2 MiB and PNG at 8 MiB before base64", () => {
+    for (const [mime_type, maximum] of [
+      ["image/jpeg", 2 * 1024 * 1024],
+      ["image/png", 8 * 1024 * 1024],
+    ] as const) {
+      expect(
+        TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse({
+          ...captureResult,
+          image: {
+            ...captureResult.image,
+            mime_type,
+            byte_length: maximum,
+          },
+        }).success,
+      ).toBe(true);
+      expect(
+        TOOL_RESULT_PAYLOAD_SCHEMAS.jetkvm_display_capture.safeParse({
+          ...captureResult,
+          image: {
+            ...captureResult.image,
+            mime_type,
+            byte_length: maximum + 1,
+          },
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it("validates strict errors and rejects incoherent mutation claims", () => {

@@ -11,10 +11,11 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import {
+  assertIndependentLegacySseBearerCredential,
   evaluateLegacySseRequest,
   HttpBoundaryError,
+  type IndependentLegacySseBearerCredential,
   type LegacySseBearerAuthenticator,
-  type LegacySseBearerCredential,
   type LegacySsePrincipal,
   type LegacySseRequestHeaders,
 } from "../browser/auth.js";
@@ -43,7 +44,7 @@ export type LegacySseTransportFactory = (
 export interface LegacySseAdapterOptions {
   readonly handlerRegistry?: HandlerRegistry;
   readonly securityPolicy: LegacySseSecurityPolicy;
-  readonly bearerCredential?: LegacySseBearerCredential;
+  readonly bearerCredential?: IndependentLegacySseBearerCredential;
   readonly authenticateBearer?: LegacySseBearerAuthenticator;
   readonly transportFactory?: LegacySseTransportFactory;
   readonly now?: () => number;
@@ -52,6 +53,12 @@ export interface LegacySseAdapterOptions {
 
 interface StreamAdmission {
   readonly principalId: string;
+  released: boolean;
+}
+
+interface PostAdmission {
+  readonly principalId: string;
+  readonly sessionId: string;
   released: boolean;
 }
 
@@ -77,7 +84,7 @@ type ReadBodyResult =
 export class LegacySseAdapter {
   readonly #handlerRegistry: HandlerRegistry;
   readonly #securityPolicy: LegacySseSecurityPolicy;
-  readonly #bearerCredential: LegacySseBearerCredential | undefined;
+  readonly #bearerCredential: IndependentLegacySseBearerCredential | undefined;
   readonly #authenticateBearer: LegacySseBearerAuthenticator | undefined;
   readonly #transportFactory: LegacySseTransportFactory;
   readonly #now: () => number;
@@ -86,12 +93,22 @@ export class LegacySseAdapter {
   readonly #activeByPrincipal = new Map<string, number>();
   readonly #globalOpenEvents: number[] = [];
   readonly #principalOpenEvents = new Map<string, number[]>();
+  readonly #activePostsByPrincipal = new Map<string, number>();
+  readonly #activePostsBySession = new Map<string, number>();
+  readonly #postRateByPrincipal = new Map<string, number>();
+  readonly #postRateBySession = new Map<string, number>();
   #activeStreams = 0;
+  #activePosts = 0;
+  #postRateCount = 0;
+  #postRateWindowStartedAt: number | undefined;
   #httpServer: LegacySseNodeServer | undefined;
   #closePromise: Promise<void> | undefined;
   #closed = false;
 
   constructor(options: LegacySseAdapterOptions) {
+    if (options.bearerCredential !== undefined) {
+      assertIndependentLegacySseBearerCredential(options.bearerCredential);
+    }
     this.#handlerRegistry = options.handlerRegistry ?? {};
     this.#securityPolicy = options.securityPolicy;
     this.#bearerCredential = options.bearerCredential;
@@ -118,6 +135,11 @@ export class LegacySseAdapter {
     server.keepAliveTimeout = this.#securityPolicy.keepAliveTimeoutMs;
     server.maxHeadersCount = 64;
     server.maxRequestsPerSocket = 1_000;
+    Object.defineProperty(server, "maxConnections", {
+      configurable: false,
+      value: this.#securityPolicy.maxConnections,
+      writable: false,
+    });
     this.#httpServer = server;
   }
 
@@ -227,6 +249,7 @@ export class LegacySseAdapter {
     try {
       cleanupWriter = installBoundedSseWriter(
         response,
+        this.#securityPolicy.maxResponseMessageBytes,
         this.#securityPolicy.maxResponseBufferedBytes,
         this.#securityPolicy.responseBackpressureTimeoutMs,
       );
@@ -281,82 +304,91 @@ export class LegacySseAdapter {
       return;
     }
 
-    const entry = this.#entries.get(sessionId);
-    if (entry === undefined || entry.principalId !== principal.principalId) {
-      sendText(response, 404, "Not Found");
+    const admission = this.#admitPost(principal.principalId, sessionId);
+    if (admission === undefined) {
+      sendText(response, 429, "Too Many Requests");
       return;
     }
-    this.#onDiagnostic?.({ code: "post_routed" });
-
-    if (singleHeader(request, "content-type") !== "application/json") {
-      sendText(response, 400, "Invalid Content-Type");
-      return;
-    }
-    const declaredLength = parseContentLength(
-      singleHeader(request, "content-length"),
-    );
-    if (declaredLength !== undefined && declaredLength > MAXIMUM_BODY_BYTES) {
-      request.resume();
-      sendText(response, 400, "Request body too large");
-      return;
-    }
-
-    const body = await readBody(
-      request,
-      this.#securityPolicy.requestBodyIdleTimeoutMs,
-      this.#securityPolicy.requestBodyTotalTimeoutMs,
-    );
-    if (body.kind === "too_large") {
-      sendText(response, 400, "Request body too large");
-      return;
-    }
-    if (body.kind === "timeout") {
-      sendText(response, 408, "Request Timeout", true);
-      return;
-    }
-    if (body.kind === "aborted") {
-      if (!response.headersSent && !response.writableEnded) {
-        sendText(response, 400, "Bad Request", true);
+    try {
+      const entry = this.#entries.get(sessionId);
+      if (entry === undefined || entry.principalId !== principal.principalId) {
+        sendText(response, 404, "Not Found");
+        return;
       }
-      return;
-    }
+      this.#onDiagnostic?.({ code: "post_routed" });
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(body.text);
-    } catch {
-      sendText(response, 400, "Invalid JSON");
-      return;
-    }
-    const message = JSONRPCMessageSchema.safeParse(parsed);
-    if (!message.success) {
-      sendText(response, 400, "Invalid JSON-RPC message");
-      return;
-    }
-
-    const authenticatedRequest = request as AuthenticatedIncomingMessage;
-    authenticatedRequest.auth = {
-      token: "[REDACTED]",
-      clientId: principal.principalId,
-      scopes: ["mcp"],
-    };
-    try {
-      await entry.transport.handlePostMessage(
-        authenticatedRequest,
-        response,
-        message.data,
+      if (singleHeader(request, "content-type") !== "application/json") {
+        sendText(response, 400, "Invalid Content-Type");
+        return;
+      }
+      const declaredLength = parseContentLength(
+        singleHeader(request, "content-length"),
       );
-      if (
-        response.statusCode === 202 &&
-        this.#entries.get(sessionId) === entry
-      ) {
-        this.#refreshIdleTimer(sessionId, entry);
+      if (declaredLength !== undefined && declaredLength > MAXIMUM_BODY_BYTES) {
+        request.resume();
+        sendText(response, 400, "Request body too large");
+        return;
       }
-    } catch {
-      this.#onDiagnostic?.({ code: "post_transport_closed" });
-      if (!response.headersSent && !response.writableEnded) {
-        sendText(response, 500, "Internal Server Error");
+
+      const body = await readBody(
+        request,
+        this.#securityPolicy.requestBodyIdleTimeoutMs,
+        this.#securityPolicy.requestBodyTotalTimeoutMs,
+      );
+      if (body.kind === "too_large") {
+        sendText(response, 400, "Request body too large");
+        return;
       }
+      if (body.kind === "timeout") {
+        sendText(response, 408, "Request Timeout", true);
+        return;
+      }
+      if (body.kind === "aborted") {
+        if (!response.headersSent && !response.writableEnded) {
+          sendText(response, 400, "Bad Request", true);
+        }
+        return;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body.text);
+      } catch {
+        sendText(response, 400, "Invalid JSON");
+        return;
+      }
+      const message = JSONRPCMessageSchema.safeParse(parsed);
+      if (!message.success) {
+        sendText(response, 400, "Invalid JSON-RPC message");
+        return;
+      }
+
+      const authenticatedRequest = request as AuthenticatedIncomingMessage;
+      authenticatedRequest.auth = {
+        token: "[REDACTED]",
+        clientId: principal.principalId,
+        scopes: ["mcp"],
+      };
+      try {
+        await entry.transport.handlePostMessage(
+          authenticatedRequest,
+          response,
+          message.data,
+        );
+        if (
+          response.statusCode === 202 &&
+          this.#entries.get(sessionId) === entry
+        ) {
+          this.#refreshIdleTimer(sessionId, entry);
+        }
+      } catch {
+        this.#onDiagnostic?.({ code: "post_transport_closed" });
+        if (!response.headersSent && !response.writableEnded) {
+          sendText(response, 500, "Internal Server Error");
+        }
+      }
+    } finally {
+      this.#releasePostAdmission(admission);
     }
   }
 
@@ -407,6 +439,67 @@ export class LegacySseAdapter {
     }
   }
 
+  #admitPost(
+    principalId: string,
+    sessionId: string,
+  ): PostAdmission | undefined {
+    if (!this.#admitPostRate(principalId, sessionId)) return undefined;
+    const principalActive = this.#activePostsByPrincipal.get(principalId) ?? 0;
+    const sessionActive = this.#activePostsBySession.get(sessionId) ?? 0;
+    if (
+      this.#activePosts >= this.#securityPolicy.maxConcurrentPosts ||
+      principalActive >= this.#securityPolicy.maxConcurrentPostsPerPrincipal ||
+      sessionActive >= this.#securityPolicy.maxConcurrentPostsPerSession
+    ) {
+      return undefined;
+    }
+
+    this.#activePosts += 1;
+    this.#activePostsByPrincipal.set(principalId, principalActive + 1);
+    this.#activePostsBySession.set(sessionId, sessionActive + 1);
+    return { principalId, sessionId, released: false };
+  }
+
+  #admitPostRate(principalId: string, sessionId: string): boolean {
+    const now = this.#now();
+    const windowStartedAt = this.#postRateWindowStartedAt;
+    if (
+      windowStartedAt === undefined ||
+      now < windowStartedAt ||
+      now - windowStartedAt >= this.#securityPolicy.postRateWindowMs
+    ) {
+      this.#postRateWindowStartedAt = now;
+      this.#postRateCount = 0;
+      this.#postRateByPrincipal.clear();
+      this.#postRateBySession.clear();
+    }
+    if (this.#postRateCount >= this.#securityPolicy.postRateLimit) {
+      return false;
+    }
+
+    const principalCount = this.#postRateByPrincipal.get(principalId) ?? 0;
+    const sessionCount = this.#postRateBySession.get(sessionId) ?? 0;
+    this.#postRateCount += 1;
+    if (principalCount < this.#securityPolicy.postRateLimitPerPrincipal) {
+      this.#postRateByPrincipal.set(principalId, principalCount + 1);
+    }
+    if (sessionCount < this.#securityPolicy.postRateLimitPerSession) {
+      this.#postRateBySession.set(sessionId, sessionCount + 1);
+    }
+    return (
+      principalCount < this.#securityPolicy.postRateLimitPerPrincipal &&
+      sessionCount < this.#securityPolicy.postRateLimitPerSession
+    );
+  }
+
+  #releasePostAdmission(admission: PostAdmission): void {
+    if (admission.released) return;
+    admission.released = true;
+    this.#activePosts -= 1;
+    decrementCount(this.#activePostsByPrincipal, admission.principalId);
+    decrementCount(this.#activePostsBySession, admission.sessionId);
+  }
+
   #refreshIdleTimer(sessionId: string, entry: RoutingEntry): void {
     if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
     entry.idleTimer = setTimeout(() => {
@@ -450,6 +543,10 @@ export class LegacySseAdapter {
     }
     this.#globalOpenEvents.length = 0;
     this.#principalOpenEvents.clear();
+    this.#postRateCount = 0;
+    this.#postRateWindowStartedAt = undefined;
+    this.#postRateByPrincipal.clear();
+    this.#postRateBySession.clear();
     await Promise.all(
       entries.map(async ([, entry]) => {
         try {
@@ -480,7 +577,9 @@ function requestMatchesListenerPolicy(
     server.requestTimeout !== policy.requestBodyTotalTimeoutMs ||
     server.keepAliveTimeout !== policy.keepAliveTimeoutMs ||
     server.maxHeadersCount !== 64 ||
-    server.maxRequestsPerSocket !== 1_000
+    server.maxRequestsPerSocket !== 1_000 ||
+    server.maxConnections !== policy.maxConnections ||
+    !isImmutableConnectionCap(server, policy.maxConnections)
   ) {
     return false;
   }
@@ -519,8 +618,9 @@ function pruneTimestamps(events: number[], cutoff: number): void {
   while (events.length > 0 && events[0]! <= cutoff) events.shift();
 }
 
-function installBoundedSseWriter(
+export function installBoundedSseWriter(
   response: ServerResponse,
+  maxMessageBytes: number,
   maxBufferedBytes: number,
   backpressureTimeoutMs: number,
 ): () => void {
@@ -562,7 +662,10 @@ function installBoundedSseWriter(
     callback?: unknown,
   ): boolean => {
     const byteLength = responseChunkByteLength(chunk, encodingOrCallback);
-    if (response.writableLength + byteLength > maxBufferedBytes) {
+    if (
+      byteLength > maxMessageBytes ||
+      response.writableLength + byteLength > maxBufferedBytes
+    ) {
       failClosed();
       return false;
     }
@@ -595,6 +698,27 @@ function responseChunkByteLength(
   if (ArrayBuffer.isView(chunk)) return chunk.byteLength;
   if (chunk instanceof ArrayBuffer) return chunk.byteLength;
   return Number.POSITIVE_INFINITY;
+}
+
+function decrementCount(counts: Map<string, number>, key: string): void {
+  const count = counts.get(key) ?? 0;
+  if (count <= 1) {
+    counts.delete(key);
+  } else {
+    counts.set(key, count - 1);
+  }
+}
+
+function isImmutableConnectionCap(
+  server: LegacySseNodeServer,
+  expected: number,
+): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(server, "maxConnections");
+  return (
+    descriptor?.configurable === false &&
+    descriptor.writable === false &&
+    descriptor.value === expected
+  );
 }
 
 function singleHeader(

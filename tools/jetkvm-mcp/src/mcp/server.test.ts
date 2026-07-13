@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { readFileSync } from "node:fs";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -195,6 +197,73 @@ describe("createMcpServer", () => {
       isError: true,
       structuredContent: { ok: false },
     });
+  });
+
+  it("maps an authorized PNG capture end to end without duplicating image bytes", async () => {
+    const bytes = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    const data = Buffer.from(bytes).toString("base64");
+    const envelope = {
+      ok: true as const,
+      tool: "jetkvm_display_capture" as const,
+      operation_id: "operation-png",
+      session_id: "session-1",
+      session_generation: 1,
+      duration_ms: 1,
+      result: {
+        observation_id: "observation-png",
+        connection_epoch: 1,
+        display_generation: 1,
+        frame_id: "frame-png",
+        captured_at: "2026-07-13T00:00:00.000Z",
+        source_width: 1,
+        source_height: 1,
+        image_width: 1,
+        image_height: 1,
+        rotation: 0 as const,
+        geometry: {
+          content_x: 0,
+          content_y: 0,
+          content_width: 1,
+          content_height: 1,
+        },
+        image: {
+          content_index: 1,
+          mime_type: "image/png" as const,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          byte_length: bytes.byteLength,
+        },
+      },
+    };
+    const client = await connectedClient(
+      completeRegistry({
+        jetkvm_display_capture: async () => ({
+          structuredContent: envelope,
+          content: [
+            { type: "text", text: JSON.stringify(envelope) },
+            { type: "image", data, mimeType: "image/png" },
+          ],
+        }),
+      }),
+    );
+
+    const result = await client.callTool({
+      name: "jetkvm_display_capture",
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        format: "png",
+        timeout_ms: 100,
+      },
+    });
+
+    expect(result.content).toEqual([
+      { type: "text", text: JSON.stringify(envelope) },
+      { type: "image", data, mimeType: "image/png" },
+    ]);
+    expect(result.structuredContent).toEqual(envelope);
+    expect(JSON.stringify(result.structuredContent)).not.toContain(data);
   });
 
   it("passes only the application-owned allowlisted handler context", async () => {

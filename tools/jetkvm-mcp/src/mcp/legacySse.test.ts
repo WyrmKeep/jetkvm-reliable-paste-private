@@ -1,6 +1,8 @@
+import { EventEmitter } from "node:events";
 import {
   createServer,
   request as httpRequest,
+  type ClientRequest,
   type IncomingMessage,
   type Server,
 } from "node:http";
@@ -11,8 +13,9 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  activateIndependentLegacySseBearerCredential,
   DisposableSecret,
-  type LegacySseBearerCredential,
+  type IndependentLegacySseBearerCredential,
 } from "../browser/auth.js";
 import { parseLegacySsePolicy, type LegacySseConfigInput } from "../config.js";
 import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
@@ -21,7 +24,11 @@ import type {
   JetKvmHandlerContext,
   JetKvmToolHandler,
 } from "./server.js";
-import { LegacySseAdapter, type LegacySseAdapterOptions } from "./legacySse.js";
+import {
+  installBoundedSseWriter,
+  LegacySseAdapter,
+  type LegacySseAdapterOptions,
+} from "./legacySse.js";
 
 const AUTHORITY = "mcp.example.test";
 const ORIGIN = "https://client.example.test";
@@ -86,7 +93,8 @@ interface RunningAdapter {
   readonly adapter: LegacySseAdapter;
   readonly server: Server;
   readonly baseUrl: string;
-  readonly credential: LegacySseBearerCredential;
+  readonly targetSecret: DisposableSecret;
+  readonly credential: IndependentLegacySseBearerCredential;
 }
 
 interface OpenSse {
@@ -115,10 +123,14 @@ interface StartAdapterOptions extends Partial<LegacySseAdapterOptions> {
 async function startAdapter(
   options: StartAdapterOptions = {},
 ): Promise<RunningAdapter> {
-  const credential = {
-    principalId: PRINCIPAL,
-    secret: DisposableSecret.fromUtf8(TOKEN),
-  } satisfies LegacySseBearerCredential;
+  const targetSecret = DisposableSecret.fromUtf8("test-only-target");
+  const credential = activateIndependentLegacySseBearerCredential(
+    targetSecret,
+    {
+      principalId: PRINCIPAL,
+      secret: DisposableSecret.fromUtf8(TOKEN),
+    },
+  );
   const {
     policy: policyOverride = {},
     listenHost,
@@ -156,6 +168,7 @@ async function startAdapter(
     server,
     baseUrl: `http://127.0.0.1:${address.port}`,
     credential,
+    targetSecret,
   };
   running.push(value);
   return value;
@@ -163,6 +176,7 @@ async function startAdapter(
 
 async function closeRunning(value: RunningAdapter): Promise<void> {
   await value.adapter.close();
+  value.targetSecret.dispose();
   value.credential.secret.dispose();
   if (!value.server.listening) return;
   const closed = Promise.withResolvers<void>();
@@ -271,6 +285,40 @@ async function post(
     headers: { ...headers, "Content-Type": "application/json" },
     body,
   });
+}
+
+interface PendingPost {
+  readonly request: ClientRequest;
+  readonly response: Promise<TestHttpResponse>;
+}
+
+function beginPendingPost(
+  baseUrl: string,
+  endpoint: string,
+  headers: Record<string, string> = authorizedHeaders(),
+): PendingPost {
+  const url = new URL(`${baseUrl}${endpoint}`);
+  const responseReady = Promise.withResolvers<IncomingMessage>();
+  const request = httpRequest({
+    hostname: url.hostname,
+    port: url.port,
+    path: `${url.pathname}${url.search}`,
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+  });
+  request.once("response", responseReady.resolve);
+  request.once("error", responseReady.reject);
+  request.write("{");
+  const response = responseReady.promise.then(async (incoming) => {
+    incoming.setEncoding("utf8");
+    let body = "";
+    for await (const chunk of incoming) body += chunk;
+    return {
+      status: incoming.statusCode ?? 0,
+      text: async () => body,
+    };
+  });
+  return { request, response };
 }
 
 afterEach(async () => {
@@ -667,6 +715,44 @@ describe("legacy SSE adapter", () => {
     expect(transportFactory).not.toHaveBeenCalled();
   });
 
+  it("sets a finite immutable connection cap before listening", async () => {
+    const value = await startAdapter();
+    const descriptor = Object.getOwnPropertyDescriptor(
+      value.server,
+      "maxConnections",
+    );
+
+    expect(value.server.maxConnections).toBe(160);
+    expect(Number.isFinite(value.server.maxConnections)).toBe(true);
+    expect(descriptor).toMatchObject({
+      configurable: false,
+      writable: false,
+      value: 160,
+    });
+    expect(() => {
+      value.server.maxConnections = 1;
+    }).toThrow(TypeError);
+  });
+
+  it("rejects a concrete bearer that bypassed independent activation", () => {
+    const secret = DisposableSecret.fromUtf8(TOKEN);
+    expect(
+      () =>
+        new LegacySseAdapter({
+          securityPolicy: parseLegacySsePolicy({
+            bearerEnvironmentVariable: "JETKVM_TEST_SSE_BEARER",
+          }),
+          bearerCredential: {
+            principalId: PRINCIPAL,
+            secret,
+          } as never,
+        }),
+    ).toThrowError(
+      "Legacy SSE bearer credential must be independently activated",
+    );
+    secret.dispose();
+  });
+
   it("enforces global and per-principal stream concurrency before allocation", async () => {
     const streamClosed = Promise.withResolvers<void>();
     const transportFactory = vi.fn(
@@ -762,6 +848,213 @@ describe("legacy SSE adapter", () => {
     const afterWindow = await openSse(baseUrl);
     expect(transportFactory).toHaveBeenCalledTimes(2);
     afterWindow.response.destroy();
+  });
+
+  it("bounds concurrent POST work globally, per principal, and per session", async () => {
+    const globalRouted = Promise.withResolvers<void>();
+    const global = await startAdapter({
+      policy: {
+        maxConcurrentPosts: 1,
+        maxConcurrentPostsPerPrincipal: 1,
+        maxConcurrentPostsPerSession: 1,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId:
+          authorization === "Bearer second-token" ? "operator-b" : PRINCIPAL,
+      }),
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") globalRouted.resolve();
+      },
+    });
+    const globalFirstStream = await openSse(global.baseUrl);
+    const globalSecondStream = await openSse(
+      global.baseUrl,
+      authorizedHeaders("second-token"),
+    );
+    const globalPending = beginPendingPost(
+      global.baseUrl,
+      globalFirstStream.endpoint,
+    );
+    await globalRouted.promise;
+    const globallyLimited = await post(
+      global.baseUrl,
+      globalSecondStream.endpoint,
+      "{}",
+      authorizedHeaders("second-token"),
+    );
+    expect(globallyLimited.status).toBe(429);
+    expect(await globallyLimited.text()).toBe("Too Many Requests");
+    globalPending.request.destroy();
+    await globalPending.response.catch(() => undefined);
+    globalFirstStream.response.destroy();
+    globalSecondStream.response.destroy();
+
+    const principalRouted = Promise.withResolvers<void>();
+    const perPrincipal = await startAdapter({
+      policy: {
+        maxConcurrentPosts: 2,
+        maxConcurrentPostsPerPrincipal: 1,
+        maxConcurrentPostsPerSession: 1,
+      },
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") principalRouted.resolve();
+      },
+    });
+    const principalFirstStream = await openSse(perPrincipal.baseUrl);
+    const principalSecondStream = await openSse(perPrincipal.baseUrl);
+    const principalPending = beginPendingPost(
+      perPrincipal.baseUrl,
+      principalFirstStream.endpoint,
+    );
+    await principalRouted.promise;
+    const principalLimited = await post(
+      perPrincipal.baseUrl,
+      principalSecondStream.endpoint,
+      "{}",
+    );
+    expect(principalLimited.status).toBe(429);
+    expect(await principalLimited.text()).toBe("Too Many Requests");
+    principalPending.request.destroy();
+    await principalPending.response.catch(() => undefined);
+    principalFirstStream.response.destroy();
+    principalSecondStream.response.destroy();
+
+    const sessionRouted = Promise.withResolvers<void>();
+    const perSession = await startAdapter({
+      policy: {
+        maxConcurrentPosts: 2,
+        maxConcurrentPostsPerPrincipal: 2,
+        maxConcurrentPostsPerSession: 1,
+      },
+      onDiagnostic: (event) => {
+        if (event.code === "post_routed") sessionRouted.resolve();
+      },
+    });
+    const sessionStream = await openSse(perSession.baseUrl);
+    const sessionPending = beginPendingPost(
+      perSession.baseUrl,
+      sessionStream.endpoint,
+    );
+    await sessionRouted.promise;
+    const sessionLimited = await post(
+      perSession.baseUrl,
+      sessionStream.endpoint,
+      "{}",
+    );
+    expect(sessionLimited.status).toBe(429);
+    expect(await sessionLimited.text()).toBe("Too Many Requests");
+    sessionPending.request.destroy();
+    await sessionPending.response.catch(() => undefined);
+    sessionStream.response.destroy();
+  });
+
+  it("admits POST rate attempts after auth and before routing in fixed windows", async () => {
+    let now = 1_000;
+    const unknownA = "/messages?sessionId=00000000-0000-4000-8000-000000000001";
+    const unknownB = "/messages?sessionId=00000000-0000-4000-8000-000000000002";
+    const perSession = await startAdapter({
+      policy: {
+        postRateLimit: 10,
+        postRateLimitPerPrincipal: 10,
+        postRateLimitPerSession: 1,
+        postRateWindowMs: 100,
+      },
+      now: () => now,
+    });
+    const unauthenticated = await post(
+      perSession.baseUrl,
+      unknownA,
+      "{}",
+      authorizedHeaders("invalid"),
+    );
+    expect(unauthenticated.status).toBe(401);
+    expect((await post(perSession.baseUrl, unknownA, "{}")).status).toBe(404);
+    expect((await post(perSession.baseUrl, unknownA, "{}")).status).toBe(429);
+    expect((await post(perSession.baseUrl, unknownB, "{}")).status).toBe(404);
+    now += 100;
+    expect((await post(perSession.baseUrl, unknownA, "{}")).status).toBe(404);
+
+    const perPrincipal = await startAdapter({
+      policy: {
+        postRateLimit: 10,
+        postRateLimitPerPrincipal: 1,
+        postRateLimitPerSession: 10,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId:
+          authorization === "Bearer second-token" ? "operator-b" : PRINCIPAL,
+      }),
+    });
+    expect((await post(perPrincipal.baseUrl, unknownA, "{}")).status).toBe(404);
+    expect((await post(perPrincipal.baseUrl, unknownB, "{}")).status).toBe(429);
+    expect(
+      (
+        await post(
+          perPrincipal.baseUrl,
+          unknownB,
+          "{}",
+          authorizedHeaders("second-token"),
+        )
+      ).status,
+    ).toBe(404);
+
+    const global = await startAdapter({
+      policy: {
+        postRateLimit: 1,
+        postRateLimitPerPrincipal: 1,
+        postRateLimitPerSession: 1,
+      },
+      authenticateBearer: (authorization) => ({
+        principalId:
+          authorization === "Bearer second-token" ? "operator-b" : PRINCIPAL,
+      }),
+    });
+    expect((await post(global.baseUrl, unknownA, "{}")).status).toBe(404);
+    expect(
+      (
+        await post(
+          global.baseUrl,
+          unknownB,
+          "{}",
+          authorizedHeaders("second-token"),
+        )
+      ).status,
+    ).toBe(429);
+  });
+
+  it("releases POST concurrency after routing, validation, and accepted work", async () => {
+    const value = await startAdapter({
+      policy: {
+        maxConcurrentPosts: 1,
+        maxConcurrentPostsPerPrincipal: 1,
+        maxConcurrentPostsPerSession: 1,
+      },
+    });
+    const unknown = "/messages?sessionId=00000000-0000-4000-8000-000000000001";
+    expect((await post(value.baseUrl, unknown, "{}")).status).toBe(404);
+
+    const stream = await openSse(value.baseUrl);
+    const acceptedBody = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    const invalidMediaType = await testFetch(
+      `${value.baseUrl}${stream.endpoint}`,
+      {
+        method: "POST",
+        headers: authorizedHeaders(),
+        body: "{}",
+      },
+    );
+    expect(invalidMediaType.status).toBe(400);
+    expect(await invalidMediaType.text()).toBe("Invalid Content-Type");
+    expect(
+      (await post(value.baseUrl, stream.endpoint, acceptedBody)).status,
+    ).toBe(202);
+    expect(
+      (await post(value.baseUrl, stream.endpoint, acceptedBody)).status,
+    ).toBe(202);
+    stream.response.destroy();
   });
 
   it("expires idle streams with a refreshable timer", async () => {
@@ -904,6 +1197,7 @@ describe("legacy SSE adapter", () => {
     const streamClosed = Promise.withResolvers<void>();
     const { baseUrl } = await startAdapter({
       policy: {
+        maxResponseMessageBytes: 262_144,
         maxResponseBufferedBytes: 262_144,
         responseBackpressureTimeoutMs: 20,
       },
@@ -936,48 +1230,52 @@ describe("legacy SSE adapter", () => {
   });
 
   it("closes a backpressured SSE writer at its write deadline", async () => {
-    let transport: SSEServerTransport | undefined;
-    const streamClosed = Promise.withResolvers<void>();
-    const { baseUrl } = await startAdapter({
-      policy: {
-        maxResponseBufferedBytes: 1_048_576,
-        responseBackpressureTimeoutMs: 20,
-      },
-      transportFactory: (endpoint, response) => {
-        transport = new SSEServerTransport(endpoint, response);
-        return transport;
-      },
-      onDiagnostic: (event) => {
-        if (event.code === "transport_closed") streamClosed.resolve();
-      },
-    });
-    const stream = await openSse(baseUrl);
-    stream.response.pause();
-
     vi.useFakeTimers();
     try {
-      const sends = Array.from({ length: 12 }, (_, index) =>
-        transport!.send({
-          jsonrpc: "2.0",
-          method: "notifications/message",
-          params: { data: `${index}:${"x".repeat(60_000)}` },
-        }),
-      );
-      await Promise.all(sends);
-      await vi.advanceTimersByTimeAsync(20);
-      await streamClosed.promise;
+      const destroy = vi.fn();
+      const write = vi.fn(() => false);
+      const response = Object.assign(new EventEmitter(), {
+        destroy,
+        writableLength: 0,
+        write,
+      }) as unknown as Parameters<typeof installBoundedSseWriter>[0];
+      const cleanup = installBoundedSseWriter(response, 1_024, 4_096, 20);
+
+      expect(response.write("event: message\ndata: {}\n\n")).toBe(false);
+      expect(write).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(19);
+      expect(destroy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(destroy).toHaveBeenCalledTimes(1);
+      cleanup();
     } finally {
       vi.useRealTimers();
     }
+  });
 
-    await expect(
-      transport!.send({
-        jsonrpc: "2.0",
-        method: "notifications/message",
-        params: { data: "after-deadline" },
-      }),
-    ).rejects.toThrow("Not connected");
-    stream.response.destroy();
+  it("bounds one serialized message separately from total queued bytes", () => {
+    const fakeResponse = (writableLength: number) => {
+      const destroy = vi.fn();
+      const write = vi.fn(() => true);
+      const response = Object.assign(new EventEmitter(), {
+        destroy,
+        writableLength,
+        write,
+      }) as unknown as Parameters<typeof installBoundedSseWriter>[0];
+      return { destroy, response, write };
+    };
+
+    const oversizedMessage = fakeResponse(0);
+    installBoundedSseWriter(oversizedMessage.response, 4, 100, 20);
+    expect(oversizedMessage.response.write("12345")).toBe(false);
+    expect(oversizedMessage.write).not.toHaveBeenCalled();
+    expect(oversizedMessage.destroy).toHaveBeenCalledTimes(1);
+
+    const overflowingQueue = fakeResponse(8);
+    installBoundedSseWriter(overflowingQueue.response, 10, 10, 20);
+    expect(overflowingQueue.response.write("123")).toBe(false);
+    expect(overflowingQueue.write).not.toHaveBeenCalled();
+    expect(overflowingQueue.destroy).toHaveBeenCalledTimes(1);
   });
 
   it("routes two independent streams and closing one leaves the other working", async () => {

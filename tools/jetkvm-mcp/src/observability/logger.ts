@@ -1,9 +1,21 @@
 const REDACTED = "[REDACTED]";
 const SAFE_EVENT_NAME = /^[a-z][a-z0-9_.-]{0,63}$/u;
+const SAFE_ERROR_NAMES: Readonly<Record<string, true>> = {
+  AggregateError: true,
+  Error: true,
+  EvalError: true,
+  RangeError: true,
+  ReferenceError: true,
+  SyntaxError: true,
+  TypeError: true,
+  URIError: true,
+};
 const SENSITIVE_FIELD =
-  /(?:address|authorization|authority|base64|bearer|bytes|clipboard|content|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
+  /(?:address|authorization|authority|base64|bearer|bytes|clipboard|cookie|credential|endpoint|frame|host|ice|image|origin|password|paste|payload|proof|screenshot|sdp|secret|text|token|uri|url)/u;
 const SENSITIVE_STRING =
   /(?:\b(?:https?|wss?|file):\/\/|\bBearer\s+\S+|\b(?:[a-z0-9_]*(?:authorization|bearer|cookie|credential|password|secret|token)[a-z0-9_]*)\s*[:=]\s*\S+|\bcandidate:\d+|\ba=fingerprint:|(?:^|\r?\n)v=0(?:\r?\n|$)|data:image\/)/iu;
+const MALFORMED_QUOTED_SENSITIVE_FIELD =
+  /(?:\\?["'])[a-z0-9_.-]*(?:authorization|cookie|password|token|url)[a-z0-9_.-]*(?:\\?["'])\s*:/iu;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -85,7 +97,7 @@ function redactValue(value: unknown, ancestors: Set<object>): unknown {
     return value;
   }
   if (typeof value === "string") {
-    return SENSITIVE_STRING.test(value) ? REDACTED : value;
+    return redactString(value, ancestors);
   }
   if (typeof value === "bigint") {
     return value.toString(10);
@@ -97,15 +109,16 @@ function redactValue(value: unknown, ancestors: Set<object>): unknown {
   ) {
     return REDACTED;
   }
-  if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     return REDACTED;
   }
   if (value instanceof Date) {
     return value.toISOString();
   }
   if (value instanceof Error) {
+    const name = value.name;
     return {
-      name: value.name,
+      name: Object.hasOwn(SAFE_ERROR_NAMES, name) ? name : "Error",
       message: REDACTED,
     };
   }
@@ -119,12 +132,15 @@ function redactValue(value: unknown, ancestors: Set<object>): unknown {
       return value.map((item) => redactValue(item, ancestors));
     }
 
+    const redactData = isEncodedBinaryDataContainer(value);
+
     const redacted: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
       const normalizedKey = key.replace(/[^a-z0-9]/giu, "").toLowerCase();
-      redacted[key] = SENSITIVE_FIELD.test(normalizedKey)
-        ? REDACTED
-        : redactValue(nested, ancestors);
+      redacted[key] =
+        (key === "data" && redactData) || SENSITIVE_FIELD.test(normalizedKey)
+          ? REDACTED
+          : redactValue(nested, ancestors);
     }
     return redacted;
   } finally {
@@ -132,10 +148,35 @@ function redactValue(value: unknown, ancestors: Set<object>): unknown {
   }
 }
 
+function redactString(value: string, ancestors: Set<object>): string {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return JSON.stringify(redactValue(parsed, ancestors));
+  } catch {
+    return SENSITIVE_STRING.test(value) ||
+      MALFORMED_QUOTED_SENSITIVE_FIELD.test(value)
+      ? REDACTED
+      : value;
+  }
+}
+
+function isEncodedBinaryDataContainer(value: object): boolean {
+  if (!Object.hasOwn(value, "data")) {
+    return false;
+  }
+  const type = "type" in value ? value.type : undefined;
+  const mimeType = "mimeType" in value ? value.mimeType : undefined;
+  return (
+    type === "image" ||
+    type === "Buffer" ||
+    (typeof mimeType === "string" && /^image\/(?:jpeg|png)$/iu.test(mimeType))
+  );
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const prototype = Object.getPrototypeOf(value) as object | null;
+  const prototype: object | null = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }

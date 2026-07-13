@@ -5,7 +5,15 @@
     "branch:definitive-acknowledgement",
     "branch:partial-verification"
   ],
-  "tools": ["jetkvm_power_control"],
+  "tools": [
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect"
+  ],
   "environments": ["fake", "replay"],
   "preconditions": [
     {
@@ -22,6 +30,11 @@
       "id": "scenario-ready",
       "description": "The ATX sequence returns a definitive correlated serial receipt and the separate cached LED post-read can fail.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -29,8 +42,8 @@
       "id": "fail-post-ack-read",
       "after_step": "power-with-post-read-failure",
       "boundary": "during_verification",
-      "action": "Complete both serial writes and their correlated receipt, then fail the optional cached LED observation.",
-      "expected_effect": "The mutation remains applied with device_ack_only, is stored, and is never replayed."
+      "action": "After each linked mutation receives a definitive acknowledgement, fail its optional verification or post-operation read.",
+      "expected_effect": "The applied acknowledgement is preserved as device_ack_only and the mutation is not replayed."
     }
   ],
   "steps": [
@@ -47,6 +60,115 @@
       },
       "timeout_ms": 1000,
       "expect": "applied with device_ack_only and a separate unavailable or stale LED fact."
+    },
+    {
+      "id": "partial-verification-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-partial-verification-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_session_connect with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "partial-verification-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-partial-verification-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_session_reconnect with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-partial-verification-input-keyboard",
+        "request_id": "opaque-partial-verification-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_keyboard with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-partial-verification-input-mouse",
+        "request_id": "opaque-partial-verification-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_mouse with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-partial-verification-input-paste",
+        "request_id": "opaque-partial-verification-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_paste with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "partial-verification-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-partial-verification-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_release with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
+    },
+    {
+      "id": "partial-verification-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-partial-verification-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_power_control with device_ack_only verification preserved after the post-acknowledgement read fails, and zero replay."
     }
   ],
   "pass": [

@@ -101,6 +101,32 @@ describe("OperatorConfig", () => {
     expect(readCredential).not.toHaveBeenCalled();
   });
 
+  it("rejects target and bearer source identities before credential access", () => {
+    for (const input of [
+      {
+        credentialEnvironmentVariable: "SHARED_SECRET",
+        legacySse: { bearerEnvironmentVariable: "SHARED_SECRET" },
+      },
+      {
+        credentialFile: "/run/secrets/jetkvm",
+        legacySse: { bearerCredentialFile: "/run/secrets/jetkvm" },
+      },
+      {
+        credentialFile: "/run/secrets/../secrets/jetkvm",
+        legacySse: { bearerCredentialFile: "/run/secrets/jetkvm" },
+      },
+    ]) {
+      expect(() =>
+        parseOperatorConfig({
+          targetUrl: "https://jetkvm.lan",
+          ...input,
+        }),
+      ).toThrowError(
+        "Target and legacy SSE credential sources must be independent",
+      );
+    }
+  });
+
   it("parses the dangerous target HTTP environment opt-in with CLI precedence", () => {
     expect(() =>
       parseOperatorConfig(
@@ -178,15 +204,70 @@ describe("OperatorConfig", () => {
       streamOpenRateLimit: 120,
       streamOpenRateLimitPerPrincipal: 30,
       streamOpenRateWindowMs: 60_000,
+      maxConcurrentPosts: 64,
+      maxConcurrentPostsPerPrincipal: 16,
+      maxConcurrentPostsPerSession: 4,
+      postRateLimit: 600,
+      postRateLimitPerPrincipal: 120,
+      postRateLimitPerSession: 60,
+      postRateWindowMs: 60_000,
+      maxConnections: 160,
       sessionIdleTimeoutMs: 300_000,
       requestHeaderTimeoutMs: 10_000,
       keepAliveTimeoutMs: 5_000,
       requestBodyIdleTimeoutMs: 5_000,
       requestBodyTotalTimeoutMs: 30_000,
-      maxResponseBufferedBytes: 1_048_576,
+      maxResponseMessageBytes: 12_582_912,
+      maxResponseBufferedBytes: 16_777_216,
       responseBackpressureTimeoutMs: 5_000,
     });
   });
+
+  it.each([
+    ["image/jpeg", 2_097_152, 2_796_204, 382],
+    ["image/png", 8_388_608, 11_184_812, 380],
+  ] as const)(
+    "accepts a maximum legal %s result plus JSON and SSE framing",
+    (mimeType, rawImageBytes, expectedBase64Bytes, expectedOverhead) => {
+      const base64 = Buffer.alloc(rawImageBytes).toString("base64");
+      expect(Buffer.byteLength(base64)).toBe(expectedBase64Bytes);
+      expect(expectedBase64Bytes).toBe(4 * Math.ceil(rawImageBytes / 3));
+
+      const frame = `event: message\ndata: ${JSON.stringify({
+        jsonrpc: "2.0",
+        id: "capture-boundary",
+        result: {
+          content: [
+            { type: "text", text: JSON.stringify({ outcome: "applied" }) },
+            { type: "image", data: base64, mimeType },
+          ],
+          structuredContent: {
+            outcome: "applied",
+            image: {
+              content_index: 1,
+              mime_type: mimeType,
+              sha256: "f".repeat(64),
+              byte_length: rawImageBytes,
+            },
+          },
+        },
+      })}\n\n`;
+      const policy = parseOperatorConfig({
+        targetUrl: "https://jetkvm.lan",
+      }).legacySse;
+      const serializedBytes = Buffer.byteLength(frame);
+      const framingAndJsonBytes = serializedBytes - expectedBase64Bytes;
+
+      expect(framingAndJsonBytes).toBe(expectedOverhead);
+      expect(serializedBytes).toBe(expectedBase64Bytes + expectedOverhead);
+      expect(serializedBytes).toBeLessThanOrEqual(
+        policy.maxResponseMessageBytes,
+      );
+      expect(policy.maxResponseMessageBytes).toBeLessThanOrEqual(
+        policy.maxResponseBufferedBytes,
+      );
+    },
+  );
 
   it("rejects non-loopback SSE unless exposure, exact Host/Origin, and independent bearer are explicit", () => {
     const base = {
@@ -263,14 +344,25 @@ describe("OperatorConfig", () => {
       { maxConcurrentStreams: 0 },
       { maxConcurrentStreams: 2, maxConcurrentStreamsPerPrincipal: 3 },
       { streamOpenRateLimit: 2, streamOpenRateLimitPerPrincipal: 3 },
+      { maxConcurrentPosts: 0 },
+      { maxConcurrentPosts: 2, maxConcurrentPostsPerPrincipal: 3 },
+      { maxConcurrentPosts: 2, maxConcurrentPostsPerSession: 3 },
+      { postRateLimit: 2, postRateLimitPerPrincipal: 3 },
+      { postRateLimit: 2, postRateLimitPerSession: 3 },
+      { postRateWindowMs: 3_600_001 },
       { requestBodyIdleTimeoutMs: 100, requestBodyTotalTimeoutMs: 99 },
-      { maxResponseBufferedBytes: Number.POSITIVE_INFINITY },
+      { maxResponseMessageBytes: Number.POSITIVE_INFINITY },
+      {
+        maxResponseMessageBytes: 2_000_000,
+        maxResponseBufferedBytes: 1_999_999,
+      },
       { maxConcurrentStreams: 1_025 },
       { streamOpenRateLimit: 10_001 },
       { streamOpenRateWindowMs: 3_600_001 },
       { sessionIdleTimeoutMs: 3_600_001 },
       { requestBodyIdleTimeoutMs: 60_001 },
       { requestBodyTotalTimeoutMs: 120_001 },
+      { maxResponseMessageBytes: 16_777_217 },
       { maxResponseBufferedBytes: 16_777_217 },
       { responseBackpressureTimeoutMs: 60_001 },
       { requestHeaderTimeoutMs: 60_001 },

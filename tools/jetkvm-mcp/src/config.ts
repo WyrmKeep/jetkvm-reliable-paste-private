@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { resolve } from "node:path";
 import {
   selectCredentialSource,
   type CredentialSourceSelection,
@@ -13,21 +14,34 @@ const DEFAULT_SSE_MAX_CONCURRENT_STREAMS_PER_PRINCIPAL = 8;
 const DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT = 120;
 const DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT_PER_PRINCIPAL = 30;
 const DEFAULT_SSE_STREAM_OPEN_RATE_WINDOW_MS = 60_000;
+const DEFAULT_SSE_MAX_CONCURRENT_POSTS = 64;
+const DEFAULT_SSE_MAX_CONCURRENT_POSTS_PER_PRINCIPAL = 16;
+const DEFAULT_SSE_MAX_CONCURRENT_POSTS_PER_SESSION = 4;
+const DEFAULT_SSE_POST_RATE_LIMIT = 600;
+const DEFAULT_SSE_POST_RATE_LIMIT_PER_PRINCIPAL = 120;
+const DEFAULT_SSE_POST_RATE_LIMIT_PER_SESSION = 60;
+const DEFAULT_SSE_POST_RATE_WINDOW_MS = 60_000;
+const SSE_CONNECTION_RESERVE = 32;
 const DEFAULT_SSE_SESSION_IDLE_TIMEOUT_MS = 300_000;
 const DEFAULT_SSE_REQUEST_BODY_IDLE_TIMEOUT_MS = 5_000;
 const DEFAULT_SSE_REQUEST_HEADER_TIMEOUT_MS = 10_000;
 const DEFAULT_SSE_KEEP_ALIVE_TIMEOUT_MS = 5_000;
 const DEFAULT_SSE_REQUEST_BODY_TOTAL_TIMEOUT_MS = 30_000;
-const DEFAULT_SSE_MAX_RESPONSE_BUFFERED_BYTES = 1_048_576;
+const DEFAULT_SSE_MAX_RESPONSE_MESSAGE_BYTES = 12_582_912;
+const DEFAULT_SSE_MAX_RESPONSE_BUFFERED_BYTES = 16_777_216;
 const DEFAULT_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS = 5_000;
 const MAX_SSE_CONCURRENT_STREAMS = 1_024;
+const MAX_SSE_CONCURRENT_POSTS = 1_024;
 const MAX_SSE_STREAM_OPEN_RATE_LIMIT = 10_000;
+const MAX_SSE_POST_RATE_LIMIT = 10_000;
 const MAX_SSE_STREAM_OPEN_RATE_WINDOW_MS = 3_600_000;
+const MAX_SSE_POST_RATE_WINDOW_MS = 3_600_000;
 const MAX_SSE_SESSION_IDLE_TIMEOUT_MS = 3_600_000;
 const MAX_SSE_REQUEST_BODY_IDLE_TIMEOUT_MS = 60_000;
 const MAX_SSE_REQUEST_BODY_TOTAL_TIMEOUT_MS = 120_000;
 const MAX_SSE_REQUEST_HEADER_TIMEOUT_MS = 60_000;
 const MAX_SSE_KEEP_ALIVE_TIMEOUT_MS = 60_000;
+const MAX_SSE_RESPONSE_MESSAGE_BYTES = 16_777_216;
 const MAX_SSE_RESPONSE_BUFFERED_BYTES = 16_777_216;
 const MAX_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS = 60_000;
 const FORBIDDEN_PUBLIC_FIELD_NAMES: Readonly<Record<string, true>> = {
@@ -65,11 +79,19 @@ export interface LegacySseConfigInput {
   readonly streamOpenRateLimit?: number;
   readonly streamOpenRateLimitPerPrincipal?: number;
   readonly streamOpenRateWindowMs?: number;
+  readonly maxConcurrentPosts?: number;
+  readonly maxConcurrentPostsPerPrincipal?: number;
+  readonly maxConcurrentPostsPerSession?: number;
+  readonly postRateLimit?: number;
+  readonly postRateLimitPerPrincipal?: number;
+  readonly postRateLimitPerSession?: number;
+  readonly postRateWindowMs?: number;
   readonly sessionIdleTimeoutMs?: number;
   readonly requestBodyIdleTimeoutMs?: number;
   readonly requestHeaderTimeoutMs?: number;
   readonly keepAliveTimeoutMs?: number;
   readonly requestBodyTotalTimeoutMs?: number;
+  readonly maxResponseMessageBytes?: number;
   readonly maxResponseBufferedBytes?: number;
   readonly responseBackpressureTimeoutMs?: number;
 }
@@ -107,11 +129,20 @@ export interface LegacySseSecurityPolicy {
   readonly streamOpenRateLimit: number;
   readonly streamOpenRateLimitPerPrincipal: number;
   readonly streamOpenRateWindowMs: number;
+  readonly maxConcurrentPosts: number;
+  readonly maxConcurrentPostsPerPrincipal: number;
+  readonly maxConcurrentPostsPerSession: number;
+  readonly postRateLimit: number;
+  readonly postRateLimitPerPrincipal: number;
+  readonly postRateLimitPerSession: number;
+  readonly postRateWindowMs: number;
+  readonly maxConnections: number;
   readonly sessionIdleTimeoutMs: number;
   readonly requestBodyIdleTimeoutMs: number;
   readonly requestHeaderTimeoutMs: number;
   readonly keepAliveTimeoutMs: number;
   readonly requestBodyTotalTimeoutMs: number;
+  readonly maxResponseMessageBytes: number;
   readonly maxResponseBufferedBytes: number;
   readonly responseBackpressureTimeoutMs: number;
 }
@@ -168,6 +199,14 @@ export function parseOperatorConfig(
       DEFAULT_CREDENTIAL_ENVIRONMENT_VARIABLE,
   });
   const legacySse = parseLegacySsePolicy(input.legacySse);
+  if (
+    legacySse.bearerCredential !== null &&
+    credentialSourcesShareIdentity(credential, legacySse.bearerCredential)
+  ) {
+    throw new OperatorConfigError(
+      "Target and legacy SSE credential sources must be independent",
+    );
+  }
 
   return Object.freeze({
     targetUrl,
@@ -299,6 +338,70 @@ export function parseLegacySsePolicy(
     MAX_SSE_STREAM_OPEN_RATE_WINDOW_MS,
     "Legacy SSE stream opening rate window",
   );
+  const maxConcurrentPosts = positiveSafeInteger(
+    input.maxConcurrentPosts,
+    DEFAULT_SSE_MAX_CONCURRENT_POSTS,
+    MAX_SSE_CONCURRENT_POSTS,
+    "Legacy SSE maximum concurrent POST requests",
+  );
+  const maxConcurrentPostsPerPrincipal = positiveSafeInteger(
+    input.maxConcurrentPostsPerPrincipal,
+    DEFAULT_SSE_MAX_CONCURRENT_POSTS_PER_PRINCIPAL,
+    MAX_SSE_CONCURRENT_POSTS,
+    "Legacy SSE per-principal maximum concurrent POST requests",
+  );
+  if (maxConcurrentPostsPerPrincipal > maxConcurrentPosts) {
+    throw new OperatorConfigError(
+      "Legacy SSE per-principal POST concurrency cannot exceed the global limit",
+    );
+  }
+  const maxConcurrentPostsPerSession = positiveSafeInteger(
+    input.maxConcurrentPostsPerSession,
+    DEFAULT_SSE_MAX_CONCURRENT_POSTS_PER_SESSION,
+    MAX_SSE_CONCURRENT_POSTS,
+    "Legacy SSE per-session maximum concurrent POST requests",
+  );
+  if (maxConcurrentPostsPerSession > maxConcurrentPosts) {
+    throw new OperatorConfigError(
+      "Legacy SSE per-session POST concurrency cannot exceed the global limit",
+    );
+  }
+  const postRateLimit = positiveSafeInteger(
+    input.postRateLimit,
+    DEFAULT_SSE_POST_RATE_LIMIT,
+    MAX_SSE_POST_RATE_LIMIT,
+    "Legacy SSE POST rate limit",
+  );
+  const postRateLimitPerPrincipal = positiveSafeInteger(
+    input.postRateLimitPerPrincipal,
+    DEFAULT_SSE_POST_RATE_LIMIT_PER_PRINCIPAL,
+    MAX_SSE_POST_RATE_LIMIT,
+    "Legacy SSE per-principal POST rate limit",
+  );
+  if (postRateLimitPerPrincipal > postRateLimit) {
+    throw new OperatorConfigError(
+      "Legacy SSE per-principal POST rate cannot exceed the global limit",
+    );
+  }
+  const postRateLimitPerSession = positiveSafeInteger(
+    input.postRateLimitPerSession,
+    DEFAULT_SSE_POST_RATE_LIMIT_PER_SESSION,
+    MAX_SSE_POST_RATE_LIMIT,
+    "Legacy SSE per-session POST rate limit",
+  );
+  if (postRateLimitPerSession > postRateLimit) {
+    throw new OperatorConfigError(
+      "Legacy SSE per-session POST rate cannot exceed the global limit",
+    );
+  }
+  const postRateWindowMs = positiveSafeInteger(
+    input.postRateWindowMs,
+    DEFAULT_SSE_POST_RATE_WINDOW_MS,
+    MAX_SSE_POST_RATE_WINDOW_MS,
+    "Legacy SSE POST rate window",
+  );
+  const maxConnections =
+    maxConcurrentStreams + maxConcurrentPosts + SSE_CONNECTION_RESERVE;
   const sessionIdleTimeoutMs = positiveSafeInteger(
     input.sessionIdleTimeoutMs,
     DEFAULT_SSE_SESSION_IDLE_TIMEOUT_MS,
@@ -339,12 +442,23 @@ export function parseLegacySsePolicy(
       "Legacy SSE request body idle timeout cannot exceed its total timeout",
     );
   }
+  const maxResponseMessageBytes = positiveSafeInteger(
+    input.maxResponseMessageBytes,
+    DEFAULT_SSE_MAX_RESPONSE_MESSAGE_BYTES,
+    MAX_SSE_RESPONSE_MESSAGE_BYTES,
+    "Legacy SSE maximum serialized response message",
+  );
   const maxResponseBufferedBytes = positiveSafeInteger(
     input.maxResponseBufferedBytes,
     DEFAULT_SSE_MAX_RESPONSE_BUFFERED_BYTES,
     MAX_SSE_RESPONSE_BUFFERED_BYTES,
     "Legacy SSE maximum response buffer",
   );
+  if (maxResponseMessageBytes > maxResponseBufferedBytes) {
+    throw new OperatorConfigError(
+      "Legacy SSE maximum response message cannot exceed the response buffer",
+    );
+  }
   const responseBackpressureTimeoutMs = positiveSafeInteger(
     input.responseBackpressureTimeoutMs,
     DEFAULT_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS,
@@ -368,9 +482,18 @@ export function parseLegacySsePolicy(
     streamOpenRateLimit,
     streamOpenRateLimitPerPrincipal,
     streamOpenRateWindowMs,
+    maxConcurrentPosts,
+    maxConcurrentPostsPerPrincipal,
+    maxConcurrentPostsPerSession,
+    postRateLimit,
+    postRateLimitPerPrincipal,
+    postRateLimitPerSession,
+    postRateWindowMs,
+    maxConnections,
     sessionIdleTimeoutMs,
     requestBodyIdleTimeoutMs,
     requestBodyTotalTimeoutMs,
+    maxResponseMessageBytes,
     maxResponseBufferedBytes,
     requestHeaderTimeoutMs,
     keepAliveTimeoutMs,
@@ -545,6 +668,18 @@ function positiveSafeInteger(
     );
   }
   return resolved;
+}
+
+function credentialSourcesShareIdentity(
+  target: CredentialSourceSelection,
+  bearer: CredentialSourceSelection,
+): boolean {
+  if (target.environmentVariable === bearer.environmentVariable) return true;
+  return (
+    target.filePath !== undefined &&
+    bearer.filePath !== undefined &&
+    resolve(target.filePath) === resolve(bearer.filePath)
+  );
 }
 
 function parseOptionalBoolean(

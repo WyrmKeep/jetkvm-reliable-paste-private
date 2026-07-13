@@ -556,7 +556,7 @@ type Result = MutationState & {
 };
 ```
 
-The server issues the output `session_id` and generation in the common envelope. It uses only the operator-configured URL/credential. Required permission is `session.connect`; `takeover:true` additionally requires `session.takeover`. Capability or compatibility failure returns the precise missing item. Connect never steals unless both explicit takeover and permission are present.
+The server issues the output `session_id` and generation in the common envelope. It uses only the operator-configured URL/credential. Required permission is `session.connect`; `takeover:true` additionally requires `session.takeover`. Connect-time auth, UI, firmware, browser, WebRTC, or reachability compatibility failures use their precise dedicated error codes (`AUTH_FAILED`, `UNSUPPORTED_UI_VERSION`, `FIRMWARE_INCOMPATIBLE`, `BROWSER_UNSUPPORTED`, or the applicable connection error), because those prerequisites are not `CapabilityName` snapshot keys. `CAPABILITY_MISSING` is not a legal connect error. Connect never steals unless both explicit takeover and permission are present.
 
 Connect is an idempotent mutation. Reusing the same connect `request_id` and normalized input returns the same issued session with `already_applied`; it never creates or takes over a second session.
 
@@ -633,7 +633,7 @@ type Result = MutationState & {
 };
 ```
 
-Required permission is `session.reconnect`; takeover additionally requires `session.takeover`. Reconnect closes/quiesces the old generation before publishing the new one and never replays an interrupted mutation. All old observations become stale. Input is blocked until a fresh capture on the new generation.
+Required permission is `session.reconnect`; takeover additionally requires `session.takeover`. Reconnect-time auth, UI, firmware, browser, WebRTC, or reachability compatibility failures use the same precise dedicated codes as connect; `CAPABILITY_MISSING` is not legal because those prerequisites are not `CapabilityName` snapshot keys. Reconnect closes/quiesces the old generation before publishing the new one and never replays an interrupted mutation. All old observations become stale. Input is blocked until a fresh capture on the new generation.
 
 The result is not inferred from automatic native-process restart, successful input quiesce, takeover cleanup, or an ICE close. It requires new WebRTC/RPC/HID/browser-channel observations from the new generation.
 
@@ -675,7 +675,7 @@ type Result = {
 };
 ```
 
-Read-only, required permission `display.capture`, required capability `display_capture`. JPEG preserves aspect ratio, does not crop or upscale, defaults to quality 88, and is limited to 2 MiB before base64. Capture is the only way to establish an input observation fence.
+Read-only, required permission `display.capture`, required capability `display_capture`. Both formats preserve aspect ratio, do not crop or upscale. JPEG defaults to quality 88 and is limited to 2 MiB before base64. PNG is limited to 8 MiB before base64 so the lossless 1920×1080 RGBA8 path and every transport remain explicitly bounded. Capture is the only way to establish an input observation fence.
 
 ### 9.5 `jetkvm_display_status`
 
@@ -973,7 +973,7 @@ Every public handler must have a manifest-linked unit/adapter assertion for ever
 |---|---|
 | strict schema rejection | no controller/plane call |
 | permission denied | actionable `PERMISSION_DENIED`, no capability disclosure, no write |
-| capability missing | actionable `CAPABILITY_MISSING`, no mutation |
+| capability missing | actionable `CAPABILITY_MISSING`, no mutation; applicable only when the tool's §10 requirement is a `CapabilityName` snapshot key—connect/reconnect compatibility failures instead use their dedicated precise codes |
 | deadline before admission | `not_sent`, queue/reservation released |
 | cancellation before write | `not_sent`, zero downstream writes |
 | disconnect before write | `not_sent`, safe retry classification |

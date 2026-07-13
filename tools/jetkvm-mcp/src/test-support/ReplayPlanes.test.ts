@@ -308,6 +308,338 @@ describe("sanitized versioned replay tapes", () => {
       ).toThrow(/invalid sanitized replay tape/i);
     }
   });
+
+  it("accepts every production DeviceRpc error discriminant and rejects code-boundary substitutions", () => {
+    const notSent = (
+      code: string,
+      boundary: "admission" | "queue" | "send",
+    ) => ({
+      code,
+      boundary,
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+    });
+    const unknown = (code: string) => ({
+      code,
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+      verification: "none",
+    });
+    const readRequest = { ref: binding };
+    const atxRequest = {
+      ref: binding,
+      request: { requestId: "power-a", action: "press_power" },
+    };
+    const legal = [
+      ["readEdid", readRequest, notSent("INVALID_BINDING", "admission")],
+      ["readEdid", readRequest, notSent("INVALID_DEADLINE", "admission")],
+      ["readEdid", readRequest, notSent("STALE_BINDING", "admission")],
+      ["performAtx", atxRequest, notSent("INVALID_REQUEST", "admission")],
+      ["readEdid", readRequest, notSent("BINDING_REPLACED", "queue")],
+      ["readEdid", readRequest, notSent("BINDING_REPLACED", "send")],
+      ["readEdid", readRequest, unknown("BINDING_REPLACED")],
+      ["readEdid", readRequest, notSent("CANCELLED", "admission")],
+      ["readEdid", readRequest, notSent("CANCELLED", "queue")],
+      ["readEdid", readRequest, notSent("CANCELLED", "send")],
+      ["readEdid", readRequest, unknown("CANCELLED")],
+      ["readEdid", readRequest, notSent("DEADLINE_EXCEEDED", "queue")],
+      ["readEdid", readRequest, notSent("DEADLINE_EXCEEDED", "send")],
+      ["readEdid", readRequest, unknown("DEADLINE_EXCEEDED")],
+      ["readEdid", readRequest, notSent("CONNECTION_LOST", "admission")],
+      ["readEdid", readRequest, notSent("CONNECTION_LOST", "queue")],
+      ["readEdid", readRequest, notSent("CONNECTION_LOST", "send")],
+      ["readEdid", readRequest, unknown("CONNECTION_LOST")],
+      ["readEdid", readRequest, notSent("WRITE_REJECTED", "send")],
+      ["readEdid", readRequest, notSent("MALFORMED_RESPONSE", "send")],
+      ["readEdid", readRequest, unknown("MALFORMED_RESPONSE")],
+      ["readEdid", readRequest, unknown("DUPLICATE_RESPONSE")],
+      ["readEdid", readRequest, unknown("DOWNSTREAM_ERROR")],
+    ] as const;
+
+    for (const [operation, request, error] of legal) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "device_rpc",
+          exchanges: [{ operation, request, error }],
+        }),
+      ).not.toThrow();
+    }
+
+    const illegal = [
+      ["readEdid", readRequest, unknown("STALE_BINDING")],
+      ["readEdid", readRequest, notSent("INVALID_BINDING", "queue")],
+      ["readEdid", readRequest, unknown("INVALID_DEADLINE")],
+      ["readEdid", readRequest, notSent("INVALID_REQUEST", "admission")],
+      ["readEdid", readRequest, notSent("BINDING_REPLACED", "admission")],
+      ["readEdid", readRequest, notSent("DEADLINE_EXCEEDED", "admission")],
+      [
+        "readEdid",
+        readRequest,
+        {
+          code: "CONNECTION_LOST",
+          boundary: "persisted",
+          outcome: "applied",
+          writeBegan: true,
+          acknowledged: true,
+          verification: "device_ack_only",
+        },
+      ],
+      ["readEdid", readRequest, unknown("WRITE_REJECTED")],
+      [
+        "readEdid",
+        readRequest,
+        {
+          code: "MALFORMED_RESPONSE",
+          boundary: "post_ack",
+          outcome: "applied",
+          writeBegan: true,
+          acknowledged: true,
+          verification: "device_ack_only",
+        },
+      ],
+      ["readEdid", readRequest, notSent("DUPLICATE_RESPONSE", "send")],
+      ["readEdid", readRequest, notSent("DOWNSTREAM_ERROR", "send")],
+    ] as const;
+
+    for (const [operation, request, error] of illegal) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "device_rpc",
+          exchanges: [{ operation, request, error }],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
+
+  it("constrains high-level replay errors by plane, operation, and exact counts", () => {
+    const cases = [
+      {
+        accepted: true,
+        plane: "browser",
+        operation: "connect",
+        request: { ref },
+        error: {
+          code: "CONTROL_BUSY",
+          boundary: "admission",
+          outcome: "not_sent",
+          writeBegan: false,
+          acknowledged: false,
+          verification: "none",
+        },
+      },
+      {
+        accepted: true,
+        plane: "browser",
+        operation: "mouse",
+        request: {
+          ref,
+          request: {
+            observationId: "observation-a",
+            requestId: "request-a",
+            actions: [{ type: "move", x: 1, y: 2 }],
+          },
+        },
+        error: {
+          code: "PARTIAL_DISPATCH",
+          boundary: "ack",
+          outcome: "unknown",
+          writeBegan: true,
+          acknowledged: false,
+          verification: "none",
+          dispatchedCount: 2,
+          completedCount: 1,
+        },
+      },
+      {
+        accepted: true,
+        plane: "native",
+        operation: "powerControl",
+        request: {
+          ref,
+          request: { requestId: "power-a", action: "press_power" },
+        },
+        error: {
+          code: "POST_ACK_READ_FAILED",
+          boundary: "post_ack",
+          outcome: "applied",
+          writeBegan: true,
+          acknowledged: true,
+          verification: "device_ack_only",
+        },
+      },
+      {
+        accepted: false,
+        plane: "browser",
+        operation: "capture",
+        request: {
+          ref,
+          request: { requestId: "capture-a", format: "jpeg", quality: 80 },
+        },
+        error: {
+          code: "PARTIAL_DISPATCH",
+          boundary: "ack",
+          outcome: "unknown",
+          writeBegan: true,
+          acknowledged: false,
+          verification: "none",
+        },
+      },
+      {
+        accepted: false,
+        plane: "browser",
+        operation: "release",
+        request: { ref, request: { requestId: "release-a" } },
+        error: {
+          code: "FRESH_CAPTURE_REQUIRED",
+          boundary: "admission",
+          outcome: "not_sent",
+          writeBegan: false,
+          acknowledged: false,
+          verification: "none",
+          dispatchedCount: 0,
+          completedCount: 0,
+        },
+      },
+      {
+        accepted: false,
+        plane: "native",
+        operation: "displayStatus",
+        request: { ref },
+        error: {
+          code: "POST_ACK_READ_FAILED",
+          boundary: "post_ack",
+          outcome: "applied",
+          writeBegan: true,
+          acknowledged: true,
+          verification: "device_ack_only",
+        },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const validate = () =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: testCase.plane,
+          exchanges: [
+            {
+              operation: testCase.operation,
+              request: testCase.request,
+              error: testCase.error,
+            },
+          ],
+        });
+      if (testCase.accepted) expect(validate).not.toThrow();
+      else expect(validate).toThrow(/invalid sanitized replay tape/i);
+    }
+
+    const mouseRequest = {
+      ref,
+      request: {
+        observationId: "observation-a",
+        requestId: "request-a",
+        actions: [{ type: "move", x: 1, y: 2 }],
+      },
+    };
+    const impossibleCounts = [
+      {
+        code: "CONNECTION_LOST",
+        boundary: "send",
+        outcome: "not_sent",
+        writeBegan: false,
+        acknowledged: false,
+        verification: "none",
+        dispatchedCount: 1,
+        completedCount: 0,
+      },
+      {
+        code: "PARTIAL_DISPATCH",
+        boundary: "ack",
+        outcome: "unknown",
+        writeBegan: true,
+        acknowledged: false,
+        verification: "none",
+        dispatchedCount: 1,
+        completedCount: 1,
+      },
+      {
+        code: "POST_ACK_READ_FAILED",
+        boundary: "post_ack",
+        outcome: "applied",
+        writeBegan: true,
+        acknowledged: true,
+        verification: "device_ack_only",
+        dispatchedCount: 2,
+        completedCount: 1,
+      },
+    ] as const;
+
+    for (const error of impossibleCounts) {
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([{ operation: "mouse", request: mouseRequest, error }]),
+        ),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
+
+  it("requires every replayed ATX receipt to correlate and use the exact semantic wire mapping", () => {
+    const semantics = [
+      ["press_power", "power-short", 200],
+      ["hold_power", "power-long", 5000],
+      ["press_reset", "reset", 200],
+    ] as const;
+
+    for (const [action, wireAction, fixedPressMs] of semantics) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "device_rpc",
+          exchanges: [
+            {
+              operation: "performAtx",
+              request: {
+                ref: binding,
+                request: { requestId: `request-${action}`, action },
+              },
+              response: {
+                ...atx,
+                requestId: `request-${action}`,
+                action,
+                wireAction,
+                fixedPressMs,
+              },
+            },
+          ],
+        }),
+      ).not.toThrow();
+    }
+
+    const request = {
+      ref: binding,
+      request: { requestId: "power-a", action: "press_power" },
+    };
+    for (const response of [
+      { ...atx, requestId: "power-b" },
+      { ...atx, action: "hold_power" },
+      { ...atx, wireAction: "reset" },
+      { ...atx, fixedPressMs: 5000 },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "device_rpc",
+          exchanges: [{ operation: "performAtx", request, response }],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
 });
 
 function jsonValue(value: unknown): JsonValue {

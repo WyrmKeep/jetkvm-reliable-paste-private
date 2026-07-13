@@ -71,10 +71,12 @@ export const BEHAVIOR_REQUIREMENT_IDS = [
 
 type ApplicableBehaviorCell = {
   applicability: "applicable";
+  coverage_scope: "tool" | "shared_transport";
   story_id: (typeof CANONICAL_STORY_IDS)[number];
   step_id: string;
   fault_id: string;
   assertion_id: string;
+  focused_assertion_id: string;
 };
 
 type NotApplicableBehaviorCell = {
@@ -93,9 +95,16 @@ export type ToolBehaviorMatrixRow = {
 
 export type ToolBehaviorMatrix = readonly ToolBehaviorMatrixRow[];
 
+type MatrixApplicableLink = Omit<
+  ApplicableBehaviorCell,
+  "coverage_scope" | "focused_assertion_id"
+> & {
+  coverage_scope?: "shared_transport";
+};
+
 type MatrixDefinition = {
   requirement: (typeof BEHAVIOR_REQUIREMENT_IDS)[number];
-  applicable: Partial<Readonly<Record<JetKvmToolName, ApplicableBehaviorCell>>>;
+  applicable: Partial<Readonly<Record<JetKvmToolName, MatrixApplicableLink>>>;
   not_applicable: Partial<
     Readonly<Record<JetKvmToolName, NotApplicableBehaviorCell>>
   >;
@@ -119,7 +128,7 @@ function linked(
   step_id: string,
   fault_id: string,
   assertion_id: string,
-): ApplicableBehaviorCell {
+): MatrixApplicableLink {
   return {
     applicability: "applicable",
     story_id: CANONICAL_STORY_IDS[storyIndex]!,
@@ -127,6 +136,31 @@ function linked(
     fault_id,
     assertion_id,
   };
+}
+
+function toolSlug(tool: JetKvmToolName): string {
+  return tool.replaceAll("_", "-");
+}
+
+function requirementSlug(
+  requirement: (typeof BEHAVIOR_REQUIREMENT_IDS)[number],
+): string {
+  return requirement.replace("branch:", "");
+}
+
+function focusedAssertionId(
+  tool: JetKvmToolName,
+  requirement: (typeof BEHAVIOR_REQUIREMENT_IDS)[number],
+  coverageScope: ApplicableBehaviorCell["coverage_scope"],
+): string {
+  const layer =
+    coverageScope === "shared_transport"
+      ? "transport"
+      : requirement.startsWith("branch:device-rpc-adapter-") ||
+          requirement === "branch:shared-device-rpc-adapter-binding"
+        ? "adapter"
+        : "unit";
+  return `${layer}:${toolSlug(tool)}:${requirementSlug(requirement)}`;
 }
 
 function reviewed(
@@ -139,123 +173,153 @@ function reviewed(
   };
 }
 
-function forEveryTool(
-  cell: ApplicableBehaviorCell,
+function linkedForTools(
+  tools: readonly JetKvmToolName[],
+  storyIndex: number,
+  stepPrefix: string,
+  faultId: string,
+  assertionId: string,
 ): MatrixDefinition["applicable"] {
   return Object.fromEntries(
-    JETKVM_TOOL_NAMES.map((tool) => [tool, { ...cell }]),
-  ) as Record<JetKvmToolName, ApplicableBehaviorCell>;
+    tools.map((tool) => [
+      tool,
+      linked(
+        storyIndex,
+        `${stepPrefix}-${toolSlug(tool)}`,
+        faultId,
+        assertionId,
+      ),
+    ]),
+  ) as MatrixDefinition["applicable"];
+}
+
+function forEveryTool(
+  storyIndex: number,
+  stepPrefix: string,
+  faultId: string,
+  assertionId: string,
+): MatrixDefinition["applicable"] {
+  return linkedForTools(
+    JETKVM_TOOL_NAMES,
+    storyIndex,
+    stepPrefix,
+    faultId,
+    assertionId,
+  );
+}
+
+function sharedTransportForEveryTool(
+  cell: MatrixApplicableLink,
+): MatrixDefinition["applicable"] {
+  return Object.fromEntries(
+    JETKVM_TOOL_NAMES.map((tool) => [
+      tool,
+      { ...cell, coverage_scope: "shared_transport" },
+    ]),
+  ) as MatrixDefinition["applicable"];
 }
 
 const MATRIX_DEFINITIONS = [
   {
     requirement: "branch:strict-schema-rejection",
     applicable: forEveryTool(
-      linked(
-        0,
-        "reject-strict-schema",
-        "strict-schema-before-controller",
-        "assertion-1",
-      ),
+      0,
+      "reject-strict-schema",
+      "strict-schema-before-controller",
+      "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:permission-denied",
     applicable: forEveryTool(
-      linked(
-        14,
-        "status-without-permission",
-        "deny-then-remove-capability",
-        "assertion-1",
-      ),
+      14,
+      "status-without-permission",
+      "deny-then-remove-capability",
+      "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:capability-missing",
-    applicable: forEveryTool(
-      linked(
-        14,
-        "keyboard-without-capability",
-        "deny-then-remove-capability",
-        "assertion-2",
+    applicable: linkedForTools(
+      JETKVM_TOOL_NAMES.filter(
+        (tool) => tool !== T.connect && tool !== T.reconnect,
       ),
+      14,
+      "keyboard-without-capability",
+      "deny-then-remove-capability",
+      "assertion-2",
     ),
-    not_applicable: {},
+    not_applicable: {
+      [T.connect]: reviewed(
+        T.connect,
+        "connect compatibility failures use dedicated AUTH_FAILED, UNSUPPORTED_UI_VERSION, FIRMWARE_INCOMPATIBLE, BROWSER_UNSUPPORTED, or reachability codes because auth, UI, and WebRTC are not CapabilityName keys.",
+      ),
+      [T.reconnect]: reviewed(
+        T.reconnect,
+        "reconnect compatibility failures use dedicated AUTH_FAILED, UNSUPPORTED_UI_VERSION, FIRMWARE_INCOMPATIBLE, BROWSER_UNSUPPORTED, or reachability codes because auth, UI, and WebRTC are not CapabilityName keys.",
+      ),
+    },
   },
   {
     requirement: "branch:deadline-before-admission",
     applicable: forEveryTool(
-      linked(
-        0,
-        "deadline-before-admission",
-        "expire-before-admission",
-        "assertion-2",
-      ),
+      0,
+      "deadline-before-admission",
+      "expire-before-admission",
+      "assertion-2",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:cancellation-before-write",
     applicable: forEveryTool(
-      linked(
-        5,
-        "cancel-before-write",
-        "cancel-before-mouse-write",
-        "assertion-1",
-      ),
+      5,
+      "cancel-before-write",
+      "cancel-before-mouse-write",
+      "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:disconnect-before-write",
     applicable: forEveryTool(
-      linked(
-        10,
-        "mouse-before-write-loss",
-        "disconnect-at-prewrite",
-        "assertion-1",
-      ),
+      10,
+      "mouse-before-write-loss",
+      "disconnect-at-prewrite",
+      "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:disconnect-after-write",
     applicable: forEveryTool(
-      linked(
-        11,
-        "power-after-write-loss",
-        "disconnect-at-postwrite",
-        "assertion-1",
-      ),
+      11,
+      "power-after-write-loss",
+      "disconnect-at-postwrite",
+      "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:malformed-downstream-response",
     applicable: forEveryTool(
-      linked(
-        13,
-        "malformed-display-status",
-        "malformed-boundary-cases",
-        "assertion-1",
-      ),
+      13,
+      "malformed-display-status",
+      "malformed-boundary-cases",
+      "assertion-1",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:stale-session-generation",
-    applicable: Object.fromEntries(
-      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.connect).map((tool) => [
-        tool,
-        linked(
-          15,
-          "stale-keyboard-generation",
-          "retain-prior-generation",
-          "assertion-1",
-        ),
-      ]),
+    applicable: linkedForTools(
+      JETKVM_TOOL_NAMES.filter((tool) => tool !== T.connect),
+      15,
+      "stale-keyboard-generation",
+      "retain-prior-generation",
+      "assertion-1",
     ),
     not_applicable: {
       [T.connect]: reviewed(
@@ -269,13 +333,13 @@ const MATRIX_DEFINITIONS = [
     applicable: {
       [T.connect]: linked(
         0,
-        "connect-without-takeover",
+        "retry-expired-connect-request",
         "incumbent-busy",
         "assertion-3",
       ),
       [T.reconnect]: linked(
         0,
-        "connect-without-takeover",
+        "reconnect-without-takeover",
         "incumbent-busy",
         "assertion-3",
       ),
@@ -326,7 +390,7 @@ const MATRIX_DEFINITIONS = [
       ),
       [T.reconnect]: linked(
         1,
-        "authorized-takeover",
+        "authorized-reconnect-takeover",
         "alternate-takeover-permission",
         "assertion-2",
       ),
@@ -377,7 +441,7 @@ const MATRIX_DEFINITIONS = [
       ),
       [T.reconnect]: linked(
         1,
-        "denied-takeover",
+        "denied-reconnect-takeover",
         "alternate-takeover-permission",
         "assertion-3",
       ),
@@ -419,7 +483,7 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:definitive-acknowledgement",
-    applicable: Object.fromEntries(
+    applicable: linkedForTools(
       [
         T.connect,
         T.reconnect,
@@ -428,10 +492,11 @@ const MATRIX_DEFINITIONS = [
         T.paste,
         T.release,
         T.power,
-      ].map((tool) => [
-        tool,
-        linked(9, "press-power", "fixed-atx-sequence", "assertion-1"),
-      ]),
+      ],
+      9,
+      "definitive-acknowledgement",
+      "fixed-atx-sequence",
+      "assertion-1",
     ),
     not_applicable: {
       [T.capture]: reviewed(
@@ -450,7 +515,7 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:duplicate-same-request-digest",
-    applicable: Object.fromEntries(
+    applicable: linkedForTools(
       [
         T.connect,
         T.reconnect,
@@ -459,10 +524,11 @@ const MATRIX_DEFINITIONS = [
         T.paste,
         T.release,
         T.power,
-      ].map((tool) => [
-        tool,
-        linked(12, "same-release-request", "repeat-ledger-key", "assertion-1"),
-      ]),
+      ],
+      12,
+      "duplicate-same-request-digest",
+      "repeat-ledger-key",
+      "assertion-1",
     ),
     not_applicable: {
       [T.capture]: reviewed(
@@ -481,7 +547,7 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:duplicate-changed-digest",
-    applicable: Object.fromEntries(
+    applicable: linkedForTools(
       [
         T.connect,
         T.reconnect,
@@ -490,15 +556,11 @@ const MATRIX_DEFINITIONS = [
         T.paste,
         T.release,
         T.power,
-      ].map((tool) => [
-        tool,
-        linked(
-          12,
-          "changed-release-request",
-          "repeat-ledger-key",
-          "assertion-2",
-        ),
-      ]),
+      ],
+      12,
+      "duplicate-changed-digest",
+      "repeat-ledger-key",
+      "assertion-2",
     ),
     not_applicable: {
       [T.capture]: reviewed(
@@ -517,7 +579,7 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:partial-verification",
-    applicable: Object.fromEntries(
+    applicable: linkedForTools(
       [
         T.connect,
         T.reconnect,
@@ -526,15 +588,11 @@ const MATRIX_DEFINITIONS = [
         T.paste,
         T.release,
         T.power,
-      ].map((tool) => [
-        tool,
-        linked(
-          16,
-          "power-with-post-read-failure",
-          "fail-post-ack-read",
-          "assertion-2",
-        ),
-      ]),
+      ],
+      16,
+      "partial-verification",
+      "fail-post-ack-read",
+      "assertion-2",
     ),
     not_applicable: {
       [T.capture]: reviewed(
@@ -615,13 +673,13 @@ const MATRIX_DEFINITIONS = [
       ),
       [T.keyboard]: linked(
         2,
-        "input-with-old-observation",
+        "keyboard-with-old-observation",
         "publish-new-generation",
         "assertion-2",
       ),
       [T.paste]: linked(
         2,
-        "input-with-old-observation",
+        "paste-with-old-observation",
         "publish-new-generation",
         "assertion-2",
       ),
@@ -659,33 +717,29 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:cleanup-failure",
-    applicable: Object.fromEntries(
-      [
-        T.capture,
-        T.keyboard,
-        T.mouse,
-        T.paste,
-        T.release,
-        T.power,
-        T.connect,
-        T.reconnect,
-      ].map((tool) => [
-        tool,
-        tool === T.capture
-          ? linked(
-              3,
-              "capture-fresh-frame",
-              "post-capture-cleanup-failure",
-              "assertion-2",
-            )
-          : linked(
-              8,
-              "release-all-input",
-              "race-release-producers",
-              "assertion-1",
-            ),
-      ]),
-    ),
+    applicable: {
+      [T.capture]: linked(
+        3,
+        "capture-fresh-frame",
+        "post-capture-cleanup-failure",
+        "assertion-2",
+      ),
+      ...linkedForTools(
+        [
+          T.keyboard,
+          T.mouse,
+          T.paste,
+          T.release,
+          T.power,
+          T.connect,
+          T.reconnect,
+        ],
+        8,
+        "cleanup-failure",
+        "race-release-producers",
+        "assertion-1",
+      ),
+    },
     not_applicable: {
       [T.displayStatus]: reviewed(
         T.displayStatus,
@@ -876,14 +930,14 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:sse-route-security",
-    applicable: forEveryTool(
+    applicable: sharedTransportForEveryTool(
       linked(22, "secure-sse-get", "deny-routes-before-state", "assertion-1"),
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:sse-routing-close",
-    applicable: forEveryTool(
+    applicable: sharedTransportForEveryTool(
       linked(
         23,
         "post-accepted-message",
@@ -896,36 +950,30 @@ const MATRIX_DEFINITIONS = [
   {
     requirement: "branch:shared-device-rpc-adapter-binding",
     applicable: forEveryTool(
-      linked(
-        20,
-        "inspect-replacement-channel",
-        "replace-one-shared-adapter",
-        "assertion-2",
-      ),
+      20,
+      "shared-device-rpc-adapter-binding",
+      "replace-one-shared-adapter",
+      "assertion-2",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:device-rpc-adapter-replacement",
     applicable: forEveryTool(
-      linked(
-        20,
-        "reconnect-with-new-channel",
-        "replace-one-shared-adapter",
-        "assertion-3",
-      ),
+      20,
+      "device-rpc-adapter-replacement",
+      "replace-one-shared-adapter",
+      "assertion-3",
     ),
     not_applicable: {},
   },
   {
     requirement: "branch:device-rpc-adapter-mid-flight-loss",
     applicable: forEveryTool(
-      linked(
-        18,
-        "session-status-after-binding-loss",
-        "lose-binding-during-read",
-        "assertion-2",
-      ),
+      18,
+      "device-rpc-adapter-mid-flight-loss",
+      "lose-binding-during-read",
+      "assertion-2",
     ),
     not_applicable: {},
   },
@@ -957,13 +1005,28 @@ function buildToolBehaviorMatrix(): ToolBehaviorMatrix {
     const { applicable, not_applicable } = definition as MatrixDefinition;
     const cells = Object.fromEntries(
       JETKVM_TOOL_NAMES.map((tool) => {
-        const cell = applicable[tool] ?? not_applicable[tool];
-        if (cell === undefined) {
+        const definitionCell = applicable[tool] ?? not_applicable[tool];
+        if (definitionCell === undefined) {
           throw new Error(
             `Behavior matrix definition ${requirement} has no reviewed cell for ${tool}`,
           );
         }
-        return [tool, cell];
+        if (definitionCell.applicability === "not_applicable") {
+          return [tool, definitionCell];
+        }
+        const coverageScope = definitionCell.coverage_scope ?? "tool";
+        return [
+          tool,
+          {
+            ...definitionCell,
+            coverage_scope: coverageScope,
+            focused_assertion_id: focusedAssertionId(
+              tool,
+              requirement,
+              coverageScope,
+            ),
+          },
+        ];
       }),
     ) as Record<JetKvmToolName, ToolBehaviorMatrixCell>;
     return { requirement, cells };
@@ -1282,6 +1345,41 @@ function assertSafetyPolicy(story: AcceptanceStory): void {
   }
 }
 
+function assertConnectDeadlineReservationExecution(
+  stories: readonly AcceptanceStory[],
+): void {
+  const story = stories[0];
+  if (story?.id !== "session-connect-without-takeover-busy") {
+    throw new Error(
+      "Canonical story 1 is unavailable for deadline reservation validation",
+    );
+  }
+
+  const deadline = story.steps.find(
+    ({ id }) => id === "deadline-before-admission",
+  );
+  const retry = story.steps.find(
+    ({ id }) => id === "retry-expired-connect-request",
+  );
+  const clearFault = story.fault_script.find(
+    ({ id }) => id === "clear-expired-deadline",
+  );
+  if (
+    deadline === undefined ||
+    retry === undefined ||
+    clearFault === undefined ||
+    deadline.tool !== "jetkvm_session_connect" ||
+    retry.tool !== "jetkvm_session_connect" ||
+    JSON.stringify(retry.input) !== JSON.stringify(deadline.input) ||
+    !/CONTROL_BUSY/.test(retry.expect) ||
+    clearFault.after_step !== deadline.id
+  ) {
+    throw new Error(
+      "Story 1 deadline reservation release must clear the deadline fault and retry the same normalized connect request to ordinary CONTROL_BUSY handling",
+    );
+  }
+}
+
 function assertScrollObservationExecution(
   stories: readonly AcceptanceStory[],
 ): void {
@@ -1334,6 +1432,104 @@ function assertScrollObservationExecution(
     throw new Error(
       "Story 6 must prove consumed-observation reuse fails before input",
     );
+  }
+
+  const cancellation = stepById.get("cancel-before-write");
+  const cancellationRetry = stepById.get("retry-cancelled-reservation");
+  if (
+    cancellation === undefined ||
+    cancellationRetry === undefined ||
+    cancellationRetry.tool !== "jetkvm_input_mouse" ||
+    JSON.stringify(cancellationRetry.input) !==
+      JSON.stringify(cancellation.input) ||
+    !/applied.*one downstream write/i.test(cancellationRetry.expect)
+  ) {
+    throw new Error(
+      "Story 6 must prove cancellation reservation release by retrying the same normalized mouse request",
+    );
+  }
+
+  const observationCases = [
+    {
+      captureId: "capture-foreign-observation",
+      stepId: "reject-foreign-observation",
+      observationId: "opaque-observation-foreign",
+      expected: /STALE_OBSERVATION.*zero downstream writes/i,
+    },
+    {
+      captureId: "capture-stale-age-observation",
+      stepId: "reject-stale-age-observation",
+      observationId: "opaque-observation-stale-age",
+      expected: /STALE_OBSERVATION.*zero downstream writes/i,
+    },
+    {
+      captureId: "capture-consumed-observation",
+      stepId: "reuse-consumed-observation",
+      observationId: "opaque-observation-consumed",
+      expected: /OBSERVATION_CONSUMED.*zero downstream writes/i,
+    },
+    {
+      captureId: "capture-display-before-observation",
+      stepId: "reject-display-change-before-dispatch",
+      observationId: "opaque-observation-display-before",
+      expected: /DISPLAY_CHANGED.*zero downstream writes/i,
+    },
+    {
+      captureId: "capture-display-after-observation",
+      stepId: "display-change-after-first-dispatch",
+      observationId: "opaque-observation-display-after",
+      expected: /unknown.*one downstream write.*suffix/i,
+    },
+  ] as const;
+  const observationIds = new Set<string>();
+  for (const observationCase of observationCases) {
+    const capture = stepById.get(observationCase.captureId);
+    const step = stepById.get(observationCase.stepId);
+    if (
+      capture?.tool !== "jetkvm_display_capture" ||
+      step?.tool !== "jetkvm_input_mouse" ||
+      step.input.observation_id !== observationCase.observationId ||
+      !observationCase.expected.test(step.expect) ||
+      story.steps.indexOf(capture) >= story.steps.indexOf(step) ||
+      observationIds.has(observationCase.observationId)
+    ) {
+      throw new Error(
+        `Story 6 observation fence ${observationCase.stepId} must use its own fresh observation and observable downstream-write expectation`,
+      );
+    }
+    observationIds.add(observationCase.observationId);
+  }
+
+  const consumedOnce = stepById.get("consume-observation");
+  if (
+    consumedOnce?.tool !== "jetkvm_input_mouse" ||
+    consumedOnce.input.observation_id !== "opaque-observation-consumed" ||
+    story.steps.indexOf(consumedOnce) >=
+      story.steps.findIndex(({ id }) => id === "reuse-consumed-observation")
+  ) {
+    throw new Error(
+      "Story 6 consumed-observation fence must first consume a fresh observation exactly once",
+    );
+  }
+
+  const requiredFaults = [
+    ["clear-cancel-before-write", "cancel-before-write"],
+    ["foreign-observation-session-fence", "capture-foreign-observation"],
+    ["age-observation-past-maximum", "capture-stale-age-observation"],
+    ["consume-observation-once", "capture-consumed-observation"],
+    ["change-display-before-dispatch", "capture-display-before-observation"],
+    [
+      "change-display-after-first-dispatch",
+      "capture-display-after-observation",
+    ],
+  ] as const;
+  for (const [faultId, afterStep] of requiredFaults) {
+    const fault = story.fault_script.find(({ id }) => id === faultId);
+    if (fault?.after_step !== afterStep) {
+      throw new Error(
+        `Story 6 observation fence requires exact fault ${faultId} after ${afterStep}`,
+      );
+    }
   }
 }
 
@@ -1404,6 +1600,39 @@ function assertBehaviorMatrix(
       ) {
         throw new Error(
           `Applicable ${tool} ${row.requirement} coverage must link an executable call, fault boundary, and pass assertion`,
+        );
+      }
+      const coverageScope = (
+        cell as ApplicableBehaviorCell & { coverage_scope?: unknown }
+      ).coverage_scope;
+      if (coverageScope !== "tool" && coverageScope !== "shared_transport") {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} coverage requires an explicit tool or shared transport coverage scope`,
+        );
+      }
+      if (coverageScope === "tool" && step.tool !== tool) {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} linked step tool ${String(step.tool)} is cross-tool coverage`,
+        );
+      }
+      if (
+        coverageScope === "shared_transport" &&
+        (step.tool !== null ||
+          (row.requirement !== "branch:sse-route-security" &&
+            row.requirement !== "branch:sse-routing-close"))
+      ) {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} shared transport coverage is permitted only for a null-tool SSE assertion`,
+        );
+      }
+      const expectedFocusedAssertionId = focusedAssertionId(
+        tool,
+        row.requirement,
+        coverageScope,
+      );
+      if (cell.focused_assertion_id !== expectedFocusedAssertionId) {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} requires focused unit/adapter assertion ID ${expectedFocusedAssertionId}`,
         );
       }
       if (
@@ -1489,6 +1718,7 @@ export function validateAcceptanceStories(
       "Manifest does not contain a complete exact-ten tool reference inventory",
     );
   }
+  assertConnectDeadlineReservationExecution(stories);
   assertScrollObservationExecution(stories);
   assertBehaviorMatrix(stories, matrix);
 

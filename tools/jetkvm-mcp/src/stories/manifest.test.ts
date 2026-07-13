@@ -448,10 +448,25 @@ describe("every-handler behavior matrix", () => {
     expect(cells).toHaveLength(32 * 10);
     expect(
       cells.filter(({ applicability }) => applicability === "applicable"),
-    ).toHaveLength(196);
+    ).toHaveLength(194);
     expect(
       cells.filter(({ applicability }) => applicability === "not_applicable"),
-    ).toHaveLength(124);
+    ).toHaveLength(126);
+  });
+
+  it("gives every applicable cell a stable focused assertion ID and an explicit coverage scope", () => {
+    for (const row of TOOL_BEHAVIOR_MATRIX) {
+      for (const cell of Object.values(row.cells)) {
+        if (cell.applicability !== "applicable") {
+          continue;
+        }
+        const link = cell as unknown as Record<string, unknown>;
+        expect(link.coverage_scope).toMatch(/^(?:tool|shared_transport)$/);
+        expect(link.focused_assertion_id).toMatch(
+          /^(?:unit|adapter|transport):[a-z0-9-]+(?::[a-z0-9-]+)+$/,
+        );
+      }
+    }
   });
 
   it("rejects a missing per-tool behavior cell", async () => {
@@ -483,6 +498,80 @@ describe("every-handler behavior matrix", () => {
     );
   });
 
+  it("rejects a copied link to a different tool's executable step", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+    const row = matrix.find(
+      ({ requirement }) => requirement === "branch:strict-schema-rejection",
+    )!;
+    const connectCell = row.cells.jetkvm_session_connect;
+    expect(connectCell.applicability).toBe("applicable");
+    (
+      row.cells as unknown as Record<string, typeof connectCell>
+    ).jetkvm_input_mouse = structuredClone(connectCell);
+
+    expect(() => validateAcceptanceStories(stories, matrix)).toThrow(
+      /linked step tool.*jetkvm_input_mouse|cross-tool/i,
+    );
+  });
+
+  it("rejects missing or prose-only focused assertion IDs", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    for (const focusedAssertionId of [
+      undefined,
+      "",
+      "This prose says a unit test covers the branch.",
+    ]) {
+      const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+      const row = matrix.find(
+        ({ requirement }) => requirement === "branch:strict-schema-rejection",
+      )!;
+      const cell = row.cells.jetkvm_session_connect;
+      expect(cell.applicability).toBe("applicable");
+      const mutable = cell as unknown as Record<string, unknown>;
+      if (focusedAssertionId === undefined) {
+        delete mutable.focused_assertion_id;
+      } else {
+        mutable.focused_assertion_id = focusedAssertionId;
+      }
+
+      expect(
+        () => validateAcceptanceStories(stories, matrix),
+        String(focusedAssertionId),
+      ).toThrow(/focused.*assertion id/i);
+    }
+  });
+
+  it("permits null-tool links only for explicitly typed shared SSE transport assertions", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+    const sharedRows = matrix.filter(({ requirement }) =>
+      ["branch:sse-route-security", "branch:sse-routing-close"].includes(
+        requirement,
+      ),
+    );
+    for (const row of sharedRows) {
+      for (const cell of Object.values(row.cells)) {
+        expect(cell.applicability).toBe("applicable");
+        expect(
+          (cell as unknown as Record<string, unknown>).coverage_scope,
+        ).toBe("shared_transport");
+      }
+    }
+    expect(() => validateAcceptanceStories(stories, matrix)).not.toThrow();
+
+    const strict = matrix.find(
+      ({ requirement }) => requirement === "branch:strict-schema-rejection",
+    )!;
+    const strictCell = strict.cells.jetkvm_session_connect;
+    expect(strictCell.applicability).toBe("applicable");
+    (strictCell as unknown as Record<string, unknown>).coverage_scope =
+      "shared_transport";
+    expect(() => validateAcceptanceStories(stories, matrix)).toThrow(
+      /shared transport.*sse/i,
+    );
+  });
+
   it("rejects applicable prose-only coverage without any executable call, fault, or pass link", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     for (const [field, missingId] of [
@@ -508,18 +597,42 @@ describe("every-handler behavior matrix", () => {
 describe("reviewed story branch execution", () => {
   it("story 1 executes strict-schema, deadline-release, and busy as distinct calls and faults", async () => {
     const [story] = await loadAcceptanceStories(storiesDirectory);
-    expect(story!.steps.map(({ id }) => id)).toEqual([
+    expect(story!.steps.slice(0, 4).map(({ id }) => id)).toEqual([
       "reject-strict-schema",
       "deadline-before-admission",
+      "retry-expired-connect-request",
       "connect-without-takeover",
     ]);
     expect(
-      story!.fault_script.map(({ id, boundary }) => [id, boundary]),
+      story!.fault_script.slice(0, 4).map(({ id, boundary }) => [id, boundary]),
     ).toEqual([
       ["strict-schema-before-controller", "before_admission"],
       ["expire-before-admission", "before_admission"],
+      ["clear-expired-deadline", "during_cleanup"],
       ["incumbent-busy", "before_admission"],
     ]);
+  });
+
+  it("story 1 retries the expired connect reservation with the same normalized request and reaches ordinary busy handling", async () => {
+    const [story] = await loadAcceptanceStories(storiesDirectory);
+    const expired = story!.steps.find(
+      ({ id }) => id === "deadline-before-admission",
+    )!;
+    const retry = story!.steps.find(
+      ({ id }) => id === "retry-expired-connect-request",
+    )!;
+
+    expect(retry.tool).toBe("jetkvm_session_connect");
+    expect(retry.input).toEqual(expired.input);
+    expect(retry.expect).toMatch(/CONTROL_BUSY/);
+
+    const missingRetry = await loadAcceptanceStories(storiesDirectory);
+    missingRetry[0]!.steps = missingRetry[0]!.steps.filter(
+      ({ id }) => id !== "retry-expired-connect-request",
+    );
+    expect(() => validateAcceptanceStories(missingRetry)).toThrow(
+      /deadline.*reservation.*retry/i,
+    );
   });
 
   it("story 6 requires fresh observations for both accepted scroll bounds and rejects consumed reuse", async () => {
@@ -557,6 +670,71 @@ describe("reviewed story branch execution", () => {
     expect(() => validateAcceptanceStories(noConsumedProof)).toThrow(
       /consumed-observation reuse/i,
     );
+  });
+
+  it("story 6 executes every observation fence with a fresh observation and observable write counts", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const story = stories[5]!;
+    const expectedCases = [
+      [
+        "retry-cancelled-reservation",
+        "opaque-observation-cancel",
+        /applied.*one downstream write/i,
+      ],
+      [
+        "reject-foreign-observation",
+        "opaque-observation-foreign",
+        /STALE_OBSERVATION.*zero downstream writes/i,
+      ],
+      [
+        "reject-stale-age-observation",
+        "opaque-observation-stale-age",
+        /STALE_OBSERVATION.*zero downstream writes/i,
+      ],
+      [
+        "reuse-consumed-observation",
+        "opaque-observation-consumed",
+        /OBSERVATION_CONSUMED.*zero downstream writes/i,
+      ],
+      [
+        "reject-display-change-before-dispatch",
+        "opaque-observation-display-before",
+        /DISPLAY_CHANGED.*zero downstream writes/i,
+      ],
+      [
+        "display-change-after-first-dispatch",
+        "opaque-observation-display-after",
+        /unknown.*one downstream write.*suffix/i,
+      ],
+    ] as const;
+    const observationIds = new Set<string>();
+
+    for (const [stepId, observationId, expected] of expectedCases) {
+      const step = story.steps.find(({ id }) => id === stepId)!;
+      expect(step.tool).toBe("jetkvm_input_mouse");
+      expect(step.input.observation_id).toBe(observationId);
+      expect(step.expect).toMatch(expected);
+      expect(observationIds.has(observationId)).toBe(false);
+      observationIds.add(observationId);
+    }
+
+    const cancellation = story.steps.find(
+      ({ id }) => id === "cancel-before-write",
+    )!;
+    const cancellationRetry = story.steps.find(
+      ({ id }) => id === "retry-cancelled-reservation",
+    )!;
+    expect(cancellationRetry.input).toEqual(cancellation.input);
+
+    for (const [stepId] of expectedCases) {
+      const incomplete = await loadAcceptanceStories(storiesDirectory);
+      incomplete[5]!.steps = incomplete[5]!.steps.filter(
+        ({ id }) => id !== stepId,
+      );
+      expect(() => validateAcceptanceStories(incomplete), stepId).toThrow(
+        /story 6.*observation|reservation release/i,
+      );
+    }
   });
 });
 

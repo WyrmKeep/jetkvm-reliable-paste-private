@@ -19,7 +19,7 @@ import {
 
 export type AuthorizedImage = {
   readonly bytes: Uint8Array;
-  readonly mime_type: "image/jpeg";
+  readonly mime_type: "image/jpeg" | "image/png";
 };
 
 export const PUBLIC_ERROR_MESSAGES = {
@@ -132,9 +132,6 @@ export function toMcpSuccessResult<T>(
   image?: AuthorizedImage,
 ): CallToolResult {
   validateSuccessEnvelope(envelope);
-  if (image !== undefined && image.mime_type !== "image/jpeg") {
-    throw new Error("Only authorized JPEG image content is permitted.");
-  }
   const metadata = imageMetadataFor(envelope.tool, envelope.result);
   if (metadata === null && image !== undefined) {
     throw new Error("Image content is not authorized for this result.");
@@ -239,14 +236,15 @@ export function validateAndMapMcpResult(
       ) ||
       imageContent.type !== "image" ||
       typeof imageContent.data !== "string" ||
-      imageContent.mimeType !== "image/jpeg" ||
+      (imageContent.mimeType !== "image/jpeg" &&
+        imageContent.mimeType !== "image/png") ||
       !isCanonicalBase64(imageContent.data)
     ) {
       throw new Error("Invalid handler result.");
     }
     image = {
       bytes: Buffer.from(imageContent.data, "base64"),
-      mime_type: "image/jpeg",
+      mime_type: imageContent.mimeType,
     };
   }
   return toMcpSuccessResult(parsed.data as Success<unknown>, image);

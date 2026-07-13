@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { parseOperatorConfig } from "../config.js";
 import {
+  activateIndependentLegacySseBearerCredential,
   CredentialConfigurationError,
   DisposableSecret,
   HttpBoundaryError,
@@ -196,6 +197,58 @@ describe("DisposableSecret", () => {
     expect(() => secret.useUtf8((value) => value)).toThrowError(
       "Secret has been disposed",
     );
+  });
+});
+
+describe("legacy SSE credential activation", () => {
+  it("returns only a bearer proven different from the loaded target secret", () => {
+    const target = DisposableSecret.fromUtf8("target-only-secret");
+    const bearer = {
+      principalId: "operator-a",
+      secret: DisposableSecret.fromUtf8("sse-only-secret"),
+    };
+
+    const activated = activateIndependentLegacySseBearerCredential(
+      target,
+      bearer,
+    );
+
+    expect(activated).not.toBe(bearer);
+    expect(activated).toEqual(bearer);
+    expect(Object.isFrozen(activated)).toBe(true);
+    expect(target.disposed).toBe(false);
+    expect(bearer.secret.disposed).toBe(false);
+    target.dispose();
+    bearer.secret.dispose();
+  });
+
+  it("fails with one redacted error and disposes both equal loaded secrets", () => {
+    const target = DisposableSecret.fromUtf8("shared-secret-value");
+    const bearer = {
+      principalId: "operator-a",
+      secret: DisposableSecret.fromUtf8("shared-secret-value"),
+    };
+
+    expect(() =>
+      activateIndependentLegacySseBearerCredential(target, bearer),
+    ).toThrowError("Target and legacy SSE credentials must be independent");
+    expect(target.disposed).toBe(true);
+    expect(bearer.secret.disposed).toBe(true);
+  });
+
+  it("disposes every loaded secret when activation cannot compare them", () => {
+    const target = DisposableSecret.fromUtf8("target-only-secret");
+    const bearer = {
+      principalId: "operator-a",
+      secret: DisposableSecret.fromUtf8("sse-only-secret"),
+    };
+    target.dispose();
+
+    expect(() =>
+      activateIndependentLegacySseBearerCredential(target, bearer),
+    ).toThrowError("Target and legacy SSE credentials must be independent");
+    expect(target.disposed).toBe(true);
+    expect(bearer.secret.disposed).toBe(true);
   });
 });
 

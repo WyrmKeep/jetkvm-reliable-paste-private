@@ -2,7 +2,18 @@
   "id": "disconnect-after-write-unknown-no-replay",
   "title": "Disconnect after write is unknown and never replayed",
   "requirements": ["branch:disconnect-after-write"],
-  "tools": ["jetkvm_power_control"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay"],
   "preconditions": [
     {
@@ -19,6 +30,11 @@
       "id": "scenario-ready",
       "description": "The adapter records write boundaries and can lose the bound channel after the first ATX write without a complete receipt.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -26,8 +42,8 @@
       "id": "disconnect-at-postwrite",
       "after_step": null,
       "boundary": "after_write",
-      "action": "Close the bound channel after the ATX ON write and before correlated sequence completion.",
-      "expected_effect": "The result is unknown, the ATX gate closes, bounded release cleanup runs, and no replay occurs."
+      "action": "For each linked tool, disconnect after its downstream request write and before acknowledgement.",
+      "expected_effect": "Each call is unknown, closes its gate, and is never automatically replayed."
     }
   ],
   "steps": [
@@ -44,6 +60,154 @@
       },
       "timeout_ms": 1000,
       "expect": "unknown with inspect-device-state-before-retry guidance and exactly one admitted sequence."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_display_capture after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_display_status after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-power-after-write-loss-input-keyboard",
+        "request_id": "opaque-power-after-write-loss-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_input_keyboard after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-power-after-write-loss-input-mouse",
+        "request_id": "opaque-power-after-write-loss-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_input_mouse after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-power-after-write-loss-input-paste",
+        "request_id": "opaque-power-after-write-loss-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_input_paste after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-after-write-loss-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_input_release after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-after-write-loss-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_power_control after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-power-after-write-loss-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_session_connect after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-power-after-write-loss-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_session_reconnect after downstream write and before acknowledgement, with the gate closed and zero replay."
+    },
+    {
+      "id": "power-after-write-loss-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown for jetkvm_session_status after downstream write and before acknowledgement, with the gate closed and zero replay."
     }
   ],
   "pass": [

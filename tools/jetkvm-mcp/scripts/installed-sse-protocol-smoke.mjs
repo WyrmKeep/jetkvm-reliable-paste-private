@@ -12,7 +12,7 @@ try {
     "sse-runner.mjs",
     `import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
-import { DisposableSecret } from "@wyrmkeep/jetkvm-mcp/dist/browser/auth.js";
+import { activateIndependentLegacySseBearerCredential, DisposableSecret } from "@wyrmkeep/jetkvm-mcp/dist/browser/auth.js";
 import { parseLegacySsePolicy } from "@wyrmkeep/jetkvm-mcp/dist/config.js";
 import { LegacySseAdapter } from "@wyrmkeep/jetkvm-mcp/dist/mcp/legacySse.js";
 import { handlers } from "./deterministic-handlers.mjs";
@@ -30,10 +30,11 @@ const auditedHandlers = Object.fromEntries(
 const authority = "installed.mcp.test";
 const origin = "https://installed-client.test";
 const token = "installed-test-token";
-const credential = {
+const targetSecret = DisposableSecret.fromUtf8("installed-target-token");
+const credential = activateIndependentLegacySseBearerCredential(targetSecret, {
   principalId: "installed-operator",
   secret: DisposableSecret.fromUtf8(token),
-};
+});
 const policy = parseLegacySsePolicy({
   enabled: true,
   scheme: "http",
@@ -58,6 +59,14 @@ const server = createServer((request, response) => {
   void adapter.handleRequest(request, response);
 });
 adapter.attachServer(server);
+assert.equal(server.maxConnections, policy.maxConnections);
+assert.deepEqual(
+  {
+    configurable: Object.getOwnPropertyDescriptor(server, "maxConnections").configurable,
+    writable: Object.getOwnPropertyDescriptor(server, "maxConnections").writable,
+  },
+  { configurable: false, writable: false },
+);
 const listening = Promise.withResolvers();
 server.once("listening", listening.resolve);
 server.listen(0, policy.bindHost);
@@ -275,6 +284,7 @@ assert.equal(invalidJson.text, "Invalid JSON");
 second.response.destroy();
 await adapter.close();
 credential.secret.dispose();
+targetSecret.dispose();
 const closed = Promise.withResolvers();
 server.close(closed.resolve);
 await closed.promise;

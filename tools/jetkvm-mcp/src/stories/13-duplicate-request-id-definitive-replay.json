@@ -5,7 +5,15 @@
     "branch:duplicate-same-request-digest",
     "branch:duplicate-changed-digest"
   ],
-  "tools": ["jetkvm_input_release"],
+  "tools": [
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -22,6 +30,11 @@
       "id": "scenario-ready",
       "description": "The request ledger is empty and the release operation can return a definitive generation-drained result.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -29,8 +42,8 @@
       "id": "repeat-ledger-key",
       "after_step": "initial-release",
       "boundary": "before_admission",
-      "action": "Repeat the exact normalized request, then reuse its request identifier with a changed timeout.",
-      "expected_effect": "The exact repeat returns the cached definitive result and changed input returns the idempotency error; neither repeats a write."
+      "action": "For every mutation tool, repeat the exact tool-scoped request and digest, then reuse the same request identifier with changed normalized input.",
+      "expected_effect": "The exact duplicate returns cached definitive evidence with zero write; changed input returns REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero write."
     }
   ],
   "steps": [
@@ -72,6 +85,333 @@
       },
       "timeout_ms": 2000,
       "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-duplicate-ledger-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-duplicate-ledger-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-duplicate-ledger-session-connect",
+        "takeover": false,
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-keyboard",
+        "request_id": "opaque-duplicate-ledger-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-keyboard",
+        "request_id": "opaque-duplicate-ledger-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-keyboard",
+        "request_id": "opaque-duplicate-ledger-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-mouse",
+        "request_id": "opaque-duplicate-ledger-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-mouse",
+        "request_id": "opaque-duplicate-ledger-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-mouse",
+        "request_id": "opaque-duplicate-ledger-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-paste",
+        "request_id": "opaque-duplicate-ledger-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-paste",
+        "request_id": "opaque-duplicate-ledger-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-duplicate-ledger-input-paste",
+        "request_id": "opaque-duplicate-ledger-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-input-release",
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
+    },
+    {
+      "id": "duplicate-initial-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A definitive applied result is stored under the tool-scoped request ledger key."
+    },
+    {
+      "id": "duplicate-same-request-digest-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "already_applied from the cached definitive result with zero second downstream write."
+    },
+    {
+      "id": "duplicate-changed-digest-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-duplicate-ledger-power-control",
+        "action": "press_power",
+        "timeout_ms": 2000
+      },
+      "timeout_ms": 2000,
+      "expect": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT with zero second downstream write."
     }
   ],
   "pass": [

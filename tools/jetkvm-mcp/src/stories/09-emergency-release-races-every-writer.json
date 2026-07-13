@@ -5,7 +5,15 @@
     "branch:cleanup-failure",
     "contract:release-races-every-writer"
   ],
-  "tools": ["jetkvm_input_release"],
+  "tools": [
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -22,6 +30,11 @@
       "id": "scenario-ready",
       "description": "Ordinary keyboard, pointer, macro, wheel, and paste producers are deterministically paused at release race boundaries.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -29,8 +42,8 @@
       "id": "race-release-producers",
       "after_step": null,
       "boundary": "queued",
-      "action": "Schedule release against each deferred producer and one ordinary writer, then force one cleanup acknowledgement failure case.",
-      "expected_effect": "Release preempts the ordinary queue, joins every producer, zeros acknowledged state, and retains any cleanup uncertainty."
+      "action": "Inject cleanup failure after each linked tool operation while release also races every deferred producer and ordinary writer.",
+      "expected_effect": "Cleanup evidence remains authoritative, no restoration is fabricated, and no deferred producer writes after the gate closes."
     }
   ],
   "steps": [
@@ -46,6 +59,115 @@
       },
       "timeout_ms": 1000,
       "expect": "The gate closes, generations drain, producers join, paste stops, and correlated zero-state facts are returned."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cleanup-failure-input-keyboard",
+        "request_id": "opaque-cleanup-failure-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_keyboard cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cleanup-failure-input-mouse",
+        "request_id": "opaque-cleanup-failure-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_mouse cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cleanup-failure-input-paste",
+        "request_id": "opaque-cleanup-failure-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_paste cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cleanup-failure-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_release cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cleanup-failure-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_power_control cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-cleanup-failure-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_connect cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
+    },
+    {
+      "id": "cleanup-failure-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cleanup-failure-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_reconnect cleanup-phase error evidence is retained without fabricating restoration or replaying the operation."
     }
   ],
   "pass": [

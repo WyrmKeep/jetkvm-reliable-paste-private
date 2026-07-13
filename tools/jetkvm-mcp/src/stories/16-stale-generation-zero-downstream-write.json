@@ -2,7 +2,17 @@
   "id": "stale-generation-zero-downstream-write",
   "title": "Stale generations make zero downstream writes",
   "requirements": ["branch:stale-session-generation"],
-  "tools": ["jetkvm_input_keyboard", "jetkvm_power_control"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -19,6 +29,11 @@
       "id": "scenario-ready",
       "description": "Generation 8 is current while calls deliberately retain the prior generation 7 binding.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -26,8 +41,8 @@
       "id": "retain-prior-generation",
       "after_step": null,
       "boundary": "before_admission",
-      "action": "Present the stale session generation to browser input and ATX admission checks.",
-      "expected_effect": "Both paths reject before queue or send and all downstream write counters remain zero."
+      "action": "Retain the prior session generation while invoking every generation-bearing tool against the active successor.",
+      "expected_effect": "Every linked tool returns STALE_SESSION_GENERATION before downstream dispatch with zero writes."
     }
   ],
   "steps": [
@@ -64,6 +79,142 @@
       },
       "timeout_ms": 1000,
       "expect": "STALE_SESSION_GENERATION and zero ATX writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_display_capture before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_display_status before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-stale-keyboard-generation-input-keyboard",
+        "request_id": "opaque-stale-keyboard-generation-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_input_keyboard before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-stale-keyboard-generation-input-mouse",
+        "request_id": "opaque-stale-keyboard-generation-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_input_mouse before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-stale-keyboard-generation-input-paste",
+        "request_id": "opaque-stale-keyboard-generation-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_input_paste before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-stale-keyboard-generation-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_input_release before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-stale-keyboard-generation-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_power_control before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-stale-keyboard-generation-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_session_reconnect before dispatch with zero downstream writes."
+    },
+    {
+      "id": "stale-keyboard-generation-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_SESSION_GENERATION for jetkvm_session_status before dispatch with zero downstream writes."
     }
   ],
   "pass": [

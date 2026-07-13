@@ -6,7 +6,18 @@
     "branch:deadline-before-admission",
     "branch:busy-without-takeover"
   ],
-  "tools": ["jetkvm_session_connect"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -23,6 +34,11 @@
       "id": "scenario-ready",
       "description": "A healthy incumbent device session owns the configured device and takeover is omitted.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -30,15 +46,22 @@
       "id": "strict-schema-before-controller",
       "after_step": null,
       "boundary": "before_admission",
-      "action": "Submit the request containing the unsupported_option field to the strict handler schema.",
-      "expected_effect": "The schema rejects the complete request before controller admission and records zero controller and plane calls."
+      "action": "Submit each tool-specific request with an unsupported_option field to its strict handler schema.",
+      "expected_effect": "Every tool rejects the complete request before handler, controller, adapter, or plane admission with zero downstream calls."
     },
     {
       "id": "expire-before-admission",
       "after_step": "reject-strict-schema",
       "boundary": "before_admission",
-      "action": "Advance the fake monotonic clock past the valid request deadline while its admission and request-id reservations are held.",
-      "expected_effect": "The request returns not_sent before admission and releases both the queue slot and request-id reservation."
+      "action": "For each tool-specific valid request, advance the fake monotonic clock past its deadline while its admission reservations are held.",
+      "expected_effect": "Every request returns not_sent before admission and releases its queue and request reservations."
+    },
+    {
+      "id": "clear-expired-deadline",
+      "after_step": "deadline-before-admission",
+      "boundary": "during_cleanup",
+      "action": "Clear the deterministic deadline injection while preserving the incumbent generation and the normalized request input.",
+      "expected_effect": "The next call with the same request identifier and normalized input reaches ordinary ownership admission rather than an in-flight or idempotency branch."
     },
     {
       "id": "incumbent-busy",
@@ -75,6 +98,18 @@
       "expect": "not_sent with the queue slot and request-id reservation released for a subsequent request."
     },
     {
+      "id": "retry-expired-connect-request",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-request",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "CONTROL_BUSY from ordinary ownership admission, proving the expired queue slot and request-id reservation were released."
+    },
+    {
       "id": "connect-without-takeover",
       "tool": "jetkvm_session_connect",
       "call": "tools/call",
@@ -85,6 +120,326 @@
       },
       "timeout_ms": 1000,
       "expect": "CONTROL_BUSY with the incumbent generation unchanged."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_display_capture before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_display_status before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-reject-strict-schema-input-keyboard",
+        "request_id": "opaque-reject-strict-schema-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_keyboard before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-reject-strict-schema-input-mouse",
+        "request_id": "opaque-reject-strict-schema-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_mouse before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-reject-strict-schema-input-paste",
+        "request_id": "opaque-reject-strict-schema-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_paste before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reject-strict-schema-input-release",
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_input_release before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reject-strict-schema-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_power_control before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-reject-strict-schema-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_session_connect before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reject-strict-schema-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_session_reconnect before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "reject-strict-schema-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000,
+        "unsupported_option": true
+      },
+      "timeout_ms": 1000,
+      "expect": "Strict schema rejection for jetkvm_session_status before its handler, controller, adapter, or plane call, with zero downstream calls."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_display_capture before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_display_status before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-keyboard",
+        "request_id": "opaque-deadline-before-admission-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_keyboard before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-mouse",
+        "request_id": "opaque-deadline-before-admission-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_mouse before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-deadline-before-admission-input-paste",
+        "request_id": "opaque-deadline-before-admission-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_paste before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-deadline-before-admission-input-release",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_input_release before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-deadline-before-admission-power-control",
+        "action": "press_power",
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_power_control before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-deadline-before-admission-session-connect",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_session_connect before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-deadline-before-admission-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_session_reconnect before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "deadline-before-admission-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 100
+      },
+      "timeout_ms": 100,
+      "expect": "not_sent for jetkvm_session_status before admission with zero downstream calls and the queue and request reservation released."
+    },
+    {
+      "id": "reconnect-without-takeover",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-reconnect-busy-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONTROL_BUSY with the incumbent generation unchanged when reconnect omits takeover."
     }
   ],
   "pass": [
@@ -96,7 +451,7 @@
     {
       "id": "assertion-2",
       "requirement": "branch:deadline-before-admission",
-      "assertion": "The response is not_sent and releases every queue and request reservation."
+      "assertion": "The expired response is not_sent; after the fault is cleared, the same request identifier and normalized input reaches normal CONTROL_BUSY handling, proving every queue and request reservation was released."
     },
     {
       "id": "assertion-3",

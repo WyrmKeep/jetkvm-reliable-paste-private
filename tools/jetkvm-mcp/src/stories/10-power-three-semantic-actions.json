@@ -5,7 +5,15 @@
     "branch:definitive-acknowledgement",
     "contract:three-semantic-atx-actions"
   ],
-  "tools": ["jetkvm_power_control"],
+  "tools": [
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -22,6 +30,11 @@
       "id": "scenario-ready",
       "description": "The ATX extension is active, serial readiness is proven, and the safe power baseline is recorded.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -29,8 +42,8 @@
       "id": "fixed-atx-sequence",
       "after_step": null,
       "boundary": "before_write",
-      "action": "Run the three actions serially and record the fixed ON, wait, and OFF receipt for each case.",
-      "expected_effect": "Only press_power, hold_power, and press_reset are admitted with 200 ms, 5000 ms, and 200 ms fixed presses."
+      "action": "Drive each mutation tool through its definitive acknowledgement boundary using its tool-specific fixture.",
+      "expected_effect": "Every linked mutation returns applied with the exact acknowledgement and verification strength."
     }
   ],
   "steps": [
@@ -75,6 +88,115 @@
       },
       "timeout_ms": 1000,
       "expect": "reset uses exactly 200 ms and returns a correlated serial receipt."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-definitive-acknowledgement-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_session_connect with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-definitive-acknowledgement-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_session_reconnect with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-definitive-acknowledgement-input-keyboard",
+        "request_id": "opaque-definitive-acknowledgement-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_keyboard with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-definitive-acknowledgement-input-mouse",
+        "request_id": "opaque-definitive-acknowledgement-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_mouse with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-definitive-acknowledgement-input-paste",
+        "request_id": "opaque-definitive-acknowledgement-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_paste with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-definitive-acknowledgement-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_input_release with its exact acknowledgement and verification strength."
+    },
+    {
+      "id": "definitive-acknowledgement-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-definitive-acknowledgement-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied for jetkvm_power_control with its exact acknowledgement and verification strength."
     }
   ],
   "pass": [

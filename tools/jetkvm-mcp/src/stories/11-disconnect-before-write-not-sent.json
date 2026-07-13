@@ -2,7 +2,18 @@
   "id": "disconnect-before-write-not-sent",
   "title": "Disconnect before write is not sent and safely classified",
   "requirements": ["branch:disconnect-before-write"],
-  "tools": ["jetkvm_display_capture", "jetkvm_input_mouse"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay"],
   "preconditions": [
     {
@@ -19,6 +30,11 @@
       "id": "scenario-ready",
       "description": "A fresh observation is reserved and the adapter can disconnect immediately before the first downstream write.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -26,8 +42,8 @@
       "id": "disconnect-at-prewrite",
       "after_step": "capture-prewrite-observation",
       "boundary": "before_write",
-      "action": "Close the bound browser channel after reservation and before the first mouse write.",
-      "expected_effect": "The operation is not_sent, reservation is released, safe retry guidance is explicit, and the plane records zero writes."
+      "action": "For each linked tool, disconnect its downstream route after admission but before the first request write.",
+      "expected_effect": "Each call is not_sent with zero writes and safe retry classification."
     }
   ],
   "steps": [
@@ -64,6 +80,154 @@
       },
       "timeout_ms": 1000,
       "expect": "not_sent with zero input dispatch and safe retry classification."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_display_capture when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_display_status when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-mouse-before-write-loss-input-keyboard",
+        "request_id": "opaque-mouse-before-write-loss-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_keyboard when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-mouse-before-write-loss-input-mouse",
+        "request_id": "opaque-mouse-before-write-loss-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_mouse when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-mouse-before-write-loss-input-paste",
+        "request_id": "opaque-mouse-before-write-loss-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_paste when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-mouse-before-write-loss-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_release when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-mouse-before-write-loss-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_power_control when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-mouse-before-write-loss-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_connect when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-mouse-before-write-loss-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_reconnect when its downstream connection is lost before write, with safe retry classification and zero writes."
+    },
+    {
+      "id": "mouse-before-write-loss-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_status when its downstream connection is lost before write, with safe retry classification and zero writes."
     }
   ],
   "pass": [

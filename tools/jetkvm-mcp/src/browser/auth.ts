@@ -54,6 +54,15 @@ export interface LegacySseBearerCredential {
   readonly secret: DisposableSecret;
 }
 
+const INDEPENDENT_LEGACY_SSE_BEARER: unique symbol = Symbol(
+  "IndependentLegacySseBearerCredential",
+);
+const ACTIVATED_LEGACY_SSE_BEARERS = new WeakSet<object>();
+
+export interface IndependentLegacySseBearerCredential extends LegacySseBearerCredential {
+  readonly [INDEPENDENT_LEGACY_SSE_BEARER]: true;
+}
+
 export type LegacySseBearerAuthenticator = (
   authorization: string | undefined,
 ) => LegacySsePrincipal;
@@ -190,6 +199,51 @@ export function loadCredentialSecret(
       bytes.fill(0);
     }
   }
+}
+
+export function activateIndependentLegacySseBearerCredential(
+  targetSecret: DisposableSecret,
+  bearer: LegacySseBearerCredential,
+): IndependentLegacySseBearerCredential {
+  let targetDigest: Buffer | undefined;
+  let bearerDigest: Buffer | undefined;
+  try {
+    targetDigest = targetSecret.useBytes((bytes) =>
+      createHash("sha256").update(bytes).digest(),
+    );
+    bearerDigest = bearer.secret.useBytes((bytes) =>
+      createHash("sha256").update(bytes).digest(),
+    );
+    if (timingSafeEqual(targetDigest, bearerDigest)) {
+      throw new CredentialConfigurationError(
+        "Target and legacy SSE credentials must be independent",
+      );
+    }
+    const activated = Object.freeze({
+      principalId: bearer.principalId,
+      secret: bearer.secret,
+    }) as IndependentLegacySseBearerCredential;
+    ACTIVATED_LEGACY_SSE_BEARERS.add(activated);
+    return activated;
+  } catch {
+    targetSecret.dispose();
+    bearer.secret.dispose();
+    throw new CredentialConfigurationError(
+      "Target and legacy SSE credentials must be independent",
+    );
+  } finally {
+    targetDigest?.fill(0);
+    bearerDigest?.fill(0);
+  }
+}
+
+export function assertIndependentLegacySseBearerCredential(
+  bearer: IndependentLegacySseBearerCredential,
+): void {
+  if (ACTIVATED_LEGACY_SSE_BEARERS.has(bearer)) return;
+  throw new CredentialConfigurationError(
+    "Legacy SSE bearer credential must be independently activated",
+  );
 }
 
 export function validateCredentialFileMetadata(

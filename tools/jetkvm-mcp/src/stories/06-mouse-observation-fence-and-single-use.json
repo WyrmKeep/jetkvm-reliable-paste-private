@@ -7,7 +7,18 @@
     "branch:scroll-validation",
     "contract:observation-single-use"
   ],
-  "tools": ["jetkvm_display_capture", "jetkvm_input_mouse"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -24,6 +35,11 @@
       "id": "scenario-ready",
       "description": "A fresh capture supplies immutable geometry and the mouse plane records admission, dispatch, and completion counts.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -33,6 +49,48 @@
       "boundary": "before_write",
       "action": "Cancel the admitted mouse request before the first downstream write.",
       "expected_effect": "The cancelled request is not_sent with zero downstream writes and its observation reservation released."
+    },
+    {
+      "id": "clear-cancel-before-write",
+      "after_step": "cancel-before-write",
+      "boundary": "during_cleanup",
+      "action": "Clear the pre-write cancellation injection without consuming the reserved observation or request identifier.",
+      "expected_effect": "Retrying the same normalized request reaches one ordinary downstream write and consumes the observation exactly once."
+    },
+    {
+      "id": "foreign-observation-session-fence",
+      "after_step": "capture-foreign-observation",
+      "boundary": "before_admission",
+      "action": "Present the separately captured foreign-session observation to the owned session mouse handler.",
+      "expected_effect": "The handler returns STALE_OBSERVATION with zero downstream writes and leaves the foreign observation unusable by this session."
+    },
+    {
+      "id": "age-observation-past-maximum",
+      "after_step": "capture-stale-age-observation",
+      "boundary": "before_admission",
+      "action": "Advance the fake monotonic clock beyond the maximum observation age before mouse admission.",
+      "expected_effect": "The handler returns STALE_OBSERVATION with zero downstream writes."
+    },
+    {
+      "id": "consume-observation-once",
+      "after_step": "capture-consumed-observation",
+      "boundary": "after_acknowledgement",
+      "action": "Complete one mouse move with the fresh observation before attempting to reuse it.",
+      "expected_effect": "The first call is applied once; reuse returns OBSERVATION_CONSUMED with zero additional downstream writes."
+    },
+    {
+      "id": "change-display-before-dispatch",
+      "after_step": "capture-display-before-observation",
+      "boundary": "before_write",
+      "action": "Change the display geometry after capture but before the first mouse dispatch.",
+      "expected_effect": "The handler returns DISPLAY_CHANGED with zero downstream writes."
+    },
+    {
+      "id": "change-display-after-first-dispatch",
+      "after_step": "capture-display-after-observation",
+      "boundary": "after_write",
+      "action": "Change the display geometry after the first event of a two-event mouse request is dispatched.",
+      "expected_effect": "The result is unknown with one downstream write and the undispatched suffix suppressed."
     },
     {
       "id": "interrupt-mouse-after-first-event",
@@ -71,11 +129,230 @@
         "session_generation": 7,
         "observation_id": "opaque-observation-cancel",
         "request_id": "opaque-mouse-cancel",
-        "actions": [{ "type": "move", "x": 40, "y": 50 }],
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
       "expect": "not_sent with zero downstream writes after cancellation before write."
+    },
+    {
+      "id": "retry-cancelled-reservation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel",
+        "request_id": "opaque-mouse-cancel",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied with one downstream write, proving the pre-write cancellation released both observation and request reservations."
+    },
+    {
+      "id": "capture-foreign-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-foreign-session",
+        "session_generation": 3,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh foreign-session observation saved as opaque-observation-foreign."
+    },
+    {
+      "id": "reject-foreign-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-foreign",
+        "request_id": "opaque-foreign-observation-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_OBSERVATION for the foreign-session observation with zero downstream writes."
+    },
+    {
+      "id": "capture-stale-age-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh observation saved as opaque-observation-stale-age before advancing the monotonic clock."
+    },
+    {
+      "id": "reject-stale-age-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-stale-age",
+        "request_id": "opaque-stale-age-observation-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_OBSERVATION after the age limit with zero downstream writes."
+    },
+    {
+      "id": "capture-consumed-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A separate fresh observation saved as opaque-observation-consumed."
+    },
+    {
+      "id": "consume-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-consumed",
+        "request_id": "opaque-consume-observation-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied once with one downstream write and the observation consumed."
+    },
+    {
+      "id": "reuse-consumed-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-consumed",
+        "request_id": "opaque-reuse-consumed-observation-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "OBSERVATION_CONSUMED with zero downstream writes on reuse."
+    },
+    {
+      "id": "capture-display-before-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh observation saved as opaque-observation-display-before."
+    },
+    {
+      "id": "reject-display-change-before-dispatch",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-display-before",
+        "request_id": "opaque-display-before-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "DISPLAY_CHANGED before dispatch with zero downstream writes."
+    },
+    {
+      "id": "capture-display-after-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh observation saved as opaque-observation-display-after."
+    },
+    {
+      "id": "display-change-after-first-dispatch",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-display-after",
+        "request_id": "opaque-display-after-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          },
+          {
+            "type": "click",
+            "x": 40,
+            "y": 50,
+            "button": "left"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown after one downstream write with the remaining suffix suppressed after the display change."
     },
     {
       "id": "capture-partial-observation",
@@ -99,8 +376,17 @@
         "observation_id": "opaque-observation-partial",
         "request_id": "opaque-mouse-partial",
         "actions": [
-          { "type": "move", "x": 40, "y": 50 },
-          { "type": "click", "x": 40, "y": 50, "button": "left" }
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          },
+          {
+            "type": "click",
+            "x": 40,
+            "y": 50,
+            "button": "left"
+          }
         ],
         "timeout_ms": 1000
       },
@@ -286,13 +572,161 @@
       },
       "timeout_ms": 1000,
       "expect": "The whole request is schema-rejected with zero plane calls."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_display_capture after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_display_status after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel-before-write-input-keyboard",
+        "request_id": "opaque-cancel-before-write-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_keyboard after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel-before-write-input-mouse",
+        "request_id": "opaque-cancel-before-write-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_mouse after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel-before-write-input-paste",
+        "request_id": "opaque-cancel-before-write-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_paste after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cancel-before-write-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_input_release after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cancel-before-write-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_power_control after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-cancel-before-write-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_connect after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cancel-before-write-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_reconnect after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_status after cancellation before its first downstream write, with zero downstream writes and every reservation released."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:cancellation-before-write",
-      "assertion": "Cancellation before the write boundary is not_sent and records zero downstream writes."
+      "assertion": "Cancellation before write is not_sent with zero downstream writes; clearing the fault and retrying the same normalized request applies one write, proving both reservations were released."
     },
     {
       "id": "assertion-2",
@@ -307,7 +741,7 @@
     {
       "id": "assertion-4",
       "requirement": "contract:observation-single-use",
-      "assertion": "Foreign, stale, consumed, and display-changed observations fail before input; a reserved observation is consumed exactly once."
+      "assertion": "Separately fresh foreign, stale-age, consumed, and display-changed observations fail with observable zero-write or exact post-first-dispatch counts; each reservation is released or consumed exactly once."
     }
   ],
   "evidence": [

@@ -10,6 +10,7 @@ import type {
   QualifiedEdidRead,
 } from "../../device/DeviceRpcAdapter.js";
 import {
+  atxReplayReceiptMatchesRequest,
   ReplayMismatchError,
   SanitizedReplayCursor,
   type SanitizedReplayTape,
@@ -129,7 +130,15 @@ const atxSchema = z
       .object({ status: z.enum(["available", "unavailable"]) })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((receipt, context) => {
+    if (!atxReplayReceiptMatchesRequest(receipt, receipt)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Replay ATX action does not match its fixed wire semantics.",
+      });
+    }
+  });
 
 export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
   private readonly replay: SanitizedReplayCursor;
@@ -191,6 +200,12 @@ export class ReplayDeviceRpcAdapter implements DeviceRpcAdapter {
     const parsed = atxSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay ATX response shape is invalid.");
+    if (!atxReplayReceiptMatchesRequest(request, parsed.data)) {
+      throw new ReplayMismatchError(
+        this.replay.position - 1,
+        "Replay ATX response does not correlate with its request.",
+      );
+    }
     return parsed.data;
   }
 

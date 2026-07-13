@@ -125,6 +125,40 @@ const edidSchema = z.discriminatedUnion("status", [
     .strict(),
 ]);
 const atxActionSchema = z.enum(["press_power", "hold_power", "press_reset"]);
+type ReplayAtxAction = z.infer<typeof atxActionSchema>;
+type ReplayAtxWireAction = "power-short" | "power-long" | "reset";
+const ATX_REPLAY_SEMANTICS: Readonly<
+  Record<
+    ReplayAtxAction,
+    {
+      readonly wireAction: ReplayAtxWireAction;
+      readonly fixedPressMs: 200 | 5000;
+    }
+  >
+> = {
+  press_power: { wireAction: "power-short", fixedPressMs: 200 },
+  hold_power: { wireAction: "power-long", fixedPressMs: 5000 },
+  press_reset: { wireAction: "reset", fixedPressMs: 200 },
+};
+
+export function atxReplayReceiptMatchesRequest(
+  request: { readonly requestId: string; readonly action: ReplayAtxAction },
+  receipt: {
+    readonly requestId: string;
+    readonly action: ReplayAtxAction;
+    readonly wireAction: ReplayAtxWireAction;
+    readonly fixedPressMs: 200 | 5000;
+  },
+): boolean {
+  const expected = ATX_REPLAY_SEMANTICS[request.action];
+  return (
+    receipt.requestId === request.requestId &&
+    receipt.action === request.action &&
+    receipt.wireAction === expected.wireAction &&
+    receipt.fixedPressMs === expected.fixedPressMs
+  );
+}
+
 const atxSchema = z
   .object({
     requestId: requestIdSchema,
@@ -146,7 +180,15 @@ const atxSchema = z
       .object({ status: z.enum(["available", "unavailable"]) })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((receipt, context) => {
+    if (!atxReplayReceiptMatchesRequest(receipt, receipt)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Replay ATX action does not match its fixed wire semantics.",
+      });
+    }
+  });
 
 const connectionSchema = z
   .object({
@@ -352,110 +394,533 @@ const devicePowerRequestSchema = z
   })
   .strict();
 
-const REPLAY_ERROR_CODES = [
-  "DEADLINE_EXCEEDED",
-  "CANCELLED",
-  "CONNECTION_LOST",
-  "POST_ACK_READ_FAILED",
-  "TERMINAL_RESULT_PRESERVED",
-  "MALFORMED_RESPONSE",
-  "PERMISSION_DENIED",
-  "CAPABILITY_MISSING",
-  "CONTROL_BUSY",
-  "SESSION_TAKEN_OVER",
-  "STALE_SESSION_GENERATION",
-  "PARTIAL_DISPATCH",
-  "CLEANUP_FAILED",
-  "FRESH_CAPTURE_REQUIRED",
-  "EVENT_GAP",
-  "ALREADY_APPLIED",
-  "INVALID_BINDING",
-  "INVALID_DEADLINE",
-  "INVALID_REQUEST",
-  "STALE_BINDING",
-  "BINDING_REPLACED",
-  "WRITE_REJECTED",
-  "DUPLICATE_RESPONSE",
-  "DOWNSTREAM_ERROR",
-] as const;
-
-const replayErrorFields = {
-  code: z.enum(REPLAY_ERROR_CODES),
-  boundary: z.enum([
-    "admission",
-    "queue",
-    "send",
-    "ack",
-    "post_ack",
-    "persisted",
-  ]),
-  outcome: z.enum(["not_sent", "unknown", "applied", "already_applied"]),
-  writeBegan: z.boolean(),
-  acknowledged: z.boolean(),
-  verification: z.enum(["none", "device_ack_only", "device_state_verified"]),
-} as const;
-function replayErrorSchema(counted: boolean) {
-  const schema = z
-    .object({
-      ...replayErrorFields,
-      ...(counted
-        ? {
-            dispatchedCount: z.number().int().nonnegative(),
-            completedCount: z.number().int().nonnegative(),
-          }
-        : {}),
-    })
-    .strict();
-  return schema.superRefine((error, context) => {
-    const valid =
-      (error.outcome === "not_sent" &&
-        !error.writeBegan &&
-        !error.acknowledged &&
-        error.verification === "none" &&
-        ["admission", "queue", "send"].includes(error.boundary)) ||
-      (error.outcome === "unknown" &&
-        error.writeBegan &&
-        !error.acknowledged &&
-        error.verification === "none" &&
-        ["ack", "post_ack"].includes(error.boundary)) ||
-      (error.outcome === "applied" &&
-        error.writeBegan &&
-        error.acknowledged &&
-        error.verification !== "none" &&
-        ["ack", "post_ack", "persisted"].includes(error.boundary)) ||
-      (error.outcome === "already_applied" &&
-        !error.writeBegan &&
-        error.acknowledged &&
-        error.verification !== "none" &&
-        ["admission", "persisted"].includes(error.boundary));
-    if (!valid) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Recorded replay error boundary and outcome are incoherent.",
-      });
-    }
-    if (
-      "dispatchedCount" in error &&
-      typeof error.dispatchedCount === "number" &&
-      "completedCount" in error &&
-      typeof error.completedCount === "number" &&
-      error.completedCount > error.dispatchedCount
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Recorded replay error counts are incoherent.",
-      });
-    }
-  });
+type ReplayErrorCode =
+  | "DEADLINE_EXCEEDED"
+  | "CANCELLED"
+  | "CONNECTION_LOST"
+  | "POST_ACK_READ_FAILED"
+  | "TERMINAL_RESULT_PRESERVED"
+  | "MALFORMED_RESPONSE"
+  | "PERMISSION_DENIED"
+  | "CAPABILITY_MISSING"
+  | "CONTROL_BUSY"
+  | "SESSION_TAKEN_OVER"
+  | "STALE_SESSION_GENERATION"
+  | "PARTIAL_DISPATCH"
+  | "CLEANUP_FAILED"
+  | "FRESH_CAPTURE_REQUIRED"
+  | "EVENT_GAP"
+  | "ALREADY_APPLIED"
+  | "INVALID_BINDING"
+  | "INVALID_DEADLINE"
+  | "INVALID_REQUEST"
+  | "STALE_BINDING"
+  | "BINDING_REPLACED"
+  | "WRITE_REJECTED"
+  | "DUPLICATE_RESPONSE"
+  | "DOWNSTREAM_ERROR";
+type ReplayErrorBoundary =
+  | "admission"
+  | "queue"
+  | "send"
+  | "ack"
+  | "post_ack"
+  | "persisted";
+type ReplayErrorOutcome =
+  | "not_sent"
+  | "unknown"
+  | "applied"
+  | "already_applied";
+type ReplayErrorVerification =
+  | "none"
+  | "device_ack_only"
+  | "device_state_verified";
+type ReplayCountRule = "zero" | "partial" | "complete" | "bounded";
+interface ReplayErrorRule {
+  readonly code: ReplayErrorCode;
+  readonly boundary: ReplayErrorBoundary;
+  readonly outcome: ReplayErrorOutcome;
+  readonly writeBegan: boolean;
+  readonly acknowledged: boolean;
+  readonly verification: ReplayErrorVerification;
+  readonly counts: ReplayCountRule;
 }
-const uncountedErrorSchema = replayErrorSchema(false);
-const countedErrorSchema = replayErrorSchema(true);
+
+const ERROR_RULES = {
+  deadlineAdmission: {
+    code: "DEADLINE_EXCEEDED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  deadlineQueue: {
+    code: "DEADLINE_EXCEEDED",
+    boundary: "queue",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  deadlineSend: {
+    code: "DEADLINE_EXCEEDED",
+    boundary: "send",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  deadlineAck: {
+    code: "DEADLINE_EXCEEDED",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  cancelledAdmission: {
+    code: "CANCELLED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  cancelledQueue: {
+    code: "CANCELLED",
+    boundary: "queue",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  cancelledSend: {
+    code: "CANCELLED",
+    boundary: "send",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  cancelledAck: {
+    code: "CANCELLED",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  connectionAdmission: {
+    code: "CONNECTION_LOST",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  connectionQueue: {
+    code: "CONNECTION_LOST",
+    boundary: "queue",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  connectionSend: {
+    code: "CONNECTION_LOST",
+    boundary: "send",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  connectionAck: {
+    code: "CONNECTION_LOST",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  postAckRead: {
+    code: "POST_ACK_READ_FAILED",
+    boundary: "post_ack",
+    outcome: "applied",
+    writeBegan: true,
+    acknowledged: true,
+    verification: "device_ack_only",
+    counts: "complete",
+  },
+  terminalPreserved: {
+    code: "TERMINAL_RESULT_PRESERVED",
+    boundary: "persisted",
+    outcome: "applied",
+    writeBegan: true,
+    acknowledged: true,
+    verification: "device_ack_only",
+    counts: "complete",
+  },
+  malformedSend: {
+    code: "MALFORMED_RESPONSE",
+    boundary: "send",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  malformedAck: {
+    code: "MALFORMED_RESPONSE",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  permissionAdmission: {
+    code: "PERMISSION_DENIED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  capabilityAdmission: {
+    code: "CAPABILITY_MISSING",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  controlBusyAdmission: {
+    code: "CONTROL_BUSY",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  sessionTakenAck: {
+    code: "SESSION_TAKEN_OVER",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  staleGenerationAdmission: {
+    code: "STALE_SESSION_GENERATION",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  partialDispatch: {
+    code: "PARTIAL_DISPATCH",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  cleanupFailure: {
+    code: "CLEANUP_FAILED",
+    boundary: "post_ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "bounded",
+  },
+  freshCaptureAdmission: {
+    code: "FRESH_CAPTURE_REQUIRED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  eventGap: {
+    code: "EVENT_GAP",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  alreadyApplied: {
+    code: "ALREADY_APPLIED",
+    boundary: "admission",
+    outcome: "already_applied",
+    writeBegan: false,
+    acknowledged: true,
+    verification: "device_ack_only",
+    counts: "complete",
+  },
+  invalidBindingAdmission: {
+    code: "INVALID_BINDING",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  invalidDeadlineAdmission: {
+    code: "INVALID_DEADLINE",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  invalidRequestAdmission: {
+    code: "INVALID_REQUEST",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  staleBindingAdmission: {
+    code: "STALE_BINDING",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  bindingReplacedQueue: {
+    code: "BINDING_REPLACED",
+    boundary: "queue",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  bindingReplacedSend: {
+    code: "BINDING_REPLACED",
+    boundary: "send",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  bindingReplacedAck: {
+    code: "BINDING_REPLACED",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  writeRejectedSend: {
+    code: "WRITE_REJECTED",
+    boundary: "send",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  duplicateResponseAck: {
+    code: "DUPLICATE_RESPONSE",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+  downstreamErrorAck: {
+    code: "DOWNSTREAM_ERROR",
+    boundary: "ack",
+    outcome: "unknown",
+    writeBegan: true,
+    acknowledged: false,
+    verification: "none",
+    counts: "partial",
+  },
+} as const satisfies Record<string, ReplayErrorRule>;
+
+function replayErrorSchema(
+  counted: boolean,
+  rules: readonly ReplayErrorRule[],
+): z.ZodTypeAny {
+  const variants = rules.map((rule) => {
+    const exactFields = {
+      code: z.literal(rule.code),
+      boundary: z.literal(rule.boundary),
+      outcome: z.literal(rule.outcome),
+      writeBegan: z.literal(rule.writeBegan),
+      acknowledged: z.literal(rule.acknowledged),
+      verification: z.literal(rule.verification),
+    };
+    if (!counted) return z.object(exactFields).strict();
+    return z
+      .object({
+        ...exactFields,
+        dispatchedCount: z.number().int().nonnegative(),
+        completedCount: z.number().int().nonnegative(),
+      })
+      .strict()
+      .superRefine((error, context) => {
+        const dispatchedCount = error.dispatchedCount;
+        const completedCount = error.completedCount;
+        const countsAreValid =
+          (rule.counts === "zero" &&
+            dispatchedCount === 0 &&
+            completedCount === 0) ||
+          (rule.counts === "partial" &&
+            dispatchedCount > 0 &&
+            completedCount < dispatchedCount) ||
+          (rule.counts === "complete" && completedCount === dispatchedCount) ||
+          (rule.counts === "bounded" &&
+            dispatchedCount > 0 &&
+            completedCount <= dispatchedCount);
+        if (!countsAreValid) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Recorded replay error counts are incoherent.",
+          });
+        }
+      });
+  });
+  const [first, second, ...rest] = variants;
+  if (first === undefined || second === undefined) {
+    throw new Error(
+      "Replay error schemas require at least two legal variants.",
+    );
+  }
+  return z.union([first, second, ...rest]);
+}
+
+const highLevelCommonErrorRules = [
+  ERROR_RULES.deadlineAdmission,
+  ERROR_RULES.cancelledAdmission,
+  ERROR_RULES.connectionSend,
+  ERROR_RULES.connectionAck,
+  ERROR_RULES.malformedAck,
+  ERROR_RULES.permissionAdmission,
+  ERROR_RULES.capabilityAdmission,
+  ERROR_RULES.sessionTakenAck,
+  ERROR_RULES.staleGenerationAdmission,
+] as const;
+const browserConnectErrorSchema = replayErrorSchema(false, [
+  ...highLevelCommonErrorRules,
+  ERROR_RULES.controlBusyAdmission,
+]);
+const browserReadErrorSchema = replayErrorSchema(
+  false,
+  highLevelCommonErrorRules,
+);
+const browserCloseErrorSchema = replayErrorSchema(false, [
+  ERROR_RULES.connectionSend,
+  ERROR_RULES.connectionAck,
+  ERROR_RULES.sessionTakenAck,
+  ERROR_RULES.staleGenerationAdmission,
+]);
+const browserMutationErrorRules = [
+  ...highLevelCommonErrorRules,
+  ERROR_RULES.postAckRead,
+  ERROR_RULES.terminalPreserved,
+  ERROR_RULES.partialDispatch,
+  ERROR_RULES.cleanupFailure,
+  ERROR_RULES.eventGap,
+  ERROR_RULES.alreadyApplied,
+] as const;
+const browserObservedMutationErrorSchema = replayErrorSchema(true, [
+  ...browserMutationErrorRules,
+  ERROR_RULES.freshCaptureAdmission,
+]);
+const browserReleaseErrorSchema = replayErrorSchema(
+  true,
+  browserMutationErrorRules,
+);
+const nativeReadErrorSchema = replayErrorSchema(
+  false,
+  highLevelCommonErrorRules,
+);
+const nativePowerErrorSchema = replayErrorSchema(false, [
+  ...highLevelCommonErrorRules,
+  ERROR_RULES.postAckRead,
+  ERROR_RULES.terminalPreserved,
+  ERROR_RULES.alreadyApplied,
+]);
+const deviceRpcCommonErrorRules = [
+  ERROR_RULES.invalidBindingAdmission,
+  ERROR_RULES.invalidDeadlineAdmission,
+  ERROR_RULES.staleBindingAdmission,
+  ERROR_RULES.bindingReplacedQueue,
+  ERROR_RULES.bindingReplacedSend,
+  ERROR_RULES.bindingReplacedAck,
+  ERROR_RULES.cancelledAdmission,
+  ERROR_RULES.cancelledQueue,
+  ERROR_RULES.cancelledSend,
+  ERROR_RULES.cancelledAck,
+  ERROR_RULES.deadlineQueue,
+  ERROR_RULES.deadlineSend,
+  ERROR_RULES.deadlineAck,
+  ERROR_RULES.connectionAdmission,
+  ERROR_RULES.connectionQueue,
+  ERROR_RULES.connectionSend,
+  ERROR_RULES.connectionAck,
+  ERROR_RULES.writeRejectedSend,
+  ERROR_RULES.malformedSend,
+  ERROR_RULES.malformedAck,
+  ERROR_RULES.duplicateResponseAck,
+  ERROR_RULES.downstreamErrorAck,
+] as const;
+const deviceRpcReadErrorSchema = replayErrorSchema(
+  false,
+  deviceRpcCommonErrorRules,
+);
+const deviceRpcAtxErrorSchema = replayErrorSchema(false, [
+  ...deviceRpcCommonErrorRules,
+  ERROR_RULES.invalidRequestAdmission,
+]);
+
+type ReplayResponseCorrelation = (
+  request: unknown,
+  response: unknown,
+) => boolean;
 
 function exchangeSchema(
   operation: string,
   request: z.ZodTypeAny,
   response: z.ZodTypeAny,
-  error: z.ZodTypeAny = uncountedErrorSchema,
+  error: z.ZodTypeAny,
+  responseMatchesRequest?: ReplayResponseCorrelation,
 ) {
   return z
     .object({
@@ -475,38 +940,79 @@ function exchangeSchema(
           message: "Exactly one replay response or error is required.",
         });
       }
+      if (
+        exchange.response !== undefined &&
+        responseMatchesRequest !== undefined &&
+        !responseMatchesRequest(exchange.request, exchange.response)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Replay response does not correlate with its request.",
+        });
+      }
     });
 }
 
+const atxResponseMatchesRequest: ReplayResponseCorrelation = (
+  request,
+  response,
+) => {
+  const typedRequest = request as {
+    readonly request: {
+      readonly requestId: string;
+      readonly action: ReplayAtxAction;
+    };
+  };
+  return atxReplayReceiptMatchesRequest(
+    typedRequest.request,
+    response as z.infer<typeof atxSchema>,
+  );
+};
+
 const browserExchangeSchema = z.union([
-  exchangeSchema("connect", refRequestSchema, connectionSchema),
-  exchangeSchema("reconnect", refRequestSchema, connectionSchema),
-  exchangeSchema("capture", captureRequestSchema, observationSchema),
+  exchangeSchema(
+    "connect",
+    refRequestSchema,
+    connectionSchema,
+    browserConnectErrorSchema,
+  ),
+  exchangeSchema(
+    "reconnect",
+    refRequestSchema,
+    connectionSchema,
+    browserConnectErrorSchema,
+  ),
+  exchangeSchema(
+    "capture",
+    captureRequestSchema,
+    observationSchema,
+    browserReadErrorSchema,
+  ),
   exchangeSchema(
     "mouse",
     mouseRequestSchema,
     mutationReceiptSchema,
-    countedErrorSchema,
+    browserObservedMutationErrorSchema,
   ),
   exchangeSchema(
     "keyboard",
     keyboardRequestSchema,
     mutationReceiptSchema,
-    countedErrorSchema,
+    browserObservedMutationErrorSchema,
   ),
   exchangeSchema(
     "paste",
     pasteRequestSchema,
     pasteReceiptSchema,
-    countedErrorSchema,
+    browserObservedMutationErrorSchema,
   ),
   exchangeSchema(
     "release",
     releaseRequestSchema,
     releaseReceiptSchema,
-    countedErrorSchema,
+    browserReleaseErrorSchema,
   ),
-  exchangeSchema("close", refRequestSchema, z.null()),
+  exchangeSchema("close", refRequestSchema, z.null(), browserCloseErrorSchema),
 ]);
 const nativeExchangeSchema = z.union([
   exchangeSchema(
@@ -519,6 +1025,7 @@ const nativeExchangeSchema = z.union([
         display: displaySchema,
       })
       .strict(),
+    nativeReadErrorSchema,
   ),
   exchangeSchema(
     "displayStatus",
@@ -532,13 +1039,36 @@ const nativeExchangeSchema = z.union([
         edid: edidSchema,
       })
       .strict(),
+    nativeReadErrorSchema,
   ),
-  exchangeSchema("powerControl", powerRequestSchema, atxSchema),
+  exchangeSchema(
+    "powerControl",
+    powerRequestSchema,
+    atxSchema,
+    nativePowerErrorSchema,
+    atxResponseMatchesRequest,
+  ),
 ]);
 const deviceRpcExchangeSchema = z.union([
-  exchangeSchema("readDisplayState", bindingRequestSchema, displaySchema),
-  exchangeSchema("readEdid", bindingRequestSchema, edidSchema),
-  exchangeSchema("performAtx", devicePowerRequestSchema, atxSchema),
+  exchangeSchema(
+    "readDisplayState",
+    bindingRequestSchema,
+    displaySchema,
+    deviceRpcReadErrorSchema,
+  ),
+  exchangeSchema(
+    "readEdid",
+    bindingRequestSchema,
+    edidSchema,
+    deviceRpcReadErrorSchema,
+  ),
+  exchangeSchema(
+    "performAtx",
+    devicePowerRequestSchema,
+    atxSchema,
+    deviceRpcAtxErrorSchema,
+    atxResponseMatchesRequest,
+  ),
 ]);
 const strictTapeSchema = z.discriminatedUnion("plane", [
   z

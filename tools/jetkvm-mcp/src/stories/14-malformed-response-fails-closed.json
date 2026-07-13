@@ -2,7 +2,18 @@
   "id": "malformed-response-fails-closed",
   "title": "Malformed downstream responses fail closed at the proven boundary",
   "requirements": ["branch:malformed-downstream-response"],
-  "tools": ["jetkvm_display_status", "jetkvm_power_control"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay"],
   "preconditions": [
     {
@@ -19,6 +30,11 @@
       "id": "scenario-ready",
       "description": "The adapter can return malformed read data before mutation and malformed ATX data after a proven wire write.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -26,8 +42,8 @@
       "id": "malformed-boundary-cases",
       "after_step": null,
       "boundary": "after_write",
-      "action": "Return a schema-invalid display response in the read case and a schema-invalid ATX receipt after a write in the mutation case.",
-      "expected_effect": "The read fails without a write; the mutation is unknown after its possible write; neither fabricates success."
+      "action": "Return a malformed downstream response to each linked tool at a recorded pre-write or post-write boundary.",
+      "expected_effect": "Each response fails closed as not_sent or unknown according to the write boundary, never as success."
     }
   ],
   "steps": [
@@ -56,6 +72,154 @@
       },
       "timeout_ms": 1000,
       "expect": "unknown at the acknowledgement boundary with no replay."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_display_capture response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_display_status response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-malformed-display-status-input-keyboard",
+        "request_id": "opaque-malformed-display-status-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_input_keyboard response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-malformed-display-status-input-mouse",
+        "request_id": "opaque-malformed-display-status-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_input_mouse response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-malformed-display-status-input-paste",
+        "request_id": "opaque-malformed-display-status-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_input_paste response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-malformed-display-status-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_input_release response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-malformed-display-status-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_power_control response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-malformed-display-status-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_session_connect response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-malformed-display-status-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_session_reconnect response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
+    },
+    {
+      "id": "malformed-display-status-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The malformed jetkvm_session_status response fails closed as not_sent or unknown according to the recorded write boundary, with no fabricated success."
     }
   ],
   "pass": [

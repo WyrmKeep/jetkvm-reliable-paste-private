@@ -333,7 +333,7 @@ const ATX_WIRE_BY_ACTION: Record<
   press_reset: { wireAction: "reset", fixedPressMs: 200 },
 };
 
-const MAX_RETIRED_CORRELATION_IDS = 256;
+const CORRELATION_ID_PREFIX = "device-rpc";
 
 export function mapDeviceRpcBindingToWire(
   binding: DeviceRpcBinding,
@@ -407,19 +407,20 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
   private cachedDisplay: CachedDisplayState | undefined;
   private sequence = 0;
   private cachedDisplayAtMs: number | undefined;
-  private readonly retiredCorrelationIds = new Set<string>();
+  private readonly correlationNamespace: string;
 
   public constructor(
     binding: DeviceRpcBinding,
     channel: BrowserOwnedRpcChannel,
     private readonly options: {
-      readonly idFactory?: () => string;
+      readonly idNamespace?: string;
       readonly now?: () => number;
     } = {},
   ) {
     assertValidBinding(binding);
     this.currentBinding = freezeBinding(binding);
     this.channel = channel;
+    this.correlationNamespace = options.idNamespace ?? crypto.randomUUID();
   }
 
   public get binding(): DeviceRpcBinding {
@@ -439,7 +440,6 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     this.channel = nextChannel;
     this.cachedDisplay = undefined;
     this.cachedDisplayAtMs = undefined;
-    this.retiredCorrelationIds.clear();
     this.revisionAbort = new AbortController();
     publish?.();
   }
@@ -732,8 +732,9 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     params: Readonly<Record<string, unknown>>,
     cancellation: CallCancellation,
   ): Promise<ExchangeResult> {
-    const correlationId =
-      this.options.idFactory?.() ?? `device-rpc-${++this.sequence}`;
+    const correlationSequence = ++this.sequence;
+    const correlationPrefix = `${CORRELATION_ID_PREFIX}:${this.correlationNamespace}:${expectedRevision}`;
+    const correlationId = `${correlationPrefix}:${correlationSequence}`;
     const payload = JSON.stringify({
       jsonrpc: "2.0",
       id: correlationId,
@@ -750,14 +751,12 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
       const finishError = (error: DeviceRpcError) => {
         if (settled) return;
         settled = true;
-        if (writeBegan) this.retireCorrelationId(correlationId);
         stopListening();
         reject(error);
       };
       const finishSuccess = () => {
         if (settled || !responseSeen) return;
         settled = true;
-        this.retireCorrelationId(correlationId);
         stopListening();
         resolve({ result: receivedResult, writeBegan: true });
       };
@@ -793,7 +792,15 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
             return;
           }
           if (envelope.data.id !== correlationId) {
-            if (this.retiredCorrelationIds.has(envelope.data.id)) return;
+            if (
+              this.isIssuedNoncurrentCorrelationId(
+                envelope.data.id,
+                correlationPrefix,
+                correlationSequence,
+              )
+            ) {
+              return;
+            }
             finishError(this.protocolError("MALFORMED_RESPONSE", writeBegan));
             return;
           }
@@ -959,18 +966,35 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     );
   }
 
-  private retireCorrelationId(correlationId: string): void {
-    if (this.retiredCorrelationIds.has(correlationId)) return;
-    this.retiredCorrelationIds.add(correlationId);
-    if (this.retiredCorrelationIds.size <= MAX_RETIRED_CORRELATION_IDS) return;
-    const oldest = this.retiredCorrelationIds.values().next().value;
-    if (oldest !== undefined) this.retiredCorrelationIds.delete(oldest);
+  private isIssuedNoncurrentCorrelationId(
+    candidate: string,
+    issuedPrefix: string,
+    currentSequence: number,
+  ): boolean {
+    const correlationPrefix = `${issuedPrefix}:`;
+    if (!candidate.startsWith(correlationPrefix)) return false;
+    const sequenceText = candidate.slice(correlationPrefix.length);
+    const candidateSequence = Number(sequenceText);
+    return (
+      Number.isSafeInteger(candidateSequence) &&
+      candidateSequence >= 1 &&
+      String(candidateSequence) === sequenceText &&
+      candidateSequence < currentSequence
+    );
   }
 
   private staleFact<T>(
     fact: QualifiedFact<T>,
     elapsedMs: number,
   ): QualifiedFact<T> {
+    if (fact.source === "none" || fact.observedAt === null) {
+      return {
+        ...fact,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+      };
+    }
     return {
       ...fact,
       ageMs: fact.ageMs === null ? null : fact.ageMs + elapsedMs,

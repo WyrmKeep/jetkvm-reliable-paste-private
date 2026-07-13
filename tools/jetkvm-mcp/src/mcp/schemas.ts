@@ -8,7 +8,13 @@ import {
   PHYSICAL_KEYS,
   type JetKvmToolName,
 } from "../domain.ts";
-import { ERROR_CODES, ERROR_PHASES } from "../errors.ts";
+import {
+  ERROR_CODES,
+  ERROR_PHASES,
+  type ErrorCode,
+  type ErrorPhase,
+  type RequiredNextStep,
+} from "../errors.ts";
 
 const MAX_JSON_INTEGER = Number.MAX_SAFE_INTEGER;
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -125,26 +131,6 @@ const readErrorOutcomeShape = {
   verification: z.literal("none"),
   safe_to_retry: z.boolean(),
 } as const;
-const notSentErrorOutcomeShape = {
-  outcome: z.literal("not_sent"),
-  verification: z.literal("none"),
-  safe_to_retry: z.boolean(),
-  required_next_step: z.enum([
-    "none",
-    "capture_then_retry",
-    "reconnect_then_capture",
-    "wait_or_request_takeover",
-  ]),
-} as const;
-const unknownErrorOutcomeShape = {
-  outcome: z.literal("unknown"),
-  verification: z.literal("none"),
-  safe_to_retry: z.literal(false),
-  required_next_step: z.enum([
-    "release_then_reconnect_then_capture",
-    "inspect_device_state_before_retry",
-  ]),
-} as const;
 
 const readErrorBody = (permission: z.ZodTypeAny, capability: z.ZodTypeAny) =>
   z.union([
@@ -186,106 +172,478 @@ const readErrorBody = (permission: z.ZodTypeAny, capability: z.ZodTypeAny) =>
       .strict(),
   ]);
 
-const mutationErrorBody = (
+type MutationErrorPolicy = {
+  readonly codes: readonly ErrorCode[];
+  readonly phase: ErrorPhase;
+  readonly phases?: readonly ErrorPhase[];
+  readonly outcome: "applied" | "already_applied" | "not_sent" | "unknown";
+  readonly verification: "device_state_verified" | "device_ack_only" | "none";
+  readonly safeToRetry: boolean;
+  readonly requiredNextStep: RequiredNextStep;
+  readonly downstreamStage:
+    | "none"
+    | "admission"
+    | "write"
+    | "acknowledgement"
+    | "verification";
+  readonly downstreamStages?: readonly (
+    | "none"
+    | "admission"
+    | "write"
+    | "acknowledgement"
+    | "verification"
+  )[];
+  readonly excludedTools?: readonly JetKvmToolName[];
+};
+
+const MUTATION_ERROR_POLICIES: readonly MutationErrorPolicy[] = [
+  {
+    codes: [
+      "CONFIG_INVALID",
+      "INVALID_COORDINATE",
+      "INVALID_KEY",
+      "UNSUPPORTED_SCROLL_AXIS",
+      "ATX_EXTENSION_INACTIVE",
+      "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+    ],
+    phase: "validate",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
+    codes: [
+      "AUTH_FAILED",
+      "AUTH_EXPIRED",
+      "UNSUPPORTED_UI_VERSION",
+      "FIRMWARE_INCOMPATIBLE",
+      "BROWSER_UNSUPPORTED",
+    ],
+    phase: "connect",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+  },
+  {
+    codes: ["AUTH_RATE_LIMITED"],
+    phase: "connect",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+  },
+  {
+    codes: ["OBSERVE_ONLY", "SAFETY_DENIED"],
+    phase: "authorize",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
+    codes: ["SESSION_NOT_FOUND", "STALE_SESSION_GENERATION"],
+    phase: "validate",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+  },
+  {
+    codes: ["DEVICE_UNREACHABLE"],
+    phase: "connect",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+  },
+  {
+    codes: ["VIDEO_UNAVAILABLE", "VIDEO_STALLED"],
+    phase: "validate",
+    phases: ["validate", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "capture_then_retry",
+    downstreamStage: "none",
+    downstreamStages: ["none", "admission", "write"],
+  },
+  {
+    codes: ["STALE_OBSERVATION", "OBSERVATION_CONSUMED", "DISPLAY_CHANGED"],
+    phase: "validate",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "capture_then_retry",
+    downstreamStage: "none",
+    downstreamStages: ["none", "admission"],
+  },
+  {
+    codes: ["DISPLAY_CHANGED"],
+    phase: "execute",
+    phases: ["execute", "verify"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["PASTE_BUSY", "ATX_BUSY"],
+    phase: "queue",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
+    codes: ["PASTE_REJECTED", "POWER_ACTION_REJECTED"],
+    phase: "execute",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
+    codes: ["SESSION_TAKEN_OVER", "SESSION_DRAINED"],
+    phase: "execute",
+    phases: ["validate", "queue", "connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission", "write"],
+  },
+  {
+    codes: ["SESSION_TAKEN_OVER", "SESSION_DRAINED"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["CONNECTION_LOST"],
+    phase: "execute",
+    phases: ["connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "write",
+    downstreamStages: ["none", "admission", "write"],
+    excludedTools: ["jetkvm_session_connect"],
+  },
+  {
+    codes: ["CONNECTION_LOST"],
+    phase: "connect",
+    phases: ["connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission", "write"],
+    excludedTools: [
+      "jetkvm_input_keyboard",
+      "jetkvm_input_mouse",
+      "jetkvm_input_paste",
+      "jetkvm_input_release",
+      "jetkvm_power_control",
+      "jetkvm_session_reconnect",
+    ],
+  },
+  {
+    codes: ["CONNECTION_LOST"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["DOWNSTREAM_MALFORMED_RESPONSE"],
+    phase: "execute",
+    phases: ["connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "write",
+    downstreamStages: ["none", "admission", "write"],
+    excludedTools: ["jetkvm_session_connect"],
+  },
+  {
+    codes: ["DOWNSTREAM_MALFORMED_RESPONSE"],
+    phase: "connect",
+    phases: ["connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission", "write"],
+    excludedTools: [
+      "jetkvm_input_keyboard",
+      "jetkvm_input_mouse",
+      "jetkvm_input_paste",
+      "jetkvm_input_release",
+      "jetkvm_power_control",
+      "jetkvm_session_reconnect",
+    ],
+  },
+  {
+    codes: ["DOWNSTREAM_MALFORMED_RESPONSE"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["PASTE_FAILED", "PASTE_CANCELLED", "EVENT_GAP"],
+    phase: "execute",
+    phases: ["execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "release_then_reconnect_then_capture",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["ATX_SERIAL_UNAVAILABLE"],
+    phase: "execute",
+    phases: ["connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "write",
+    downstreamStages: ["none", "admission", "write"],
+  },
+  {
+    codes: ["ATX_SERIAL_UNAVAILABLE"],
+    phase: "execute",
+    phases: ["execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["CANCELLED", "DEADLINE_EXCEEDED"],
+    phase: "queue",
+    phases: ["queue", "connect", "execute"],
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+    downstreamStages: ["none", "admission", "write"],
+  },
+  {
+    codes: ["CANCELLED", "DEADLINE_EXCEEDED"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+  {
+    codes: ["POWER_STATE_UNVERIFIED", "PARTIAL_VERIFICATION"],
+    phase: "verify",
+    outcome: "applied",
+    verification: "device_ack_only",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "verification",
+  },
+  {
+    codes: ["POWER_STATE_UNVERIFIED", "PARTIAL_VERIFICATION"],
+    phase: "verify",
+    outcome: "already_applied",
+    verification: "device_ack_only",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "verification",
+  },
+  {
+    codes: ["MUTATION_OUTCOME_UNKNOWN"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    outcome: "unknown",
+    verification: "none",
+    safeToRetry: false,
+    requiredNextStep: "inspect_device_state_before_retry",
+    downstreamStage: "write",
+    downstreamStages: ["write", "acknowledgement", "verification"],
+  },
+];
+
+const zeroWriteCountSchema = z.union([z.null(), z.literal(0)]);
+const mutationErrorDetails = (
   permission: z.ZodTypeAny,
   capability: z.ZodTypeAny,
-  definitiveVerification: z.ZodTypeAny = z.enum([
-    "device_state_verified",
-    "device_ack_only",
-  ]),
+  policy: MutationErrorPolicy,
 ) =>
-  z.union([
-    z
-      .object({
-        ...genericCommonErrorShape,
-        outcome: z.enum(["applied", "already_applied"]),
-        verification: definitiveVerification,
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("none"),
-      })
-      .strict(),
-    z
-      .object({
-        ...genericCommonErrorShape,
-        ...notSentErrorOutcomeShape,
-      })
-      .strict(),
-    z
-      .object({
-        ...genericCommonErrorShape,
-        ...unknownErrorOutcomeShape,
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("MUTATION_OUTCOME_UNKNOWN"),
-        phase: z.enum(["connect", "execute", "verify", "cleanup"]),
-        details: errorDetailsSchema,
-        ...unknownErrorOutcomeShape,
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("PARTIAL_VERIFICATION"),
-        phase: z.literal("verify"),
-        details: errorDetailsSchema,
-        outcome: z.literal("applied"),
-        verification: z.literal("device_ack_only"),
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("none"),
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"),
-        phase: z.literal("validate"),
-        details: errorDetailsSchema,
-        outcome: z.literal("not_sent"),
-        verification: z.literal("none"),
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("none"),
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("CONTROL_BUSY"),
-        phase: z.literal("authorize"),
-        details: errorDetailsSchema,
-        outcome: z.literal("not_sent"),
-        verification: z.literal("none"),
-        safe_to_retry: z.literal(true),
-        required_next_step: z.literal("wait_or_request_takeover"),
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("PERMISSION_DENIED"),
-        phase: z.literal("authorize"),
-        details: permissionErrorDetails(permission),
-        outcome: z.literal("not_sent"),
-        verification: z.literal("none"),
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("grant_permission"),
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("CAPABILITY_MISSING"),
-        phase: z.literal("validate"),
-        details: capabilityErrorDetails(capability),
-        outcome: z.literal("not_sent"),
-        verification: z.literal("none"),
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("enable_capability"),
-      })
-      .strict(),
-  ]);
+  z
+    .object({
+      ...errorDetailsShape,
+      permission,
+      capability,
+      dispatched_action_count:
+        policy.outcome === "not_sent"
+          ? zeroWriteCountSchema
+          : errorDetailsShape.dispatched_action_count,
+      completed_action_count:
+        policy.outcome === "not_sent"
+          ? zeroWriteCountSchema
+          : errorDetailsShape.completed_action_count,
+      downstream_stage:
+        policy.downstreamStages === undefined
+          ? z.literal(policy.downstreamStage)
+          : z.enum(
+              policy.downstreamStages as [
+                MutationErrorPolicy["downstreamStage"],
+                ...MutationErrorPolicy["downstreamStage"][],
+              ],
+            ),
+    })
+    .strict();
+
+const mutationErrorPolicySchema = (
+  policy: MutationErrorPolicy,
+  permission: z.ZodTypeAny = z.null(),
+  capability: z.ZodTypeAny = z.null(),
+) =>
+  z
+    .object({
+      ...commonErrorShape,
+      code:
+        policy.codes.length === 1
+          ? z.literal(policy.codes[0]!)
+          : z.enum(policy.codes as [ErrorCode, ...ErrorCode[]]),
+      phase:
+        policy.phases === undefined
+          ? z.literal(policy.phase)
+          : z.enum(policy.phases as [ErrorPhase, ...ErrorPhase[]]),
+      outcome: z.literal(policy.outcome),
+      verification: z.literal(policy.verification),
+      safe_to_retry: z.literal(policy.safeToRetry),
+      required_next_step: z.literal(policy.requiredNextStep),
+      details: mutationErrorDetails(permission, capability, policy),
+    })
+    .strict();
+
+const permissionMutationPolicy = {
+  codes: ["PERMISSION_DENIED"],
+  phase: "authorize",
+  outcome: "not_sent",
+  verification: "none",
+  safeToRetry: false,
+  requiredNextStep: "grant_permission",
+  downstreamStage: "none",
+} as const satisfies MutationErrorPolicy;
+const capabilityMutationPolicy = {
+  codes: ["CAPABILITY_MISSING"],
+  phase: "validate",
+  outcome: "not_sent",
+  verification: "none",
+  safeToRetry: false,
+  requiredNextStep: "enable_capability",
+  downstreamStage: "none",
+} as const satisfies MutationErrorPolicy;
+const controlBusyMutationPolicy = {
+  codes: ["CONTROL_BUSY"],
+  phase: "authorize",
+  outcome: "not_sent",
+  verification: "none",
+  safeToRetry: true,
+  requiredNextStep: "wait_or_request_takeover",
+  downstreamStage: "admission",
+} as const satisfies MutationErrorPolicy;
+
+const COMMON_MUTATION_ERROR_CODES = [
+  "CONFIG_INVALID",
+  "AUTH_FAILED",
+  "AUTH_RATE_LIMITED",
+  "AUTH_EXPIRED",
+  "OBSERVE_ONLY",
+  "SAFETY_DENIED",
+  "UNSUPPORTED_UI_VERSION",
+  "FIRMWARE_INCOMPATIBLE",
+  "BROWSER_UNSUPPORTED",
+  "DEVICE_UNREACHABLE",
+  "CONNECTION_LOST",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
+  "CANCELLED",
+  "DEADLINE_EXCEEDED",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+] as const satisfies readonly ErrorCode[];
+const SESSION_BOUND_MUTATION_ERROR_CODES = [
+  "SESSION_NOT_FOUND",
+  "STALE_SESSION_GENERATION",
+  "SESSION_TAKEN_OVER",
+  "SESSION_DRAINED",
+] as const satisfies readonly ErrorCode[];
+const OBSERVATION_MUTATION_ERROR_CODES = [
+  "STALE_OBSERVATION",
+  "OBSERVATION_CONSUMED",
+  "DISPLAY_CHANGED",
+  "VIDEO_UNAVAILABLE",
+  "VIDEO_STALLED",
+] as const satisfies readonly ErrorCode[];
+
+const mutationErrorBody = (
+  tool: JetKvmToolName,
+  permission: z.ZodTypeAny,
+  capability: z.ZodTypeAny,
+  applicableCodes: readonly ErrorCode[],
+) => {
+  const policySchemas = MUTATION_ERROR_POLICIES.flatMap((policy) => {
+    if (policy.excludedTools?.includes(tool)) return [];
+    const codes = policy.codes.filter((code) => applicableCodes.includes(code));
+    return codes.length === 0
+      ? []
+      : [mutationErrorPolicySchema({ ...policy, codes })];
+  });
+  const branches = [
+    mutationErrorPolicySchema(permissionMutationPolicy, permission, z.null()),
+    mutationErrorPolicySchema(capabilityMutationPolicy, z.null(), capability),
+    ...(applicableCodes.includes("CONTROL_BUSY")
+      ? [mutationErrorPolicySchema(controlBusyMutationPolicy)]
+      : []),
+    ...policySchemas,
+  ] as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]];
+  return z.union(branches);
+};
 
 const displayCaptureErrorBodySchema = readErrorBody(
   z.literal("display.capture"),
@@ -300,33 +658,82 @@ const sessionStatusErrorBodySchema = readErrorBody(
   z.literal("session_status"),
 );
 const inputKeyboardErrorBodySchema = mutationErrorBody(
+  "jetkvm_input_keyboard",
   z.literal("input.keyboard"),
   z.literal("keyboard"),
+  [
+    ...COMMON_MUTATION_ERROR_CODES,
+    ...SESSION_BOUND_MUTATION_ERROR_CODES,
+    ...OBSERVATION_MUTATION_ERROR_CODES,
+    "INVALID_KEY",
+    "PARTIAL_VERIFICATION",
+  ],
 );
 const inputMouseErrorBodySchema = mutationErrorBody(
+  "jetkvm_input_mouse",
   z.literal("input.mouse"),
   z.enum(["mouse", "absolute_pointer"]),
+  [
+    ...COMMON_MUTATION_ERROR_CODES,
+    ...SESSION_BOUND_MUTATION_ERROR_CODES,
+    ...OBSERVATION_MUTATION_ERROR_CODES,
+    "INVALID_COORDINATE",
+    "UNSUPPORTED_SCROLL_AXIS",
+    "PARTIAL_VERIFICATION",
+  ],
 );
 const inputPasteErrorBodySchema = mutationErrorBody(
+  "jetkvm_input_paste",
   z.literal("input.paste"),
   z.literal("reliable_paste"),
+  [
+    ...COMMON_MUTATION_ERROR_CODES,
+    ...SESSION_BOUND_MUTATION_ERROR_CODES,
+    ...OBSERVATION_MUTATION_ERROR_CODES,
+    "PASTE_BUSY",
+    "PASTE_REJECTED",
+    "PASTE_FAILED",
+    "PASTE_CANCELLED",
+    "EVENT_GAP",
+    "PARTIAL_VERIFICATION",
+  ],
 );
 const inputReleaseErrorBodySchema = mutationErrorBody(
+  "jetkvm_input_release",
   z.literal("input.release"),
   z.literal("input_release"),
+  [...COMMON_MUTATION_ERROR_CODES, ...SESSION_BOUND_MUTATION_ERROR_CODES],
 );
 const powerControlErrorBodySchema = mutationErrorBody(
+  "jetkvm_power_control",
   z.literal("power.control"),
   z.literal("power_control"),
-  z.literal("device_ack_only"),
+  [
+    ...COMMON_MUTATION_ERROR_CODES,
+    ...SESSION_BOUND_MUTATION_ERROR_CODES,
+    "POWER_ACTION_REJECTED",
+    "ATX_EXTENSION_INACTIVE",
+    "ATX_SERIAL_UNAVAILABLE",
+    "ATX_BUSY",
+    "POWER_STATE_UNVERIFIED",
+    "PARTIAL_VERIFICATION",
+  ],
 );
 const sessionConnectErrorBodySchema = mutationErrorBody(
+  "jetkvm_session_connect",
   z.enum(["session.connect", "session.takeover"]),
   z.never(),
+  [...COMMON_MUTATION_ERROR_CODES, "CONTROL_BUSY"],
 );
 const sessionReconnectErrorBodySchema = mutationErrorBody(
+  "jetkvm_session_reconnect",
   z.enum(["session.reconnect", "session.takeover"]),
   z.never(),
+  [
+    ...COMMON_MUTATION_ERROR_CODES,
+    ...SESSION_BOUND_MUTATION_ERROR_CODES,
+    "CONTROL_BUSY",
+  ],
 );
 
 const toolErrorEnvelopeShape = {
@@ -561,17 +968,24 @@ const observedFactSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
       .strict(),
   ]);
 
+const jpegByteLengthSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(2 * 1024 * 1024);
+const pngByteLengthSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(8 * 1024 * 1024);
+
 const imageMetadataSchema = z.discriminatedUnion("mime_type", [
   z
     .object({
       content_index: z.literal(1),
       mime_type: z.literal("image/jpeg"),
       sha256: sha256Schema,
-      byte_length: z
-        .number()
-        .int()
-        .min(0)
-        .max(2 * 1024 * 1024),
+      byte_length: jpegByteLengthSchema,
     })
     .strict(),
   z
@@ -579,7 +993,7 @@ const imageMetadataSchema = z.discriminatedUnion("mime_type", [
       content_index: z.literal(1),
       mime_type: z.literal("image/png"),
       sha256: sha256Schema,
-      byte_length: nonNegativeIntegerSchema,
+      byte_length: pngByteLengthSchema,
     })
     .strict(),
 ]);

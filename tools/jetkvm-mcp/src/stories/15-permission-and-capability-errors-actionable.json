@@ -2,7 +2,18 @@
   "id": "permission-and-capability-errors-actionable",
   "title": "Permission and capability errors are actionable without disclosure",
   "requirements": ["branch:permission-denied", "branch:capability-missing"],
-  "tools": ["jetkvm_session_status", "jetkvm_input_keyboard"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -19,6 +30,11 @@
       "id": "scenario-ready",
       "description": "One principal lacks session.status and a separate authorized session lacks the keyboard capability.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -26,8 +42,8 @@
       "id": "deny-then-remove-capability",
       "after_step": null,
       "boundary": "before_admission",
-      "action": "Deny session.status authorization for the first call and remove keyboard capability before the second call.",
-      "expected_effect": "Each failure names the operator action, records no write, and permission denial does not disclose capabilities."
+      "action": "For each linked tool, first deny its required permission; for CapabilityName-bearing handlers, separately remove the precise required capability.",
+      "expected_effect": "Permission failures disclose no capabilities and make zero writes; applicable capability failures identify the precise CapabilityName and make zero mutations."
     }
   ],
   "steps": [
@@ -62,6 +78,276 @@
       },
       "timeout_ms": 1000,
       "expect": "Actionable CAPABILITY_MISSING with enable_capability guidance and zero mutation."
+    },
+    {
+      "id": "status-without-permission-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_display_capture before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_display_status before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-status-without-permission-input-keyboard",
+        "request_id": "opaque-status-without-permission-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_input_keyboard before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-status-without-permission-input-mouse",
+        "request_id": "opaque-status-without-permission-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_input_mouse before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-status-without-permission-input-paste",
+        "request_id": "opaque-status-without-permission-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_input_paste before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-status-without-permission-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_input_release before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-status-without-permission-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_power_control before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-status-without-permission-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_session_connect before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-status-without-permission-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_session_reconnect before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "status-without-permission-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "PERMISSION_DENIED for jetkvm_session_status before capability disclosure or mutation, with zero downstream writes."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_display_capture with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_display_status with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-keyboard-without-capability-input-keyboard",
+        "request_id": "opaque-keyboard-without-capability-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_input_keyboard with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-keyboard-without-capability-input-mouse",
+        "request_id": "opaque-keyboard-without-capability-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_input_mouse with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-keyboard-without-capability-input-paste",
+        "request_id": "opaque-keyboard-without-capability-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_input_paste with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-keyboard-without-capability-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_input_release with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-keyboard-without-capability-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_power_control with the precise applicable CapabilityName and zero mutation."
+    },
+    {
+      "id": "keyboard-without-capability-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CAPABILITY_MISSING for jetkvm_session_status with the precise applicable CapabilityName and zero mutation."
     }
   ],
   "pass": [

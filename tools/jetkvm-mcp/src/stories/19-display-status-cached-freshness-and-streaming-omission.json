@@ -6,7 +6,18 @@
     "branch:device-rpc-adapter-mid-flight-loss",
     "contract:cached-display-qualification"
   ],
-  "tools": ["jetkvm_display_status", "jetkvm_session_status"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -23,6 +34,11 @@
       "id": "scenario-ready",
       "description": "Snapshot and event caches contain deliberately unequal signal, resolution, and FPS observation times.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -30,8 +46,8 @@
       "id": "lose-binding-during-read",
       "after_step": "status-with-unequal-facts",
       "boundary": "during_verification",
-      "action": "Invalidate the binding during a second status read while retaining an explicitly stale qualified cache.",
-      "expected_effect": "The first response preserves unequal provenance; the second errors or explicitly qualifies stale cached facts and never invents proxy streaming."
+      "action": "Lose or replace the shared DeviceRpcAdapter binding at the tool-specific read or mutation boundary.",
+      "expected_effect": "Reads return explicit errors or qualified cached freshness; mutations use legal pre/post-write outcomes and are never replayed."
     }
   ],
   "steps": [
@@ -58,6 +74,154 @@
       },
       "timeout_ms": 1000,
       "expect": "Status returns explicitly stale or unknown cached facts with no unified health inference."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_display_capture call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_display_status call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-device-rpc-adapter-mid-flight-loss-input-keyboard",
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_keyboard call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-device-rpc-adapter-mid-flight-loss-input-mouse",
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_mouse call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-device-rpc-adapter-mid-flight-loss-input-paste",
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_paste call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_release call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_power_control call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_connect call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-device-rpc-adapter-mid-flight-loss-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_reconnect call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
+    },
+    {
+      "id": "device-rpc-adapter-mid-flight-loss-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_status call under mid-flight binding loss returns an explicit read freshness/error or legal pre/post-write mutation outcome with no replay."
     }
   ],
   "pass": [

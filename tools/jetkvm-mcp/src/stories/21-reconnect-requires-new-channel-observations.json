@@ -7,7 +7,18 @@
     "branch:device-rpc-adapter-replacement",
     "contract:reconnect-channel-observations"
   ],
-  "tools": ["jetkvm_session_reconnect", "jetkvm_session_status"],
+  "tools": [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -24,6 +35,11 @@
       "id": "scenario-ready",
       "description": "The ready session exposes one browser-owned RPC channel and the exact same generation-bound adapter instance to both planes.",
       "required": true
+    },
+    {
+      "id": "matrix-tool-fixtures",
+      "description": "The harness provisions each linked tool call with its valid owned session, required capability, and a separately captured fresh observation when the handler consumes one.",
+      "required": true
     }
   ],
   "fault_script": [
@@ -31,8 +47,8 @@
       "id": "replace-one-shared-adapter",
       "after_step": "reconnect-with-new-channel",
       "boundary": "during_verification",
-      "action": "Invalidate the old binding before publishing one replacement adapter backed by the new browser channel; reject restart-only evidence first.",
-      "expected_effect": "Restart or quiesce alone cannot pass; the old binding makes zero writes; both planes receive the same replacement instance."
+      "action": "Replace the sole Browser/WebRTC RPC binding while each linked tool call inspects or traverses the injected adapter.",
+      "expected_effect": "The old binding is invalidated before publication and no tool creates a direct or second channel."
     }
   ],
   "steps": [
@@ -61,6 +77,302 @@
       },
       "timeout_ms": 1000,
       "expect": "The new generation reports one current browser channel and fresh_capture_required true."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_display_capture call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_display_status call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-keyboard",
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_keyboard call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-mouse",
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_mouse call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-paste",
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_paste call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_input_release call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_power_control call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-shared-device-rpc-adapter-binding-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_connect call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-shared-device-rpc-adapter-binding-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_reconnect call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "shared-device-rpc-adapter-binding-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The jetkvm_session_status call traverses the one injected DeviceRpcAdapter and sole Browser/WebRTC RPC channel, with zero direct or second channel."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-display-capture",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "format": "jpeg",
+        "max_width": 1280,
+        "max_height": 720,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_display_capture call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-display-status",
+      "tool": "jetkvm_display_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_display_status call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-keyboard",
+        "request_id": "opaque-device-rpc-adapter-replacement-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_input_keyboard call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-mouse",
+        "request_id": "opaque-device-rpc-adapter-replacement-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_input_mouse call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-paste",
+        "request_id": "opaque-device-rpc-adapter-replacement-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_input_paste call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-device-rpc-adapter-replacement-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_input_release call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-device-rpc-adapter-replacement-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_power_control call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-device-rpc-adapter-replacement-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_session_connect call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-device-rpc-adapter-replacement-session-reconnect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_session_reconnect call observes the newly published binding; stale operations make zero writes."
+    },
+    {
+      "id": "device-rpc-adapter-replacement-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The old adapter binding is invalidated before the jetkvm_session_status call observes the newly published binding; stale operations make zero writes."
     }
   ],
   "pass": [

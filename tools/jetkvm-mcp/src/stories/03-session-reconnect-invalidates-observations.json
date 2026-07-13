@@ -6,7 +6,12 @@
     "branch:post-reconnect-input-without-capture",
     "contract:reconnect-invalidates-observations"
   ],
-  "tools": ["jetkvm_session_reconnect", "jetkvm_input_mouse"],
+  "tools": [
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_session_reconnect"
+  ],
   "environments": ["fake", "replay", "live"],
   "preconditions": [
     {
@@ -70,6 +75,41 @@
       },
       "timeout_ms": 1000,
       "expect": "STALE_SESSION_GENERATION or the canonical fresh-capture error with zero input."
+    },
+    {
+      "id": "keyboard-with-old-observation",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-old-observation-keyboard-input-keyboard",
+        "request_id": "opaque-old-observation-keyboard-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_OBSERVATION or fresh-capture-required before input with zero keyboard-plane calls."
+    },
+    {
+      "id": "paste-with-old-observation",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-old-observation-paste-input-paste",
+        "request_id": "opaque-old-observation-paste-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "STALE_OBSERVATION or fresh-capture-required before input with zero paste-plane calls."
     }
   ],
   "pass": [

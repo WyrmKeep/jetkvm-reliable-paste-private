@@ -150,7 +150,9 @@
                       "$ref": "#/anyOf/0/properties/result/properties/image/anyOf/0/properties/sha256"
                     },
                     "byte_length": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 8388608
                     }
                   },
                   "required": [
