@@ -572,15 +572,6 @@ func (u *UsbGadget) keypressReportLocked(key byte, press bool) (KeysDownState, e
 	return u.UpdateKeysDown(modifier, keys), nil
 }
 
-func (u *UsbGadget) keypressReport(key byte, press bool) (KeysDownState, error) {
-	defer u.resetUserInputTime()
-
-	u.keyboardLock.Lock()
-	defer u.keyboardLock.Unlock()
-
-	return u.keypressReportLocked(key, press)
-}
-
 func (u *UsbGadget) KeypressReport(key byte, press bool) error {
 	defer u.resetUserInputTime()
 
