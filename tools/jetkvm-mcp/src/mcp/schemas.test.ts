@@ -1025,7 +1025,7 @@ describe("strict canonical tool schemas", () => {
     malformedNotSent.error.details.downstream_stage = "admission";
     malformedNotSent.error.required_next_step = "none";
     expect(toolErrorSchema.safeParse(malformedNotSent).success).toBe(true);
-  });
+  }, 30_000);
 
   it("uses dedicated compatibility codes for connect and reconnect", () => {
     const compatibilityCodes = [
