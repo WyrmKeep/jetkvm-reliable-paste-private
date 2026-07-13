@@ -253,17 +253,17 @@ Existing names are retained where they already exist. New names below establish 
 - Config/contracts: `tools/jetkvm-mcp/src/config.ts`, `config.test.ts`, replacement `domain.ts`, `domain.test.ts`, `errors.ts`, `errors.test.ts`.
 - MCP: `src/mcp/toolCatalogue.ts`, `toolCatalogue.test.ts`, `schemas.ts`, `schemas.test.ts`, `results.ts`, `results.test.ts`, `server.ts`, `server.test.ts`, `stdio.ts`, `stdio.test.ts`, `legacySse.ts`, `legacySse.test.ts`.
 - Sessions/request ledger: `src/session/deviceSessionClient.ts`, `deviceSessionClient.test.ts`, `src/idempotency/RequestLedger.ts`, `RequestLedger.test.ts`.
-- Shared device RPC: `src/device/DeviceRpcAdapter.ts`, `DeviceRpcAdapter.test.ts`; bind exactly `{session_id, session_generation, connection_epoch, browser_channel_generation}` to the existing BrowserPlane RPC-channel handle; NativeControlPlane uses this one injected adapter rather than opening another WebRTC connection.
+- Shared device RPC: `src/device/DeviceRpcAdapter.ts`, `DeviceRpcAdapter.test.ts`; one internal `DeviceRpcBinding` with camelCase fields `{sessionId, sessionGeneration, connectionEpoch, browserChannelGeneration}` references the existing BrowserPlane RPC channel; NativeControlPlane uses this injected adapter rather than opening another WebRTC connection.
 - Planes: `src/planes/BrowserPlane.ts`, `NativeControlPlane.ts`; `test-support/fakes/FakeBrowserPlane.ts`, `FakeNativeControlPlane.ts`; `test-support/replay/BrowserPlaneReplay.ts`, `NativeControlPlaneReplay.ts`; seam tests under `test-support/`.
 - Stories: `src/stories/manifest.ts`, `manifest.test.ts`, tracked `schemas/story-manifest.schema.json`, and `stories/*.json`.
-- Protocol/package scripts: `scripts/generate-schemas.mjs`, `check-schemas.mjs`, contract/protocol installed smoke scripts, and package scripts that run them.
+- Protocol/docs/package scripts: `scripts/generate-schemas.mjs`, `check-schemas.mjs`, `check-docs-consistency.mjs` with focused tests, contract/protocol installed smokes, and package scripts that run them.
 
 ### Phase 3 — Input and display
 
 - UI boundary: `ui/src/automation/bridge.ts`, `bridge.test.ts`, `inputGuard.ts`, `inputGuard.test.ts`, `controller.ts`, `controller.test.tsx`; `ui/src/utils/pasteText.ts`, `pasteText.test.ts`; focused changes/tests in `useKeyboard.ts`, `useMouse.ts`, `useHidRpc.ts`, `useJsonRpc.ts`, `hidRpcTransport.ts`, `WebRTCVideo.tsx`, and `devices.$id.tsx`.
 - Browser implementation: `tools/jetkvm-mcp/src/browser/auth.ts`, `geometry.ts`, `frames.ts`, `keys.ts`, `input.ts`, `paste.ts`, `BrowserController.ts`, and focused tests beside each module.
 - Plane/handlers: `src/planes/JetKvmBrowserPlane.ts`, `JetKvmBrowserPlane.test.ts`, `src/native/JetKvmNativeControlPlane.ts`, `JetKvmNativeControlPlane.test.ts`, `src/handlers/display.ts`, `display.test.ts`, `input.ts`, `input.test.ts`.
-- Native read correctness: modify `internal/native/cgo_linux.go` at `videoGetEDID`, propagate its error through existing `VideoGetEDID` gRPC/JSON-RPC layers, and add focused native/JSON-RPC tests; adapter tests cover cached `getVideoState`/`videoInputState` provenance and sanitized native display replays.
+- Native read correctness: modify `internal/native/cgo_linux.go` at `videoGetEDID`, propagate its error through existing `VideoGetEDID` gRPC/JSON-RPC layers, and add focused native/JSON-RPC tests; adapter tests cover per-fact `cached_snapshot` (`getVideoState`) versus `cached_event` (`videoInputState`) freshness plus EDID unsupported/unavailable/read-failed distinctions and sanitized replays.
 - Adapter fixture: `test-support/uiFixture.ts`, `BrowserPlane.adapter.test.ts`, sanitized native display replay tapes, and the Phase 3 story files.
 
 ### Phase 4 — Power and session
@@ -318,6 +318,7 @@ Existing names are retained where they already exist. New names below establish 
 - [ ] Finish host-runnable race tests for manager-only maintenance leases, draining rejection, blocked/queued producer join, ordinary lease count zero before final zero, correlated receipts, stale generation no-write, and zero post-zero.
 - [ ] Finish root integration tests for current-session snapshots, session-scoped candidates/close, session-bound `quiesceAndZero(operationId)`, matching operation/generation receipts, and stale-channel no-write after replacement.
 - [ ] Fix the fired auto-release callback race by serializing callback validation/write with keyboard clear. Prove both lock orders deterministically: callback-first writes release then clear; clear-first removes the timer and the resumed callback writes zero HID reports. Preserve lock order and no timer-to-keyboard-lock cycle.
+- [ ] Extend `scripts/run-device-go-tests.mjs` with a hardware-free Foundation root-integration mode that compiles/runs the full Phase 1 root integration selection against injected seams without deploy, network, target, or device. Unit-test command selection and fail closed if hardware/target inputs are present; device-dependent execution remains Phase 6.
 - [ ] Audit direct current-session mutation so ownership changes are manager-backed.
 - [ ] Preserve the exact commit subject: `fix(webrtc): revoke stale HID sessions atomically`; keep the auto-release race fix as its own narrow Foundation commit when history already separates it.
 - [ ] Retain `scripts/run-device-go-tests.mjs` and its unit tests. Root/device hardware tests remain deferred to the serialized Phase 6 operator target; Phase 1 runs only hardware-free package races and host-runnable integrations.
@@ -327,10 +328,10 @@ Existing names are retained where they already exist. New names below establish 
 **Files:** `.github/workflows/jetkvm-mcp-foundation.yml`, existing Node-job workflows including `build.yml` and `ui-lint.yml`, package scripts, `scripts/check-package.mjs`, and focused script tests.
 
 - [ ] Pin every new and existing workflow Node job to exact Node 22.23.1 with `actions/setup-node`, then immediately assert `node --version` is exactly `v22.23.1`.
-- [ ] Foundation CI runs `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, `npm run test:installed-lease`, and `npm run package:check` in `tools/jetkvm-mcp`, plus hardware-free `go test -race ./internal/controlsession ./internal/usbgadget`.
+- [ ] Foundation CI runs `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, `npm run test:installed-lease`, `npm run package:check`, the hardware-free Foundation root-integration mode, and `go test -race ./internal/controlsession ./internal/usbgadget`.
 - [ ] `package:check` validates the production allowlist and rejects test, fixture, debug, trace, secret, lease-proof, and unallowlisted files.
-- [ ] CI receives no hardware URL, target identity, lease proof, credential, secret, self-hosted label, or live-test discovery path. It cannot read or mutate a device; root/device hardware tests remain Phase 6-only.
-- [ ] Add required path triggers for every Foundation source, test, lock, runtime, script, and workflow file, explicitly including `internal/controlsession/**` and `internal/usbgadget/**`.
+- [ ] CI receives no hardware URL, target identity, lease proof, credential, secret, self-hosted label, or live-test discovery path. It cannot read or mutate a device; device-dependent root tests remain Phase 6-only.
+- [ ] Required workflow policy covers every Phase 1 root integration/runtime path with safe gates: root `*.go`, relevant `internal/controlsession/**`, `internal/usbgadget/**`, `internal/hidrpc/**`, MCP runtime/lock/scripts, and `.github/workflows/*.yml`.
 
 ## Task 1.5: Focused and clean-checkout gates
 
@@ -344,6 +345,7 @@ npm run typecheck
 npm run build
 npm run test:installed-lease
 npm run package:check
+npm run test:go-foundation
 
 go test -race ./internal/controlsession ./internal/usbgadget
 ```
@@ -358,6 +360,7 @@ npm run typecheck
 npm run build
 npm run test:installed-lease
 npm run package:check
+npm run test:go-foundation
 go test -race ./internal/controlsession ./internal/usbgadget
 ```
 
@@ -426,10 +429,10 @@ Acceptance: no test/fixture/debug file in production output; no secret or lease 
 
 **Files:** `device/DeviceRpcAdapter.ts`, `DeviceRpcAdapter.test.ts`; BrowserPlane channel-handle contract and fakes/replays.
 
-- [ ] Bind one adapter instance to exactly `{session_id, session_generation, connection_epoch, browser_channel_generation}`. Every call validates all four before admission, queue, and send; any stale component produces zero downstream write.
-- [ ] Reuse the sole product Browser/WebRTC `rpc` data channel already owned by BrowserPlane. Native display/EDID/semantic-ATX calls share this adapter; no second browser, peer connection, RPC channel, WebRTC signaling flow, or direct HID transport is created.
-- [ ] Provide typed, bounded operations only for proven downstream calls needed by status/display/power. Correlate request/response IDs, qualify malformed/downstream errors, redact payloads, expose ack/write boundaries, and cancel on caller deadline.
-- [ ] RED-test all four binding components, including connection-epoch-only replacement with unchanged session/generation/channel value; old-binding invalidation before publish; channel replacement at admission/queue/send/ack; session takeover; timeout/cancel before write; response on old binding; malformed/duplicate response; post-ack read failure; mid-flight loss; adapter close; stale cached qualification; and no migration.
+- [ ] Create one internal `DeviceRpcBinding` with camelCase fields `{sessionId, sessionGeneration, connectionEpoch, browserChannelGeneration}`. It is the sole internal tuple; snake_case appears only in explicit MCP/wire mapping and is never maintained as a duplicate object.
+- [ ] Validate all four binding fields before admission, queue, and send; any stale component produces zero downstream write. Reuse the sole product Browser/WebRTC `rpc` data channel; native display/EDID/ATX share this adapter with no second browser, peer connection, RPC channel, signaling flow, or direct HID transport.
+- [ ] Provide typed, bounded operations only for proven status/display/power downstream calls. Correlate IDs, qualify malformed errors, redact payloads, expose ack/write boundaries, and cancel on deadline.
+- [ ] RED-test camelCase wire mapping and all binding fields, including epoch-only replacement with unchanged session/generation/channel; old-binding invalidation before publish; replacement at admission/queue/send/ack; takeover; pre-write timeout/cancel; response on old binding; malformed/duplicate response; post-ack read failure; mid-flight loss; close; stale cached qualification; and no migration.
 - [ ] Fake/Replay NativeControlPlane implementations consume the same typed adapter contract, so unit, replay, and production code agree on one channel and one fencing model.
 
 ## Task 2.6: Create the complete reviewed machine-readable story manifest
@@ -459,6 +462,7 @@ Acceptance: no test/fixture/debug file in production output; no secret or lease 
 
 ## Task 2.8: Phase-wide and clean-checkout gates
 
+- [ ] Add `check-docs-consistency.mjs` and focused tests that enforce the approved component-to-phase map in the canonical design, this plan, package scripts, and story ownership: Phase 2 owns `DeviceRpcAdapter` plus the complete 24-story manifest; Phase 3 owns display capture/status and read-only EDID. Fail on duplicate ownership, another story inventory, a 25th ID, or drift in tool/branch/phase names.
 Add deterministic scripts `test:phase2`, `schemas:check`, and installed contract/protocol smokes. Maker agents skip them. The orchestrator runs once after integration:
 
 ```bash
@@ -468,6 +472,7 @@ npm run test:phase2
 npm run typecheck
 npm run build
 npm run schemas:check
+npm run docs:check
 npm run smoke:installed-contracts
 npm run smoke:installed-stdio-protocol
 npm run smoke:installed-sse-protocol
@@ -488,13 +493,13 @@ Repeat the same gate from a clean checkout using only committed files and a fres
 
 **Branch:** After Phase 2 is merged, update clean `main` and create `feat/jetkvm-mcp-input-display`. Do not branch from the Phase 2 feature branch.
 
-**Outcome:** Implement the browser frame/mouse/physical-keyboard/reliable-paste/release plane and native read-only display status, with every handler branch forced through fakes/replays and executable named stories.
+**Outcome:** Implement Phase 3's approved display component boundary—browser frame capture plus native display status and read-only EDID—and browser mouse/physical-keyboard/reliable-paste/release, with every applicable canonical cell forced through fakes/replays and reviewed stories. `DeviceRpcAdapter` and the complete manifest remain Phase 2-owned.
 
 ## Task 3.1: Advisor gate and proven protocol mapping
 
-- [ ] Before implementation, record which existing product surfaces each method uses. Browser operations must use the real browser/WebRTC path. Native display status may use existing `getVideoState`, `videoInputState`, and `getEDID` only with their actual semantics: video state is process-cached/event-derived rather than a synchronous hardware query; EDID is a driver read whose current cgo wrapper loses low-level failure.
-- [ ] Record the read-only EDID decision, cached/event freshness contract, untrusted proxy-`streaming` decision, reliable-paste pacing decision, image payload policy, and unsupported capability behavior in the PR body.
-- [ ] If a required read field is unavailable on supported firmware, represent it as typed unavailable/unknown with provenance and freshness. Do not fabricate it, infer live state from a zero value, or add a mutation.
+- [ ] Before implementation, record which existing product surfaces each method uses. Browser operations use the real browser/WebRTC path through the Phase 2 `DeviceRpcAdapter`. Native status uses `getVideoState` as `cached_snapshot`, `videoInputState` as `cached_event`, and `getEDID` only with qualified read semantics.
+- [ ] Base `jetkvm_display_status` requires `display_status`, not `edid_read`. Record explicit EDID `unsupported` (capability absent), `unavailable` (read path not currently available), and attempted-read `EDID_READ_FAILED` behavior, per-fact snapshot/event freshness, proxy-`streaming` omission, and read-only/no-mutation policy.
+- [ ] If a fact is unavailable, return its canonical unknown/null/status with provenance and freshness. Do not fabricate it, infer live state from a zero value, or add mutation.
 
 ## Task 3.2: Build the stable product automation boundary
 
@@ -520,17 +525,17 @@ Repeat the same gate from a clean checkout using only committed files and a fres
 
 **Files:** `native/JetKvmNativeControlPlane.ts`, `handlers/display.ts`, focused tests and sanitized display replay tapes; `internal/native/cgo_linux.go`, existing gRPC/JSON-RPC EDID propagation paths, and focused native/JSON-RPC tests.
 
-- [ ] RED-test signal/video state, capture/native resolution, observation source, event sequence, MCP-receipt timestamp/age, permission/capability errors, malformed response, timeout/disconnect, stale session generation, and unknown fields. `getVideoState` is marked cached snapshot; `videoInputState` is marked cached event. Receipt age is not mislabeled as hardware-acquisition age.
-- [ ] RED-test normal proxy behavior that omits `Streaming`: the public status never reports the proxy's reconstructed zero-value `streaming` field as live/false capture truth.
-- [ ] Fix `videoGetEDID` in `internal/native/cgo_linux.go` to detect the C `NULL` returned after open/`VIDIOC_G_EDID` failure before `C.GoString`, return a non-nil Go error, and preserve that error through native gRPC and JSON-RPC. Tests prove low-level failure becomes `EDID_READ_FAILED`/typed unavailable rather than an empty successful EDID.
-- [ ] Implement `jetkvm_display_status` using only qualified read operations. Return EDID summary/hash only after a successful hardware-read result. Never call or register `setEDID`; add a source/plane contract test proving no EDID mutation method is exposed.
-- [ ] Correlate browser capture metadata and native display generation without pretending render resolution, cached native resolution, and source resolution are identical or equally fresh.
+- [ ] RED-test signal, width, height, refresh/FPS, and resolution facts independently. A `getVideoState` response is `cached_snapshot`; `videoInputState` is `cached_event`; each fact preserves source, observation time, age, fresh/stale/unknown classification, event supersession, and binding-loss behavior. Receipt time is never mislabeled as hardware acquisition time.
+- [ ] RED-test normal proxy omission of `Streaming`: no status/result treats the reconstructed zero value as live capture truth.
+- [ ] RED-test base status success when `display_status` exists but `edid_read` does not: display facts return and EDID is explicitly `unsupported` with null detail. Distinguish that from `unavailable` when the supported read path cannot currently be attempted.
+- [ ] Fix `videoGetEDID` to detect C `NULL` after open/`VIDIOC_G_EDID` failure before `C.GoString` and propagate a non-nil error through native gRPC/JSON-RPC. An attempted lower-level failure returns `EDID_READ_FAILED`, never unsupported, unavailable, not-reported, empty, or qualified success.
+- [ ] Return EDID summary/hash only after successful verified read; a proven successful no-EDID result uses the canonical not-reported state. Never call/register `setEDID`; contract-test no mutation. Correlate browser capture and per-fact native observations without equating render/source/native resolution or freshness.
 
 ## Task 3.5: Implement mouse and physical keyboard handlers
 
 **Files:** `browser/keys.ts`, `input.ts`, `handlers/input.ts`, focused tests.
 
-- [ ] For `jetkvm_input_mouse`, implement bounded move/click/double-click/drag/vertical-scroll steps with whole-request validation and fresh-observation fencing.
+- [ ] For `jetkvm_input_mouse`, implement bounded move/click/double-click/drag and the exact scroll contract: `delta_y` is a signed integer HID wheel step from -127 through 127 excluding 0; optional `delta_x` is exactly 0. Reject zero, fractions, overflow/underflow, nonzero horizontal scroll, and unknown fields before reservation with zero plane calls.
 - [ ] For `jetkvm_input_keyboard`, implement physical press/down/up/chord operations, modifier-first/reverse-release behavior, layout/capability validation, and whole-request prevalidation. Reject text fields and unsupported keys before admission.
 - [ ] Test every applicable canonical §11.2 cell with FakeBrowserPlane, BrowserPlaneReplay, and the real Playwright fixture, including partial multi-event counts/suffix suppression, cleanup failure, post-capture failure, and admission-to-write generation barriers.
 - [ ] Persist request-ledger terminal state before returning. A definitive acknowledgement with failed post-capture remains `applied/device_ack_only`; no uncertain dispatch is auto-replayed.
@@ -574,6 +579,7 @@ npm run test:phase3
 npm run typecheck
 npm run build
 npm run stories:validate
+npm run docs:check
 ```
 
 Run the equivalent committed-file gate in a clean checkout, including the real Playwright adapter fixture and package artifact scan. No physical hardware is used in this phase.
@@ -654,6 +660,7 @@ npm run typecheck
 npm run build
 npm run schemas:check
 npm run stories:validate
+npm run docs:check
 npm run smoke:installed-stdio
 npm run smoke:installed-sse
 ```
@@ -716,7 +723,7 @@ Repeat from a clean checkout and freshly packed tarball. Smokes initialize/list 
 - [ ] Document operator-only device URL/auth configuration for HTTPS, LAN, and Tailscale; insecure HTTP opt-in; SSE bind/Origin/Host/bearer security; secret handling; and why tools never accept credentials.
 - [ ] List exactly ten tools with strict input/result summaries and realistic examples for connect/status/reconnect, capture/status, mouse/keyboard/paste/release, and all three power actions.
 - [ ] Explain ownership/no-steal/takeover, transport-session independence, generation/observation fencing, idempotency outcomes, safe retry, next steps, and no-silent-partial-success behavior.
-- [ ] Explain reliable paste nominal pacing and completion evidence, physical keyboard versus paste, read-only EDID/resolution semantics, image/paste privacy, and semantic ATX limitations.
+- [ ] Explain reliable paste pacing, physical keyboard versus paste, exact signed-integer wheel bounds, per-fact cached-snapshot/event display freshness, base display-status success without EDID capability, EDID unsupported/unavailable/read-failed semantics, image/paste privacy, and semantic ATX limitations.
 - [ ] Add troubleshooting for auth/permission, insecure HTTP rejection, CONTROL_BUSY, capability missing, stale generation/observation, no video/stalled frame, paste interruption, unknown input/power effect, release/reconnect/manual recovery, SSE reconnect, and runtime/browser setup.
 - [ ] Execute every example against the installed fake/replay E2E environment. Examples must fail if they drift from schemas.
 
@@ -750,6 +757,7 @@ npm run build
 npm run schemas:check
 npm run stories:validate
 npm run branch-matrix:check
+npm run docs:check
 npm run package:check
 npm run smoke:installed-stdio
 npm run smoke:installed-sse
@@ -810,8 +818,8 @@ For every reviewed manifest story whose `environments` includes `live`, the runn
 Run at minimum, in manifest order:
 
 - [ ] Session available connect/status, busy without takeover, explicit takeover with old-generation rejection, and disconnect/reconnect with fresh generation. Evidence records each composed browser/channel/native observation and its freshness; neither ping, native auto-restart, nor quiesce alone passes. MCP transport reconnect never transfers ownership.
-- [ ] Fresh display capture and read-only display status: frame hash/dimensions/age, cached/event video-state provenance/age, qualified resolution, successful EDID summary/hash or explicit low-level read failure, no proxy-`streaming` claim, and no mutation.
-- [ ] Mouse move/click/double-click/drag/vertical scroll with fresh observations, stale-observation negative case, and post-action capture evidence.
+- [ ] Fresh display capture and read-only display status: frame hash/dimensions/age; per-fact `cached_snapshot`/`cached_event` provenance/age; base success without `edid_read`; EDID unsupported, unavailable, verified/not-reported, and explicit low-level read-failure cases; no proxy-`streaming` claim or mutation.
+- [ ] Mouse move/click/double-click/drag and signed integer vertical wheel values -127, -1, 1, and 127 with fresh observations; live-safe stale-observation negative; fraction/zero/overflow remain fake/replay zero-call evidence.
 - [ ] Physical keyboard press/chord/layout cases, stale-generation negative case, and post-action evidence.
 - [ ] Reliable paste corpus at nominal ~91 source chars/s, including normalization and representative sizes; record original/normalized counts/hashes, elapsed time, terminal lifecycle, and target-visible verification without persisting text or frame bytes.
 - [ ] Input release during inactive and active/uncertain state; prove paste cancelled, emitters joined, correlated generation receipt, and zero post-release HID.
@@ -877,11 +885,12 @@ The release is incomplete unless all six deliverables are present and mutually c
 | Explicit sessions independent of transports; no steal without takeover | Phase 2 foundation tests, Phase 4 session implementation/stories, Phase 6 live stories |
 | stdio and legacy SSE only | Phase 2 Task 2.7, Phase 5 protocol/package scan, Phase 6 release audit |
 | Browser frame/mouse/keyboard/~91 char/s paste/release | Phase 3 Tasks 3.2–3.7 and Phase 6 stories |
-| Native read-only resolution/EDID | Phase 3 Task 3.4 and reviewed hardware display stories |
+| Phase 3 display boundary: capture, status base success, per-fact freshness, and read-only EDID distinctions | Phase 3 Tasks 3.1, 3.3–3.4 and reviewed display stories |
 | Semantic ATX only | Phase 4 Task 4.3 and the three cases inside canonical story `power-three-semantic-actions` |
 | Sole complete behavior inventory with focused+story evidence | §0.4/canonical design §11.2 and Phase 5 branch matrix/E2E |
 | Exact 24-story `AcceptanceStory` manifest with preconditions/steps/pass/evidence/restore | Phase 2 Task 2.6; Phases 3–6 execute the reviewed manifest |
 | README/examples/troubleshooting and clean install | Phase 5 Tasks 5.5–5.7, Phase 6 clean-download verification |
+| Component-to-phase documentation consistency | Phase 2 `docs:check`, rerun by Phases 3–6 and CI |
 | Six independent branches/PRs with fresh reviews and merge gates | §0.6 and every phase PR gate |
 | One serialized runtime-derived device lease on the protected operator target, per-story restore, no public topology | Phase 6 Tasks 6.2–6.4 |
 | Immutable manifest bound to tarball/Node/firmware | Phase 6 Tasks 6.1, 6.4, 6.6 |
@@ -893,7 +902,7 @@ The release is incomplete unless all six deliverables are present and mutually c
 - “Public-first” means operator-selectable URL/auth/configuration with secure defaults; it does not mean anonymous public Internet exposure or a hard-coded cloud path.
 - “Session” means an application-level JetKVM device session. stdio process lifetime and SSE transport session IDs are transport details only.
 - “~91 char/s” is the nominal deterministic reliable-paste pacing target measured and reported by stories; correctness and exact normalized content remain the pass authority, not optimistic throughput.
-- “Native display” means cached/event-derived video state with explicit provenance/age plus a qualified read-only EDID operation. Proxy `streaming` is never trusted, and low-level EDID failures are surfaced instead of becoming empty success. No write, persistence, preset selection, or EDID rollback surface is planned.
+- “Native display” means per-fact `cached_snapshot` (`getVideoState`) or `cached_event` (`videoInputState`) provenance/age. Base status succeeds without `edid_read`; unsupported, unavailable, verified/not-reported, and attempted-read failure are distinct. Proxy `streaming` is omitted and EDID remains read-only.
 - “Power control” means serialized fixed 200 ms/5 s/200 ms serial press/release semantics plus separately qualified cached indicators. Serial acknowledgement and LED/video observations never claim the host OS or host power state changed.
 - “Full local” in Phases 1–5 means all hardware-free repository, package, UI, adapter, fake/replay, protocol, story, docs, and clean-install gates. Phase 6 adds the serialized real-device story suite.
 - The hardware target and lease key are protected runtime inputs. The runner derives the key from normalized target identity, and public evidence omits network topology.

@@ -569,6 +569,14 @@ type Input = {
   timeout_ms: number; // 100..30000
 };
 
+type ObservedFact<T> = {
+  value: T;
+  observed_at: string | null;
+  age_ms: number | null;
+  freshness: "fresh" | "stale" | "unknown";
+  source: "cached_snapshot" | "cached_event" | "none";
+};
+
 type Result = {
   state: "connecting" | "ready" | "degraded" | "drained" | "taken_over" | "closing" | "failed";
   connection_epoch: number;
@@ -583,12 +591,10 @@ type Result = {
   web_rtc: "connecting" | "connected" | "disconnected" | "failed" | "unknown";
   hid: "ready" | "not_ready" | "unknown";
   decoded_video: "ready" | "stalled" | "unavailable" | "unknown";
-  native_capture_observation: {
-    state: "ready" | "no_signal" | "no_lock" | "out_of_range" | "unknown";
-    observed_at: string | null;
-    age_ms: number | null;
-    freshness: "fresh" | "stale" | "unknown";
-    source: "cached_event";
+  native_capture_facts: {
+    signal: ObservedFact<"present" | "no_signal" | "no_lock" | "out_of_range" | "unknown">;
+    resolution: ObservedFact<{ width: number; height: number } | null>;
+    fps: ObservedFact<number | null>;
   };
   active_mutation: boolean;
   fresh_capture_required: boolean;
@@ -604,7 +610,7 @@ type Result = {
 };
 ```
 
-Read-only and required permission `session.status`. RPC reachability, native-process availability, native capture observation, WebRTC, HID, and decoded-video state remain separate facts; the adapter never collapses them into a unified health assertion. Native capture state is cached/event-derived and carries provenance/freshness. The omitted proxy `streaming` value is not trustworthy. Unknown facts remain `unknown`/`null`; they are never inferred. No credentials, cookies, SDP, ICE, input text, or stack traces appear.
+Read-only and required permission `session.status`. RPC reachability, native-process availability, WebRTC, HID, decoded-video state, and each native capture fact remain separate; the adapter never collapses them into unified health. Signal, resolution, and FPS each carry their own provenance, observation time, age, and freshness because they may come from different observations: synchronous `getVideoState` cache reads use `cached_snapshot`, while asynchronous `videoInputState` updates use `cached_event`. They are never assigned a shared timestamp/freshness tuple. `source:"none"` requires `observed_at:null`, `age_ms:null`, `freshness:"unknown"`, and an unknown/null value. The omitted proxy `streaming` value is not trustworthy. Unknown facts are never inferred. No credentials, cookies, SDP, ICE, input text, or stack traces appear.
 
 ### 9.3 `jetkvm_session_reconnect`
 
@@ -680,38 +686,53 @@ type Input = {
   timeout_ms: number; // 100..30000
 };
 
+type EdidResult =
+  | {
+      status: "unsupported";
+      read_completed: false;
+      reason: "edid_read_capability_absent";
+      observed_at: null;
+      data: null;
+    }
+  | {
+      status: "unavailable";
+      read_completed: true;
+      reason: "successful_read_reported_no_edid";
+      observed_at: string;
+      data: null;
+    }
+  | {
+      status: "available";
+      read_completed: true;
+      reason: null;
+      observed_at: string;
+      data: {
+        sha256: string;
+        manufacturer_id: string | null;
+        product_code: number | null;
+        serial_number: string | null;
+        display_name: string | null;
+        preferred_resolution: {
+          width: number;
+          height: number;
+          refresh_hz: number | null;
+        } | null;
+      };
+    };
+
 type Result = {
-  signal: "present" | "no_signal" | "no_lock" | "out_of_range" | "unknown";
-  native_resolution: {
+  signal: ObservedFact<"present" | "no_signal" | "no_lock" | "out_of_range" | "unknown">;
+  native_resolution: ObservedFact<{
     width: number;
     height: number;
     refresh_hz: number | null;
-    fps: number | null;
-  } | null;
-  observed_at: string | null;
-  freshness: {
-    source: "cached_event";
-    age_ms: number | null;
-    state: "fresh" | "stale" | "unknown";
-  };
-  edid: {
-    read_status: "hardware_read_verified" | "not_reported";
-    observed_at: string | null;
-    sha256: string | null;
-    manufacturer_id: string | null;
-    product_code: number | null;
-    serial_number: string | null;
-    display_name: string | null;
-    preferred_resolution: {
-      width: number;
-      height: number;
-      refresh_hz: number | null;
-    } | null;
-  };
+  } | null>;
+  fps: ObservedFact<number | null>;
+  edid: EdidResult;
 };
 ```
 
-Read-only, required permission `display.status`, required capability `display_status`; EDID retrieval additionally requires `edid_read`. Resolution/signal/FPS are cached native callback observations and must include observation time and freshness; the adapter never exposes or trusts the proxy `streaming` field. EDID uses only the read-only `VIDIOC_G_EDID` path. `hardware_read_verified` is legal only after the adapter receives an explicit successful lower-layer read; open/ioctl/cgo failure returns `EDID_READ_FAILED`, never `not_reported` or fabricated empty success. `not_reported` means a proven successful read reported no EDID.
+Read-only, required permission `display.status`, and required capability `display_status`. The base tool does **not** require `edid_read`: when absent it succeeds with the exact `unsupported` EDID branch. Signal, resolution, and FPS each have independent time/age/freshness/provenance; a `getVideoState` cache read is `cached_snapshot`, a `videoInputState` callback is `cached_event`, and the adapter may select different sources/times for different facts. It never exposes or trusts proxy `streaming`. When `edid_read` is present, EDID uses only read-only `VIDIOC_G_EDID`. A proven successful read with no EDID uses `unavailable`; a proven read with bytes uses `available`. Open/ioctl/cgo failure returns `EDID_READ_FAILED`, never either successful branch. Until the lower-layer cgo failure is propagated, the adapter must return that error rather than infer empty success.
 
 ### 9.6 `jetkvm_input_mouse`
 
@@ -721,7 +742,7 @@ type MouseAction =
   | { type: "click"; x: number; y: number; button: "left" | "middle" | "right" }
   | { type: "double_click"; x: number; y: number; button: "left" | "middle" | "right" }
   | { type: "drag"; button: "left" | "middle" | "right"; path: Array<{ x: number; y: number }> }
-  | { type: "scroll"; x: number; y: number; delta_y: number; delta_x?: 0 };
+  | { type: "scroll"; x: number; y: number; delta_y: number; delta_x?: 0 }; // delta_y: integer -127..127 excluding 0
 
 type Input = {
   session_id: string;
@@ -739,7 +760,7 @@ type Result = MutationState & {
 };
 ```
 
-Required permission `input.mouse`, capabilities `mouse` and absolute pointer mode. Coordinates are fenced to the observation. The whole batch validates before reservation. Drag releases in cleanup. Nonzero horizontal scroll is rejected before input.
+Required permission `input.mouse`, capabilities `mouse` and absolute pointer mode. Coordinates are fenced to the observation. The whole request validates before reservation or any plane call. Drag releases in cleanup. `delta_y` is signed integer HID wheel steps with JSON Schema minimum -127, maximum 127, and `not: { const: 0 }`; fractional, zero, underflow, overflow, and nonzero horizontal scroll reject the entire request with zero plane calls and zero input.
 
 ### 9.7 `jetkvm_input_keyboard`
 
@@ -914,6 +935,8 @@ type AcceptanceStory = {
 
 Every story must declare setup, exact calls, timing/fault boundaries, observable pass assertions, allowed evidence fields, and unconditional restore steps. The harness validates schema and requirement coverage before execution. Generated documentation renders tool examples and failure guidance from the same manifest/schema identifiers.
 
+The complete strict 24-story manifest is a Phase 2 deliverable together with the public schemas and fake/replay/DeviceRpcAdapter bases. Later phases fill implementations and evidence against these unchanged IDs; adding, removing, or renumbering a story requires contract review.
+
 Required named stories include:
 
 1. `session-connect-without-takeover-busy`
@@ -967,8 +990,10 @@ Every public handler must have a manifest-linked unit/adapter assertion for ever
 | partial multi-event dispatch | unknown with exact counts; suffix suppressed |
 | post-reconnect input without capture | stale/fresh-capture error, zero input |
 | cleanup failure | error evidence retained, no fabricated restoration |
-| cached display observation | observed time/age/provenance returned; stale policy enforced; proxy streaming omitted |
-| EDID lower-layer failure | `EDID_READ_FAILED`; no empty or qualified success |
+| per-fact status provenance | signal/resolution/FPS independently select `cached_snapshot`, `cached_event`, or `none`; unequal times/ages remain unequal; proxy streaming omitted |
+| EDID capability absent | base display status succeeds with strict `unsupported`/capability-absent/null branch |
+| EDID successful empty | strict `unavailable`/read-completed/no-EDID/null branch |
+| EDID lower-layer failure | `EDID_READ_FAILED`; no empty, unavailable, or available success |
 | reconnect evidence | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected |
 | ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing |
 | ATX acknowledgement semantics | serial completion only; cached LED fact separate; no host-state proof |
@@ -977,14 +1002,15 @@ Every public handler must have a manifest-linked unit/adapter assertion for ever
 | shared DeviceRpcAdapter binding | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel |
 | DeviceRpcAdapter replacement | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes |
 | DeviceRpcAdapter mid-flight loss | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay |
+| scroll validation | integer HID wheel steps -127..127 excluding zero accepted; fraction/zero/overflow/nonzero-X rejects whole request with zero plane calls |
 
-Input handlers additionally cover stale/consumed/foreign observations, display change before and after first dispatch, invalid coordinates/keys, held-state cleanup, and post-operation capture failure. Paste additionally covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release additionally races every deferred producer and ordinary writer. Power covers all three actions and no fourth value.
+Input handlers additionally cover stale/consumed/foreign observations, display change before and after first dispatch, invalid coordinates/keys, held-state cleanup, post-operation capture failure, and whole-request scroll rejection before any plane call. Paste additionally covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release additionally races every deferred producer and ordinary writer. Power covers all three actions and no fourth value.
 
 ### 11.3 Test layers
 
 1. **Go generation manager:** pure race tests and root integration compile/tests cover lease admission, stale generation, takeover, quiesce, maintenance zero writes, writer joins, and ICE scoping.
 2. **UI bridge and DeviceRpcAdapter:** lifecycle, single-RPC-channel injection, generation/connection/channel fencing, old-adapter invalidation before replacement, capture guard, transport receipts, capability reset, physical-key resolution, Reliable Paste events, producer joins, and correlated release.
-3. **Domain/controller:** strict schemas, deadlines, observation reservation, idempotency, outcome classification, permissions, capabilities, shared-adapter identity, stale/replaced binding branches, plane errors, and redaction.
+3. **Domain/controller:** strict schemas, deadlines, observation reservation, idempotency, outcome classification, permissions, capabilities, shared-adapter identity, stale/replaced binding branches, per-fact unequal provenance/freshness, all three successful EDID branches plus lower-layer error, exact scroll bounds/zero-plane rejection, plane errors, and redaction.
 4. **Fake E2E:** every manifest story runs with deterministic plane faults and a fake monotonic clock.
 5. **Replay E2E:** sanitized production-shaped traces prove call ordering and reject unrecorded behavior.
 6. **Transport:** installed tarball over stdio and two-client legacy SSE; stdout purity; exact endpoint/message framing; MCP HTTP middleware on both `/sse` and `/messages`; auth-before-lookup; sessionId routing-only semantics; adapter-owned body/status/close behavior; Host, Origin, anti-CSRF, cancellation, and device-session independence.
@@ -1037,10 +1063,10 @@ Work lands through exactly six sequential branches/PRs:
 | Phase | Branch | Deliverable |
 |---:|---|---|
 | 1 | `feat/jetkvm-mcp-foundation` | Preserved Node package/domain/device lease; Go generation manager, dispatch leases, quiesce/zero, takeover and ICE fencing; strict shared result/error/idempotency types |
-| 2 | `feat/jetkvm-mcp-transport-api` | Exact ten schemas and adapter handlers; stdio; legacy `/sse` + `/messages`; auth/Host/Origin/security; explicit transport-independent session registry; fake/replay base |
-| 3 | `feat/jetkvm-mcp-input-display` | BrowserPlane capture/observation fences, mouse, physical keyboard, Reliable Paste near 91 chars/s, emergency release, and the single-session DeviceRpcAdapter lifecycle/injection/generation-fencing boundary |
-| 4 | `feat/jetkvm-mcp-power-session` | NativeControlPlane semantics over the injected DeviceRpcAdapter: separate status observations, cached resolution freshness, qualified read-only EDID, explicit connect/status/reconnect/takeover with new-channel proof, and serialized/idempotent exact-timing ATX with no host-state claim |
-| 5 | `feat/jetkvm-mcp-system-e2e-docs` | Machine-readable story manifest, every-handler branch matrix, fake/replay/transport/browser E2E, generated/checked docs, packaging and required CI |
+| 2 | `feat/jetkvm-mcp-transport-api` | Exact ten schemas and adapter handlers; complete strict 24-story manifest; stdio; legacy `/sse` + `/messages`; auth/Host/Origin/security; transport-independent session registry; single-session DeviceRpcAdapter lifecycle/injection/generation fencing; fake/replay bases |
+| 3 | `feat/jetkvm-mcp-input-display` | BrowserPlane capture/observation fences, mouse including exact HID wheel validation, physical keyboard, Reliable Paste near 91 chars/s, emergency release, plus NativeControlPlane status/display semantics, per-fact cached freshness, and qualified optional read-only EDID over the injected adapter |
+| 4 | `feat/jetkvm-mcp-power-session` | Explicit connect/status/reconnect/takeover with new-channel proof and serialized/idempotent exact-timing ATX semantics over the injected adapter, with no host-state claim |
+| 5 | `feat/jetkvm-mcp-system-e2e-docs` | Manifest-driven every-handler branch matrix, fake/replay/transport/browser E2E, generated/checked docs, packaging and required CI |
 | 6 | `feat/jetkvm-mcp-hardware-release` | Serialized live stories, privacy-safe evidence, per-story restore gates, exact-candidate manifest, clean-install verification, tag and GitHub release assets |
 
 ### 13.1 Mandatory gate for every phase
