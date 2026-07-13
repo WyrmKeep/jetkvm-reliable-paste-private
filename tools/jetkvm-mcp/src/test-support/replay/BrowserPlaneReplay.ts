@@ -27,29 +27,37 @@ import {
   type SanitizedReplayTape,
 } from "./SanitizedReplayTape.js";
 
+const requestIdSchema = z.string().min(1).max(256);
+const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const timestampSchema = z.string().datetime();
+const mutationReceiptFields = {
+  requestId: requestIdSchema,
+  outcome: z.enum(["applied", "already_applied"]),
+  verification: z.enum(["device_ack_only", "device_state_verified"]),
+  dispatchedCount: z.number().int().nonnegative(),
+  completedCount: z.number().int().nonnegative(),
+  acknowledgedAt: timestampSchema,
+} as const;
 const mutationReceiptSchema = z
+  .object(mutationReceiptFields)
+  .strict()
+  .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
+const pasteReceiptSchema = z
   .object({
-    requestId: z.string().min(1),
-    outcome: z.enum(["applied", "already_applied"]),
-    verification: z.enum(["device_ack_only", "device_state_verified"]),
-    dispatchedCount: z.number().int().nonnegative(),
-    completedCount: z.number().int().nonnegative(),
-    acknowledgedAt: z.string().datetime(),
-  })
-  .strict();
-const pasteReceiptSchema = mutationReceiptSchema
-  .extend({
+    ...mutationReceiptFields,
     originalByteCount: z.number().int().nonnegative(),
     normalizedByteCount: z.number().int().nonnegative(),
-    normalizedSha256: z.string().regex(/^[a-f0-9]{64}$/),
-    acceptedAt: z.string().datetime().nullable(),
-    completedAt: z.string().datetime().nullable(),
+    normalizedSha256: sha256Schema,
+    acceptedAt: timestampSchema.nullable(),
+    completedAt: timestampSchema.nullable(),
     terminalState: z.enum(["succeeded", "failed", "cancelled", "unknown"]),
     measuredCharsPerSecond: z.number().nonnegative().nullable(),
   })
-  .strict();
-const releaseReceiptSchema = mutationReceiptSchema
-  .extend({
+  .strict()
+  .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
+const releaseReceiptSchema = z
+  .object({
+    ...mutationReceiptFields,
     mutationGateClosed: z.boolean(),
     deferredProducersJoined: z.boolean(),
     pasteTerminal: z.enum(["cancelled", "inactive", "unknown"]),
@@ -59,10 +67,11 @@ const releaseReceiptSchema = mutationReceiptSchema
     generationDrained: z.boolean(),
     heldKeys: z.array(z.enum(PHYSICAL_KEYS)),
   })
-  .strict();
+  .strict()
+  .refine((receipt) => receipt.completedCount <= receipt.dispatchedCount);
 const bindingSchema = z
   .object({
-    sessionId: z.string().min(1),
+    sessionId: z.string().min(1).max(256),
     sessionGeneration: z.number().int().positive(),
     connectionEpoch: z.number().int().positive(),
     browserChannelGeneration: z.number().int().positive(),
@@ -73,7 +82,7 @@ const connectionSchema = z
     state: z.literal("ready"),
     ref: z
       .object({
-        sessionId: z.string().min(1),
+        sessionId: z.string().min(1).max(256),
         sessionGeneration: z.number().int().positive(),
       })
       .strict(),
@@ -85,11 +94,11 @@ const connectionSchema = z
   .strict();
 const observationSchema = z
   .object({
-    observationId: z.string().min(1),
+    observationId: z.string().min(1).max(256),
     sessionGeneration: z.number().int().positive(),
     connectionEpoch: z.number().int().positive(),
     displayGeneration: z.number().int().positive(),
-    frameId: z.string().min(1),
+    frameId: z.string().min(1).max(256),
     capturedAt: z.string().datetime(),
     sourceWidth: z.number().int().positive(),
     sourceHeight: z.number().int().positive(),
@@ -109,17 +118,30 @@ const observationSchema = z
         contentHeight: z.number().positive(),
       })
       .strict(),
-    artifact: z
-      .object({
-        mimeType: z.enum(["image/jpeg", "image/png"]),
-        sha256: z.string().regex(/^[a-f0-9]{64}$/),
-        byteLength: z
-          .number()
-          .int()
-          .positive()
-          .max(2 * 1024 * 1024),
-      })
-      .strict(),
+    artifact: z.discriminatedUnion("mimeType", [
+      z
+        .object({
+          mimeType: z.literal("image/jpeg"),
+          sha256: sha256Schema,
+          byteLength: z
+            .number()
+            .int()
+            .positive()
+            .max(2 * 1024 * 1024),
+        })
+        .strict(),
+      z
+        .object({
+          mimeType: z.literal("image/png"),
+          sha256: sha256Schema,
+          byteLength: z
+            .number()
+            .int()
+            .positive()
+            .max(8 * 1024 * 1024),
+        })
+        .strict(),
+    ]),
   })
   .strict();
 
@@ -151,6 +173,18 @@ export class BrowserPlaneReplay implements BrowserPlane {
     const parsed = connectionSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay connect response shape is invalid.");
+    if (
+      parsed.data.ref.sessionId !== ref.sessionId ||
+      parsed.data.ref.sessionGeneration !== ref.sessionGeneration ||
+      parsed.data.binding.sessionId !== parsed.data.ref.sessionId ||
+      parsed.data.binding.sessionGeneration !==
+        parsed.data.ref.sessionGeneration ||
+      parsed.data.binding.connectionEpoch !== parsed.data.connectionEpoch ||
+      parsed.data.binding.browserChannelGeneration !==
+        parsed.data.browserChannelGeneration
+    ) {
+      throw new Error("Replay connect response identity is invalid.");
+    }
     return { ...parsed.data, deviceRpc: this.deviceRpc };
   }
 
@@ -163,6 +197,18 @@ export class BrowserPlaneReplay implements BrowserPlane {
     const parsed = connectionSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay reconnect response shape is invalid.");
+    if (
+      parsed.data.ref.sessionId !== ref.sessionId ||
+      parsed.data.ref.sessionGeneration !== ref.sessionGeneration ||
+      parsed.data.binding.sessionId !== parsed.data.ref.sessionId ||
+      parsed.data.binding.sessionGeneration !==
+        parsed.data.ref.sessionGeneration ||
+      parsed.data.binding.connectionEpoch !== parsed.data.connectionEpoch ||
+      parsed.data.binding.browserChannelGeneration !==
+        parsed.data.browserChannelGeneration
+    ) {
+      throw new Error("Replay reconnect response identity is invalid.");
+    }
     return { ...parsed.data, deviceRpc: this.deviceRpc };
   }
 
@@ -179,6 +225,14 @@ export class BrowserPlaneReplay implements BrowserPlane {
     const parsed = observationSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay capture response shape is invalid.");
+    const expectedMimeType =
+      request.format === "jpeg" ? "image/jpeg" : "image/png";
+    if (
+      parsed.data.sessionGeneration !== ref.sessionGeneration ||
+      parsed.data.artifact.mimeType !== expectedMimeType
+    ) {
+      throw new Error("Replay capture response identity or format is invalid.");
+    }
     if (this.frameArtifacts === undefined) {
       throw new Error(
         "Replay capture requires an external sanitized frame artifact provider.",
@@ -236,18 +290,25 @@ export class BrowserPlaneReplay implements BrowserPlane {
   ): Promise<PasteReceipt> {
     this.validateDeadline(deadline);
     const encoded = Buffer.from(request.text, "utf8");
+    let sourceCharacterCount = 0;
+    for (const character of request.text) {
+      sourceCharacterCount += character.length > 0 ? 1 : 0;
+    }
     const response = this.replay.consume("paste", {
       ref: { ...ref },
       request: {
         observationId: request.observationId,
         requestId: request.requestId,
         textByteLength: encoded.byteLength,
+        sourceCharacterCount,
         textSha256: createHash("sha256").update(encoded).digest("hex"),
       },
     });
     const parsed = pasteReceiptSchema.safeParse(response);
     if (!parsed.success)
       throw new Error("Replay paste response shape is invalid.");
+    if (parsed.data.requestId !== request.requestId)
+      throw new Error("Replay paste receipt request ID is invalid.");
     return parsed.data;
   }
 
@@ -272,7 +333,7 @@ export class BrowserPlaneReplay implements BrowserPlane {
       throw new Error("Replay close response must be null.");
   }
 
-  private async consumeReceipt<T>(
+  private async consumeReceipt<T extends { readonly requestId: string }>(
     operation: "mouse" | "keyboard" | "release",
     ref: SessionRef,
     request: MouseRequest | KeyboardRequest | ReleaseRequest,
@@ -287,6 +348,8 @@ export class BrowserPlaneReplay implements BrowserPlane {
     const parsed = schema.safeParse(response);
     if (!parsed.success)
       throw new Error(`Replay ${operation} response shape is invalid.`);
+    if (parsed.data.requestId !== request.requestId)
+      throw new Error(`Replay ${operation} receipt request ID is invalid.`);
     return parsed.data;
   }
 

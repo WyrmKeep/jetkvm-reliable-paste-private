@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   CapabilitySnapshot,
@@ -13,6 +13,7 @@ import {
   PUBLIC_ERROR_MESSAGES,
   toMcpErrorResult,
   toMcpSuccessResult,
+  validateAndMapMcpResult,
   type AuthorizedImage,
 } from "./results.js";
 
@@ -56,6 +57,42 @@ const captureEnvelope: Success<DisplayCaptureResult> = {
   duration_ms: 5,
   result: capture,
 };
+
+function captureEnvelopeWithImage(
+  bytes: Uint8Array,
+  mimeType: "image/jpeg" | "image/png",
+): Success<DisplayCaptureResult> {
+  return {
+    ...captureEnvelope,
+    result: {
+      ...captureEnvelope.result,
+      image: {
+        content_index: 1,
+        mime_type: mimeType,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        byte_length: bytes.byteLength,
+      },
+    },
+  };
+}
+
+function inboundImageResult(
+  envelope: Success<DisplayCaptureResult>,
+  data: string,
+  mimeType: "image/jpeg" | "image/png",
+) {
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(envelope) },
+      { type: "image" as const, data, mimeType },
+    ],
+    structuredContent: envelope,
+  };
+}
+
+function countBase64Decodes(calls: readonly (readonly unknown[])[]): number {
+  return calls.filter((call) => call[1] === "base64").length;
+}
 
 describe("MCP result mapping", () => {
   it("maps non-image successes to identical structured and compact text content", () => {
@@ -179,6 +216,149 @@ describe("MCP result mapping", () => {
     expect(JSON.stringify(mapped.structuredContent)).not.toContain(imageBase64);
   });
 
+  it("accepts an empty canonical image permitted by the tracked schema", () => {
+    const bytes = Buffer.alloc(0);
+    const envelope = captureEnvelopeWithImage(bytes, "image/jpeg");
+
+    const mapped = validateAndMapMcpResult(
+      "jetkvm_display_capture",
+      inboundImageResult(envelope, "", "image/jpeg"),
+    );
+
+    expect(mapped.content).toHaveLength(2);
+    expect(mapped.content[1]).toEqual({
+      type: "image",
+      data: "",
+      mimeType: "image/jpeg",
+    });
+    expect(mapped.structuredContent).toEqual(envelope);
+  });
+
+  it.each([
+    ["image/jpeg", 2 * 1024 * 1024],
+    ["image/png", 8 * 1024 * 1024],
+  ] as const)("accepts the exact %s byte maximum", (mimeType, maximum) => {
+    const bytes = Buffer.alloc(maximum);
+    const envelope = captureEnvelopeWithImage(bytes, mimeType);
+    const data = bytes.toString("base64");
+
+    const mapped = validateAndMapMcpResult(
+      "jetkvm_display_capture",
+      inboundImageResult(envelope, data, mimeType),
+    );
+
+    expect(mapped.content).toHaveLength(2);
+    expect(mapped.content[1]).toMatchObject({
+      type: "image",
+      data,
+      mimeType,
+    });
+    expect(envelope.result.image).toEqual({
+      content_index: 1,
+      mime_type: mimeType,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      byte_length: maximum,
+    });
+  });
+
+  it("rejects encoded data over the MIME maximum before decoding", () => {
+    const maximum = 2 * 1024 * 1024;
+    const bytes = Buffer.alloc(maximum);
+    const envelope = captureEnvelopeWithImage(bytes, "image/jpeg");
+    const maximumEncodedLength = 4 * Math.ceil(maximum / 3);
+    const oversized = "A".repeat(maximumEncodedLength + 1);
+    const fromSpy = vi.spyOn(Buffer, "from");
+
+    try {
+      expect(() =>
+        validateAndMapMcpResult(
+          "jetkvm_display_capture",
+          inboundImageResult(envelope, oversized, "image/jpeg"),
+        ),
+      ).toThrow("Invalid handler result.");
+      expect(countBase64Decodes(fromSpy.mock.calls)).toBe(0);
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
+
+  it("rejects huge encoded data for a one-byte claim before decoding", () => {
+    const bytes = Uint8Array.of(0);
+    const envelope = captureEnvelopeWithImage(bytes, "image/png");
+    const huge = "A".repeat(4 * Math.ceil((2 * 1024 * 1024) / 3));
+    const fromSpy = vi.spyOn(Buffer, "from");
+
+    try {
+      expect(() =>
+        validateAndMapMcpResult(
+          "jetkvm_display_capture",
+          inboundImageResult(envelope, huge, "image/png"),
+        ),
+      ).toThrow("Invalid handler result.");
+      expect(countBase64Decodes(fromSpy.mock.calls)).toBe(0);
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
+
+  it("rejects noncanonical base64 padding before decoding", () => {
+    const bytes = Uint8Array.of(0xff);
+    const envelope = captureEnvelopeWithImage(bytes, "image/jpeg");
+    const fromSpy = vi.spyOn(Buffer, "from");
+
+    try {
+      expect(() =>
+        validateAndMapMcpResult(
+          "jetkvm_display_capture",
+          inboundImageResult(envelope, "/x==", "image/jpeg"),
+        ),
+      ).toThrow("Invalid handler result.");
+      expect(countBase64Decodes(fromSpy.mock.calls)).toBe(0);
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
+
+  it("rejects decoded image length and digest mismatches", () => {
+    const oneByte = Uint8Array.of(0);
+    const oneByteEnvelope = captureEnvelopeWithImage(oneByte, "image/jpeg");
+    expect(() =>
+      validateAndMapMcpResult(
+        "jetkvm_display_capture",
+        inboundImageResult(oneByteEnvelope, "AAA=", "image/jpeg"),
+      ),
+    ).toThrow("Image content does not match result metadata.");
+
+    expect(() =>
+      validateAndMapMcpResult(
+        "jetkvm_display_capture",
+        inboundImageResult(oneByteEnvelope, "/w==", "image/jpeg"),
+      ),
+    ).toThrow("Image content does not match result metadata.");
+  });
+
+  it("decodes canonical image data exactly once and preserves its identity", () => {
+    const bytes = Uint8Array.of(0, 1, 2, 3);
+    const envelope = captureEnvelopeWithImage(bytes, "image/png");
+    const data = Buffer.from(bytes).toString("base64");
+    const fromSpy = vi.spyOn(Buffer, "from");
+
+    try {
+      const mapped = validateAndMapMcpResult(
+        "jetkvm_display_capture",
+        inboundImageResult(envelope, data, "image/png"),
+      );
+      expect(countBase64Decodes(fromSpy.mock.calls)).toBe(1);
+      expect(mapped.content).toEqual([
+        { type: "text", text: JSON.stringify(envelope) },
+        { type: "image", data, mimeType: "image/png" },
+      ]);
+      expect(mapped.structuredContent).toEqual(envelope);
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
+
   it("rejects image bytes for results without image metadata", () => {
     const envelope = {
       ok: true,
@@ -239,7 +419,7 @@ describe("MCP result mapping", () => {
         details: {
           permission: null,
           capability: null,
-          failed_action_index: null,
+          failed_action_index: 0,
           dispatched_action_count: 1,
           completed_action_count: 0,
           downstream_stage: "write",
@@ -256,6 +436,12 @@ describe("MCP result mapping", () => {
       { type: "text", text: JSON.stringify(mapped.structuredContent) },
     ]);
     expect(JSON.stringify(mapped)).not.toContain(imageBase64);
+  });
+
+  it("publishes the canonical admission-capacity error message", () => {
+    expect(PUBLIC_ERROR_MESSAGES.ADMISSION_CAPACITY_EXCEEDED).toBe(
+      "The request ledger is at admission capacity.",
+    );
   });
 
   it("replaces handler-controlled error messages with stable code-specific public text", () => {
@@ -279,7 +465,7 @@ describe("MCP result mapping", () => {
         details: {
           permission: null,
           capability: null,
-          failed_action_index: null,
+          failed_action_index: 0,
           dispatched_action_count: 1,
           completed_action_count: 0,
           downstream_stage: "write",

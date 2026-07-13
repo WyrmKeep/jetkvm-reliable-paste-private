@@ -341,6 +341,138 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     });
   });
 
+  it.each([
+    [
+      "source-none metadata with an observation timestamp",
+      {
+        value: "unknown",
+        observed_at: "2026-06-10T10:00:00.000Z",
+        age_ms: null,
+        freshness: "unknown",
+        source: "none",
+      },
+    ],
+    [
+      "source-none metadata with an observation age",
+      {
+        value: "unknown",
+        observed_at: null,
+        age_ms: 1,
+        freshness: "unknown",
+        source: "none",
+      },
+    ],
+    [
+      "source-none metadata marked fresh",
+      {
+        value: "unknown",
+        observed_at: null,
+        age_ms: null,
+        freshness: "fresh",
+        source: "none",
+      },
+    ],
+    [
+      "cached metadata without an observation timestamp",
+      {
+        value: "present",
+        observed_at: null,
+        age_ms: 1,
+        freshness: "fresh",
+        source: "cached_snapshot",
+      },
+    ],
+    [
+      "cached metadata without an observation age",
+      {
+        value: "present",
+        observed_at: "2026-06-10T10:00:00.000Z",
+        age_ms: null,
+        freshness: "fresh",
+        source: "cached_event",
+      },
+    ],
+    [
+      "cached metadata with unknown freshness",
+      {
+        value: "present",
+        observed_at: "2026-06-10T10:00:00.000Z",
+        age_ms: 1,
+        freshness: "unknown",
+        source: "cached_snapshot",
+      },
+    ],
+  ] as const)("fails closed on %s", async (_label, signal) => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, { ...displayWireResult(), signal });
+
+    const error = await pending.catch((caught) => caught);
+
+    expectDeviceError(error, {
+      code: "MALFORMED_RESPONSE",
+      boundary: "ack",
+      outcome: "unknown",
+    });
+  });
+
+  it("maps every legal wire fact variant without weakening qualification", async () => {
+    const channel = new FakeDeviceRpcChannel();
+    const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.readDisplayState(BINDING, deadline());
+    await channel.waitForWrites(1);
+    channel.respondToWrite(0, {
+      signal: {
+        value: "no_lock",
+        observed_at: "2026-06-10T10:00:00.000Z",
+        age_ms: 42,
+        freshness: "stale",
+        source: "cached_event",
+      },
+      resolution: {
+        value: { width: 1920, height: 1080, refresh_hz: 60 },
+        observed_at: "2026-06-10T10:00:01.000Z",
+        age_ms: 0,
+        freshness: "fresh",
+        source: "cached_snapshot",
+      },
+      fps: {
+        value: null,
+        observed_at: null,
+        age_ms: null,
+        freshness: "unknown",
+        source: "none",
+      },
+    });
+
+    await expect(pending).resolves.toEqual({
+      signal: {
+        value: "no_lock",
+        observedAt: "2026-06-10T10:00:00.000Z",
+        ageMs: 42,
+        freshness: "stale",
+        source: "cached_event",
+      },
+      resolution: {
+        value: { width: 1920, height: 1080, refreshHz: 60 },
+        observedAt: "2026-06-10T10:00:01.000Z",
+        ageMs: 0,
+        freshness: "fresh",
+        source: "cached_snapshot",
+      },
+      fps: {
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown",
+        source: "none",
+      },
+      qualification: "current_binding",
+    });
+  });
+
   it("ignores a delayed retired response while awaiting the current correlation id", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel, {

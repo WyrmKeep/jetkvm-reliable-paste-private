@@ -119,7 +119,9 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
       );
     }
     try {
-      return validateAndMapMcpResult(toolName, result);
+      const mapped = validateAndMapMcpResult(toolName, result);
+      validateCallResultCorrelation(toolName, input.data, mapped);
+      return mapped;
     } catch {
       throw new McpError(
         ErrorCode.InternalError,
@@ -133,10 +135,105 @@ export function createMcpServer(handlerRegistry: HandlerRegistry = {}): Server {
 
 function sanitizedPrincipalId(principalId: string | undefined): string | null {
   if (principalId === undefined) return null;
-  if (/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(principalId)) {
-    return principalId;
+  const digest = createHash("sha256")
+    .update("jetkvm-mcp:principal:v1\u0000", "utf8")
+    .update(`${Buffer.byteLength(principalId, "utf8")}\u0000`, "utf8")
+    .update(principalId, "utf8")
+    .digest("hex");
+  return `principal-${digest}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateCallResultCorrelation(
+  tool: JetKvmToolName,
+  input: unknown,
+  mapped: CallToolResult,
+): void {
+  if (!isRecord(input) || !isRecord(mapped.structuredContent)) {
+    throw new Error("Invalid handler result correlation.");
   }
-  return `principal-${createHash("sha256").update(principalId).digest("hex").slice(0, 32)}`;
+  const envelope = mapped.structuredContent;
+  if (envelope.ok === true) {
+    if (!isRecord(envelope.result)) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    const result = envelope.result;
+    if (
+      typeof input.request_id === "string" &&
+      result.request_id !== input.request_id
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    if (tool === "jetkvm_session_reconnect") {
+      if (
+        envelope.session_id !== input.session_id ||
+        result.previous_session_generation !== input.session_generation ||
+        typeof result.new_session_generation !== "number" ||
+        result.new_session_generation <=
+          (result.previous_session_generation as number) ||
+        envelope.session_generation !== result.new_session_generation
+      ) {
+        throw new Error("Invalid handler result correlation.");
+      }
+    } else if (
+      tool !== "jetkvm_session_connect" &&
+      (envelope.session_id !== input.session_id ||
+        envelope.session_generation !== input.session_generation)
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+  }
+
+  if (tool !== "jetkvm_input_keyboard" && tool !== "jetkvm_input_mouse") {
+    return;
+  }
+  if (!Array.isArray(input.actions)) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  const expectedActionCount = input.actions.length;
+  if (envelope.ok === true) {
+    const result = envelope.result as Record<string, unknown>;
+    if (
+      result.dispatched_action_count !== expectedActionCount ||
+      result.completed_action_count !== expectedActionCount
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    return;
+  }
+  if (!isRecord(envelope.error)) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  const error = envelope.error;
+  const errorDetails = error.details;
+  if (!isRecord(errorDetails)) {
+    throw new Error("Invalid handler result correlation.");
+  }
+  const details = errorDetails;
+  if (error.outcome === "unknown") {
+    if (
+      typeof details.failed_action_index !== "number" ||
+      typeof details.dispatched_action_count !== "number" ||
+      typeof details.completed_action_count !== "number" ||
+      details.completed_action_count !== details.failed_action_index ||
+      details.dispatched_action_count !== details.failed_action_index + 1 ||
+      details.dispatched_action_count > expectedActionCount
+    ) {
+      throw new Error("Invalid handler result correlation.");
+    }
+    return;
+  }
+  if (
+    (error.outcome === "applied" || error.outcome === "already_applied") &&
+    (details.failed_action_index !== null ||
+      details.dispatched_action_count !== expectedActionCount ||
+      details.completed_action_count !== expectedActionCount)
+  ) {
+    throw new Error("Invalid handler result correlation.");
+  }
 }
 
 function correlationIdFor(requestId: string | number): string {

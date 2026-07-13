@@ -6,7 +6,12 @@ import type {
   SessionReconnectInput,
   SessionReconnectResult,
 } from "../domain.js";
-import type { ErrorCode, RequiredNextStep } from "../errors.js";
+import {
+  ERROR_CODES,
+  REQUIRED_NEXT_STEPS,
+  type ErrorCode,
+  type RequiredNextStep,
+} from "../errors.js";
 import type { Deadline, SessionRef } from "../device/DeviceRpcAdapter.js";
 import type {
   BrowserConnection,
@@ -67,6 +72,12 @@ export interface DeviceSessionReconnectSuccess {
 }
 
 export type DeviceSessionErrorOutcome = "not_sent" | "unknown";
+export interface DeviceSessionPlaneFailure {
+  readonly code: ErrorCode;
+  readonly outcome: DeviceSessionErrorOutcome;
+  readonly safeToRetry: boolean;
+  readonly requiredNextStep: RequiredNextStep;
+}
 
 export class DeviceSessionClientError extends Error {
   public readonly name = "DeviceSessionClientError";
@@ -82,7 +93,10 @@ export class DeviceSessionClientError extends Error {
   }
 }
 
-export class DeviceSessionPlaneError extends Error {
+export class DeviceSessionPlaneError
+  extends Error
+  implements DeviceSessionPlaneFailure
+{
   public readonly name = "DeviceSessionPlaneError";
 
   public constructor(
@@ -97,6 +111,25 @@ export class DeviceSessionPlaneError extends Error {
       "The injected browser plane could not complete the session operation.",
     );
   }
+}
+
+function isDeviceSessionPlaneFailure(
+  error: unknown,
+): error is Error & DeviceSessionPlaneFailure {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const candidate = error as Partial<DeviceSessionPlaneFailure>;
+  return (
+    typeof candidate.code === "string" &&
+    ERROR_CODES.some((code) => code === candidate.code) &&
+    (candidate.outcome === "not_sent" || candidate.outcome === "unknown") &&
+    typeof candidate.safeToRetry === "boolean" &&
+    typeof candidate.requiredNextStep === "string" &&
+    REQUIRED_NEXT_STEPS.some(
+      (nextStep) => nextStep === candidate.requiredNextStep,
+    )
+  );
 }
 
 type SessionRecord = {
@@ -253,19 +286,20 @@ export class DeviceSessionClient {
         };
       }
       if (decision.kind === "conflict") {
+        throw clientError(decision.code, "not_sent", false, "none");
+      }
+      if (decision.kind === "capacity_exceeded") {
         throw clientError(
-          decision.code,
+          "ADMISSION_CAPACITY_EXCEEDED",
           "not_sent",
-          false,
-          "inspect_device_state_before_retry",
+          true,
+          "none",
         );
       }
       if (decision.kind !== "acquired") {
         throw clientError(
           "MUTATION_OUTCOME_UNKNOWN",
-          decision.kind === "in_flight" || decision.kind === "cache_lost"
-            ? "unknown"
-            : "not_sent",
+          "unknown",
           false,
           "inspect_device_state_before_retry",
         );
@@ -477,19 +511,20 @@ export class DeviceSessionClient {
         };
       }
       if (decision.kind === "conflict") {
+        throw clientError(decision.code, "not_sent", false, "none");
+      }
+      if (decision.kind === "capacity_exceeded") {
         throw clientError(
-          decision.code,
+          "ADMISSION_CAPACITY_EXCEEDED",
           "not_sent",
-          false,
-          "inspect_device_state_before_retry",
+          true,
+          "none",
         );
       }
       if (decision.kind !== "acquired") {
         throw clientError(
           "MUTATION_OUTCOME_UNKNOWN",
-          decision.kind === "in_flight" || decision.kind === "cache_lost"
-            ? "unknown"
-            : "not_sent",
+          "unknown",
           false,
           "inspect_device_state_before_retry",
         );
@@ -794,7 +829,7 @@ export class DeviceSessionClient {
       }
       return error;
     }
-    if (error instanceof DeviceSessionPlaneError) {
+    if (isDeviceSessionPlaneFailure(error)) {
       return clientError(
         error.code,
         irreversibleTransition ? "unknown" : error.outcome,
@@ -906,11 +941,11 @@ export class DeviceSessionClient {
       rpcBinding.browserChannelGeneration !==
         connection.browserChannelGeneration ||
       !Number.isSafeInteger(connection.connectionEpoch) ||
-      connection.connectionEpoch < 0 ||
+      connection.connectionEpoch < 1 ||
       !Number.isSafeInteger(connection.displayGeneration) ||
       connection.displayGeneration < 0 ||
       !Number.isSafeInteger(connection.browserChannelGeneration) ||
-      connection.browserChannelGeneration < 0 ||
+      connection.browserChannelGeneration < 1 ||
       (previous !== undefined &&
         (previous.browserChannelGeneration === null ||
           connection.connectionEpoch <= previous.connectionEpoch ||

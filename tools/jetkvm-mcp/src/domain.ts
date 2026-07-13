@@ -63,8 +63,8 @@ export type Success<T> = {
   ok: true;
   tool: JetKvmToolName;
   operation_id: string;
-  session_id: string | null;
-  session_generation: number | null;
+  session_id: string;
+  session_generation: number;
   duration_ms: number;
   result: T;
 };

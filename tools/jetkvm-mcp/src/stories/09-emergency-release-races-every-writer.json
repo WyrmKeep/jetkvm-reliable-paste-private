@@ -228,6 +228,12 @@
       "action": "Clear deterministic faults and restore the recorded fixture baseline.",
       "assertion": "The next story starts only after the safe baseline is verified.",
       "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
+      "always": true
     }
   ],
   "privacy": [

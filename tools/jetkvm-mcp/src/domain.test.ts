@@ -150,6 +150,14 @@ describe("canonical domain contracts", () => {
   it("types exact common mutation, success, and error envelopes", () => {
     expectTypeOf<MutationState>().toHaveProperty("required_next_step");
     expectTypeOf<Success<unknown>>().toHaveProperty("session_generation");
+    expectTypeOf<Success<unknown>["session_id"]>().toEqualTypeOf<string>();
+    expectTypeOf<
+      Success<unknown>["session_generation"]
+    >().toEqualTypeOf<number>();
+    expectTypeOf<ToolError["session_id"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<ToolError["session_generation"]>().toEqualTypeOf<
+      number | null
+    >();
     expectTypeOf<ToolError>().toHaveProperty("error");
     expectTypeOf<ToolError["error"]["details"]>().toHaveProperty(
       "downstream_stage",

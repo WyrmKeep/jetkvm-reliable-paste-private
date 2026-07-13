@@ -15,7 +15,10 @@ import {
   acceptanceStorySchema,
   loadAcceptanceStories,
   validateAcceptanceStories,
+  validateFocusedAssertionRegistrations,
   type AcceptanceStory,
+  type FocusedAssertionOwnerPhase,
+  type FocusedAssertionRegistration,
 } from "./manifest.js";
 
 const packageRoot = resolve(import.meta.dirname, "../..");
@@ -25,6 +28,27 @@ const generatedSchemaPath = resolve(
   "schemas/story-manifest.schema.json",
 );
 
+function makeFocusedAssertionRegistrations(
+  phases: readonly FocusedAssertionOwnerPhase[],
+): FocusedAssertionRegistration[] {
+  const registrations: FocusedAssertionRegistration[] = [];
+  for (const row of TOOL_BEHAVIOR_MATRIX) {
+    for (const cell of Object.values(row.cells)) {
+      if (
+        cell.applicability === "applicable" &&
+        phases.includes(cell.focused_assertion_owner_phase)
+      ) {
+        registrations.push({
+          focused_assertion_id: cell.focused_assertion_id,
+          owner_phase: cell.focused_assertion_owner_phase,
+          test_file: "src/focused/assertionRegistry.test.ts",
+          test_name: `registers ${cell.focused_assertion_id}`,
+        });
+      }
+    }
+  }
+  return registrations;
+}
 function makeStory(overrides: Partial<AcceptanceStory> = {}): AcceptanceStory {
   const requirement = "branch:strict-schema-rejection";
   return {
@@ -469,6 +493,186 @@ describe("every-handler behavior matrix", () => {
     }
   });
 
+  it("marks Phase 2 focused IDs as reservations owned by the implementing phase", () => {
+    const toolOwnerPhase: Record<
+      (typeof JETKVM_TOOL_NAMES)[number],
+      FocusedAssertionOwnerPhase
+    > = {
+      jetkvm_display_capture: "phase_3",
+      jetkvm_display_status: "phase_3",
+      jetkvm_input_keyboard: "phase_3",
+      jetkvm_input_mouse: "phase_3",
+      jetkvm_input_paste: "phase_3",
+      jetkvm_input_release: "phase_3",
+      jetkvm_power_control: "phase_4",
+      jetkvm_session_connect: "phase_4",
+      jetkvm_session_reconnect: "phase_4",
+      jetkvm_session_status: "phase_4",
+    };
+
+    for (const row of TOOL_BEHAVIOR_MATRIX) {
+      for (const tool of JETKVM_TOOL_NAMES) {
+        const cell = row.cells[tool];
+        if (cell.applicability !== "applicable") {
+          continue;
+        }
+        expect(cell.focused_assertion_phase_2_status).toBe("reserved");
+        expect(cell.focused_assertion_owner_phase).toBe(
+          cell.coverage_scope === "shared_transport"
+            ? "phase_5"
+            : toolOwnerPhase[tool],
+        );
+      }
+    }
+  });
+
+  it("requires focused assertion registrations only as their owning phase lands", () => {
+    const phase3 = makeFocusedAssertionRegistrations(["phase_3"]);
+    const throughPhase4 = makeFocusedAssertionRegistrations([
+      "phase_3",
+      "phase_4",
+    ]);
+    const all = makeFocusedAssertionRegistrations([
+      "phase_3",
+      "phase_4",
+      "phase_5",
+    ]);
+
+    expect(() =>
+      validateFocusedAssertionRegistrations([], "phase_2"),
+    ).not.toThrow();
+    expect(() => validateFocusedAssertionRegistrations([], "phase_3")).toThrow(
+      /unresolved.*phase_3/i,
+    );
+    expect(() =>
+      validateFocusedAssertionRegistrations(phase3, "phase_3"),
+    ).not.toThrow();
+    expect(() =>
+      validateFocusedAssertionRegistrations(phase3, "phase_4"),
+    ).toThrow(/unresolved.*phase_4/i);
+    expect(() =>
+      validateFocusedAssertionRegistrations(throughPhase4, "phase_4"),
+    ).not.toThrow();
+    expect(() =>
+      validateFocusedAssertionRegistrations(all, "phase_5"),
+    ).not.toThrow();
+    expect(() =>
+      validateFocusedAssertionRegistrations(all, "release"),
+    ).not.toThrow();
+  });
+
+  it("rejects duplicate, unknown, and wrong-owner focused registrations", () => {
+    const [registration] = makeFocusedAssertionRegistrations(["phase_3"]);
+    expect(registration).toBeDefined();
+
+    expect(() =>
+      validateFocusedAssertionRegistrations(
+        [registration!, registration!],
+        "phase_2",
+      ),
+    ).toThrow(/duplicate focused assertion registration/i);
+    expect(() =>
+      validateFocusedAssertionRegistrations(
+        [
+          {
+            ...registration!,
+            focused_assertion_id: "unit:unknown:assertion",
+          },
+        ],
+        "phase_2",
+      ),
+    ).toThrow(/unknown focused assertion registration/i);
+    expect(() =>
+      validateFocusedAssertionRegistrations(
+        [{ ...registration!, owner_phase: "phase_4" }],
+        "phase_2",
+      ),
+    ).toThrow(/owner phase/i);
+  });
+
+  it("links deadline and cancellation cells to compatible per-tool faults", () => {
+    for (const [requirement, stepPrefix, faultPrefix] of [
+      [
+        "branch:deadline-before-admission",
+        "deadline-before-admission",
+        "expire-before-admission",
+      ],
+      [
+        "branch:cancellation-before-write",
+        "cancel-before-write",
+        "cancel-before-write",
+      ],
+    ] as const) {
+      const row = TOOL_BEHAVIOR_MATRIX.find(
+        (candidate) => candidate.requirement === requirement,
+      )!;
+      for (const tool of JETKVM_TOOL_NAMES) {
+        const cell = row.cells[tool];
+        expect(cell.applicability).toBe("applicable");
+        if (cell.applicability !== "applicable") {
+          continue;
+        }
+        const slug = tool.replaceAll("_", "-");
+        expect(cell.step_id).toBe(`${stepPrefix}-${slug}`);
+        expect(cell.fault_id).toBe(`${faultPrefix}-${slug}`);
+      }
+    }
+  });
+
+  it("rejects a deadline or cancellation fault armed after its linked call", async () => {
+    for (const requirement of [
+      "branch:deadline-before-admission",
+      "branch:cancellation-before-write",
+    ] as const) {
+      const stories = await loadAcceptanceStories(storiesDirectory);
+      const row = TOOL_BEHAVIOR_MATRIX.find(
+        (candidate) => candidate.requirement === requirement,
+      )!;
+      const cell = row.cells.jetkvm_display_capture;
+      expect(cell.applicability).toBe("applicable");
+      if (cell.applicability !== "applicable") {
+        continue;
+      }
+      const story = stories.find(({ id }) => id === cell.story_id)!;
+      const fault = story.fault_script.find(({ id }) => id === cell.fault_id)!;
+      fault.after_step = cell.step_id;
+
+      expect(() => validateAcceptanceStories(stories), requirement).toThrow(
+        /fault.*armed.*before.*linked call/i,
+      );
+    }
+  });
+
+  it("rejects cross-tool deadline and cancellation fault links", async () => {
+    for (const requirement of [
+      "branch:deadline-before-admission",
+      "branch:cancellation-before-write",
+    ] as const) {
+      const stories = await loadAcceptanceStories(storiesDirectory);
+      const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
+      const row = matrix.find(
+        (candidate) => candidate.requirement === requirement,
+      )!;
+      const captureCell = row.cells.jetkvm_display_capture;
+      const mouseCell = row.cells.jetkvm_input_mouse;
+      expect(captureCell.applicability).toBe("applicable");
+      expect(mouseCell.applicability).toBe("applicable");
+      if (
+        captureCell.applicability !== "applicable" ||
+        mouseCell.applicability !== "applicable"
+      ) {
+        continue;
+      }
+      (captureCell as unknown as Record<string, unknown>).fault_id =
+        mouseCell.fault_id;
+
+      expect(
+        () => validateAcceptanceStories(stories, matrix),
+        requirement,
+      ).toThrow(/compatible per-tool fault/i);
+    }
+  });
+
   it("rejects a missing per-tool behavior cell", async () => {
     const stories = await loadAcceptanceStories(storiesDirectory);
     const matrix = structuredClone(TOOL_BEHAVIOR_MATRIX);
@@ -633,6 +837,119 @@ describe("reviewed story branch execution", () => {
     expect(() => validateAcceptanceStories(missingRetry)).toThrow(
       /deadline.*reservation.*retry/i,
     );
+  });
+
+  it("serializes per-tool deadline and cancellation faults with clear steps and mutation retries", async () => {
+    const stories = await loadAcceptanceStories(storiesDirectory);
+    const mutationTools: Partial<
+      Record<(typeof JETKVM_TOOL_NAMES)[number], true>
+    > = {
+      jetkvm_input_keyboard: true,
+      jetkvm_input_mouse: true,
+      jetkvm_input_paste: true,
+      jetkvm_input_release: true,
+      jetkvm_power_control: true,
+      jetkvm_session_connect: true,
+      jetkvm_session_reconnect: true,
+    };
+
+    for (const {
+      storyIndex,
+      requirement,
+      faultPrefix,
+      clearPrefix,
+      stepPrefix,
+      retryPrefix,
+    } of [
+      {
+        storyIndex: 0,
+        requirement: "branch:deadline-before-admission",
+        faultPrefix: "expire-before-admission",
+        clearPrefix: "clear-expired-deadline",
+        stepPrefix: "deadline-before-admission",
+        retryPrefix: "retry-deadline-before-admission",
+      },
+      {
+        storyIndex: 5,
+        requirement: "branch:cancellation-before-write",
+        faultPrefix: "cancel-before-write",
+        clearPrefix: "clear-cancel-before-write",
+        stepPrefix: "cancel-before-write",
+        retryPrefix: "retry-cancel-before-write",
+      },
+    ] as const) {
+      const story = stories[storyIndex]!;
+      const row = TOOL_BEHAVIOR_MATRIX.find(
+        (candidate) => candidate.requirement === requirement,
+      )!;
+      const requestIds = new Set<string>();
+
+      for (const tool of JETKVM_TOOL_NAMES) {
+        const slug = tool.replaceAll("_", "-");
+        const cell = row.cells[tool];
+        expect(cell.applicability).toBe("applicable");
+        const call = story.steps.find(
+          ({ id }) => id === `${stepPrefix}-${slug}`,
+        )!;
+        const fault = story.fault_script.find(
+          ({ id }) => id === `${faultPrefix}-${slug}`,
+        );
+        const clear = story.fault_script.find(
+          ({ id }) => id === `${clearPrefix}-${slug}`,
+        );
+        expect(fault, `${requirement} ${tool} fault`).toBeDefined();
+        expect(clear, `${requirement} ${tool} clear`).toBeDefined();
+        expect(clear?.after_step).toBe(call.id);
+
+        if (mutationTools[tool] !== true) {
+          continue;
+        }
+        const requestId = call.input.request_id;
+        expect(requestId).toEqual(expect.any(String));
+        expect(requestIds.has(requestId as string)).toBe(false);
+        requestIds.add(requestId as string);
+
+        const retry = story.steps.find(
+          ({ id }) => id === `${retryPrefix}-${slug}`,
+        );
+        expect(retry, `${requirement} ${tool} retry`).toBeDefined();
+        expect(retry?.tool).toBe(tool);
+        expect(retry?.input).toEqual(call.input);
+        expect(story.steps.indexOf(retry!)).toBeGreaterThan(
+          story.steps.indexOf(call),
+        );
+      }
+      expect(requestIds).toHaveLength(7);
+    }
+  });
+
+  it("rejects a missing per-tool mutation retry after fault clear", async () => {
+    for (const [storyIndex, retryId, nextFaultId, nextArmStepId] of [
+      [
+        0,
+        "retry-deadline-before-admission-jetkvm-input-keyboard",
+        "expire-before-admission-jetkvm-input-mouse",
+        "deadline-before-admission-jetkvm-input-keyboard",
+      ],
+      [
+        5,
+        "retry-cancel-before-write-jetkvm-input-keyboard",
+        "cancel-before-write-jetkvm-input-mouse",
+        "cancel-before-write-jetkvm-input-keyboard",
+      ],
+    ] as const) {
+      const stories = await loadAcceptanceStories(storiesDirectory);
+      stories[storyIndex]!.steps = stories[storyIndex]!.steps.filter(
+        ({ id }) => id !== retryId,
+      );
+      const nextFault = stories[storyIndex]!.fault_script.find(
+        ({ id }) => id === nextFaultId,
+      )!;
+      nextFault.after_step = nextArmStepId;
+      expect(() => validateAcceptanceStories(stories), retryId).toThrow(
+        /per-tool.*reservation.*retry/i,
+      );
+    }
   });
 
   it("story 6 requires fresh observations for both accepted scroll bounds and rejects consumed reuse", async () => {

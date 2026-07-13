@@ -35,18 +35,18 @@ The final authority is the superseding product brief and these locked decisions:
 
 The production tool inventory is exactly the following ten names. Inventory tests compare the complete sorted set, generated schemas, packed schemas, `tools/list`, README tables, examples, and story references byte-for-byte where applicable.
 
-| Tool | Plane | Class | Implementation phase |
-|---|---|---|---|
-| `jetkvm_session_connect` | Session service + both planes | ownership mutation | Phase 4 |
-| `jetkvm_session_status` | Session service + both planes | read | Phase 4 |
-| `jetkvm_session_reconnect` | Session service + both planes | lifecycle mutation | Phase 4 |
-| `jetkvm_display_capture` | BrowserPlane | read, returns fresh observation | Phase 3 |
-| `jetkvm_display_status` | NativeControlPlane | read-only resolution/EDID | Phase 3 |
-| `jetkvm_input_mouse` | BrowserPlane | mutation | Phase 3 |
-| `jetkvm_input_keyboard` | BrowserPlane | mutation | Phase 3 |
-| `jetkvm_input_paste` | BrowserPlane | mutation | Phase 3 |
-| `jetkvm_input_release` | BrowserPlane + Go quiesce | idempotent safety mutation | Phase 3 |
-| `jetkvm_power_control` | NativeControlPlane | mutation | Phase 4 |
+| Tool                       | Plane                         | Class                           | Implementation phase |
+| -------------------------- | ----------------------------- | ------------------------------- | -------------------- |
+| `jetkvm_session_connect`   | Session service + both planes | ownership mutation              | Phase 4              |
+| `jetkvm_session_status`    | Session service + both planes | read                            | Phase 4              |
+| `jetkvm_session_reconnect` | Session service + both planes | lifecycle mutation              | Phase 4              |
+| `jetkvm_display_capture`   | BrowserPlane                  | read, returns fresh observation | Phase 3              |
+| `jetkvm_display_status`    | NativeControlPlane            | read-only resolution/EDID       | Phase 3              |
+| `jetkvm_input_mouse`       | BrowserPlane                  | mutation                        | Phase 3              |
+| `jetkvm_input_keyboard`    | BrowserPlane                  | mutation                        | Phase 3              |
+| `jetkvm_input_paste`       | BrowserPlane                  | mutation                        | Phase 3              |
+| `jetkvm_input_release`     | BrowserPlane + Go quiesce     | idempotent safety mutation      | Phase 3              |
+| `jetkvm_power_control`     | NativeControlPlane            | mutation                        | Phase 4              |
 
 No alias, compatibility name, hidden production tool, experimental tool, or catch-all action tool is registered.
 
@@ -59,8 +59,8 @@ type Success<T> = {
   ok: true;
   tool: JetKvmToolName;
   operation_id: string;
-  session_id: string | null;
-  session_generation: number | null;
+  session_id: string;
+  session_generation: number;
   duration_ms: number;
   result: T;
 };
@@ -91,7 +91,14 @@ type ToolError = {
   error: {
     code: ErrorCode;
     message: string;
-    phase: "validate" | "authorize" | "queue" | "connect" | "execute" | "verify" | "cleanup";
+    phase:
+      | "validate"
+      | "authorize"
+      | "queue"
+      | "connect"
+      | "execute"
+      | "verify"
+      | "cleanup";
     outcome: "applied" | "already_applied" | "not_sent" | "unknown" | null;
     verification: "device_state_verified" | "device_ack_only" | "none";
     safe_to_retry: boolean;
@@ -102,7 +109,12 @@ type ToolError = {
       failed_action_index: number | null;
       dispatched_action_count: number | null;
       completed_action_count: number | null;
-      downstream_stage: "none" | "admission" | "write" | "acknowledgement" | "verification";
+      downstream_stage:
+        | "none"
+        | "admission"
+        | "write"
+        | "acknowledgement"
+        | "verification";
       expected_generation: number | null;
       actual_generation: number | null;
       observation_id: string | null;
@@ -138,46 +150,48 @@ type SessionConnectResult = MutationState & {
 ```
 
 The common success envelope supplies the newly issued `session_id` and `session_generation`. Connect accepts no mode, lease shape, target, URL, or credentials. A transport disconnect does not transfer the session. A conflicting connect returns `CONTROL_BUSY`; only explicit authorized takeover revokes the incumbent. Reconnect preserves logical ownership, publishes a new generation, invalidates old observations, and requires fresh capture.
+
 ### 0.4 Sole behavioral branch matrix inventory
 
 Canonical design §11.2 is the only behavior-ID inventory. The plan, manifest, focused tests, generated matrix, docs, and evidence use these exact rows and do not define a second branch taxonomy.
 
-| Branch | Required assertion |
-|---|---|
-| strict schema rejection | no controller/plane call |
-| permission denied | actionable `PERMISSION_DENIED`, no capability disclosure, no write |
-| capability missing | actionable `CAPABILITY_MISSING`, no mutation |
-| deadline before admission | `not_sent`, queue/reservation released |
-| cancellation before write | `not_sent`, zero downstream writes |
-| disconnect before write | `not_sent`, safe retry classification |
-| disconnect after write | `unknown`, gate closes, zero replay |
-| malformed downstream response | fail closed; `not_sent` or `unknown` according to write boundary |
-| stale session generation | `STALE_SESSION_GENERATION`, zero downstream writes |
-| busy without takeover | `CONTROL_BUSY`, incumbent unchanged |
-| authorized takeover | old generation quiesced before new publish |
-| unauthorized takeover | permission error, incumbent unchanged |
-| definitive acknowledgement | `applied` with exact verification strength |
-| duplicate same request/digest | cached definitive result, zero second write |
-| duplicate changed digest | `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`, zero second write |
-| partial verification | applied acknowledgement preserved as `device_ack_only`; no replay |
-| partial multi-event dispatch | `unknown` with exact dispatched/completed counts; suffix suppressed |
-| post-reconnect input without capture | fresh-capture error, zero input |
-| cleanup failure | cleanup-phase error evidence retained, no fabricated restoration |
-| per-fact status provenance | signal/resolution/FPS independently select `cached_snapshot`, `cached_event`, or `none`; unequal times/ages remain unequal; proxy streaming omitted |
-| EDID capability absent | base display status succeeds with strict `unsupported`/capability-absent/null branch |
-| EDID successful empty | strict `unavailable`/read-completed/no-EDID/null branch |
-| EDID lower-layer failure | `EDID_READ_FAILED`; no empty, unavailable, or available success |
-| reconnect evidence | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected |
-| ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing |
-| ATX acknowledgement semantics | serial completion only; cached LED fact separate; no host-state proof |
-| SSE route security | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup |
-| SSE routing/close | sessionId never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers |
-| shared DeviceRpcAdapter binding | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel |
-| DeviceRpcAdapter replacement | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes |
-| DeviceRpcAdapter mid-flight loss | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay |
-| scroll validation | integer HID wheel steps -127..127 excluding zero accepted; fraction/zero/overflow/nonzero-X rejects whole request with zero plane calls |
+| Branch                               | Required assertion                                                                                                                                  |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| strict schema rejection              | no controller/plane call                                                                                                                            |
+| permission denied                    | actionable `PERMISSION_DENIED`, no capability disclosure, no write                                                                                  |
+| capability missing                   | actionable `CAPABILITY_MISSING`, no mutation                                                                                                        |
+| deadline before admission            | `not_sent`, queue/reservation released                                                                                                              |
+| cancellation before write            | `not_sent`, zero downstream writes                                                                                                                  |
+| disconnect before write              | `not_sent`, safe retry classification                                                                                                               |
+| disconnect after write               | `unknown`, gate closes, zero replay                                                                                                                 |
+| malformed downstream response        | fail closed; `not_sent` or `unknown` according to write boundary                                                                                    |
+| stale session generation             | `STALE_SESSION_GENERATION`, zero downstream writes                                                                                                  |
+| busy without takeover                | `CONTROL_BUSY`, incumbent unchanged                                                                                                                 |
+| authorized takeover                  | old generation quiesced before new publish                                                                                                          |
+| unauthorized takeover                | permission error, incumbent unchanged                                                                                                               |
+| definitive acknowledgement           | `applied` with exact verification strength                                                                                                          |
+| duplicate same request/digest        | cached definitive result, zero second write                                                                                                         |
+| duplicate changed digest             | `REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT`, zero second write                                                                                         |
+| partial verification                 | applied acknowledgement preserved as `device_ack_only`; no replay                                                                                   |
+| partial multi-event dispatch         | `unknown` with exact dispatched/completed counts; suffix suppressed                                                                                 |
+| post-reconnect input without capture | fresh-capture error, zero input                                                                                                                     |
+| cleanup failure                      | cleanup-phase error evidence retained, no fabricated restoration                                                                                    |
+| per-fact status provenance           | signal/resolution/FPS independently select `cached_snapshot`, `cached_event`, or `none`; unequal times/ages remain unequal; proxy streaming omitted |
+| EDID capability absent               | base display status succeeds with strict `unsupported`/capability-absent/null branch                                                                |
+| EDID successful empty                | strict `unavailable`/read-completed/no-EDID/null branch                                                                                             |
+| EDID lower-layer failure             | `EDID_READ_FAILED`; no empty, unavailable, or available success                                                                                     |
+| reconnect evidence                   | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected                                                              |
+| ATX gate and serialization           | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing                                                     |
+| ATX acknowledgement semantics        | serial completion only; cached LED fact separate; no host-state proof                                                                               |
+| SSE route security                   | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup                                                               |
+| SSE routing/close                    | sessionId never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers  |
+| shared DeviceRpcAdapter binding      | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel                                                          |
+| DeviceRpcAdapter replacement         | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes                                   |
+| DeviceRpcAdapter mid-flight loss     | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay                                                |
+| scroll validation                    | integer HID wheel steps -127..127 excluding zero accepted; fraction/zero/overflow/nonzero-X rejects whole request with zero plane calls             |
 
 Every applicable handler/row cell cites both a focused unit/adapter assertion and a manifest story assertion. A non-applicable cell requires reviewed rationale. Input cells additionally cover stale/consumed/foreign observations, display change before/after first dispatch, invalid coordinates/keys, held-state cleanup, and post-operation capture failure. Paste covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release races every deferred producer and writer. Power covers exactly three actions.
+
 ### 0.5 Story manifest is acceptance authority
 
 Phase 2 creates the one strict, versioned machine-readable manifest under `tools/jetkvm-mcp/stories/`. It uses exactly the canonical `AcceptanceStory` shape; no plan-local story schema or prose-only steps are allowed:
@@ -227,6 +241,7 @@ The reviewed Phase 2 manifest contains all 24 complete canonical stories—never
 24. `sse-session-id-is-routing-not-authentication`
 
 Each story has complete setup/preconditions, exact calls, timing/fault boundaries, observable pass assertions, allowed evidence, unconditional restore, and privacy rules in Phase 2. Later phases implement and execute only through this reviewed manifest. Any story/schema/step change is an API/acceptance change that reruns advisor, manifest review, generated docs/matrix, affected tests, and downstream gates. The same manifest drives focused links, fake/replay E2E, docs, and serialized live hardware.
+
 ### 0.6 Branch, maker, review, and merge rules
 
 These rules apply independently to all six phases and are repeated in each phase gate:
@@ -446,9 +461,10 @@ Acceptance: no test/fixture/debug file in production output; no secret or lease 
 - [ ] Implement exactly the strict `AcceptanceStory` fields in §0.5 and reject unknown fields; generate the one JSON Schema from that type instead of maintaining a second hand-authored story schema.
 - [ ] Commit all 24 lowercase canonical IDs from §0.5 with complete requirements, tools, environments, preconditions, fault scripts, steps, pass assertions, evidence, restore, and privacy. No placeholder, uppercase alias, phase-local rename, or deferred fields are permitted.
 - [ ] Test unique exact IDs, complete tool/requirement references, unconditional restoration, privacy, no topology, and no unmapped matrix row. Link final rows only into the existing 24 stories: per-fact provenance and DeviceRpc replacement in story 19/21 as specified; EDID capability-absent and successful-empty in story 5; EDID lower failure in story 20; ATX mid-flight fencing in story 22; scroll validation in story 6. Never create story 25.
+- [ ] Materialize all deadline-before-admission and cancellation-before-write cells as serialized per-tool arm → linked call → clear sequences. Validate exact call/fault tool compatibility and ordering from machine fields/IDs, never fault prose. A mutation cell that claims reservation release immediately retries the same normalized input after clear with a request ID unique to that tool's pair.
+- [ ] In Phase 2, reserve every stable `focused_assertion_id` with machine-readable `focused_assertion_phase_2_status: "reserved"` and `focused_assertion_owner_phase`; validate unique IDs, story links, and phase ownership only. Do not register invented assertions or claim unimplemented handlers exist. The cumulative registration validator must require actual test file/assertion registrations when Phase 3 input/display, Phase 4 session/power, and Phase 5 shared-transport/system owners land; Phase 5 and release require every applicable cell resolved.
 
 ## Task 2.7: Implement stdio and legacy HTTP/SSE protocol adapters only
-
 
 **Files:** `mcp/server.ts`, tests; `mcp/stdio.ts`, tests; `mcp/legacySse.ts`, tests; package scripts and installed contract smokes.
 
@@ -467,7 +483,7 @@ Acceptance: no test/fixture/debug file in production output; no secret or lease 
 ## Task 2.8: Phase-wide and clean-checkout gates
 
 - [ ] Add `check-docs-consistency.mjs` and focused tests that enforce the approved component-to-phase map in the canonical design, this plan, package scripts, and story ownership: Phase 2 owns `DeviceRpcAdapter` plus the complete 24-story manifest; Phase 3 owns display capture/status and read-only EDID. Fail on duplicate ownership, another story inventory, a 25th ID, or drift in tool/branch/phase names.
-Add deterministic scripts `test:phase2`, `schemas:check`, and installed contract/protocol smokes. Maker agents skip them. The orchestrator runs once after integration:
+      Add deterministic scripts `test:phase2`, `schemas:check`, and installed contract/protocol smokes. Maker agents skip them. The orchestrator runs once after integration:
 
 ```bash
 cd tools/jetkvm-mcp
@@ -586,6 +602,8 @@ npm run stories:validate
 npm run docs:check
 ```
 
+The Phase 3 gate runs the focused-assertion registration validator at `phase_3`. Every applicable input/display cell must resolve its Phase 2 reservation to the actual focused test file and assertion name that ran; Phase 4 and Phase 5 reservations remain explicitly unresolved and do not fail this gate.
+
 Run the equivalent committed-file gate in a clean checkout, including the real Playwright adapter fixture and package artifact scan. No physical hardware is used in this phase.
 
 ## Phase 3 PR/review/merge gate
@@ -668,6 +686,8 @@ npm run docs:check
 npm run smoke:installed-stdio
 npm run smoke:installed-sse
 ```
+
+The Phase 4 gate runs the focused-assertion registration validator cumulatively at `phase_4`. Every Phase 3 input/display and Phase 4 session/power cell must resolve uniquely to its actual focused test file and assertion name; only Phase 5 shared-transport/system reservations may remain unresolved.
 
 Repeat from a clean checkout and freshly packed tarball. Smokes initialize/list exactly ten tools and execute fake-device-independent status/protocol/error paths without contacting a real device.
 
@@ -772,6 +792,8 @@ npm ci
 npm test
 npm run typecheck
 ```
+
+The Phase 5 gate runs the focused-assertion registration validator at `phase_5` and again with the `release` policy. All applicable cells must resolve uniquely to actual focused test files and assertion names with matching owner phases; a reserved-only cell, duplicate registration, unknown ID, wrong owner, skip, or fabricated no-op assertion fails the complete matrix and release gate.
 
 Repeat from a separate clean checkout using a freshly created tarball and empty install directory. Run every README/example command in that environment. Required result: zero skips, exact ten tools, only stdio/SSE, deterministic package/checksum, no secrets/payloads, complete matrix.
 
@@ -879,27 +901,27 @@ The release is incomplete unless all six deliverables are present and mutually c
 
 ## Plan self-review and acceptance crosswalk
 
-| Acceptance requirement | Planned phase/gate |
-|---|---|
-| Preserve package/runtime/device lease/supervisor, Go quiesce, no-post-zero keyboard auto-release, and hardware-free Foundation CI | Phase 1 Tasks 1.2–1.5 |
-| No old public handlers in Foundation | Phase 1 advisor/focused/PR gates |
-| Public URL/auth; LAN/Tailscale/HTTPS; insecure HTTP opt-in; model never chooses credentials | Phase 2 Task 2.1, Phase 5 docs/security, protocol tests |
-| Exact ten strict schemas and bounded timeouts | Phase 2 Task 2.2; Phase 4 production inventory; Phase 5/6 pack audits |
-| Exact common envelopes, request-ID ledger, verification, retry, and next-step contract | §0.3, Phase 2 Tasks 2.2–2.3, canonical §11.2 matrix |
-| One session-owned generation-fenced RPC channel, no second WebRTC | Phase 2 Task 2.5, Phase 3 display and Phase 4 session/power adapters |
-| Explicit sessions independent of transports; no steal without takeover | Phase 2 foundation tests, Phase 4 session implementation/stories, Phase 6 live stories |
-| stdio and legacy SSE only | Phase 2 Task 2.7, Phase 5 protocol/package scan, Phase 6 release audit |
-| Browser frame/mouse/keyboard/~91 char/s paste/release | Phase 3 Tasks 3.2–3.7 and Phase 6 stories |
-| Phase 3 display boundary: capture, status base success, per-fact freshness, and read-only EDID distinctions | Phase 3 Tasks 3.1, 3.3–3.4 and reviewed display stories |
-| Semantic ATX only | Phase 4 Task 4.3 and the three cases inside canonical story `power-three-semantic-actions` |
-| Sole complete behavior inventory with focused+story evidence | §0.4/canonical design §11.2 and Phase 5 branch matrix/E2E |
-| Exact 24-story `AcceptanceStory` manifest with preconditions/steps/pass/evidence/restore | Phase 2 Task 2.6; Phases 3–6 execute the reviewed manifest |
-| README/examples/troubleshooting and clean install | Phase 5 Tasks 5.5–5.7, Phase 6 clean-download verification |
-| Component-to-phase documentation consistency | Phase 2 `docs:check`, rerun by Phases 3–6 and CI |
-| Six independent branches/PRs with fresh reviews and merge gates | §0.6 and every phase PR gate |
-| One serialized runtime-derived device lease on the protected operator target, per-story restore, no public topology | Phase 6 Tasks 6.2–6.4 |
-| Immutable manifest bound to tarball/Node/firmware | Phase 6 Tasks 6.1, 6.4, 6.6 |
-| Semver tag/release and six-deliverable audit | Phase 6 Tasks 6.6–6.7 |
+| Acceptance requirement                                                                                                            | Planned phase/gate                                                                         |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Preserve package/runtime/device lease/supervisor, Go quiesce, no-post-zero keyboard auto-release, and hardware-free Foundation CI | Phase 1 Tasks 1.2–1.5                                                                      |
+| No old public handlers in Foundation                                                                                              | Phase 1 advisor/focused/PR gates                                                           |
+| Public URL/auth; LAN/Tailscale/HTTPS; insecure HTTP opt-in; model never chooses credentials                                       | Phase 2 Task 2.1, Phase 5 docs/security, protocol tests                                    |
+| Exact ten strict schemas and bounded timeouts                                                                                     | Phase 2 Task 2.2; Phase 4 production inventory; Phase 5/6 pack audits                      |
+| Exact common envelopes, request-ID ledger, verification, retry, and next-step contract                                            | §0.3, Phase 2 Tasks 2.2–2.3, canonical §11.2 matrix                                        |
+| One session-owned generation-fenced RPC channel, no second WebRTC                                                                 | Phase 2 Task 2.5, Phase 3 display and Phase 4 session/power adapters                       |
+| Explicit sessions independent of transports; no steal without takeover                                                            | Phase 2 foundation tests, Phase 4 session implementation/stories, Phase 6 live stories     |
+| stdio and legacy SSE only                                                                                                         | Phase 2 Task 2.7, Phase 5 protocol/package scan, Phase 6 release audit                     |
+| Browser frame/mouse/keyboard/~91 char/s paste/release                                                                             | Phase 3 Tasks 3.2–3.7 and Phase 6 stories                                                  |
+| Phase 3 display boundary: capture, status base success, per-fact freshness, and read-only EDID distinctions                       | Phase 3 Tasks 3.1, 3.3–3.4 and reviewed display stories                                    |
+| Semantic ATX only                                                                                                                 | Phase 4 Task 4.3 and the three cases inside canonical story `power-three-semantic-actions` |
+| Sole complete behavior inventory with focused+story evidence                                                                      | §0.4/canonical design §11.2 and Phase 5 branch matrix/E2E                                  |
+| Exact 24-story `AcceptanceStory` manifest with preconditions/steps/pass/evidence/restore                                          | Phase 2 Task 2.6; Phases 3–6 execute the reviewed manifest                                 |
+| README/examples/troubleshooting and clean install                                                                                 | Phase 5 Tasks 5.5–5.7, Phase 6 clean-download verification                                 |
+| Component-to-phase documentation consistency                                                                                      | Phase 2 `docs:check`, rerun by Phases 3–6 and CI                                           |
+| Six independent branches/PRs with fresh reviews and merge gates                                                                   | §0.6 and every phase PR gate                                                               |
+| One serialized runtime-derived device lease on the protected operator target, per-story restore, no public topology               | Phase 6 Tasks 6.2–6.4                                                                      |
+| Immutable manifest bound to tarball/Node/firmware                                                                                 | Phase 6 Tasks 6.1, 6.4, 6.6                                                                |
+| Semver tag/release and six-deliverable audit                                                                                      | Phase 6 Tasks 6.6–6.7                                                                      |
 
 ### Resolved ambiguities
 

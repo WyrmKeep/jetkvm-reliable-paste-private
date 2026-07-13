@@ -105,7 +105,590 @@ function browserTape(
   return { version: 1, plane: "browser", exchanges };
 }
 
+function browserObservation(
+  mimeType: "image/jpeg" | "image/png",
+  byteLength: number,
+  sessionGeneration = ref.sessionGeneration,
+) {
+  return {
+    observationId: "observation-a",
+    sessionGeneration,
+    connectionEpoch: 1,
+    displayGeneration: 1,
+    frameId: "frame-a",
+    capturedAt: "2026-07-13T00:00:00.000Z",
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    imageWidth: 1920,
+    imageHeight: 1080,
+    rotation: 0,
+    geometry: {
+      contentX: 0,
+      contentY: 0,
+      contentWidth: 1920,
+      contentHeight: 1080,
+    },
+    artifact: {
+      mimeType,
+      sha256: "a".repeat(64),
+      byteLength,
+    },
+  };
+}
+
+function browserConnection(sessionId = ref.sessionId) {
+  return {
+    state: "ready",
+    ref: { sessionId, sessionGeneration: ref.sessionGeneration },
+    binding: {
+      sessionId,
+      sessionGeneration: ref.sessionGeneration,
+      connectionEpoch: 1,
+      browserChannelGeneration: 1,
+    },
+    connectionEpoch: 1,
+    browserChannelGeneration: 1,
+    displayGeneration: 1,
+  };
+}
+
+const browserMutationRequests = {
+  mouse: {
+    ref,
+    request: {
+      observationId: "observation-a",
+      requestId: "mouse-request",
+      actions: [
+        { type: "move", x: 1, y: 2 },
+        { type: "move", x: 3, y: 4 },
+      ],
+    },
+  },
+  keyboard: {
+    ref,
+    request: {
+      observationId: "observation-a",
+      requestId: "keyboard-request",
+      actions: [
+        { type: "key_press", key: "KeyA" },
+        { type: "key_press", key: "KeyB" },
+      ],
+    },
+  },
+  paste: {
+    ref,
+    request: {
+      observationId: "observation-a",
+      requestId: "paste-request",
+      textByteLength: 4,
+      sourceCharacterCount: 2,
+      textSha256: "b".repeat(64),
+    },
+  },
+  release: {
+    ref,
+    request: { requestId: "release-request" },
+  },
+} as const;
+
+function browserMutationReceipt(requestId: string) {
+  return {
+    requestId,
+    outcome: "applied",
+    verification: "device_ack_only",
+    dispatchedCount: 1,
+    completedCount: 1,
+    acknowledgedAt: "2026-07-13T00:00:00.000Z",
+  };
+}
+
+function browserPasteReceipt(requestId: string) {
+  return {
+    ...browserMutationReceipt(requestId),
+    originalByteCount: 4,
+    normalizedByteCount: 4,
+    normalizedSha256: "b".repeat(64),
+    acceptedAt: "2026-07-13T00:00:00.000Z",
+    completedAt: "2026-07-13T00:00:01.000Z",
+    terminalState: "succeeded",
+    measuredCharsPerSecond: 91,
+  };
+}
+
+function browserReleaseReceipt(requestId: string) {
+  return {
+    ...browserMutationReceipt(requestId),
+    mutationGateClosed: true,
+    deferredProducersJoined: true,
+    pasteTerminal: "inactive",
+    ordinaryLeasesZero: true,
+    keyboardZero: true,
+    pointerZero: true,
+    generationDrained: true,
+    heldKeys: [],
+  };
+}
+
 describe("sanitized versioned replay tapes", () => {
+  it("enforces MIME-specific capture limits and definitive response correlation", () => {
+    const captureCases = [
+      ["jpeg", "image/jpeg", 2 * 1024 * 1024],
+      ["png", "image/png", 8 * 1024 * 1024],
+    ] as const;
+
+    for (const [format, mimeType, maximum] of captureCases) {
+      const request = {
+        ref,
+        request: { format, maxWidth: 1920, maxHeight: 1080 },
+      };
+      expect(() =>
+        validateSanitizedReplayTape(
+          browserTape([
+            {
+              operation: "capture",
+              request,
+              response: browserObservation(mimeType, maximum),
+            },
+          ]),
+        ),
+      ).not.toThrow();
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation: "capture",
+              request,
+              response: browserObservation(mimeType, maximum + 1),
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+
+      const otherMimeType =
+        mimeType === "image/jpeg" ? "image/png" : "image/jpeg";
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation: "capture",
+              request,
+              response: browserObservation(otherMimeType, 1),
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation: "capture",
+              request,
+              response: browserObservation(
+                mimeType,
+                maximum,
+                ref.sessionGeneration + 1,
+              ),
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+
+    for (const operation of ["connect", "reconnect"] as const) {
+      const valid = {
+        operation,
+        request: { ref },
+        response: browserConnection(),
+      };
+      expect(() =>
+        validateSanitizedReplayTape(browserTape([valid])),
+      ).not.toThrow();
+      for (const response of [
+        browserConnection("session-b"),
+        {
+          ...browserConnection(),
+          binding: {
+            ...browserConnection().binding,
+            connectionEpoch: 2,
+          },
+        },
+        {
+          ...browserConnection(),
+          browserChannelGeneration: 2,
+        },
+      ]) {
+        expect(() =>
+          validateSanitizedReplayTape({
+            version: 1,
+            plane: "browser",
+            exchanges: [{ ...valid, response }],
+          }),
+        ).toThrow(/invalid sanitized replay tape/i);
+      }
+    }
+  });
+
+  it("accepts only nonzero integer vertical scroll within HID bounds and horizontal zero", () => {
+    const makeExchange = (action: Record<string, unknown>) => ({
+      operation: "mouse",
+      request: {
+        ref,
+        request: {
+          observationId: "observation-a",
+          requestId: "scroll-request",
+          actions: [action],
+        },
+      },
+      response: browserMutationReceipt("scroll-request"),
+    });
+
+    for (const delta_y of [-127, -1, 1, 127]) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [makeExchange({ type: "scroll", x: 0, y: 0, delta_y })],
+        }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      validateSanitizedReplayTape({
+        version: 1,
+        plane: "browser",
+        exchanges: [
+          makeExchange({
+            type: "scroll",
+            x: 0,
+            y: 0,
+            delta_y: 1,
+            delta_x: 0,
+          }),
+        ],
+      }),
+    ).not.toThrow();
+
+    for (const action of [
+      { type: "scroll", x: 0, y: 0, delta_y: -128 },
+      { type: "scroll", x: 0, y: 0, delta_y: 0 },
+      { type: "scroll", x: 0, y: 0, delta_y: 128 },
+      { type: "scroll", x: 0, y: 0, delta_y: 1.5 },
+      { type: "scroll", x: 0, y: 0, delta_y: 1, delta_x: 1 },
+      { type: "scroll", x: 0, y: 0, delta_y: 1, extra: true },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [makeExchange(action)],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
+
+  it("requires every browser mutation receipt to match its nested request ID", () => {
+    const responses = {
+      mouse: browserMutationReceipt("mouse-response"),
+      keyboard: browserMutationReceipt("keyboard-response"),
+      paste: browserPasteReceipt("paste-response"),
+      release: browserReleaseReceipt("release-response"),
+    } as const;
+
+    for (const operation of [
+      "mouse",
+      "keyboard",
+      "paste",
+      "release",
+    ] as const) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation,
+              request: browserMutationRequests[operation],
+              response: responses[operation],
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
+
+  it("accepts every exact connect tuple and rejects substitutions and capability classification", () => {
+    const notSent = (
+      code: string,
+      boundary: "admission" | "send" = "admission",
+    ) => ({
+      code,
+      boundary,
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+    });
+    const unknown = (code: string) => ({
+      code,
+      boundary: "ack",
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+      verification: "none",
+    });
+    const legal = [
+      notSent("DEADLINE_EXCEEDED"),
+      notSent("CANCELLED"),
+      notSent("CONNECTION_LOST", "send"),
+      unknown("CONNECTION_LOST"),
+      unknown("MALFORMED_RESPONSE"),
+      notSent("PERMISSION_DENIED"),
+      unknown("SESSION_TAKEN_OVER"),
+      notSent("STALE_SESSION_GENERATION"),
+      notSent("CONTROL_BUSY"),
+      notSent("AUTH_FAILED"),
+      notSent("AUTH_RATE_LIMITED"),
+      notSent("AUTH_EXPIRED"),
+      notSent("UNSUPPORTED_UI_VERSION"),
+      notSent("FIRMWARE_INCOMPATIBLE"),
+      notSent("BROWSER_UNSUPPORTED"),
+      notSent("DEVICE_UNREACHABLE"),
+    ] as const;
+
+    for (const operation of ["connect", "reconnect"] as const) {
+      for (const error of legal) {
+        const exchange = { operation, request: { ref }, error };
+        expect(() =>
+          validateSanitizedReplayTape({
+            version: 1,
+            plane: "browser",
+            exchanges: [exchange],
+          }),
+        ).not.toThrow();
+        expect(() =>
+          validateSanitizedReplayTape({
+            version: 1,
+            plane: "browser",
+            exchanges: [
+              {
+                ...exchange,
+                error: {
+                  ...error,
+                  boundary:
+                    error.boundary === "admission" ? "ack" : "admission",
+                },
+              },
+            ],
+          }),
+        ).toThrow(/invalid sanitized replay tape/i);
+        expect(() =>
+          validateSanitizedReplayTape({
+            version: 1,
+            plane: "browser",
+            exchanges: [{ ...exchange, error: { ...error, unexpected: true } }],
+          }),
+        ).toThrow(/invalid sanitized replay tape/i);
+      }
+
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation,
+              request: { ref },
+              error: notSent("CAPABILITY_MISSING"),
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+  });
+
+  it("enforces exact per-operation browser mutation error tuples", () => {
+    const zeroCounts = { dispatchedCount: 0, completedCount: 0 };
+    const partialCounts = { dispatchedCount: 2, completedCount: 1 };
+    const completeCounts = { dispatchedCount: 1, completedCount: 1 };
+    const notSent = (
+      code: string,
+      boundary: "admission" | "send" = "admission",
+    ) => ({
+      code,
+      boundary,
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+      ...zeroCounts,
+    });
+    const unknown = (code: string, boundary: "ack" | "post_ack" = "ack") => ({
+      code,
+      boundary,
+      outcome: "unknown",
+      writeBegan: true,
+      acknowledged: false,
+      verification: "none",
+      ...partialCounts,
+    });
+    const applied = (code: string, boundary: "post_ack" | "persisted") => ({
+      code,
+      boundary,
+      outcome: "applied",
+      writeBegan: true,
+      acknowledged: true,
+      verification: "device_ack_only",
+      ...completeCounts,
+    });
+    const partialDispatch = {
+      ...unknown("PARTIAL_DISPATCH"),
+      requestedCount: 2,
+      dispatchedCount: 1,
+      completedCount: 1,
+    };
+    const tuples = [
+      ["deadline", notSent("DEADLINE_EXCEEDED")],
+      ["cancelled", notSent("CANCELLED")],
+      ["connection-before-write", notSent("CONNECTION_LOST", "send")],
+      ["connection-after-write", unknown("CONNECTION_LOST")],
+      ["malformed", unknown("MALFORMED_RESPONSE")],
+      ["permission", notSent("PERMISSION_DENIED")],
+      ["capability", notSent("CAPABILITY_MISSING")],
+      ["taken-over", unknown("SESSION_TAKEN_OVER")],
+      ["stale-generation", notSent("STALE_SESSION_GENERATION")],
+      ["post-ack-read", applied("POST_ACK_READ_FAILED", "post_ack")],
+      ["terminal-preserved", applied("TERMINAL_RESULT_PRESERVED", "persisted")],
+      ["partial-dispatch", partialDispatch],
+      ["cleanup", unknown("CLEANUP_FAILED", "post_ack")],
+      ["event-gap", unknown("EVENT_GAP")],
+      [
+        "already-applied",
+        {
+          code: "ALREADY_APPLIED",
+          boundary: "admission",
+          outcome: "already_applied",
+          writeBegan: false,
+          acknowledged: true,
+          verification: "device_ack_only",
+          ...completeCounts,
+        },
+      ],
+      ["fresh-capture", notSent("FRESH_CAPTURE_REQUIRED")],
+    ] as const;
+    const rejectedByOperation: Record<
+      keyof typeof browserMutationRequests,
+      readonly (typeof tuples)[number][0][]
+    > = {
+      mouse: ["event-gap"],
+      keyboard: ["event-gap"],
+      paste: [],
+      release: ["partial-dispatch", "event-gap", "fresh-capture"],
+    };
+
+    for (const operation of [
+      "mouse",
+      "keyboard",
+      "paste",
+      "release",
+    ] as const) {
+      for (const [name, error] of tuples) {
+        const validate = () =>
+          validateSanitizedReplayTape({
+            version: 1,
+            plane: "browser",
+            exchanges: [
+              {
+                operation,
+                request: browserMutationRequests[operation],
+                error,
+              },
+            ],
+          });
+        if (!rejectedByOperation[operation].includes(name)) {
+          expect(validate).not.toThrow();
+        } else {
+          expect(validate).toThrow(/invalid sanitized replay tape/i);
+        }
+      }
+    }
+
+    for (const error of [
+      unknown("PARTIAL_DISPATCH"),
+      { ...partialDispatch, requestedCount: 1 },
+      { ...partialDispatch, requestedCount: 3 },
+      { ...partialDispatch, completedCount: 2 },
+      { ...partialDispatch, dispatchedCount: 2 },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation: "mouse",
+              request: browserMutationRequests.mouse,
+              error,
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+
+    for (const request of [
+      {
+        ref,
+        request: {
+          observationId: "observation-a",
+          requestId: "paste-request",
+          textByteLength: 4,
+          textSha256: "b".repeat(64),
+        },
+      },
+      {
+        ref,
+        request: {
+          ...browserMutationRequests.paste.request,
+          sourceCharacterCount: 3,
+        },
+      },
+    ]) {
+      expect(() =>
+        validateSanitizedReplayTape({
+          version: 1,
+          plane: "browser",
+          exchanges: [
+            {
+              operation: "paste",
+              request,
+              error: partialDispatch,
+            },
+          ],
+        }),
+      ).toThrow(/invalid sanitized replay tape/i);
+    }
+
+    expect(() =>
+      validateSanitizedReplayTape({
+        version: 1,
+        plane: "browser",
+        exchanges: [
+          {
+            operation: "paste",
+            request: browserMutationRequests.paste,
+            error: {
+              ...unknown("EVENT_GAP"),
+              completedCount: 2,
+            },
+          },
+        ],
+      }),
+    ).toThrow(/invalid sanitized replay tape/i);
+  });
   it.each([
     ["url", "https://device.invalid"],
     ["targetUrl", "https://device.invalid"],
@@ -442,7 +1025,10 @@ describe("sanitized versioned replay tapes", () => {
           request: {
             observationId: "observation-a",
             requestId: "request-a",
-            actions: [{ type: "move", x: 1, y: 2 }],
+            actions: [
+              { type: "move", x: 1, y: 2 },
+              { type: "move", x: 3, y: 4 },
+            ],
           },
         },
         error: {
@@ -452,7 +1038,8 @@ describe("sanitized versioned replay tapes", () => {
           writeBegan: true,
           acknowledged: false,
           verification: "none",
-          dispatchedCount: 2,
+          requestedCount: 2,
+          dispatchedCount: 1,
           completedCount: 1,
         },
       },
@@ -720,7 +1307,7 @@ describe("BrowserPlaneReplay", () => {
   });
 
   it("hashes paste text for matching without storing it in the tape", async () => {
-    const text = "private paste";
+    const text = "A😀é";
     const replay = new BrowserPlaneReplay(
       new ReplayAdapter(),
       browserTape([
@@ -732,6 +1319,7 @@ describe("BrowserPlaneReplay", () => {
               observationId: "observation-a",
               requestId: "request-a",
               textByteLength: Buffer.byteLength(text),
+              sourceCharacterCount: 3,
               textSha256: createHash("sha256").update(text).digest("hex"),
             },
           },

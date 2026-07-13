@@ -16,225 +16,512 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
         },
         "session_id": {
-          "anyOf": [
-            {
-              "$ref": "#/anyOf/0/properties/operation_id"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/anyOf/0/properties/operation_id"
         },
         "session_generation": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "duration_ms": {
-          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "result": {
-          "type": "object",
-          "properties": {
-            "request_id": {
-              "$ref": "#/anyOf/0/properties/operation_id"
-            },
-            "outcome": {
-              "type": "string",
-              "enum": [
-                "applied",
-                "already_applied"
+          "allOf": [
+            {
+              "type": "object",
+              "properties": {
+                "request_id": {
+                  "$ref": "#/anyOf/0/properties/operation_id"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "applied",
+                    "already_applied"
+                  ]
+                },
+                "verification": {
+                  "type": "string",
+                  "enum": [
+                    "device_state_verified",
+                    "device_ack_only"
+                  ]
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "dispatched_action_count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16
+                },
+                "completed_action_count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16
+                },
+                "post_capture": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "observation_id": {
+                          "$ref": "#/anyOf/0/properties/operation_id"
+                        },
+                        "connection_epoch": {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        "display_generation": {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        "frame_id": {
+                          "$ref": "#/anyOf/0/properties/operation_id"
+                        },
+                        "captured_at": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "source_width": {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        "source_height": {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        "image_width": {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        "image_height": {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        "rotation": {
+                          "type": "number",
+                          "enum": [
+                            0,
+                            90,
+                            180,
+                            270
+                          ]
+                        },
+                        "geometry": {
+                          "type": "object",
+                          "properties": {
+                            "content_x": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            "content_y": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            "content_width": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            "content_height": {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            }
+                          },
+                          "required": [
+                            "content_x",
+                            "content_y",
+                            "content_width",
+                            "content_height"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "image": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "content_index": {
+                                  "type": "number",
+                                  "const": 1
+                                },
+                                "mime_type": {
+                                  "type": "string",
+                                  "const": "image/jpeg"
+                                },
+                                "sha256": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "byte_length": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 2097152
+                                }
+                              },
+                              "required": [
+                                "content_index",
+                                "mime_type",
+                                "sha256",
+                                "byte_length"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "content_index": {
+                                  "type": "number",
+                                  "const": 1
+                                },
+                                "mime_type": {
+                                  "type": "string",
+                                  "const": "image/png"
+                                },
+                                "sha256": {
+                                  "$ref": "#/anyOf/0/properties/result/allOf/0/properties/post_capture/anyOf/0/properties/image/anyOf/0/properties/sha256"
+                                },
+                                "byte_length": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 8388608
+                                }
+                              },
+                              "required": [
+                                "content_index",
+                                "mime_type",
+                                "sha256",
+                                "byte_length"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "observation_id",
+                        "connection_epoch",
+                        "display_generation",
+                        "frame_id",
+                        "captured_at",
+                        "source_width",
+                        "source_height",
+                        "image_width",
+                        "image_height",
+                        "rotation",
+                        "geometry",
+                        "image"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "request_id",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "dispatched_action_count",
+                "completed_action_count",
+                "post_capture"
               ]
             },
-            "verification": {
-              "type": "string",
-              "enum": [
-                "device_state_verified",
-                "device_ack_only"
-              ]
-            },
-            "safe_to_retry": {
-              "type": "boolean",
-              "const": false
-            },
-            "required_next_step": {
-              "type": "string",
-              "const": "none"
-            },
-            "dispatched_action_count": {
-              "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-            },
-            "completed_action_count": {
-              "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-            },
-            "post_capture": {
+            {
               "anyOf": [
                 {
                   "type": "object",
                   "properties": {
-                    "observation_id": {
-                      "$ref": "#/anyOf/0/properties/operation_id"
-                    },
-                    "connection_epoch": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                    },
-                    "display_generation": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                    },
-                    "frame_id": {
-                      "$ref": "#/anyOf/0/properties/operation_id"
-                    },
-                    "captured_at": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "source_width": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                    },
-                    "source_height": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                    },
-                    "image_width": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                    },
-                    "image_height": {
-                      "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                    },
-                    "rotation": {
+                    "dispatched_action_count": {
                       "type": "number",
-                      "enum": [
-                        0,
-                        90,
-                        180,
-                        270
-                      ]
+                      "const": 1
                     },
-                    "geometry": {
-                      "type": "object",
-                      "properties": {
-                        "content_x": {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                        },
-                        "content_y": {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                        },
-                        "content_width": {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                        },
-                        "content_height": {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                        }
-                      },
-                      "required": [
-                        "content_x",
-                        "content_y",
-                        "content_width",
-                        "content_height"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "image": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "content_index": {
-                              "type": "number",
-                              "const": 1
-                            },
-                            "mime_type": {
-                              "type": "string",
-                              "const": "image/jpeg"
-                            },
-                            "sha256": {
-                              "type": "string",
-                              "pattern": "^[a-f0-9]{64}$"
-                            },
-                            "byte_length": {
-                              "type": "integer",
-                              "minimum": 0,
-                              "maximum": 2097152
-                            }
-                          },
-                          "required": [
-                            "content_index",
-                            "mime_type",
-                            "sha256",
-                            "byte_length"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "content_index": {
-                              "type": "number",
-                              "const": 1
-                            },
-                            "mime_type": {
-                              "type": "string",
-                              "const": "image/png"
-                            },
-                            "sha256": {
-                              "$ref": "#/anyOf/0/properties/result/properties/post_capture/anyOf/0/properties/image/anyOf/0/properties/sha256"
-                            },
-                            "byte_length": {
-                              "type": "integer",
-                              "minimum": 0,
-                              "maximum": 8388608
-                            }
-                          },
-                          "required": [
-                            "content_index",
-                            "mime_type",
-                            "sha256",
-                            "byte_length"
-                          ],
-                          "additionalProperties": false
-                        }
-                      ]
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 1
                     }
                   },
                   "required": [
-                    "observation_id",
-                    "connection_epoch",
-                    "display_generation",
-                    "frame_id",
-                    "captured_at",
-                    "source_width",
-                    "source_height",
-                    "image_width",
-                    "image_height",
-                    "rotation",
-                    "geometry",
-                    "image"
+                    "dispatched_action_count",
+                    "completed_action_count"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": true
                 },
                 {
-                  "type": "null"
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 2
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 2
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 3
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 3
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 4
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 4
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 5
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 5
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 6
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 6
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 7
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 7
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 8
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 8
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 9
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 9
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 10
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 10
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 11
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 11
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 12
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 12
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 13
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 13
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 14
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 14
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 15
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 15
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "dispatched_action_count": {
+                      "type": "number",
+                      "const": 16
+                    },
+                    "completed_action_count": {
+                      "type": "number",
+                      "const": 16
+                    }
+                  },
+                  "required": [
+                    "dispatched_action_count",
+                    "completed_action_count"
+                  ],
+                  "additionalProperties": true
                 }
               ]
             }
-          },
-          "required": [
-            "request_id",
-            "outcome",
-            "verification",
-            "safe_to_retry",
-            "required_next_step",
-            "dispatched_action_count",
-            "completed_action_count",
-            "post_capture"
-          ],
-          "additionalProperties": false
+          ]
         }
       },
       "required": [
@@ -271,7 +558,7 @@
         "session_generation": {
           "anyOf": [
             {
-              "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+              "$ref": "#/anyOf/0/properties/duration_ms"
             },
             {
               "type": "null"
@@ -279,7 +566,7 @@
           ]
         },
         "duration_ms": {
-          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+          "$ref": "#/anyOf/0/properties/duration_ms"
         },
         "tool": {
           "type": "string",
@@ -330,14 +617,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "anyOf": [
@@ -360,7 +640,7 @@
                     "expected_generation": {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         {
                           "type": "null"
@@ -370,7 +650,7 @@
                     "actual_generation": {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         {
                           "type": "null"
@@ -458,7 +738,7 @@
                       ]
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -551,7 +831,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -645,7 +925,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -733,7 +1013,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -824,7 +1104,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -903,7 +1183,7 @@
                 },
                 "required_next_step": {
                   "type": "string",
-                  "const": "none"
+                  "const": "reconnect_then_capture"
                 },
                 "details": {
                   "type": "object",
@@ -915,7 +1195,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1003,7 +1283,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1097,7 +1377,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1193,7 +1473,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1278,67 +1558,449 @@
                   "const": "release_then_reconnect_then_capture"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dispatched_action_count": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "completed_action_count": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/anyOf/0/properties/duration_ms"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "acknowledgement",
+                            "verification"
+                          ]
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
+                      ]
                     },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
+                    {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 0
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 1
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 0
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
                         },
                         {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "completed_action_count": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 1
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 2
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
                         },
                         {
-                          "type": "null"
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 2
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 3
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 2
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 3
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 4
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 3
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 4
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 5
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 4
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 5
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 6
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 5
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 6
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 7
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 6
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 7
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 8
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 7
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 8
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 9
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 8
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 9
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 10
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 9
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 10
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 11
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 10
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 11
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 12
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 11
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 12
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 13
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 12
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 13
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 14
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 13
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 14
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 15
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 14
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "number",
+                              "const": 15
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 16
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 15
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
                         }
                       ]
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "enum": [
-                        "write",
-                        "acknowledgement",
-                        "verification"
-                      ]
-                    },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -1401,7 +2063,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1492,53 +2154,59 @@
                   "const": "release_then_reconnect_then_capture"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
-                    },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
-                    },
-                    "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "enum": [
-                        "write",
-                        "acknowledgement",
-                        "verification"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "acknowledgement",
+                            "verification"
+                          ]
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
                       ]
                     },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/1"
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -1596,7 +2264,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1684,53 +2352,59 @@
                   "const": "inspect_device_state_before_retry"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
-                    },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
-                    },
-                    "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "enum": [
-                        "write",
-                        "acknowledgement",
-                        "verification"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "acknowledgement",
+                            "verification"
+                          ]
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
                       ]
                     },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/1"
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -1788,7 +2462,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1876,53 +2550,59 @@
                   "const": "inspect_device_state_before_retry"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
-                    },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
-                    },
-                    "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "enum": [
-                        "write",
-                        "acknowledgement",
-                        "verification"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "acknowledgement",
+                            "verification"
+                          ]
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
                       ]
                     },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/1"
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -1984,7 +2664,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -2075,53 +2755,59 @@
                   "const": "inspect_device_state_before_retry"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
-                    },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
-                    },
-                    "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "enum": [
-                        "write",
-                        "acknowledgement",
-                        "verification"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "acknowledgement",
+                            "verification"
+                          ]
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
                       ]
                     },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/1"
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -2167,49 +2853,408 @@
                   "const": "none"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "const": "verification"
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
+                      ]
                     },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
-                    },
-                    "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "const": "verification"
-                    },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 1
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 1
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 2
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 2
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 3
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 3
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 4
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 4
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 5
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 5
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 6
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 6
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 7
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 7
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 8
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 8
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 9
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 9
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 10
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 10
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 11
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 11
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 12
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 12
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 13
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 13
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 14
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 14
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 15
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 15
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "failed_action_index": {
+                              "type": "null"
+                            },
+                            "dispatched_action_count": {
+                              "type": "number",
+                              "const": 16
+                            },
+                            "completed_action_count": {
+                              "type": "number",
+                              "const": 16
+                            }
+                          },
+                          "required": [
+                            "failed_action_index",
+                            "dispatched_action_count",
+                            "completed_action_count"
+                          ],
+                          "additionalProperties": true
+                        }
+                      ]
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [
@@ -2255,6 +3300,100 @@
                   "const": "none"
                 },
                 "details": {
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "const": "verification"
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
+                      ]
+                    },
+                    {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/19/properties/details/allOf/1"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "queue"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "ADMISSION_CAPACITY_EXCEEDED"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
                   "type": "object",
                   "properties": {
                     "permission": {
@@ -2264,17 +3403,17 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
                     },
                     "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
                     },
                     "downstream_stage": {
                       "type": "string",
-                      "const": "verification"
+                      "const": "none"
                     },
                     "expected_generation": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
@@ -2348,53 +3487,59 @@
                   "const": "inspect_device_state_before_retry"
                 },
                 "details": {
-                  "type": "object",
-                  "properties": {
-                    "permission": {
-                      "type": "null"
-                    },
-                    "capability": {
-                      "type": "null"
-                    },
-                    "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
-                    },
-                    "dispatched_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/dispatched_action_count"
-                    },
-                    "completed_action_count": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/properties/completed_action_count"
-                    },
-                    "downstream_stage": {
-                      "type": "string",
-                      "enum": [
-                        "write",
-                        "acknowledgement",
-                        "verification"
+                  "allOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "permission": {
+                          "type": "null"
+                        },
+                        "capability": {
+                          "type": "null"
+                        },
+                        "failed_action_index": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/failed_action_index"
+                        },
+                        "dispatched_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/dispatched_action_count"
+                        },
+                        "completed_action_count": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/0/properties/completed_action_count"
+                        },
+                        "downstream_stage": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "acknowledgement",
+                            "verification"
+                          ]
+                        },
+                        "expected_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                        },
+                        "actual_generation": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                        },
+                        "observation_id": {
+                          "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                        }
+                      },
+                      "required": [
+                        "permission",
+                        "capability",
+                        "failed_action_index",
+                        "dispatched_action_count",
+                        "completed_action_count",
+                        "downstream_stage",
+                        "expected_generation",
+                        "actual_generation",
+                        "observation_id"
                       ]
                     },
-                    "expected_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
-                    },
-                    "actual_generation": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
-                    },
-                    "observation_id": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/10/properties/details/allOf/1"
                     }
-                  },
-                  "required": [
-                    "permission",
-                    "capability",
-                    "failed_action_index",
-                    "dispatched_action_count",
-                    "completed_action_count",
-                    "downstream_stage",
-                    "expected_generation",
-                    "actual_generation",
-                    "observation_id"
-                  ],
-                  "additionalProperties": false
+                  ]
                 }
               },
               "required": [

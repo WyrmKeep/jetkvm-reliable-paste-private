@@ -1,9 +1,15 @@
-import type {
-  IncomingMessage,
-  Server as HttpServer,
-  ServerResponse,
+import {
+  createServer as createNodeHttpServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerOptions as HttpServerOptions,
+  type ServerResponse,
 } from "node:http";
-import type { Server as HttpsServer } from "node:https";
+import {
+  createServer as createNodeHttpsServer,
+  type Server as HttpsServer,
+  type ServerOptions as HttpsServerOptions,
+} from "node:https";
 import { isIP, type AddressInfo, type Socket } from "node:net";
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
@@ -24,9 +30,22 @@ import { createMcpServer, type HandlerRegistry } from "./server.js";
 
 type LegacySseNodeServer = HttpServer | HttpsServer;
 
+interface LegacySseServerConstructionProof {
+  readonly owner: object;
+  readonly scheme: "http" | "https";
+  readonly connectionsCheckingIntervalMs: number;
+  readonly tlsHandshakeTimeoutMs: number | null;
+}
+
+const serverConstructionProofs = new WeakMap<
+  LegacySseNodeServer,
+  LegacySseServerConstructionProof
+>();
+
 const MAXIMUM_BODY_BYTES = 1_048_576;
 const SESSION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const FATAL_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 export interface LegacySseDiagnostic {
   readonly code:
@@ -77,6 +96,7 @@ interface AuthenticatedIncomingMessage extends IncomingMessage {
 
 type ReadBodyResult =
   | { readonly kind: "ok"; readonly text: string }
+  | { readonly kind: "invalid_utf8" }
   | { readonly kind: "too_large" }
   | { readonly kind: "timeout" }
   | { readonly kind: "aborted" };
@@ -89,6 +109,7 @@ export class LegacySseAdapter {
   readonly #transportFactory: LegacySseTransportFactory;
   readonly #now: () => number;
   readonly #onDiagnostic: ((event: LegacySseDiagnostic) => void) | undefined;
+  readonly #constructionOwner = Object.freeze({});
   readonly #entries = new Map<string, RoutingEntry>();
   readonly #activeByPrincipal = new Map<string, number>();
   readonly #globalOpenEvents: number[] = [];
@@ -97,10 +118,13 @@ export class LegacySseAdapter {
   readonly #activePostsBySession = new Map<string, number>();
   readonly #postRateByPrincipal = new Map<string, number>();
   readonly #postRateBySession = new Map<string, number>();
+  #routeAttemptCount = 0;
+  #routeAttemptWindowStartedAt: number | undefined;
   #activeStreams = 0;
   #activePosts = 0;
   #postRateCount = 0;
   #postRateWindowStartedAt: number | undefined;
+  #lastStreamRateObservedAt: number | undefined;
   #httpServer: LegacySseNodeServer | undefined;
   #closePromise: Promise<void> | undefined;
   #closed = false;
@@ -120,6 +144,37 @@ export class LegacySseAdapter {
     this.#onDiagnostic = options.onDiagnostic;
   }
 
+  createHttpServer(): HttpServer {
+    if (this.#securityPolicy.scheme !== "http") {
+      throw new Error("Legacy SSE HTTPS policy requires an HTTPS server");
+    }
+    const server = createNodeHttpServer(
+      this.#httpServerOptions(),
+      (request, response) => {
+        void this.handleRequest(request, response);
+      },
+    );
+    return this.#proveAndAttachServer(server, "http", null);
+  }
+
+  createHttpsServer(options: HttpsServerOptions): HttpsServer {
+    if (this.#securityPolicy.scheme !== "https") {
+      throw new Error("Legacy SSE HTTP policy requires an HTTP server");
+    }
+    const handshakeTimeout = this.#securityPolicy.requestHeaderTimeoutMs;
+    const server = createNodeHttpsServer(
+      {
+        ...options,
+        ...this.#httpServerOptions(),
+        handshakeTimeout,
+      },
+      (request, response) => {
+        void this.handleRequest(request, response);
+      },
+    );
+    return this.#proveAndAttachServer(server, "https", handshakeTimeout);
+  }
+
   attachServer(server: LegacySseNodeServer): void {
     if (this.#closed) {
       throw new Error("Cannot attach a closed legacy SSE adapter");
@@ -130,17 +185,95 @@ export class LegacySseAdapter {
     if (this.#httpServer !== undefined && this.#httpServer !== server) {
       throw new Error("Legacy SSE adapter is already attached to a server");
     }
-    server.headersTimeout = this.#securityPolicy.requestHeaderTimeoutMs;
-    server.requestTimeout = this.#securityPolicy.requestBodyTotalTimeoutMs;
-    server.keepAliveTimeout = this.#securityPolicy.keepAliveTimeoutMs;
-    server.maxHeadersCount = 64;
-    server.maxRequestsPerSocket = 1_000;
-    Object.defineProperty(server, "maxConnections", {
-      configurable: false,
-      value: this.#securityPolicy.maxConnections,
-      writable: false,
+    const proof = serverConstructionProofs.get(server);
+    if (proof?.owner !== this.#constructionOwner) {
+      throw new Error(
+        "Legacy SSE server lacks project-owned construction proof",
+      );
+    }
+    if (
+      proof.scheme !== this.#securityPolicy.scheme ||
+      proof.connectionsCheckingIntervalMs <= 0 ||
+      proof.connectionsCheckingIntervalMs >
+        this.#securityPolicy.requestHeaderTimeoutMs ||
+      (proof.scheme === "https" &&
+        (proof.tlsHandshakeTimeoutMs === null ||
+          proof.tlsHandshakeTimeoutMs <= 0 ||
+          proof.tlsHandshakeTimeoutMs >
+            this.#securityPolicy.requestHeaderTimeoutMs)) ||
+      server.headersTimeout !== this.#securityPolicy.requestHeaderTimeoutMs ||
+      server.requestTimeout !==
+        this.#securityPolicy.requestBodyTotalTimeoutMs ||
+      server.keepAliveTimeout !== this.#securityPolicy.keepAliveTimeoutMs
+    ) {
+      throw new Error("Legacy SSE server construction proof is invalid");
+    }
+    Object.defineProperties(server, {
+      headersTimeout: {
+        configurable: false,
+        value: this.#securityPolicy.requestHeaderTimeoutMs,
+        writable: false,
+      },
+      requestTimeout: {
+        configurable: false,
+        value: this.#securityPolicy.requestBodyTotalTimeoutMs,
+        writable: false,
+      },
+      keepAliveTimeout: {
+        configurable: false,
+        value: this.#securityPolicy.keepAliveTimeoutMs,
+        writable: false,
+      },
+      maxHeadersCount: {
+        configurable: false,
+        value: 64,
+        writable: false,
+      },
+      maxRequestsPerSocket: {
+        configurable: false,
+        value: 1_000,
+        writable: false,
+      },
+      maxConnections: {
+        configurable: false,
+        value: this.#securityPolicy.maxConnections,
+        writable: false,
+      },
     });
     this.#httpServer = server;
+  }
+
+  #httpServerOptions(): HttpServerOptions {
+    return {
+      connectionsCheckingInterval: this.#securityPolicy.requestHeaderTimeoutMs,
+      headersTimeout: this.#securityPolicy.requestHeaderTimeoutMs,
+      requestTimeout: this.#securityPolicy.requestBodyTotalTimeoutMs,
+      keepAliveTimeout: this.#securityPolicy.keepAliveTimeoutMs,
+      keepAliveTimeoutBuffer: 0,
+      insecureHTTPParser: false,
+      requireHostHeader: true,
+    };
+  }
+
+  #proveAndAttachServer<T extends LegacySseNodeServer>(
+    server: T,
+    scheme: "http" | "https",
+    tlsHandshakeTimeoutMs: number | null,
+  ): T {
+    serverConstructionProofs.set(server, {
+      owner: this.#constructionOwner,
+      scheme,
+      connectionsCheckingIntervalMs:
+        this.#securityPolicy.requestHeaderTimeoutMs,
+      tlsHandshakeTimeoutMs,
+    });
+    try {
+      this.attachServer(server);
+      return server;
+    } catch (error) {
+      serverConstructionProofs.delete(server);
+      throw error;
+    }
   }
 
   async handleRequest(
@@ -148,11 +281,16 @@ export class LegacySseAdapter {
     response: ServerResponse,
   ): Promise<void> {
     try {
+      if (!this.#admitRouteAttempt()) {
+        sendPreBodyRejection(request, response, 429, "Too Many Requests");
+        return;
+      }
+
       const url = new URL(request.url ?? "/", "http://mcp.invalid");
       const isSseRoute = url.pathname === "/sse";
       const isMessagesRoute = url.pathname === "/messages";
       if (!isSseRoute && !isMessagesRoute) {
-        sendText(response, 404, "Not Found");
+        sendPreBodyRejection(request, response, 404, "Not Found");
         return;
       }
 
@@ -163,7 +301,7 @@ export class LegacySseAdapter {
           this.#httpServer,
         )
       ) {
-        sendText(response, 403, "Forbidden");
+        sendPreBodyRejection(request, response, 403, "Forbidden");
         return;
       }
 
@@ -171,7 +309,7 @@ export class LegacySseAdapter {
       const principal = this.#authorize(request, expectedMethod, response);
       if (principal === undefined) return;
       if (request.method !== expectedMethod) {
-        sendText(response, 405, "Method Not Allowed");
+        sendPreBodyRejection(request, response, 405, "Method Not Allowed");
         return;
       }
 
@@ -187,7 +325,7 @@ export class LegacySseAdapter {
     } catch {
       this.#onDiagnostic?.({ code: "unexpected_error" });
       if (!response.headersSent && !response.writableEnded) {
-        sendText(response, 500, "Internal Server Error");
+        sendPreBodyRejection(request, response, 500, "Internal Server Error");
       }
     }
   }
@@ -222,7 +360,8 @@ export class LegacySseAdapter {
       );
     } catch (error) {
       if (error instanceof HttpBoundaryError) {
-        sendText(
+        sendPreBodyRejection(
+          request,
           response,
           error.statusCode,
           error.statusCode === 401 ? "Unauthorized" : "Forbidden",
@@ -295,38 +434,37 @@ export class LegacySseAdapter {
   ): Promise<void> {
     const sessionIds = url.searchParams.getAll("sessionId");
     if (sessionIds.length !== 1 || !SESSION_ID.test(sessionIds[0] ?? "")) {
-      sendText(response, 400, "Bad Request");
+      sendPreBodyRejection(request, response, 400, "Bad Request");
       return;
     }
     const sessionId = sessionIds[0];
     if (sessionId === undefined) {
-      sendText(response, 400, "Bad Request");
+      sendPreBodyRejection(request, response, 400, "Bad Request");
       return;
     }
 
     const admission = this.#admitPost(principal.principalId, sessionId);
     if (admission === undefined) {
-      sendText(response, 429, "Too Many Requests");
+      sendPreBodyRejection(request, response, 429, "Too Many Requests");
       return;
     }
     try {
       const entry = this.#entries.get(sessionId);
       if (entry === undefined || entry.principalId !== principal.principalId) {
-        sendText(response, 404, "Not Found");
+        sendPreBodyRejection(request, response, 404, "Not Found");
         return;
       }
       this.#onDiagnostic?.({ code: "post_routed" });
 
       if (singleHeader(request, "content-type") !== "application/json") {
-        sendText(response, 400, "Invalid Content-Type");
+        sendPreBodyRejection(request, response, 400, "Invalid Content-Type");
         return;
       }
       const declaredLength = parseContentLength(
         singleHeader(request, "content-length"),
       );
       if (declaredLength !== undefined && declaredLength > MAXIMUM_BODY_BYTES) {
-        request.resume();
-        sendText(response, 400, "Request body too large");
+        sendPreBodyRejection(request, response, 400, "Request body too large");
         return;
       }
 
@@ -336,7 +474,7 @@ export class LegacySseAdapter {
         this.#securityPolicy.requestBodyTotalTimeoutMs,
       );
       if (body.kind === "too_large") {
-        sendText(response, 400, "Request body too large");
+        sendText(response, 400, "Request body too large", true);
         return;
       }
       if (body.kind === "timeout") {
@@ -347,6 +485,10 @@ export class LegacySseAdapter {
         if (!response.headersSent && !response.writableEnded) {
           sendText(response, 400, "Bad Request", true);
         }
+        return;
+      }
+      if (body.kind === "invalid_utf8") {
+        sendText(response, 400, "Invalid UTF-8");
         return;
       }
 
@@ -392,6 +534,24 @@ export class LegacySseAdapter {
     }
   }
 
+  #admitRouteAttempt(): boolean {
+    const now = this.#now();
+    const windowStartedAt = this.#routeAttemptWindowStartedAt;
+    if (
+      windowStartedAt === undefined ||
+      now < windowStartedAt ||
+      now - windowStartedAt >= this.#securityPolicy.routeAttemptRateWindowMs
+    ) {
+      this.#routeAttemptWindowStartedAt = now;
+      this.#routeAttemptCount = 0;
+    }
+    if (this.#routeAttemptCount >= this.#securityPolicy.routeAttemptRateLimit) {
+      return false;
+    }
+    this.#routeAttemptCount += 1;
+    return true;
+  }
+
   #admitStream(principalId: string): StreamAdmission | undefined {
     const now = this.#now();
     this.#pruneRateEvents(now);
@@ -418,6 +578,12 @@ export class LegacySseAdapter {
   }
 
   #pruneRateEvents(now: number): void {
+    const lastObservedAt = this.#lastStreamRateObservedAt;
+    if (lastObservedAt !== undefined && now < lastObservedAt) {
+      this.#globalOpenEvents.length = 0;
+      this.#principalOpenEvents.clear();
+    }
+    this.#lastStreamRateObservedAt = now;
     const cutoff = now - this.#securityPolicy.streamOpenRateWindowMs;
     pruneTimestamps(this.#globalOpenEvents, cutoff);
     for (const [principalId, events] of this.#principalOpenEvents) {
@@ -541,8 +707,11 @@ export class LegacySseAdapter {
     for (const [sessionId, entry] of entries) {
       this.#removeEntry(sessionId, entry);
     }
+    this.#routeAttemptCount = 0;
+    this.#routeAttemptWindowStartedAt = undefined;
     this.#globalOpenEvents.length = 0;
     this.#principalOpenEvents.clear();
+    this.#lastStreamRateObservedAt = undefined;
     this.#postRateCount = 0;
     this.#postRateWindowStartedAt = undefined;
     this.#postRateByPrincipal.clear();
@@ -572,6 +741,19 @@ function requestMatchesListenerPolicy(
   const socket = request.socket as ListenerSocket;
   const server = socket.server;
   if (server === undefined || server !== attachedServer) return false;
+  const proof = serverConstructionProofs.get(server);
+  if (
+    proof === undefined ||
+    proof.scheme !== policy.scheme ||
+    proof.connectionsCheckingIntervalMs <= 0 ||
+    proof.connectionsCheckingIntervalMs > policy.requestHeaderTimeoutMs ||
+    (proof.scheme === "https" &&
+      (proof.tlsHandshakeTimeoutMs === null ||
+        proof.tlsHandshakeTimeoutMs <= 0 ||
+        proof.tlsHandshakeTimeoutMs > policy.requestHeaderTimeoutMs))
+  ) {
+    return false;
+  }
   if (
     server.headersTimeout !== policy.requestHeaderTimeoutMs ||
     server.requestTimeout !== policy.requestBodyTotalTimeoutMs ||
@@ -757,19 +939,15 @@ async function readBody(
     request.off("aborted", onAborted);
     request.off("error", onAborted);
   };
-  const settle = (result: ReadBodyResult, drain: boolean): void => {
+  const settle = (result: ReadBodyResult): void => {
     if (settled) return;
     settled = true;
     cleanup();
-    if (drain) request.resume();
     completion.resolve(result);
   };
   const armIdleTimer = (): void => {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
-    idleTimer = setTimeout(
-      () => settle({ kind: "timeout" }, true),
-      idleTimeoutMs,
-    );
+    idleTimer = setTimeout(() => settle({ kind: "timeout" }), idleTimeoutMs);
     idleTimer.unref();
   };
   function onData(chunk: Buffer | string): void {
@@ -777,35 +955,42 @@ async function readBody(
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     byteLength += bytes.byteLength;
     if (byteLength > MAXIMUM_BODY_BYTES) {
-      settle({ kind: "too_large" }, true);
+      settle({ kind: "too_large" });
       return;
     }
     chunks.push(bytes);
   }
   function onEnd(): void {
-    settle(
-      {
-        kind: "ok",
-        text: Buffer.concat(chunks, byteLength).toString("utf8"),
-      },
-      false,
-    );
+    let text: string;
+    try {
+      text = FATAL_UTF8_DECODER.decode(Buffer.concat(chunks, byteLength));
+    } catch {
+      settle({ kind: "invalid_utf8" });
+      return;
+    }
+    settle({ kind: "ok", text });
   }
   function onAborted(): void {
-    settle({ kind: "aborted" }, false);
+    settle({ kind: "aborted" });
   }
 
   request.on("data", onData);
   request.once("end", onEnd);
   request.once("aborted", onAborted);
   request.once("error", onAborted);
-  totalTimer = setTimeout(
-    () => settle({ kind: "timeout" }, true),
-    totalTimeoutMs,
-  );
+  totalTimer = setTimeout(() => settle({ kind: "timeout" }), totalTimeoutMs);
   totalTimer.unref();
   armIdleTimer();
   return completion.promise;
+}
+
+function sendPreBodyRejection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  statusCode: number,
+  body: string,
+): void {
+  sendText(response, statusCode, body, request.method === "POST");
 }
 
 function sendText(
@@ -822,5 +1007,9 @@ function sendText(
     "Cache-Control": "no-store",
     ...(closeConnection ? { Connection: "close" } : {}),
   });
+  if (closeConnection) {
+    response.end(body, () => response.destroy());
+    return;
+  }
   response.end(body);
 }

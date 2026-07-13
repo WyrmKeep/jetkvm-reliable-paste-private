@@ -35,8 +35,8 @@
       "id": "publish-new-generation",
       "after_step": "reconnect-session",
       "boundary": "after_acknowledgement",
-      "action": "Publish the proven replacement generation and retain the old observation identifier for the negative call.",
-      "expected_effect": "The old generation and observation are rejected before input dispatch."
+      "action": "Publish proven generation 8 while retaining distinct generation-7 and prior-observation fixtures for ordered negative calls.",
+      "expected_effect": "The generation-7 call returns STALE_SESSION_GENERATION; generation-8 input using prior observations returns only the canonical fresh-capture error, all before input dispatch."
     }
   ],
   "steps": [
@@ -55,14 +55,14 @@
       "expect": "A new ready generation with fresh_capture_required true."
     },
     {
-      "id": "input-with-old-observation",
+      "id": "input-with-stale-generation",
       "tool": "jetkvm_input_mouse",
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-old-observation",
-        "request_id": "opaque-stale-input",
+        "observation_id": "opaque-observation-stale-generation-mouse",
+        "request_id": "opaque-stale-generation-mouse",
         "actions": [
           {
             "type": "click",
@@ -74,7 +74,29 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "STALE_SESSION_GENERATION or the canonical fresh-capture error with zero input."
+      "expect": "STALE_SESSION_GENERATION with zero input-plane calls."
+    },
+    {
+      "id": "input-with-old-observation",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 8,
+        "observation_id": "opaque-observation-old-observation-mouse-input-mouse",
+        "request_id": "opaque-old-observation-mouse-input-mouse",
+        "actions": [
+          {
+            "type": "click",
+            "x": 12,
+            "y": 18,
+            "button": "left"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "The canonical fresh-capture-required or STALE_OBSERVATION error with zero mouse-plane calls."
     },
     {
       "id": "keyboard-with-old-observation",
@@ -82,7 +104,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-old-observation-keyboard-input-keyboard",
         "request_id": "opaque-old-observation-keyboard-input-keyboard",
         "actions": [
@@ -102,7 +124,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-old-observation-paste-input-paste",
         "request_id": "opaque-old-observation-paste-input-paste",
         "text": "FixturePaste91",
@@ -116,17 +138,17 @@
     {
       "id": "assertion-1",
       "requirement": "branch:stale-session-generation",
-      "assertion": "A stale session generation returns STALE_SESSION_GENERATION and records zero downstream writes."
+      "assertion": "The distinct generation-7 mouse call returns STALE_SESSION_GENERATION and records zero downstream writes."
     },
     {
       "id": "assertion-2",
       "requirement": "branch:post-reconnect-input-without-capture",
-      "assertion": "Input after reconnect without a new capture returns the fresh-capture error with zero input events."
+      "assertion": "Each generation-8 mouse, keyboard, and paste call using a prior-generation observation returns only the canonical fresh-capture or STALE_OBSERVATION error with zero input-plane calls."
     },
     {
       "id": "assertion-3",
       "requirement": "contract:reconnect-invalidates-observations",
-      "assertion": "Every observation from the prior generation is invalid before the new generation is published."
+      "assertion": "Every generation-7 observation remains invalid after generation 8 is published."
     }
   ],
   "evidence": [

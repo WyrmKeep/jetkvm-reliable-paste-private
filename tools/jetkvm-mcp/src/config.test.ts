@@ -199,6 +199,8 @@ describe("OperatorConfig", () => {
       requiresAntiCsrf: false,
       bearerCredential: null,
       networkExposed: false,
+      routeAttemptRateLimit: 720,
+      routeAttemptRateWindowMs: 60_000,
       maxConcurrentStreams: 64,
       maxConcurrentStreamsPerPrincipal: 8,
       streamOpenRateLimit: 120,
@@ -341,6 +343,8 @@ describe("OperatorConfig", () => {
 
   it("validates bounded SSE resource policy relationships", () => {
     for (const legacySse of [
+      { routeAttemptRateLimit: 0 },
+      { routeAttemptRateWindowMs: 3_600_001 },
       { maxConcurrentStreams: 0 },
       { maxConcurrentStreams: 2, maxConcurrentStreamsPerPrincipal: 3 },
       { streamOpenRateLimit: 2, streamOpenRateLimitPerPrincipal: 3 },

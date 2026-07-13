@@ -16,6 +16,7 @@ import type {
   SessionRef,
 } from "../device/DeviceRpcAdapter.js";
 import { RequestLedger } from "../idempotency/RequestLedger.js";
+import { ReplayRecordedError } from "../test-support/replay/SanitizedReplayTape.js";
 import {
   DeviceSessionClient,
   DeviceSessionClientError,
@@ -332,6 +333,30 @@ describe("DeviceSessionClient", () => {
     ).toHaveLength(1);
   });
 
+  it("maps changed-digest reuse to the canonical no-dispatch error without disturbing replay", async () => {
+    const { client, browser } = makeClient();
+    const original = await client.connect("principal-a", connectInput());
+
+    const conflict = await expectClientError(
+      client.connect("principal-a", connectInput({ timeout_ms: 6_000 })),
+      "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+    );
+
+    expect(conflict).toMatchObject({
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "none",
+    });
+    const replayed = await client.connect("principal-a", connectInput());
+    expect(replayed).toEqual({
+      ...original,
+      result: { ...original.result, outcome: "already_applied" },
+    });
+    expect(
+      browser.events.filter((event) => event.kind === "connect"),
+    ).toHaveLength(1);
+  });
+
   it("authorizes before replay and does not return a stored session after permission revocation", async () => {
     let permissions = BASE_PERMISSIONS;
     const { client, browser } = makeClient({
@@ -369,6 +394,46 @@ describe("DeviceSessionClient", () => {
 
     expect(error.outcome).toBe("unknown");
     expect(browser.events).toHaveLength(0);
+  });
+
+  it("maps ledger capacity to a retryable admission error without a plane call or phantom reservation", async () => {
+    const requestLedger = new RequestLedger({
+      ttlMs: 60_000,
+      maxEntries: 1,
+    });
+    const occupied = requestLedger.acquire(
+      {
+        principal: "principal-b",
+        configuredDevice: "configured-device-a",
+        tool: "jetkvm_session_connect",
+        requestId: "occupied-request",
+      },
+      { takeover: false, timeout_ms: 5_000 },
+    );
+    if (occupied.kind !== "acquired") {
+      throw new Error("expected the setup reservation to be acquired");
+    }
+    const { client, browser } = makeClient({ requestLedger });
+
+    const capacity = await expectClientError(
+      client.connect("principal-a", connectInput()),
+      "ADMISSION_CAPACITY_EXCEEDED",
+    );
+
+    expect(capacity).toMatchObject({
+      outcome: "not_sent",
+      safeToRetry: true,
+      requiredNextStep: "none",
+    });
+    expect(browser.events).toHaveLength(0);
+    expect(requestLedger.size).toBe(1);
+    expect(requestLedger.release(occupied.reservation, "not_sent")).toBe(true);
+
+    const retried = await client.connect("principal-a", connectInput());
+    expect(retried.result.outcome).toBe("applied");
+    expect(
+      browser.events.filter((event) => event.kind === "connect"),
+    ).toHaveLength(1);
   });
 
   it("returns CONTROL_BUSY without takeover and leaves the incumbent unchanged", async () => {
@@ -574,6 +639,81 @@ describe("DeviceSessionClient", () => {
     ]);
   });
 
+  it("maps changed-digest reconnect reuse without another plane call or replay loss", async () => {
+    const { client, browser } = makeClient();
+    const connected = await client.connect("principal-a", connectInput());
+    const input = reconnectInput(connected.ref);
+    const original = await client.reconnect("principal-a", input);
+    const callsAfterOriginal = browser.events.length;
+
+    const conflict = await expectClientError(
+      client.reconnect(
+        "principal-a",
+        reconnectInput(connected.ref, { timeout_ms: 6_000 }),
+      ),
+      "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+    );
+
+    expect(conflict).toMatchObject({
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "none",
+    });
+    const replayed = await client.reconnect("principal-a", input);
+    expect(replayed).toEqual({
+      ...original,
+      result: { ...original.result, outcome: "already_applied" },
+    });
+    expect(browser.events).toHaveLength(callsAfterOriginal);
+  });
+
+  it("maps reconnect ledger capacity without a plane call or phantom reservation", async () => {
+    const requestLedger = new RequestLedger({
+      ttlMs: 60_000,
+      maxEntries: 2,
+    });
+    const { client, browser } = makeClient({ requestLedger });
+    const connected = await client.connect("principal-a", connectInput());
+    const occupied = requestLedger.acquire(
+      {
+        principal: "principal-b",
+        configuredDevice: "configured-device-a",
+        tool: "jetkvm_session_connect",
+        requestId: "occupied-request",
+      },
+      { takeover: false, timeout_ms: 5_000 },
+    );
+    if (occupied.kind !== "acquired") {
+      throw new Error("expected the setup reservation to be acquired");
+    }
+    const callsBeforeCapacity = browser.events.length;
+
+    const capacity = await expectClientError(
+      client.reconnect("principal-a", reconnectInput(connected.ref)),
+      "ADMISSION_CAPACITY_EXCEEDED",
+    );
+
+    expect(capacity).toMatchObject({
+      outcome: "not_sent",
+      safeToRetry: true,
+      requiredNextStep: "none",
+    });
+    expect(browser.events).toHaveLength(callsBeforeCapacity);
+    expect(requestLedger.size).toBe(2);
+    expect(requestLedger.release(occupied.reservation, "not_sent")).toBe(true);
+
+    const retried = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+    expect(retried.result.outcome).toBe("applied");
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "close",
+      "reconnect",
+    ]);
+  });
+
   it("rotates generation on reconnect and rejects the old generation without a plane call", async () => {
     const { client, browser } = makeClient();
     const connected = await client.connect("principal-a", connectInput());
@@ -606,13 +746,18 @@ describe("DeviceSessionClient", () => {
     ]);
 
     const callsBeforeStaleRequest = browser.events.length;
-    await expectClientError(
+    const stale = await expectClientError(
       client.reconnect(
         "principal-a",
         reconnectInput(connected.ref, { request_id: "reconnect-request-2" }),
       ),
       "STALE_SESSION_GENERATION",
     );
+    expect(stale).toMatchObject({
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture",
+    });
     expect(browser.events).toHaveLength(callsBeforeStaleRequest);
   });
 
@@ -621,10 +766,15 @@ describe("DeviceSessionClient", () => {
     const connected = await client.connect("principal-a", connectInput());
     await client.reconnect("principal-a", reconnectInput(connected.ref));
 
-    await expectClientError(
+    const missing = await expectClientError(
       client.reconnect("principal-b", reconnectInput(connected.ref)),
       "SESSION_NOT_FOUND",
     );
+    expect(missing).toMatchObject({
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture",
+    });
 
     expect(
       browser.events.filter((event) => event.kind === "reconnect"),
@@ -723,6 +873,57 @@ describe("DeviceSessionClient", () => {
       "close:app-session-2",
       "reconnect:app-session-1",
     ]);
+  });
+
+  it.each(["connectionEpoch", "browserChannelGeneration"] as const)(
+    "rejects a zero %s before publishing the connection",
+    async (field) => {
+      const browser = new FakeBrowserPlane();
+      const originalConnect = browser.connect.bind(browser);
+      browser.connect = async (ref, deadline) => {
+        const connection = await originalConnect(ref, deadline);
+        return {
+          ...connection,
+          [field]: 0,
+          binding: { ...connection.binding, [field]: 0 },
+          deviceRpc: {
+            binding: { ...connection.deviceRpc.binding, [field]: 0 },
+          } as DeviceRpcAdapter,
+        };
+      };
+      const { client } = makeClient({ browser });
+
+      const error = await expectClientError(
+        client.connect("principal-a", connectInput()),
+        "DOWNSTREAM_MALFORMED_RESPONSE",
+      );
+
+      expect(error).toMatchObject({
+        outcome: "unknown",
+        safeToRetry: false,
+        requiredNextStep: "inspect_device_state_before_retry",
+      });
+      expect(browser.events.map((event) => event.kind)).toEqual([
+        "connect",
+        "close",
+      ]);
+    },
+  );
+
+  it("accepts display generation zero independently of positive connection generations", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.displayGeneration = 0;
+    const { client } = makeClient({ browser });
+
+    const connected = await client.connect("principal-a", connectInput());
+
+    expect(connected.result.display_generation).toBe(0);
+    expect(client.resolveSession("principal-a", connected.ref)).toMatchObject({
+      state: "ready",
+      displayGeneration: 0,
+      connectionEpoch: 10,
+      browserChannelGeneration: 30,
+    });
   });
 
   it("rejects mismatched connection evidence rather than publishing ready", async () => {
@@ -879,6 +1080,42 @@ describe("DeviceSessionClient", () => {
     const error = await expectClientError(pending, "CANCELLED");
     expect(error.outcome).toBe("unknown");
     expect(browser.lastConnectSignal?.aborted).toBe(true);
+  });
+
+  it("preserves a replay-shaped qualified failure and releases its not_sent reservation", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.connectFailure = new ReplayRecordedError({
+      code: "DEVICE_UNREACHABLE",
+      boundary: "admission",
+      outcome: "not_sent",
+      writeBegan: false,
+      acknowledged: false,
+      verification: "none",
+    });
+    const { client } = makeClient({ browser });
+
+    const failure = await expectClientError(
+      client.connect("principal-a", connectInput()),
+      "DEVICE_UNREACHABLE",
+    );
+
+    expect(failure).toMatchObject({
+      code: "DEVICE_UNREACHABLE",
+      outcome: "not_sent",
+      safeToRetry: true,
+      requiredNextStep: "reconnect_then_capture",
+    });
+    browser.connectFailure = null;
+
+    const retried = await client.connect("principal-a", connectInput());
+
+    expect(retried.result).toMatchObject({
+      request_id: "connect-request-1",
+      outcome: "applied",
+    });
+    expect(
+      browser.events.filter((event) => event.kind === "connect"),
+    ).toHaveLength(2);
   });
 
   it("releases a plane-classified not_sent reservation for a safe same-ID retry", async () => {

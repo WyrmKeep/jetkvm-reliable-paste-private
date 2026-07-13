@@ -69,6 +69,28 @@ export const BEHAVIOR_REQUIREMENT_IDS = [
   "branch:scroll-validation",
 ] as const;
 
+export const FOCUSED_ASSERTION_OWNER_PHASES = [
+  "phase_3",
+  "phase_4",
+  "phase_5",
+] as const;
+export type FocusedAssertionOwnerPhase =
+  (typeof FOCUSED_ASSERTION_OWNER_PHASES)[number];
+
+export const FOCUSED_ASSERTION_GATES = [
+  "phase_2",
+  ...FOCUSED_ASSERTION_OWNER_PHASES,
+  "release",
+] as const;
+export type FocusedAssertionGate = (typeof FOCUSED_ASSERTION_GATES)[number];
+
+export type FocusedAssertionRegistration = {
+  focused_assertion_id: string;
+  owner_phase: FocusedAssertionOwnerPhase;
+  test_file: string;
+  test_name: string;
+};
+
 type ApplicableBehaviorCell = {
   applicability: "applicable";
   coverage_scope: "tool" | "shared_transport";
@@ -77,6 +99,8 @@ type ApplicableBehaviorCell = {
   fault_id: string;
   assertion_id: string;
   focused_assertion_id: string;
+  focused_assertion_owner_phase: FocusedAssertionOwnerPhase;
+  focused_assertion_phase_2_status: "reserved";
 };
 
 type NotApplicableBehaviorCell = {
@@ -97,7 +121,10 @@ export type ToolBehaviorMatrix = readonly ToolBehaviorMatrixRow[];
 
 type MatrixApplicableLink = Omit<
   ApplicableBehaviorCell,
-  "coverage_scope" | "focused_assertion_id"
+  | "coverage_scope"
+  | "focused_assertion_id"
+  | "focused_assertion_owner_phase"
+  | "focused_assertion_phase_2_status"
 > & {
   coverage_scope?: "shared_transport";
 };
@@ -122,6 +149,21 @@ const T = {
   reconnect: "jetkvm_session_reconnect",
   sessionStatus: "jetkvm_session_status",
 } as const satisfies Readonly<Record<string, JetKvmToolName>>;
+
+const FOCUSED_ASSERTION_OWNER_PHASE_BY_TOOL: Readonly<
+  Record<JetKvmToolName, Exclude<FocusedAssertionOwnerPhase, "phase_5">>
+> = Object.freeze({
+  jetkvm_display_capture: "phase_3",
+  jetkvm_display_status: "phase_3",
+  jetkvm_input_keyboard: "phase_3",
+  jetkvm_input_mouse: "phase_3",
+  jetkvm_input_paste: "phase_3",
+  jetkvm_input_release: "phase_3",
+  jetkvm_power_control: "phase_4",
+  jetkvm_session_connect: "phase_4",
+  jetkvm_session_reconnect: "phase_4",
+  jetkvm_session_status: "phase_4",
+});
 
 function linked(
   storyIndex: number,
@@ -161,6 +203,15 @@ function focusedAssertionId(
         ? "adapter"
         : "unit";
   return `${layer}:${toolSlug(tool)}:${requirementSlug(requirement)}`;
+}
+
+function focusedAssertionOwnerPhase(
+  tool: JetKvmToolName,
+  coverageScope: ApplicableBehaviorCell["coverage_scope"],
+): FocusedAssertionOwnerPhase {
+  return coverageScope === "shared_transport"
+    ? "phase_5"
+    : FOCUSED_ASSERTION_OWNER_PHASE_BY_TOOL[tool];
 }
 
 function reviewed(
@@ -206,6 +257,28 @@ function forEveryTool(
     faultId,
     assertionId,
   );
+}
+
+function forEveryToolWithPerToolFault(
+  storyIndex: number,
+  stepPrefix: string,
+  faultPrefix: string,
+  assertionId: string,
+): MatrixDefinition["applicable"] {
+  return Object.fromEntries(
+    JETKVM_TOOL_NAMES.map((tool) => {
+      const slug = toolSlug(tool);
+      return [
+        tool,
+        linked(
+          storyIndex,
+          `${stepPrefix}-${slug}`,
+          `${faultPrefix}-${slug}`,
+          assertionId,
+        ),
+      ];
+    }),
+  ) as MatrixDefinition["applicable"];
 }
 
 function sharedTransportForEveryTool(
@@ -264,7 +337,7 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:deadline-before-admission",
-    applicable: forEveryTool(
+    applicable: forEveryToolWithPerToolFault(
       0,
       "deadline-before-admission",
       "expire-before-admission",
@@ -274,10 +347,10 @@ const MATRIX_DEFINITIONS = [
   },
   {
     requirement: "branch:cancellation-before-write",
-    applicable: forEveryTool(
+    applicable: forEveryToolWithPerToolFault(
       5,
       "cancel-before-write",
-      "cancel-before-mouse-write",
+      "cancel-before-write",
       "assertion-1",
     ),
     not_applicable: {},
@@ -1025,6 +1098,11 @@ function buildToolBehaviorMatrix(): ToolBehaviorMatrix {
               requirement,
               coverageScope,
             ),
+            focused_assertion_owner_phase: focusedAssertionOwnerPhase(
+              tool,
+              coverageScope,
+            ),
+            focused_assertion_phase_2_status: "reserved",
           },
         ];
       }),
@@ -1034,6 +1112,87 @@ function buildToolBehaviorMatrix(): ToolBehaviorMatrix {
 }
 
 export const TOOL_BEHAVIOR_MATRIX = buildToolBehaviorMatrix();
+
+const FOCUSED_ASSERTION_REQUIRED_PHASES_BY_GATE: Readonly<
+  Record<FocusedAssertionGate, readonly FocusedAssertionOwnerPhase[]>
+> = Object.freeze({
+  phase_2: [],
+  phase_3: ["phase_3"],
+  phase_4: ["phase_3", "phase_4"],
+  phase_5: FOCUSED_ASSERTION_OWNER_PHASES,
+  release: FOCUSED_ASSERTION_OWNER_PHASES,
+});
+
+export function validateFocusedAssertionRegistrations(
+  registrations: readonly FocusedAssertionRegistration[],
+  gate: FocusedAssertionGate,
+  matrix: ToolBehaviorMatrix = TOOL_BEHAVIOR_MATRIX,
+): void {
+  const expectedById = new Map<
+    string,
+    { ownerPhase: FocusedAssertionOwnerPhase }
+  >();
+  for (const row of matrix) {
+    for (const cell of Object.values(row.cells)) {
+      if (cell.applicability !== "applicable") {
+        continue;
+      }
+      if (expectedById.has(cell.focused_assertion_id)) {
+        throw new Error(
+          `Focused assertion ID ${cell.focused_assertion_id} is reserved by more than one matrix cell`,
+        );
+      }
+      expectedById.set(cell.focused_assertion_id, {
+        ownerPhase: cell.focused_assertion_owner_phase,
+      });
+    }
+  }
+
+  const registeredIds = new Set<string>();
+  for (const registration of registrations) {
+    if (registeredIds.has(registration.focused_assertion_id)) {
+      throw new Error(
+        `Duplicate focused assertion registration ${registration.focused_assertion_id}`,
+      );
+    }
+    registeredIds.add(registration.focused_assertion_id);
+
+    const expected = expectedById.get(registration.focused_assertion_id);
+    if (expected === undefined) {
+      throw new Error(
+        `Unknown focused assertion registration ${registration.focused_assertion_id}`,
+      );
+    }
+    if (registration.owner_phase !== expected.ownerPhase) {
+      throw new Error(
+        `Focused assertion registration ${registration.focused_assertion_id} has owner phase ${registration.owner_phase}; expected ${expected.ownerPhase}`,
+      );
+    }
+    if (
+      !/(?:\.(?:test|spec)\.[cm]?[jt]sx?|_test\.go)$/.test(
+        registration.test_file,
+      ) ||
+      registration.test_name.trim().length === 0
+    ) {
+      throw new Error(
+        `Focused assertion registration ${registration.focused_assertion_id} must cite an actual focused test file and assertion name`,
+      );
+    }
+  }
+
+  const requiredOwnerPhases = FOCUSED_ASSERTION_REQUIRED_PHASES_BY_GATE[gate];
+  const unresolved = [...expectedById.entries()]
+    .filter(
+      ([id, { ownerPhase }]) =>
+        requiredOwnerPhases.includes(ownerPhase) && !registeredIds.has(id),
+    )
+    .map(([id]) => id);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `Unresolved focused assertion registrations required through ${gate}: ${unresolved.join(", ")}`,
+    );
+  }
+}
 
 const storyConditionSchema = z
   .object({
@@ -1345,6 +1504,146 @@ function assertSafetyPolicy(story: AcceptanceStory): void {
   }
 }
 
+const MUTATION_TOOL_LOOKUP: Readonly<Partial<Record<JetKvmToolName, true>>> =
+  Object.freeze({
+    jetkvm_input_keyboard: true,
+    jetkvm_input_mouse: true,
+    jetkvm_input_paste: true,
+    jetkvm_input_release: true,
+    jetkvm_power_control: true,
+    jetkvm_session_connect: true,
+    jetkvm_session_reconnect: true,
+  });
+
+const PER_TOOL_FAULT_EXECUTIONS = [
+  {
+    storyIndex: 0,
+    requirement: "branch:deadline-before-admission",
+    stepPrefix: "deadline-before-admission",
+    faultPrefix: "expire-before-admission",
+    clearPrefix: "clear-expired-deadline",
+    retryPrefix: "retry-deadline-before-admission",
+    boundary: "before_admission",
+  },
+  {
+    storyIndex: 5,
+    requirement: "branch:cancellation-before-write",
+    stepPrefix: "cancel-before-write",
+    faultPrefix: "cancel-before-write",
+    clearPrefix: "clear-cancel-before-write",
+    retryPrefix: "retry-cancel-before-write",
+    boundary: "before_write",
+  },
+] as const;
+
+function assertPerToolFaultExecution(
+  stories: readonly AcceptanceStory[],
+  matrix: ToolBehaviorMatrix,
+): void {
+  for (const execution of PER_TOOL_FAULT_EXECUTIONS) {
+    const story = stories[execution.storyIndex];
+    const row = matrix.find(
+      ({ requirement }) => requirement === execution.requirement,
+    );
+    if (story === undefined || row === undefined) {
+      throw new Error(
+        `Per-tool fault execution is unavailable for ${execution.requirement}`,
+      );
+    }
+
+    const requestIds = new Set<string>();
+    for (const tool of JETKVM_TOOL_NAMES) {
+      const slug = toolSlug(tool);
+      const expectedStepId = `${execution.stepPrefix}-${slug}`;
+      const expectedFaultId = `${execution.faultPrefix}-${slug}`;
+      const expectedClearId = `${execution.clearPrefix}-${slug}`;
+      const cell = row.cells[tool];
+      if (
+        cell?.applicability !== "applicable" ||
+        cell.story_id !== story.id ||
+        cell.step_id !== expectedStepId ||
+        cell.fault_id !== expectedFaultId
+      ) {
+        throw new Error(
+          `Applicable ${tool} ${execution.requirement} must link its compatible per-tool fault ${expectedFaultId}`,
+        );
+      }
+
+      const callIndex = story.steps.findIndex(
+        ({ id }) => id === expectedStepId,
+      );
+      const call = story.steps[callIndex];
+      const faultIndex = story.fault_script.findIndex(
+        ({ id }) => id === expectedFaultId,
+      );
+      const fault = story.fault_script[faultIndex];
+      const clearIndex = story.fault_script.findIndex(
+        ({ id }) => id === expectedClearId,
+      );
+      const clear = story.fault_script[clearIndex];
+      const armAnchorIndex = story.steps.findIndex(
+        ({ id }) => id === fault?.after_step,
+      );
+      if (
+        call === undefined ||
+        call.tool !== tool ||
+        fault === undefined ||
+        fault.boundary !== execution.boundary ||
+        callIndex < 1 ||
+        armAnchorIndex !== callIndex - 1
+      ) {
+        throw new Error(
+          `Per-tool fault ${expectedFaultId} must be armed immediately before its linked call ${expectedStepId}`,
+        );
+      }
+      if (
+        clear === undefined ||
+        clear.boundary !== "during_cleanup" ||
+        clear.after_step !== expectedStepId ||
+        clearIndex !== faultIndex + 1
+      ) {
+        throw new Error(
+          `Per-tool fault ${expectedFaultId} must have an ordered clear ${expectedClearId} immediately after its linked call`,
+        );
+      }
+
+      if (MUTATION_TOOL_LOOKUP[tool] !== true) {
+        continue;
+      }
+      const retryId = `${execution.retryPrefix}-${slug}`;
+      const retry = story.steps[callIndex + 1];
+      const requestId = call.input.request_id;
+      if (
+        retry?.id !== retryId ||
+        retry.tool !== tool ||
+        JSON.stringify(retry.input) !== JSON.stringify(call.input) ||
+        typeof requestId !== "string" ||
+        requestId.length === 0 ||
+        !/(?:applied|CONTROL_BUSY)/.test(retry.expect)
+      ) {
+        throw new Error(
+          `Per-tool mutation reservation retry ${retryId} must immediately reuse the same normalized request after fault clear`,
+        );
+      }
+      if (requestIds.has(requestId)) {
+        throw new Error(
+          `Per-tool mutation reservation retry request ID ${requestId} is reused across tools`,
+        );
+      }
+      requestIds.add(requestId);
+
+      if (
+        tool === T.power &&
+        !story.restore.some(({ id }) => id === "restore-power-baseline")
+      ) {
+        throw new Error(
+          `Story ${story.id} must restore the power baseline after the cleared-fault power retry`,
+        );
+      }
+    }
+  }
+}
+
 function assertConnectDeadlineReservationExecution(
   stories: readonly AcceptanceStory[],
 ): void {
@@ -1625,6 +1924,18 @@ function assertBehaviorMatrix(
           `Applicable ${tool} ${row.requirement} shared transport coverage is permitted only for a null-tool SSE assertion`,
         );
       }
+      const expectedOwnerPhase = focusedAssertionOwnerPhase(
+        tool,
+        coverageScope,
+      );
+      if (
+        cell.focused_assertion_phase_2_status !== "reserved" ||
+        cell.focused_assertion_owner_phase !== expectedOwnerPhase
+      ) {
+        throw new Error(
+          `Applicable ${tool} ${row.requirement} requires a Phase 2 reserved focused assertion owned by ${expectedOwnerPhase}`,
+        );
+      }
       const expectedFocusedAssertionId = focusedAssertionId(
         tool,
         row.requirement,
@@ -1720,6 +2031,7 @@ export function validateAcceptanceStories(
   }
   assertConnectDeadlineReservationExecution(stories);
   assertScrollObservationExecution(stories);
+  assertPerToolFaultExecution(stories, matrix);
   assertBehaviorMatrix(stories, matrix);
 
   return stories;

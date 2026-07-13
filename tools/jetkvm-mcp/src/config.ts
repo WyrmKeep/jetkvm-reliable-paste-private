@@ -9,6 +9,8 @@ const DEFAULT_CREDENTIAL_ENVIRONMENT_VARIABLE = "JETKVM_CREDENTIAL";
 const DEFAULT_SSE_BEARER_ENVIRONMENT_VARIABLE = "JETKVM_MCP_BEARER";
 const DEFAULT_SSE_BIND_HOST = "127.0.0.1";
 const DEFAULT_SSE_HOST_AUTHORITY = "127.0.0.1";
+const DEFAULT_SSE_ROUTE_ATTEMPT_RATE_LIMIT = 720;
+const DEFAULT_SSE_ROUTE_ATTEMPT_RATE_WINDOW_MS = 60_000;
 const DEFAULT_SSE_MAX_CONCURRENT_STREAMS = 64;
 const DEFAULT_SSE_MAX_CONCURRENT_STREAMS_PER_PRINCIPAL = 8;
 const DEFAULT_SSE_STREAM_OPEN_RATE_LIMIT = 120;
@@ -32,6 +34,8 @@ const DEFAULT_SSE_MAX_RESPONSE_BUFFERED_BYTES = 16_777_216;
 const DEFAULT_SSE_RESPONSE_BACKPRESSURE_TIMEOUT_MS = 5_000;
 const MAX_SSE_CONCURRENT_STREAMS = 1_024;
 const MAX_SSE_CONCURRENT_POSTS = 1_024;
+const MAX_SSE_ROUTE_ATTEMPT_RATE_LIMIT = 10_000;
+const MAX_SSE_ROUTE_ATTEMPT_RATE_WINDOW_MS = 3_600_000;
 const MAX_SSE_STREAM_OPEN_RATE_LIMIT = 10_000;
 const MAX_SSE_POST_RATE_LIMIT = 10_000;
 const MAX_SSE_STREAM_OPEN_RATE_WINDOW_MS = 3_600_000;
@@ -74,6 +78,8 @@ export interface LegacySseConfigInput {
   readonly allowDangerousNetworkPlaintext?: boolean;
   readonly bearerCredentialFile?: string;
   readonly bearerEnvironmentVariable?: string;
+  readonly routeAttemptRateLimit?: number;
+  readonly routeAttemptRateWindowMs?: number;
   readonly maxConcurrentStreams?: number;
   readonly maxConcurrentStreamsPerPrincipal?: number;
   readonly streamOpenRateLimit?: number;
@@ -124,6 +130,8 @@ export interface LegacySseSecurityPolicy {
   readonly requiresAntiCsrf: boolean;
   readonly bearerCredential: Readonly<CredentialSourceSelection> | null;
   readonly networkExposed: boolean;
+  readonly routeAttemptRateLimit: number;
+  readonly routeAttemptRateWindowMs: number;
   readonly maxConcurrentStreams: number;
   readonly maxConcurrentStreamsPerPrincipal: number;
   readonly streamOpenRateLimit: number;
@@ -298,6 +306,18 @@ export function parseLegacySsePolicy(
       })
     : null;
 
+  const routeAttemptRateLimit = positiveSafeInteger(
+    input.routeAttemptRateLimit,
+    DEFAULT_SSE_ROUTE_ATTEMPT_RATE_LIMIT,
+    MAX_SSE_ROUTE_ATTEMPT_RATE_LIMIT,
+    "Legacy SSE route-attempt rate limit",
+  );
+  const routeAttemptRateWindowMs = positiveSafeInteger(
+    input.routeAttemptRateWindowMs,
+    DEFAULT_SSE_ROUTE_ATTEMPT_RATE_WINDOW_MS,
+    MAX_SSE_ROUTE_ATTEMPT_RATE_WINDOW_MS,
+    "Legacy SSE route-attempt rate window",
+  );
   const maxConcurrentStreams = positiveSafeInteger(
     input.maxConcurrentStreams,
     DEFAULT_SSE_MAX_CONCURRENT_STREAMS,
@@ -477,6 +497,8 @@ export function parseLegacySsePolicy(
     requiresAntiCsrf: networkExposed,
     bearerCredential,
     networkExposed,
+    routeAttemptRateLimit,
+    routeAttemptRateWindowMs,
     maxConcurrentStreams,
     maxConcurrentStreamsPerPrincipal,
     streamOpenRateLimit,

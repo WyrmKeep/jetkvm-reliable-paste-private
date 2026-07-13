@@ -105,6 +105,146 @@
       "boundary": "before_admission",
       "action": "Submit zero, fractional, overflow, and nonzero-horizontal scroll variants to the strict schema before observation lookup.",
       "expected_effect": "Each invalid variant rejects the whole request with zero mouse-plane calls."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-display-capture",
+      "after_step": "reject-horizontal-scroll",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_display_capture only.",
+      "expected_effect": "The next jetkvm_display_capture call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-display-capture",
+      "after_step": "cancel-before-write-jetkvm-display-capture",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_display_capture pre-write cancellation injector.",
+      "expected_effect": "No later tool call inherits the jetkvm_display_capture cancellation fault."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-display-status",
+      "after_step": "cancel-before-write-jetkvm-display-capture",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_display_status only.",
+      "expected_effect": "The next jetkvm_display_status call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-display-status",
+      "after_step": "cancel-before-write-jetkvm-display-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_display_status pre-write cancellation injector.",
+      "expected_effect": "No later tool call inherits the jetkvm_display_status cancellation fault."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-keyboard",
+      "after_step": "cancel-before-write-jetkvm-display-status",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_input_keyboard only.",
+      "expected_effect": "The next jetkvm_input_keyboard call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-input-keyboard",
+      "after_step": "cancel-before-write-jetkvm-input-keyboard",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_keyboard cancellation injector while preserving its request and observation reservations for retry.",
+      "expected_effect": "The same normalized keyboard request can retry through ordinary admission."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-mouse",
+      "after_step": "retry-cancel-before-write-jetkvm-input-keyboard",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_input_mouse only.",
+      "expected_effect": "The next jetkvm_input_mouse call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-input-mouse",
+      "after_step": "cancel-before-write-jetkvm-input-mouse",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_mouse cancellation injector while preserving its request and observation reservations for retry.",
+      "expected_effect": "The same normalized mouse request can retry through ordinary admission."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-paste",
+      "after_step": "retry-cancel-before-write-jetkvm-input-mouse",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_input_paste only.",
+      "expected_effect": "The next jetkvm_input_paste call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-input-paste",
+      "after_step": "cancel-before-write-jetkvm-input-paste",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_paste cancellation injector while preserving its request and observation reservations for retry.",
+      "expected_effect": "The same normalized paste request can retry through ordinary admission."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-input-release",
+      "after_step": "retry-cancel-before-write-jetkvm-input-paste",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_input_release only.",
+      "expected_effect": "The next jetkvm_input_release call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-input-release",
+      "after_step": "cancel-before-write-jetkvm-input-release",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_input_release cancellation injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized release request can retry through ordinary admission."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-power-control",
+      "after_step": "retry-cancel-before-write-jetkvm-input-release",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_power_control only.",
+      "expected_effect": "The next jetkvm_power_control call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-power-control",
+      "after_step": "cancel-before-write-jetkvm-power-control",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_power_control cancellation injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized power request can retry through ordinary admission."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-connect",
+      "after_step": "retry-cancel-before-write-jetkvm-power-control",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_session_connect only.",
+      "expected_effect": "The next jetkvm_session_connect call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-session-connect",
+      "after_step": "cancel-before-write-jetkvm-session-connect",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_session_connect cancellation injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized connect request can retry through ordinary ownership admission."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-status",
+      "after_step": "retry-cancel-before-write-jetkvm-session-connect",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_session_status only.",
+      "expected_effect": "The next jetkvm_session_status call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-session-status",
+      "after_step": "cancel-before-write-jetkvm-session-status",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_session_status pre-write cancellation injector.",
+      "expected_effect": "No later tool call inherits the jetkvm_session_status cancellation fault."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-reconnect",
+      "after_step": "cancel-before-write-jetkvm-session-status",
+      "boundary": "before_write",
+      "action": "Arm pre-write cancellation for jetkvm_session_reconnect only.",
+      "expected_effect": "The next jetkvm_session_reconnect call is cancelled before its first downstream write."
+    },
+    {
+      "id": "clear-cancel-before-write-jetkvm-session-reconnect",
+      "after_step": "cancel-before-write-jetkvm-session-reconnect",
+      "boundary": "during_cleanup",
+      "action": "Clear the jetkvm_session_reconnect cancellation injector while preserving its request reservation for retry.",
+      "expected_effect": "The same normalized reconnect request can retry through ordinary admission."
     }
   ],
   "steps": [
@@ -586,7 +726,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_display_capture after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+      "expect": "not_sent for jetkvm_display_capture after cancellation before its first downstream write, with zero downstream writes."
     },
     {
       "id": "cancel-before-write-jetkvm-display-status",
@@ -598,7 +738,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_display_status after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+      "expect": "not_sent for jetkvm_display_status after cancellation before its first downstream write, with zero downstream writes."
     },
     {
       "id": "cancel-before-write-jetkvm-input-keyboard",
@@ -619,6 +759,26 @@
       },
       "timeout_ms": 1000,
       "expect": "not_sent for jetkvm_input_keyboard after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "retry-cancel-before-write-jetkvm-input-keyboard",
+      "tool": "jetkvm_input_keyboard",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel-before-write-input-keyboard",
+        "request_id": "opaque-cancel-before-write-input-keyboard",
+        "actions": [
+          {
+            "type": "key_press",
+            "key": "Enter"
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the keyboard request and observation reservations were released."
     },
     {
       "id": "cancel-before-write-jetkvm-input-mouse",
@@ -642,6 +802,27 @@
       "expect": "not_sent for jetkvm_input_mouse after cancellation before its first downstream write, with zero downstream writes and every reservation released."
     },
     {
+      "id": "retry-cancel-before-write-jetkvm-input-mouse",
+      "tool": "jetkvm_input_mouse",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel-before-write-input-mouse",
+        "request_id": "opaque-cancel-before-write-input-mouse",
+        "actions": [
+          {
+            "type": "move",
+            "x": 40,
+            "y": 50
+          }
+        ],
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the mouse request and observation reservations were released."
+    },
+    {
       "id": "cancel-before-write-jetkvm-input-paste",
       "tool": "jetkvm_input_paste",
       "call": "tools/call",
@@ -657,6 +838,21 @@
       "expect": "not_sent for jetkvm_input_paste after cancellation before its first downstream write, with zero downstream writes and every reservation released."
     },
     {
+      "id": "retry-cancel-before-write-jetkvm-input-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-cancel-before-write-input-paste",
+        "request_id": "opaque-cancel-before-write-input-paste",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the paste request and observation reservations were released."
+    },
+    {
       "id": "cancel-before-write-jetkvm-input-release",
       "tool": "jetkvm_input_release",
       "call": "tools/call",
@@ -668,6 +864,19 @@
       },
       "timeout_ms": 1000,
       "expect": "not_sent for jetkvm_input_release after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "retry-cancel-before-write-jetkvm-input-release",
+      "tool": "jetkvm_input_release",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cancel-before-write-input-release",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the release request reservation was released."
     },
     {
       "id": "cancel-before-write-jetkvm-power-control",
@@ -684,6 +893,20 @@
       "expect": "not_sent for jetkvm_power_control after cancellation before its first downstream write, with zero downstream writes and every reservation released."
     },
     {
+      "id": "retry-cancel-before-write-jetkvm-power-control",
+      "tool": "jetkvm_power_control",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "request_id": "opaque-cancel-before-write-power-control",
+        "action": "press_power",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "applied through ordinary admission after the cancellation fault is cleared, proving the power request reservation was released."
+    },
+    {
       "id": "cancel-before-write-jetkvm-session-connect",
       "tool": "jetkvm_session_connect",
       "call": "tools/call",
@@ -694,6 +917,30 @@
       },
       "timeout_ms": 1000,
       "expect": "not_sent for jetkvm_session_connect after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+    },
+    {
+      "id": "retry-cancel-before-write-jetkvm-session-connect",
+      "tool": "jetkvm_session_connect",
+      "call": "tools/call",
+      "input": {
+        "request_id": "opaque-cancel-before-write-session-connect",
+        "takeover": false,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "CONTROL_BUSY through ordinary ownership admission after the cancellation fault is cleared, proving the connect request reservation was released."
+    },
+    {
+      "id": "cancel-before-write-jetkvm-session-status",
+      "tool": "jetkvm_session_status",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent for jetkvm_session_status after cancellation before its first downstream write, with zero downstream writes."
     },
     {
       "id": "cancel-before-write-jetkvm-session-reconnect",
@@ -710,23 +957,25 @@
       "expect": "not_sent for jetkvm_session_reconnect after cancellation before its first downstream write, with zero downstream writes and every reservation released."
     },
     {
-      "id": "cancel-before-write-jetkvm-session-status",
-      "tool": "jetkvm_session_status",
+      "id": "retry-cancel-before-write-jetkvm-session-reconnect",
+      "tool": "jetkvm_session_reconnect",
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
+        "request_id": "opaque-cancel-before-write-session-reconnect",
+        "takeover": false,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "not_sent for jetkvm_session_status after cancellation before its first downstream write, with zero downstream writes and every reservation released."
+      "expect": "applied through ordinary reconnect admission after the cancellation fault is cleared, proving the reconnect request reservation was released and publishing the next session generation."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:cancellation-before-write",
-      "assertion": "Cancellation before write is not_sent with zero downstream writes; clearing the fault and retrying the same normalized request applies one write, proving both reservations were released."
+      "assertion": "Each linked tool call runs under its compatible cancellation-before-write fault and returns not_sent with zero downstream writes. Clearing each fault isolates the next tool; every mutation retries the same normalized input under its tool-unique request identifier and reaches ordinary applied or CONTROL_BUSY handling."
     },
     {
       "id": "assertion-2",
@@ -803,6 +1052,12 @@
       "id": "reset-fixture",
       "action": "Clear deterministic faults and restore the recorded fixture baseline.",
       "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Unconditionally restore the recorded ATX-observable baseline after the cleared-fault power retry may have written.",
+      "assertion": "The recorded ATX-observable baseline is restored before the next story.",
       "always": true
     }
   ],

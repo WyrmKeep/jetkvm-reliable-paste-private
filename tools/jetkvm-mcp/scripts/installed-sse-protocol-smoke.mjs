@@ -11,7 +11,7 @@ try {
     installed.consumer,
     "sse-runner.mjs",
     `import assert from "node:assert/strict";
-import { createServer, request as httpRequest } from "node:http";
+import { request as httpRequest } from "node:http";
 import { activateIndependentLegacySseBearerCredential, DisposableSecret } from "@wyrmkeep/jetkvm-mcp/dist/browser/auth.js";
 import { parseLegacySsePolicy } from "@wyrmkeep/jetkvm-mcp/dist/config.js";
 import { LegacySseAdapter } from "@wyrmkeep/jetkvm-mcp/dist/mcp/legacySse.js";
@@ -55,11 +55,9 @@ const adapter = new LegacySseAdapter({
     if (event.code === "transport_closed") transportClosed.resolve();
   },
 });
-const server = createServer((request, response) => {
-  void adapter.handleRequest(request, response);
-});
-adapter.attachServer(server);
+const server = adapter.createHttpServer();
 assert.equal(server.maxConnections, policy.maxConnections);
+assert.equal(server.headersTimeout, policy.requestHeaderTimeoutMs);
 assert.deepEqual(
   {
     configurable: Object.getOwnPropertyDescriptor(server, "maxConnections").configurable,
@@ -264,7 +262,7 @@ assert.notEqual(applicationSessionId, secondRoutingId);
 assert.equal(observedContexts.length, 1);
 const [{ context }] = observedContexts;
 assert.deepEqual(Object.keys(context).sort(), ["correlationId", "principalId", "signal"]);
-assert.equal(context.principalId, "installed-operator");
+assert.match(context.principalId, /^principal-[a-f0-9]{64}$/);
 assert.match(context.correlationId, /^mcp-[a-f0-9]{32}$/);
 assert.notEqual(context.correlationId, firstRoutingId);
 assert.notEqual(context.correlationId, secondRoutingId);

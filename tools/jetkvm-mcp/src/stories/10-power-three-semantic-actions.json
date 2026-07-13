@@ -69,11 +69,11 @@
         "session_id": "opaque-session",
         "session_generation": 7,
         "request_id": "opaque-power-long",
-        "timeout_ms": 1000,
+        "timeout_ms": 10000,
         "action": "hold_power"
       },
-      "timeout_ms": 1000,
-      "expect": "power-long uses exactly 5000 ms and returns a correlated serial receipt."
+      "timeout_ms": 10000,
+      "expect": "power-long holds for exactly 5000 ms and returns a correlated serial receipt within the bounded 10000 ms deadline."
     },
     {
       "id": "press-reset",

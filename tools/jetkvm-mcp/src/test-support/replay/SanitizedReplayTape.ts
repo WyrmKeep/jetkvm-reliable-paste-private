@@ -200,6 +200,30 @@ const connectionSchema = z
     displayGeneration: z.number().int().positive(),
   })
   .strict();
+const observationArtifactSchema = z.discriminatedUnion("mimeType", [
+  z
+    .object({
+      mimeType: z.literal("image/jpeg"),
+      sha256: sha256Schema,
+      byteLength: z
+        .number()
+        .int()
+        .positive()
+        .max(2 * 1024 * 1024),
+    })
+    .strict(),
+  z
+    .object({
+      mimeType: z.literal("image/png"),
+      sha256: sha256Schema,
+      byteLength: z
+        .number()
+        .int()
+        .positive()
+        .max(8 * 1024 * 1024),
+    })
+    .strict(),
+]);
 const observationSchema = z
   .object({
     observationId: z.string().min(1).max(256),
@@ -226,17 +250,7 @@ const observationSchema = z
         contentHeight: z.number().positive(),
       })
       .strict(),
-    artifact: z
-      .object({
-        mimeType: z.enum(["image/jpeg", "image/png"]),
-        sha256: sha256Schema,
-        byteLength: z
-          .number()
-          .int()
-          .positive()
-          .max(2 * 1024 * 1024),
-      })
-      .strict(),
+    artifact: observationArtifactSchema,
   })
   .strict();
 const mutationReceiptSchema = z
@@ -319,7 +333,12 @@ const mouseActionSchema = z.discriminatedUnion("type", [
       type: z.literal("scroll"),
       x: z.number().finite(),
       y: z.number().finite(),
-      delta_y: z.number().int(),
+      delta_y: z
+        .number()
+        .int()
+        .min(-127)
+        .max(127)
+        .refine((value) => value !== 0),
       delta_x: z.literal(0).optional(),
     })
     .strict(),
@@ -361,6 +380,7 @@ const pasteRequestSchema = browserMutationRequest(
       observationId: z.string().min(1).max(256),
       requestId: requestIdSchema,
       textByteLength: z.number().int().nonnegative(),
+      sourceCharacterCount: z.number().int().nonnegative(),
       textSha256: sha256Schema,
     })
     .strict(),
@@ -402,6 +422,13 @@ type ReplayErrorCode =
   | "TERMINAL_RESULT_PRESERVED"
   | "MALFORMED_RESPONSE"
   | "PERMISSION_DENIED"
+  | "AUTH_FAILED"
+  | "AUTH_RATE_LIMITED"
+  | "AUTH_EXPIRED"
+  | "UNSUPPORTED_UI_VERSION"
+  | "FIRMWARE_INCOMPATIBLE"
+  | "BROWSER_UNSUPPORTED"
+  | "DEVICE_UNREACHABLE"
   | "CAPABILITY_MISSING"
   | "CONTROL_BUSY"
   | "SESSION_TAKEN_OVER"
@@ -435,7 +462,12 @@ type ReplayErrorVerification =
   | "none"
   | "device_ack_only"
   | "device_state_verified";
-type ReplayCountRule = "zero" | "partial" | "complete" | "bounded";
+type ReplayCountRule =
+  | "zero"
+  | "partial"
+  | "partial_dispatch"
+  | "complete"
+  | "bounded";
 interface ReplayErrorRule {
   readonly code: ReplayErrorCode;
   readonly boundary: ReplayErrorBoundary;
@@ -600,6 +632,69 @@ const ERROR_RULES = {
     verification: "none",
     counts: "zero",
   },
+  authFailedAdmission: {
+    code: "AUTH_FAILED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  authRateLimitedAdmission: {
+    code: "AUTH_RATE_LIMITED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  authExpiredAdmission: {
+    code: "AUTH_EXPIRED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  unsupportedUiVersionAdmission: {
+    code: "UNSUPPORTED_UI_VERSION",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  firmwareIncompatibleAdmission: {
+    code: "FIRMWARE_INCOMPATIBLE",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  browserUnsupportedAdmission: {
+    code: "BROWSER_UNSUPPORTED",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
+  deviceUnreachableAdmission: {
+    code: "DEVICE_UNREACHABLE",
+    boundary: "admission",
+    outcome: "not_sent",
+    writeBegan: false,
+    acknowledged: false,
+    verification: "none",
+    counts: "zero",
+  },
   capabilityAdmission: {
     code: "CAPABILITY_MISSING",
     boundary: "admission",
@@ -643,7 +738,7 @@ const ERROR_RULES = {
     writeBegan: true,
     acknowledged: false,
     verification: "none",
-    counts: "partial",
+    counts: "partial_dispatch",
   },
   cleanupFailure: {
     code: "CLEANUP_FAILED",
@@ -787,6 +882,28 @@ function replayErrorSchema(
       verification: z.literal(rule.verification),
     };
     if (!counted) return z.object(exactFields).strict();
+    if (rule.counts === "partial_dispatch") {
+      return z
+        .object({
+          ...exactFields,
+          requestedCount: z.number().int().positive(),
+          dispatchedCount: z.number().int().nonnegative(),
+          completedCount: z.number().int().nonnegative(),
+        })
+        .strict()
+        .superRefine((error, context) => {
+          if (
+            error.completedCount > error.dispatchedCount ||
+            error.dispatchedCount >= error.requestedCount
+          ) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "Partial dispatch requires completed <= dispatched < requested.",
+            });
+          }
+        });
+    }
     return z
       .object({
         ...exactFields,
@@ -837,8 +954,22 @@ const highLevelCommonErrorRules = [
   ERROR_RULES.staleGenerationAdmission,
 ] as const;
 const browserConnectErrorSchema = replayErrorSchema(false, [
-  ...highLevelCommonErrorRules,
+  ERROR_RULES.deadlineAdmission,
+  ERROR_RULES.cancelledAdmission,
+  ERROR_RULES.connectionSend,
+  ERROR_RULES.connectionAck,
+  ERROR_RULES.malformedAck,
+  ERROR_RULES.permissionAdmission,
+  ERROR_RULES.sessionTakenAck,
+  ERROR_RULES.staleGenerationAdmission,
   ERROR_RULES.controlBusyAdmission,
+  ERROR_RULES.authFailedAdmission,
+  ERROR_RULES.authRateLimitedAdmission,
+  ERROR_RULES.authExpiredAdmission,
+  ERROR_RULES.unsupportedUiVersionAdmission,
+  ERROR_RULES.firmwareIncompatibleAdmission,
+  ERROR_RULES.browserUnsupportedAdmission,
+  ERROR_RULES.deviceUnreachableAdmission,
 ]);
 const browserReadErrorSchema = replayErrorSchema(
   false,
@@ -850,22 +981,27 @@ const browserCloseErrorSchema = replayErrorSchema(false, [
   ERROR_RULES.sessionTakenAck,
   ERROR_RULES.staleGenerationAdmission,
 ]);
-const browserMutationErrorRules = [
+const browserMutationCommonErrorRules = [
   ...highLevelCommonErrorRules,
   ERROR_RULES.postAckRead,
   ERROR_RULES.terminalPreserved,
-  ERROR_RULES.partialDispatch,
   ERROR_RULES.cleanupFailure,
-  ERROR_RULES.eventGap,
   ERROR_RULES.alreadyApplied,
 ] as const;
 const browserObservedMutationErrorSchema = replayErrorSchema(true, [
-  ...browserMutationErrorRules,
+  ...browserMutationCommonErrorRules,
+  ERROR_RULES.partialDispatch,
+  ERROR_RULES.freshCaptureAdmission,
+]);
+const browserPasteErrorSchema = replayErrorSchema(true, [
+  ...browserMutationCommonErrorRules,
+  ERROR_RULES.partialDispatch,
+  ERROR_RULES.eventGap,
   ERROR_RULES.freshCaptureAdmission,
 ]);
 const browserReleaseErrorSchema = replayErrorSchema(
   true,
-  browserMutationErrorRules,
+  browserMutationCommonErrorRules,
 );
 const nativeReadErrorSchema = replayErrorSchema(
   false,
@@ -921,6 +1057,7 @@ function exchangeSchema(
   response: z.ZodTypeAny,
   error: z.ZodTypeAny,
   responseMatchesRequest?: ReplayResponseCorrelation,
+  errorMatchesRequest?: ReplayResponseCorrelation,
 ) {
   return z
     .object({
@@ -950,6 +1087,16 @@ function exchangeSchema(
           message: "Replay response does not correlate with its request.",
         });
       }
+      if (
+        exchange.error !== undefined &&
+        errorMatchesRequest !== undefined &&
+        !errorMatchesRequest(exchange.request, exchange.error)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Replay error does not correlate with its request.",
+        });
+      }
     });
 }
 
@@ -969,48 +1116,129 @@ const atxResponseMatchesRequest: ReplayResponseCorrelation = (
   );
 };
 
+const browserConnectionResponseMatchesRequest: ReplayResponseCorrelation = (
+  request,
+  response,
+) => {
+  const typedRequest = request as z.infer<typeof refRequestSchema>;
+  const typedResponse = response as z.infer<typeof connectionSchema>;
+  return (
+    isDeepStrictEqual(typedResponse.ref, typedRequest.ref) &&
+    isDeepStrictEqual(typedResponse.binding, {
+      ...typedResponse.ref,
+      connectionEpoch: typedResponse.connectionEpoch,
+      browserChannelGeneration: typedResponse.browserChannelGeneration,
+    })
+  );
+};
+
+const browserCaptureResponseMatchesRequest: ReplayResponseCorrelation = (
+  request,
+  response,
+) => {
+  const typedRequest = request as z.infer<typeof captureRequestSchema>;
+  const typedResponse = response as z.infer<typeof observationSchema>;
+  const expectedMimeType =
+    typedRequest.request.format === "jpeg" ? "image/jpeg" : "image/png";
+  return (
+    typedResponse.sessionGeneration === typedRequest.ref.sessionGeneration &&
+    typedResponse.artifact.mimeType === expectedMimeType
+  );
+};
+
+const browserMutationResponseMatchesRequest: ReplayResponseCorrelation = (
+  request,
+  response,
+) => {
+  const typedRequest = request as {
+    readonly request: { readonly requestId: string };
+  };
+  const typedResponse = response as { readonly requestId: string };
+  return typedResponse.requestId === typedRequest.request.requestId;
+};
+
+const browserMultiActionErrorMatchesRequest: ReplayResponseCorrelation = (
+  request,
+  error,
+) => {
+  const typedError = error as {
+    readonly code: string;
+    readonly requestedCount?: number;
+  };
+  if (typedError.code !== "PARTIAL_DISPATCH") return true;
+  const typedRequest = request as {
+    readonly request: { readonly actions: readonly unknown[] };
+  };
+  return typedError.requestedCount === typedRequest.request.actions.length;
+};
+
+const browserPasteErrorMatchesRequest: ReplayResponseCorrelation = (
+  request,
+  error,
+) => {
+  const typedError = error as {
+    readonly code: string;
+    readonly requestedCount?: number;
+  };
+  if (typedError.code !== "PARTIAL_DISPATCH") return true;
+  const typedRequest = request as z.infer<typeof pasteRequestSchema>;
+  return (
+    typedError.requestedCount === typedRequest.request.sourceCharacterCount
+  );
+};
+
 const browserExchangeSchema = z.union([
   exchangeSchema(
     "connect",
     refRequestSchema,
     connectionSchema,
     browserConnectErrorSchema,
+    browserConnectionResponseMatchesRequest,
   ),
   exchangeSchema(
     "reconnect",
     refRequestSchema,
     connectionSchema,
     browserConnectErrorSchema,
+    browserConnectionResponseMatchesRequest,
   ),
   exchangeSchema(
     "capture",
     captureRequestSchema,
     observationSchema,
     browserReadErrorSchema,
+    browserCaptureResponseMatchesRequest,
   ),
   exchangeSchema(
     "mouse",
     mouseRequestSchema,
     mutationReceiptSchema,
     browserObservedMutationErrorSchema,
+    browserMutationResponseMatchesRequest,
+    browserMultiActionErrorMatchesRequest,
   ),
   exchangeSchema(
     "keyboard",
     keyboardRequestSchema,
     mutationReceiptSchema,
     browserObservedMutationErrorSchema,
+    browserMutationResponseMatchesRequest,
+    browserMultiActionErrorMatchesRequest,
   ),
   exchangeSchema(
     "paste",
     pasteRequestSchema,
     pasteReceiptSchema,
-    browserObservedMutationErrorSchema,
+    browserPasteErrorSchema,
+    browserMutationResponseMatchesRequest,
+    browserPasteErrorMatchesRequest,
   ),
   exchangeSchema(
     "release",
     releaseRequestSchema,
     releaseReceiptSchema,
     browserReleaseErrorSchema,
+    browserMutationResponseMatchesRequest,
   ),
   exchangeSchema("close", refRequestSchema, z.null(), browserCloseErrorSchema),
 ]);
@@ -1127,6 +1355,7 @@ export interface SanitizedReplayRecordedError {
   readonly verification: "none" | "device_ack_only" | "device_state_verified";
   readonly dispatchedCount?: number;
   readonly completedCount?: number;
+  readonly requestedCount?: number;
 }
 export interface SanitizedReplayExchange {
   readonly operation: string;
@@ -1244,6 +1473,15 @@ export class ReplayRecordedError extends Error {
   public readonly verification: SanitizedReplayRecordedError["verification"];
   public readonly dispatchedCount?: number;
   public readonly completedCount?: number;
+  public readonly requestedCount?: number;
+  public readonly safeToRetry: boolean;
+  public readonly requiredNextStep:
+    | "none"
+    | "reconnect_then_capture"
+    | "inspect_device_state_before_retry"
+    | "wait_or_request_takeover"
+    | "grant_permission"
+    | "enable_capability";
 
   public constructor(recorded: SanitizedReplayRecordedError) {
     super(`The replay recorded ${recorded.code}.`);
@@ -1253,6 +1491,34 @@ export class ReplayRecordedError extends Error {
     this.writeBegan = recorded.writeBegan;
     this.acknowledged = recorded.acknowledged;
     this.verification = recorded.verification;
+    if (recorded.outcome !== "not_sent") {
+      this.safeToRetry = false;
+      this.requiredNextStep = "inspect_device_state_before_retry";
+    } else if (
+      recorded.code === "DEVICE_UNREACHABLE" ||
+      recorded.code === "CONNECTION_LOST"
+    ) {
+      this.safeToRetry = true;
+      this.requiredNextStep = "reconnect_then_capture";
+    } else if (recorded.code === "PERMISSION_DENIED") {
+      this.safeToRetry = false;
+      this.requiredNextStep = "grant_permission";
+    } else if (recorded.code === "CAPABILITY_MISSING") {
+      this.safeToRetry = false;
+      this.requiredNextStep = "enable_capability";
+    } else if (recorded.code === "CONTROL_BUSY") {
+      this.safeToRetry = true;
+      this.requiredNextStep = "wait_or_request_takeover";
+    } else {
+      this.safeToRetry =
+        recorded.code === "AUTH_RATE_LIMITED" ||
+        recorded.code === "CANCELLED" ||
+        recorded.code === "DEADLINE_EXCEEDED";
+      this.requiredNextStep = "none";
+    }
+    if (recorded.requestedCount !== undefined) {
+      this.requestedCount = recorded.requestedCount;
+    }
     if (recorded.dispatchedCount !== undefined) {
       this.dispatchedCount = recorded.dispatchedCount;
     }

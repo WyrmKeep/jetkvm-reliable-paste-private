@@ -47,8 +47,8 @@
       "id": "replace-one-shared-adapter",
       "after_step": "reconnect-with-new-channel",
       "boundary": "during_verification",
-      "action": "Replace the sole Browser/WebRTC RPC binding while each linked tool call inspects or traverses the injected adapter.",
-      "expected_effect": "The old binding is invalidated before publication and no tool creates a direct or second channel."
+      "action": "At the adapter boundary, verify the current generation-8 four-part session/generation/connection/channel binding is the sole injected adapter for each shared-binding call; for each replacement call, inject the invalidated generation-7 prior-connection prior-channel four-part binding while leaving the public input on generation 8.",
+      "expected_effect": "Current public inputs pass the generation fence, shared calls traverse only the current adapter, and replacement calls reject or qualify the injected old binding at the adapter boundary before any stale ATX write or second channel."
     }
   ],
   "steps": [
@@ -84,7 +84,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "format": "jpeg",
         "max_width": 1280,
         "max_height": 720,
@@ -99,7 +99,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -111,7 +111,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-keyboard",
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-keyboard",
         "actions": [
@@ -131,7 +131,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-mouse",
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-mouse",
         "actions": [
@@ -152,7 +152,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-shared-device-rpc-adapter-binding-input-paste",
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-paste",
         "text": "FixturePaste91",
@@ -167,7 +167,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "request_id": "opaque-shared-device-rpc-adapter-binding-input-release",
         "timeout_ms": 1000
       },
@@ -180,7 +180,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "request_id": "opaque-shared-device-rpc-adapter-binding-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -206,7 +206,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "request_id": "opaque-shared-device-rpc-adapter-binding-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -220,7 +220,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -232,7 +232,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "format": "jpeg",
         "max_width": 1280,
         "max_height": 720,
@@ -247,7 +247,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -259,7 +259,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-keyboard",
         "request_id": "opaque-device-rpc-adapter-replacement-input-keyboard",
         "actions": [
@@ -279,7 +279,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-mouse",
         "request_id": "opaque-device-rpc-adapter-replacement-input-mouse",
         "actions": [
@@ -300,7 +300,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "observation_id": "opaque-observation-device-rpc-adapter-replacement-input-paste",
         "request_id": "opaque-device-rpc-adapter-replacement-input-paste",
         "text": "FixturePaste91",
@@ -315,7 +315,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "request_id": "opaque-device-rpc-adapter-replacement-input-release",
         "timeout_ms": 1000
       },
@@ -328,7 +328,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "request_id": "opaque-device-rpc-adapter-replacement-power-control",
         "action": "press_power",
         "timeout_ms": 1000
@@ -354,7 +354,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "request_id": "opaque-device-rpc-adapter-replacement-session-reconnect",
         "takeover": false,
         "timeout_ms": 1000
@@ -368,7 +368,7 @@
       "call": "tools/call",
       "input": {
         "session_id": "opaque-session",
-        "session_generation": 7,
+        "session_generation": 8,
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
@@ -456,6 +456,12 @@
       "id": "reset-fixture",
       "action": "Clear deterministic faults and restore the recorded fixture baseline.",
       "assertion": "The next story starts only after the safe baseline is verified.",
+      "always": true
+    },
+    {
+      "id": "restore-power-baseline",
+      "action": "Restore the recorded ATX-observable baseline using the reviewed fixture procedure while retaining the device lease.",
+      "assertion": "The baseline ATX-observable state is proven before the next story starts.",
       "always": true
     }
   ],

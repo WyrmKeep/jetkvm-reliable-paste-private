@@ -92,6 +92,12 @@ function successfulConnect(): CallToolResult {
     content: [{ type: "text", text: JSON.stringify(payload) }],
   };
 }
+function callToolResult(envelope: Record<string, unknown>): CallToolResult {
+  return {
+    structuredContent: envelope,
+    content: [{ type: "text", text: JSON.stringify(envelope) }],
+  };
+}
 
 function completeRegistry(
   override?: Partial<Record<JetKvmToolName, JetKvmToolHandler>>,
@@ -104,10 +110,25 @@ function completeRegistry(
   } as HandlerRegistry;
 }
 
-async function connectedClient(registry: HandlerRegistry): Promise<Client> {
+async function connectedClient(
+  registry: HandlerRegistry,
+  clientId?: string,
+): Promise<Client> {
   const server = createMcpServer(registry);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
+  if (clientId !== undefined) {
+    const send = clientTransport.send.bind(clientTransport);
+    clientTransport.send = async (message, options) =>
+      send(message, {
+        ...options,
+        authInfo: {
+          token: "test-token",
+          clientId,
+          scopes: [],
+        },
+      });
+  }
   await server.connect(serverTransport);
   const client = new Client({ name: "server-contract-test", version: "1.0.0" });
   openClients.push(client);
@@ -298,6 +319,265 @@ describe("createMcpServer", () => {
     expect(context).not.toHaveProperty("requestId");
     expect(context).not.toHaveProperty("sendNotification");
     expect(context).not.toHaveProperty("sendRequest");
+  });
+
+  it("domain-separates every non-null accepted principal without canonical aliases", async () => {
+    const observedPrincipals: (string | null)[] = [];
+    const handler: JetKvmToolHandler = async (_input, context) => {
+      observedPrincipals.push(context.principalId);
+      return businessError("jetkvm_session_connect");
+    };
+    const formerlyHashed = "alice~x";
+    const formerlyCanonical = `principal-${createHash("sha256")
+      .update(formerlyHashed)
+      .digest("hex")
+      .slice(0, 32)}`;
+    const firstClient = await connectedClient(
+      completeRegistry({ jetkvm_session_connect: handler }),
+      formerlyHashed,
+    );
+    const secondClient = await connectedClient(
+      completeRegistry({ jetkvm_session_connect: handler }),
+      formerlyCanonical,
+    );
+
+    await firstClient.callTool({
+      name: "jetkvm_session_connect",
+      arguments: { request_id: "request-principal-a", timeout_ms: 100 },
+    });
+    await secondClient.callTool({
+      name: "jetkvm_session_connect",
+      arguments: { request_id: "request-principal-b", timeout_ms: 100 },
+    });
+
+    expect(observedPrincipals).toHaveLength(2);
+    expect(observedPrincipals[0]).toMatch(/^principal-[a-f0-9]{64}$/);
+    expect(observedPrincipals[1]).toMatch(/^principal-[a-f0-9]{64}$/);
+    expect(observedPrincipals[0]).not.toBe(observedPrincipals[1]);
+    expect(observedPrincipals).not.toContain(formerlyHashed);
+    expect(observedPrincipals).not.toContain(formerlyCanonical);
+  });
+
+  it.each([
+    {
+      tool: "jetkvm_input_keyboard" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-actions",
+        actions: [
+          { type: "key_press", key: "KeyA" },
+          { type: "key_press", key: "KeyB" },
+        ],
+        timeout_ms: 100,
+      },
+    },
+    {
+      tool: "jetkvm_input_mouse" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-actions",
+        actions: [
+          { type: "move", x: 1, y: 1 },
+          { type: "click", x: 1, y: 1, button: "left" },
+        ],
+        timeout_ms: 100,
+      },
+    },
+  ])(
+    "correlates $tool success counts to the validated action list",
+    async ({ tool, arguments: callArguments }) => {
+      let returnedCount = 1;
+      const handler: JetKvmToolHandler = async () => {
+        const result = {
+          request_id: "request-actions",
+          outcome: "applied",
+          verification: "device_ack_only",
+          safe_to_retry: false,
+          required_next_step: "none",
+          dispatched_action_count: returnedCount,
+          completed_action_count: returnedCount,
+          post_capture: null,
+          ...(tool === "jetkvm_input_keyboard" ? { held_keys: [] } : {}),
+        };
+        return callToolResult({
+          ok: true,
+          tool,
+          operation_id: "operation-actions",
+          session_id: "session-1",
+          session_generation: 1,
+          duration_ms: 1,
+          result,
+        });
+      };
+      const client = await connectedClient(
+        completeRegistry({ [tool]: handler }),
+      );
+
+      await expect(
+        client.callTool({ name: tool, arguments: callArguments }),
+      ).rejects.toThrow(/Invalid handler result/);
+      returnedCount = callArguments.actions.length;
+      await expect(
+        client.callTool({ name: tool, arguments: callArguments }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          ok: true,
+          result: {
+            dispatched_action_count: 2,
+            completed_action_count: 2,
+          },
+        },
+      });
+    },
+  );
+
+  it("correlates action error prefixes to the validated action list", async () => {
+    let details = {
+      failed_action_index: 1,
+      dispatched_action_count: 2,
+      completed_action_count: 1,
+    };
+    const handler: JetKvmToolHandler = async () => {
+      const envelope = {
+        ok: false,
+        tool: "jetkvm_input_mouse",
+        operation_id: "operation-action-error",
+        session_id: "session-1",
+        session_generation: 1,
+        duration_ms: 1,
+        error: {
+          code: "MUTATION_OUTCOME_UNKNOWN",
+          message: "Unknown action outcome.",
+          phase: "execute",
+          outcome: "unknown",
+          verification: "none",
+          safe_to_retry: false,
+          required_next_step: "inspect_device_state_before_retry",
+          details: {
+            permission: null,
+            capability: null,
+            ...details,
+            downstream_stage: "write",
+            expected_generation: null,
+            actual_generation: null,
+            observation_id: "observation-1",
+          },
+        },
+      };
+      return { ...callToolResult(envelope), isError: true };
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_input_mouse: handler }),
+    );
+    const call = {
+      name: "jetkvm_input_mouse" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 1,
+        observation_id: "observation-1",
+        request_id: "request-action-error",
+        actions: [{ type: "move", x: 1, y: 1 }],
+        timeout_ms: 100,
+      },
+    };
+
+    await expect(client.callTool(call)).rejects.toThrow(
+      /Invalid handler result/,
+    );
+    details = {
+      failed_action_index: 0,
+      dispatched_action_count: 1,
+      completed_action_count: 0,
+    };
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      isError: true,
+      structuredContent: {
+        ok: false,
+        error: {
+          details: {
+            failed_action_index: 0,
+            dispatched_action_count: 1,
+            completed_action_count: 0,
+          },
+        },
+      },
+    });
+  });
+
+  it("enforces exact reconnect request, session, and generation correlation", async () => {
+    let overrides: Record<string, unknown> = {};
+    const handler: JetKvmToolHandler = async () => {
+      const baseResult = {
+        request_id: "request-reconnect",
+        outcome: "applied",
+        verification: "device_ack_only",
+        safe_to_retry: false,
+        required_next_step: "none",
+        previous_session_generation: 7,
+        new_session_generation: 8,
+        connection_epoch: 2,
+        state: "ready",
+        takeover_performed: false,
+        fresh_capture_required: true,
+      };
+      const result = {
+        ...baseResult,
+        ...((overrides.result as Record<string, unknown> | undefined) ?? {}),
+      };
+      return callToolResult({
+        ok: true,
+        tool: "jetkvm_session_reconnect",
+        operation_id: "operation-reconnect",
+        session_id: "session-1",
+        session_generation: 8,
+        duration_ms: 1,
+        ...overrides,
+        result,
+      });
+    };
+    const client = await connectedClient(
+      completeRegistry({ jetkvm_session_reconnect: handler }),
+    );
+    const call = {
+      name: "jetkvm_session_reconnect" as const,
+      arguments: {
+        session_id: "session-1",
+        session_generation: 7,
+        request_id: "request-reconnect",
+        takeover: false,
+        timeout_ms: 100,
+      },
+    };
+
+    for (const invalidOverrides of [
+      { result: { request_id: "request-other" } },
+      { result: { previous_session_generation: 6 } },
+      { result: { new_session_generation: 7 }, session_generation: 7 },
+      { session_generation: 9 },
+      { session_id: "session-other" },
+    ]) {
+      overrides = invalidOverrides;
+      await expect(client.callTool(call)).rejects.toThrow(
+        /Invalid handler result/,
+      );
+    }
+    overrides = {};
+    await expect(client.callTool(call)).resolves.toMatchObject({
+      structuredContent: {
+        ok: true,
+        session_id: "session-1",
+        session_generation: 8,
+        result: {
+          request_id: "request-reconnect",
+          previous_session_generation: 7,
+          new_session_generation: 8,
+        },
+      },
+    });
   });
 
   it("rejects schema-invalid calls before invoking a handler", async () => {

@@ -28,14 +28,82 @@
   ],
   "fault_script": [
     {
+      "id": "cancel-before-paste-acceptance",
+      "after_step": "capture-cancel-observation",
+      "boundary": "before_write",
+      "action": "Arm a one-shot cancellation for paste-cancel-before-acceptance before the paste operation is accepted, then clear the fault.",
+      "expected_effect": "The call is not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and its request reservation released."
+    },
+    {
+      "id": "disconnect-after-paste-write",
+      "after_step": "capture-disconnect-observation",
+      "boundary": "after_write",
+      "action": "Arm a one-shot channel loss for paste-disconnect-after-write immediately after exactly one paste event is dispatched and before any correlated completion, then clear the fault.",
+      "expected_effect": "The call is unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
+    },
+    {
       "id": "paste-boundary-sequence",
       "after_step": "capture-paste-observation",
       "boundary": "after_write",
-      "action": "Exercise cancellation before acceptance separately from an accepted operation that loses its channel before a correlated terminal event.",
-      "expected_effect": "Pre-acceptance cancellation is not_sent; post-acceptance loss is unknown with no replay and exact event counts."
+      "action": "Arm a one-shot partial dispatch for submit-reliable-paste after exactly two of fourteen character events are dispatched but only the first completes, then suppress the suffix and clear the fault.",
+      "expected_effect": "The call is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
     }
   ],
   "steps": [
+    {
+      "id": "capture-cancel-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A fresh unused observation reserved as opaque-observation-paste-cancel-before-acceptance."
+    },
+    {
+      "id": "paste-cancel-before-acceptance",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-paste-cancel-before-acceptance",
+        "request_id": "opaque-request-paste-cancel-before-acceptance",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and the request reservation released."
+    },
+    {
+      "id": "capture-disconnect-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh unused observation reserved as opaque-observation-paste-disconnect-after-write."
+    },
+    {
+      "id": "paste-disconnect-after-write",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-paste-disconnect-after-write",
+        "request_id": "opaque-request-paste-disconnect-after-write",
+        "text": "FixturePaste91",
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
+    },
     {
       "id": "capture-paste-observation",
       "tool": "jetkvm_display_capture",
@@ -46,7 +114,7 @@
         "timeout_ms": 1000
       },
       "timeout_ms": 1000,
-      "expect": "A fresh unused observation."
+      "expect": "A distinct fresh unused observation reserved as opaque-observation-paste-partial-dispatch."
     },
     {
       "id": "submit-reliable-paste",
@@ -55,35 +123,62 @@
       "input": {
         "session_id": "opaque-session",
         "session_generation": 7,
-        "observation_id": "opaque-observation",
-        "request_id": "opaque-paste",
+        "observation_id": "opaque-observation-paste-partial-dispatch",
+        "request_id": "opaque-request-paste-partial-dispatch",
         "text": "FixturePaste91",
-        "timeout_ms": 300000
+        "timeout_ms": 1000
       },
-      "timeout_ms": 300000,
-      "expect": "Submitted, active, and succeeded events correlate monotonically to the operation and measured pacing is reported."
+      "timeout_ms": 1000,
+      "expect": "unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
+    },
+    {
+      "id": "capture-correlated-terminal-observation",
+      "tool": "jetkvm_display_capture",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "timeout_ms": 1000
+      },
+      "timeout_ms": 1000,
+      "expect": "A distinct fresh unused observation reserved as opaque-observation-paste-correlated-terminal."
+    },
+    {
+      "id": "submit-correlated-terminal-paste",
+      "tool": "jetkvm_input_paste",
+      "call": "tools/call",
+      "input": {
+        "session_id": "opaque-session",
+        "session_generation": 7,
+        "observation_id": "opaque-observation-paste-correlated-terminal",
+        "request_id": "opaque-request-paste-correlated-terminal",
+        "text": "FixturePaste91",
+        "timeout_ms": 10000
+      },
+      "timeout_ms": 10000,
+      "expect": "Exactly fourteen submitted, active, and succeeded character events correlate monotonically to this request and measured pacing is reported at nominal 91 cps."
     }
   ],
   "pass": [
     {
       "id": "assertion-1",
       "requirement": "branch:cancellation-before-write",
-      "assertion": "Cancellation before the write boundary is not_sent and records zero downstream writes."
+      "assertion": "Cancellation before paste acceptance is not_sent with dispatched_count 0, completed_count 0, zero downstream writes, and a released request reservation."
     },
     {
       "id": "assertion-2",
       "requirement": "branch:disconnect-after-write",
-      "assertion": "Disconnect after a possible write is unknown, closes the mutation gate, and performs zero replay writes."
+      "assertion": "Disconnect after exactly one paste event is dispatched is unknown with dispatched_count 1, completed_count 0, a closed mutation gate, and zero replay writes."
     },
     {
       "id": "assertion-3",
       "requirement": "branch:partial-multi-event-dispatch",
-      "assertion": "A partial multi-event dispatch is unknown with exact dispatched and completed counts and suppresses the suffix."
+      "assertion": "Partial paste dispatch is unknown with dispatched_count 2, completed_count 1, the remaining twelve-character suffix suppressed, and zero replay writes."
     },
     {
       "id": "assertion-4",
       "requirement": "contract:reliable-paste-correlated-terminal",
-      "assertion": "Only submitted-active-succeeded proves success; gaps, layout mismatch, lifecycle downgrade, cancellation, and timeout remain explicit and never claim target-application acceptance."
+      "assertion": "Only the distinct fault-free call's correlated submitted-active-succeeded sequence proves all fourteen characters completed at measured nominal pacing; no error branch claims target-application acceptance."
     }
   ],
   "evidence": [

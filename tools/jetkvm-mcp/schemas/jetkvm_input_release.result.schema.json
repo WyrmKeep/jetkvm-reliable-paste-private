@@ -16,29 +16,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
         },
         "session_id": {
-          "anyOf": [
-            {
-              "$ref": "#/anyOf/0/properties/operation_id"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/anyOf/0/properties/operation_id"
         },
         "session_generation": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "duration_ms": {
-          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "result": {
           "type": "object",
@@ -148,7 +136,7 @@
         "session_generation": {
           "anyOf": [
             {
-              "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+              "$ref": "#/anyOf/0/properties/duration_ms"
             },
             {
               "type": "null"
@@ -156,7 +144,7 @@
           ]
         },
         "duration_ms": {
-          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+          "$ref": "#/anyOf/0/properties/duration_ms"
         },
         "tool": {
           "type": "string",
@@ -207,14 +195,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "anyOf": [
@@ -237,7 +218,7 @@
                     "expected_generation": {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         {
                           "type": "null"
@@ -247,7 +228,7 @@
                     "actual_generation": {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         {
                           "type": "null"
@@ -332,7 +313,7 @@
                       "const": "input_release"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -423,7 +404,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -517,7 +498,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -605,7 +586,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -696,7 +677,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -775,7 +756,7 @@
                 },
                 "required_next_step": {
                   "type": "string",
-                  "const": "none"
+                  "const": "reconnect_then_capture"
                 },
                 "details": {
                   "type": "object",
@@ -787,7 +768,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -875,7 +856,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -971,7 +952,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1071,12 +1052,19 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "anyOf": [
+                        {
+                          "$ref": "#/anyOf/0/properties/duration_ms"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "dispatched_action_count": {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         {
                           "type": "null"
@@ -1086,7 +1074,7 @@
                     "completed_action_count": {
                       "anyOf": [
                         {
-                          "$ref": "#/anyOf/0/properties/session_generation/anyOf/0"
+                          "$ref": "#/anyOf/0/properties/duration_ms"
                         },
                         {
                           "type": "null"
@@ -1180,7 +1168,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1277,7 +1265,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
@@ -1372,7 +1360,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1469,7 +1457,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
@@ -1568,7 +1556,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "type": "null"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
@@ -1668,7 +1656,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"
@@ -1683,6 +1671,94 @@
                         "acknowledgement",
                         "verification"
                       ]
+                    },
+                    "expected_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
+                    },
+                    "actual_generation": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/actual_generation"
+                    },
+                    "observation_id": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/observation_id"
+                    }
+                  },
+                  "required": [
+                    "permission",
+                    "capability",
+                    "failed_action_index",
+                    "dispatched_action_count",
+                    "completed_action_count",
+                    "downstream_stage",
+                    "expected_generation",
+                    "actual_generation",
+                    "observation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "message",
+                "phase",
+                "code",
+                "outcome",
+                "verification",
+                "safe_to_retry",
+                "required_next_step",
+                "details"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/message"
+                },
+                "phase": {
+                  "type": "string",
+                  "const": "queue"
+                },
+                "code": {
+                  "type": "string",
+                  "const": "ADMISSION_CAPACITY_EXCEEDED"
+                },
+                "outcome": {
+                  "type": "string",
+                  "const": "not_sent"
+                },
+                "verification": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "safe_to_retry": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "required_next_step": {
+                  "type": "string",
+                  "const": "none"
+                },
+                "details": {
+                  "type": "object",
+                  "properties": {
+                    "permission": {
+                      "type": "null"
+                    },
+                    "capability": {
+                      "type": "null"
+                    },
+                    "failed_action_index": {
+                      "type": "null"
+                    },
+                    "dispatched_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "completed_action_count": {
+                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/dispatched_action_count"
+                    },
+                    "downstream_stage": {
+                      "type": "string",
+                      "const": "none"
                     },
                     "expected_generation": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/expected_generation"
@@ -1765,7 +1841,7 @@
                       "type": "null"
                     },
                     "failed_action_index": {
-                      "$ref": "#/anyOf/1/properties/error/anyOf/0/properties/details/properties/failed_action_index"
+                      "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/failed_action_index"
                     },
                     "dispatched_action_count": {
                       "$ref": "#/anyOf/1/properties/error/anyOf/9/properties/details/properties/dispatched_action_count"

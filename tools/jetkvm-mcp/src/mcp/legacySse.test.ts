@@ -6,7 +6,8 @@ import {
   type IncomingMessage,
   type Server,
 } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo, type Socket } from "node:net";
+import type { Server as HttpsServer } from "node:https";
 
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -154,10 +155,7 @@ async function startAdapter(
     bearerCredential: credential,
     ...adapterOptions,
   });
-  const server = createServer((request, response) => {
-    void adapter.handleRequest(request, response);
-  });
-  adapter.attachServer(server);
+  const server = adapter.createHttpServer();
   const listening = Promise.withResolvers<void>();
   server.once("listening", listening.resolve);
   server.listen(0, listenHost ?? policy.bindHost);
@@ -238,7 +236,7 @@ interface TestHttpResponse {
 interface TestHttpRequestInit {
   readonly method?: string;
   readonly headers?: Record<string, string>;
-  readonly body?: string;
+  readonly body?: string | Buffer;
 }
 
 async function testFetch(
@@ -319,6 +317,50 @@ function beginPendingPost(
     };
   });
   return { request, response };
+}
+
+async function listenOnLoopback(server: Server | HttpsServer): Promise<number> {
+  const listening = Promise.withResolvers<void>();
+  server.once("listening", listening.resolve);
+  server.listen(0, "127.0.0.1");
+  await listening.promise;
+  return (server.address() as AddressInfo).port;
+}
+
+async function closeServer(server: Server | HttpsServer): Promise<void> {
+  if (!server.listening) return;
+  const closed = Promise.withResolvers<void>();
+  server.close(() => closed.resolve());
+  await closed.promise;
+}
+
+async function connectRaw(port: number): Promise<Socket> {
+  const socket = connect({ host: "127.0.0.1", port });
+  const connected = Promise.withResolvers<void>();
+  socket.once("connect", connected.resolve);
+  socket.once("error", connected.reject);
+  await connected.promise;
+  return socket;
+}
+
+async function waitForSocketClose(
+  socket: Socket,
+  timeoutMs: number,
+): Promise<string> {
+  const completed = Promise.withResolvers<string>();
+  const chunks: Buffer[] = [];
+  // These integration checks exercise Node's real parser/TLS construction timers.
+  const timer = setTimeout(() => {
+    socket.destroy();
+    completed.reject(new Error(`Socket remained open after ${timeoutMs}ms`));
+  }, timeoutMs);
+  socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+  socket.once("error", () => undefined);
+  socket.once("close", () => {
+    clearTimeout(timer);
+    completed.resolve(Buffer.concat(chunks).toString("utf8"));
+  });
+  return completed.promise;
 }
 
 afterEach(async () => {
@@ -538,7 +580,7 @@ describe("legacy SSE adapter", () => {
       "principalId",
       "signal",
     ]);
-    expect(context.principalId).toBe(PRINCIPAL);
+    expect(context.principalId).toMatch(/^principal-[a-f0-9]{64}$/);
     expect(context.correlationId).toMatch(/^mcp-[0-9a-f]{32}$/);
     expect(JSON.stringify(context)).not.toMatch(
       /authInfo|requestInfo|sessionId|authorization|bearer|csrf|test-only-bearer/i,
@@ -662,7 +704,6 @@ describe("legacy SSE adapter", () => {
       { bindHost: "127.0.0.1" },
       "0.0.0.0",
     ],
-    ["HTTPS policy on plaintext", { scheme: "https" as const }, "0.0.0.0"],
   ] as const)(
     "rejects %s before authentication or allocation",
     async (_case, policy, listenHost) => {
@@ -691,28 +732,88 @@ describe("legacy SSE adapter", () => {
     },
   );
 
-  it("fails closed if attached listener deadlines are weakened", async () => {
-    const authenticateBearer = vi.fn(() => ({ principalId: PRINCIPAL }));
-    const transportFactory = vi.fn(
-      (
-        endpoint: string,
-        response: ConstructorParameters<typeof SSEServerTransport>[1],
-      ) => new SSEServerTransport(endpoint, response),
+  it("refuses an HTTP constructor for an HTTPS policy", () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({ enabled: true }),
+    });
+
+    expect(() => adapter.createHttpServer()).toThrowError(
+      "Legacy SSE HTTPS policy requires an HTTPS server",
     );
-    const value = await startAdapter({
-      authenticateBearer,
-      transportFactory,
-    });
-    value.server.headersTimeout = 0;
+  });
 
-    const response = await testFetch(`${value.baseUrl}/sse`, {
-      headers: authorizedHeaders(),
-    });
+  it("makes attached listener deadlines immutable", async () => {
+    const value = await startAdapter();
 
-    expect(response.status).toBe(403);
-    expect(await response.text()).toBe("Forbidden");
-    expect(authenticateBearer).not.toHaveBeenCalled();
-    expect(transportFactory).not.toHaveBeenCalled();
+    expect(() => {
+      value.server.headersTimeout = 0;
+    }).toThrow(TypeError);
+    expect(() => {
+      value.server.requestTimeout = 0;
+    }).toThrow(TypeError);
+    expect(() => {
+      value.server.keepAliveTimeout = 0;
+    }).toThrow(TypeError);
+    expect(value.server.headersTimeout).toBe(10_000);
+    expect(value.server.requestTimeout).toBe(30_000);
+    expect(value.server.keepAliveTimeout).toBe(5_000);
+  });
+
+  it("rejects servers without project-owned construction proof", () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: true,
+        scheme: "http",
+        allowPlaintextHttp: true,
+      }),
+    });
+    const server = createServer();
+
+    expect(() => adapter.attachServer(server)).toThrowError(
+      "Legacy SSE server lacks project-owned construction proof",
+    );
+    expect(server.maxConnections).toBeUndefined();
+  });
+
+  it("expires incomplete HTTP headers at the configured construction bound", async () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: true,
+        scheme: "http",
+        allowPlaintextHttp: true,
+        requestHeaderTimeoutMs: 40,
+      }),
+    });
+    const server = adapter.createHttpServer();
+    const port = await listenOnLoopback(server);
+
+    try {
+      const socket = await connectRaw(port);
+      socket.write("GET /sse HTTP/1.1\r\nHost: 127.0.0.1\r\n");
+      await waitForSocketClose(socket, 500);
+    } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
+  });
+
+  it("expires incomplete TLS handshakes no later than the header bound", async () => {
+    const adapter = new LegacySseAdapter({
+      securityPolicy: parseLegacySsePolicy({
+        enabled: true,
+        requestHeaderTimeoutMs: 40,
+      }),
+    });
+    const server = adapter.createHttpsServer({});
+    const port = await listenOnLoopback(server);
+
+    try {
+      const socket = await connectRaw(port);
+      await waitForSocketClose(socket, 500);
+    } finally {
+      await adapter.close();
+      await closeServer(server);
+    }
   });
 
   it("sets a finite immutable connection cap before listening", async () => {
@@ -751,6 +852,81 @@ describe("legacy SSE adapter", () => {
       "Legacy SSE bearer credential must be independently activated",
     );
     secret.dispose();
+  });
+
+  it("rate-limits unauthenticated and malformed route attempts before checks", async () => {
+    let now = 1_000;
+    const authenticateBearer = vi.fn((authorization: string | undefined) => {
+      if (authorization !== `Bearer ${TOKEN}`) {
+        throw new Error("invalid bearer");
+      }
+      return { principalId: PRINCIPAL };
+    });
+    const transportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => new SSEServerTransport(endpoint, response),
+    );
+    const { baseUrl } = await startAdapter({
+      policy: {
+        routeAttemptRateLimit: 2,
+        routeAttemptRateWindowMs: 100,
+      },
+      now: () => now,
+      authenticateBearer,
+      transportFactory,
+    });
+
+    const unauthenticated = await testFetch(`${baseUrl}/sse`, {
+      headers: {
+        Host: AUTHORITY,
+        Origin: ORIGIN,
+        "X-JetKVM-CSRF": "1",
+      },
+    });
+    expect(unauthenticated.status).toBe(401);
+
+    const malformed = await post(baseUrl, "/messages?sessionId=bad", "{}");
+    expect(malformed.status).toBe(400);
+
+    const limited = await testFetch(`${baseUrl}/unknown`, {
+      headers: authorizedHeaders(),
+    });
+    expect(limited.status).toBe(429);
+    expect(await limited.text()).toBe("Too Many Requests");
+    expect(authenticateBearer).toHaveBeenCalledTimes(2);
+    expect(transportFactory).not.toHaveBeenCalled();
+
+    now -= 1;
+    const recovered = await testFetch(`${baseUrl}/unknown`, {
+      headers: authorizedHeaders(),
+    });
+    expect(recovered.status).toBe(404);
+  });
+
+  it("closes a rejected POST socket without draining its trickled body", async () => {
+    const { baseUrl } = await startAdapter();
+    const port = Number(new URL(baseUrl).port);
+    const socket = await connectRaw(port);
+    socket.write(
+      [
+        "POST /messages?sessionId=00000000-0000-4000-8000-000000000000 HTTP/1.1",
+        `Host: ${AUTHORITY}`,
+        `Origin: ${ORIGIN}`,
+        "X-JetKVM-CSRF: 1",
+        "Content-Type: application/json",
+        "Content-Length: 1048576",
+        "Connection: keep-alive",
+        "",
+        "{",
+      ].join("\r\n"),
+    );
+
+    const response = await waitForSocketClose(socket, 500);
+    expect(response).toMatch(/^HTTP\/1\.1 401 Unauthorized\r\n/);
+    expect(response.toLowerCase()).toContain("\r\nconnection: close\r\n");
+    expect(response.endsWith("Unauthorized")).toBe(true);
   });
 
   it("enforces global and per-principal stream concurrency before allocation", async () => {
@@ -848,6 +1024,54 @@ describe("legacy SSE adapter", () => {
     const afterWindow = await openSse(baseUrl);
     expect(transportFactory).toHaveBeenCalledTimes(2);
     afterWindow.response.destroy();
+  });
+
+  it("resets stream opening histories when the clock moves backward", async () => {
+    let now = 1_000;
+    const streamClosed = Promise.withResolvers<void>();
+    let allocationCount = 0;
+    const transportFactory = vi.fn(
+      (
+        endpoint: string,
+        response: ConstructorParameters<typeof SSEServerTransport>[1],
+      ) => {
+        allocationCount += 1;
+        if (allocationCount === 2) {
+          throw new Error("rollback reached allocation");
+        }
+        return new SSEServerTransport(endpoint, response);
+      },
+    );
+    const { baseUrl } = await startAdapter({
+      policy: {
+        routeAttemptRateLimit: 10,
+        streamOpenRateLimit: 1,
+        streamOpenRateLimitPerPrincipal: 1,
+        streamOpenRateWindowMs: 100,
+      },
+      now: () => now,
+      transportFactory,
+      onDiagnostic: (event) => {
+        if (event.code === "transport_closed") streamClosed.resolve();
+      },
+    });
+    const first = await openSse(baseUrl);
+    first.response.destroy();
+    await streamClosed.promise;
+    expect(
+      (
+        await testFetch(`${baseUrl}/sse`, {
+          headers: authorizedHeaders(),
+        })
+      ).status,
+    ).toBe(429);
+
+    now = 900;
+    const afterRollback = await testFetch(`${baseUrl}/sse`, {
+      headers: authorizedHeaders(),
+    });
+    expect(afterRollback.status).toBe(500);
+    expect(transportFactory).toHaveBeenCalledTimes(2);
   });
 
   it("bounds concurrent POST work globally, per principal, and per session", async () => {
@@ -1345,6 +1569,53 @@ describe("legacy SSE adapter", () => {
     },
   );
 
+  it("rejects malformed UTF-8 before JSON parsing or dispatch", async () => {
+    const handler = vi.fn(async (_input: unknown) =>
+      businessError("jetkvm_input_paste"),
+    );
+    const { baseUrl } = await startAdapter({
+      handlerRegistry: completeRegistry({ jetkvm_input_paste: handler }),
+    });
+    const stream = await openSse(baseUrl);
+    const initialized = await post(
+      baseUrl,
+      stream.endpoint,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "invalid-utf8-test", version: "1.0.0" },
+        },
+      }),
+    );
+    expect(initialized.status).toBe(202);
+    await stream.nextFrame();
+
+    const malformed = Buffer.concat([
+      Buffer.from(
+        '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jetkvm_input_paste","arguments":{"session_id":"session-1","session_generation":1,"observation_id":"observation-1","request_id":"request-utf8","text":"',
+      ),
+      Buffer.from([0xc3, 0x28]),
+      Buffer.from('","timeout_ms":100}}}'),
+    ]);
+    const response = await testFetch(`${baseUrl}${stream.endpoint}`, {
+      method: "POST",
+      headers: {
+        ...authorizedHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: malformed,
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Invalid UTF-8");
+    expect(handler).not.toHaveBeenCalled();
+    stream.response.destroy();
+  });
+
   it("rejects a body larger than 1 MiB without dispatch", async () => {
     const handler = vi.fn(async (_input: unknown) =>
       businessError("jetkvm_session_connect"),
@@ -1354,11 +1625,15 @@ describe("legacy SSE adapter", () => {
     });
     const stream = await openSse(baseUrl);
 
-    const response = await post(
-      baseUrl,
-      stream.endpoint,
-      `"${"x".repeat(1_048_576)}"`,
-    );
+    const response = await testFetch(`${baseUrl}${stream.endpoint}`, {
+      method: "POST",
+      headers: {
+        ...authorizedHeaders(),
+        "Content-Type": "application/json",
+        "Content-Length": String(1_048_577),
+      },
+      body: "{",
+    });
 
     expect(response.status).toBe(400);
     expect(await response.text()).toBe("Request body too large");

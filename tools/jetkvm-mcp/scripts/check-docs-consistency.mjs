@@ -103,7 +103,10 @@ function extractPlanPhaseBlocks(planText) {
 
 function extractDesignPhaseRow(designText, phase) {
   const row = designText.match(
-    new RegExp(`^\\| ${phase} \\| \x60([^\x60]+)\x60 \\| (.+) \\|$`, "m"),
+    new RegExp(
+      `^\\|\\s*${phase}\\s*\\|\\s*\x60([^\x60]+)\x60\\s*\\|\\s*(.+?)\\s*\\|$`,
+      "m",
+    ),
   );
   if (row === null) {
     throw new Error(`Canonical design is missing Phase ${phase}`);
@@ -154,7 +157,10 @@ export function checkDocsConsistency({
     designToolSection,
     /^\d+\. `([a-z0-9_]+)`$/gm,
   );
-  const planTools = uniqueMatches(planToolSection, /^\| `([a-z0-9_]+)` \|/gm);
+  const planTools = uniqueMatches(
+    planToolSection,
+    /^\|\s*`([a-z0-9_]+)`\s*\|/gm,
+  );
   if (
     !exactOrderedValues(designTools, CANONICAL_TOOL_NAMES) ||
     !exactOrderedValues(planTools, CANONICAL_TOOL_NAMES)
@@ -162,6 +168,26 @@ export function checkDocsConsistency({
     throw new Error(
       "Canonical docs must contain the exact ten tool names in canonical order",
     );
+  }
+
+  for (const [label, text] of [
+    ["design", designText],
+    ["plan", planText],
+  ]) {
+    const successContract = sectionBetween(
+      text,
+      "type Success<T> = {",
+      "type MutationState = {",
+    );
+    if (
+      !/session_id:\s*string;/.test(successContract) ||
+      !/session_generation:\s*number;/.test(successContract) ||
+      /session_(?:id|generation):[^;\n]*null/.test(successContract)
+    ) {
+      throw new Error(
+        `Canonical ${label} Success contract must require non-null session identity`,
+      );
+    }
   }
 
   const designPhaseRows = [1, 2, 3, 4, 5, 6].map((phase) =>

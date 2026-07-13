@@ -22,6 +22,11 @@ export type AuthorizedImage = {
   readonly mime_type: "image/jpeg" | "image/png";
 };
 
+const IMAGE_BYTE_LIMITS = {
+  "image/jpeg": 2 * 1024 * 1024,
+  "image/png": 8 * 1024 * 1024,
+} as const;
+
 export const PUBLIC_ERROR_MESSAGES = {
   CONFIG_INVALID: "The server configuration is invalid.",
   AUTH_FAILED: "Authentication failed.",
@@ -68,6 +73,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   MUTATION_OUTCOME_UNKNOWN: "The mutation outcome is unknown.",
   PARTIAL_VERIFICATION:
     "The mutation was acknowledged but only partially verified.",
+  ADMISSION_CAPACITY_EXCEEDED: "The request ledger is at admission capacity.",
   REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
     "The request ID was already used with different input.",
 } as const satisfies Record<ErrorCode, string>;
@@ -237,7 +243,16 @@ export function validateAndMapMcpResult(
       imageContent.type !== "image" ||
       typeof imageContent.data !== "string" ||
       (imageContent.mimeType !== "image/jpeg" &&
-        imageContent.mimeType !== "image/png") ||
+        imageContent.mimeType !== "image/png")
+    ) {
+      throw new Error("Invalid handler result.");
+    }
+
+    const metadata = imageMetadataFor(tool, parsed.data.result);
+    if (
+      metadata === null ||
+      imageContent.mimeType !== metadata.mime_type ||
+      imageContent.data.length !== maximumEncodedImageLength(metadata) ||
       !isCanonicalBase64(imageContent.data)
     ) {
       throw new Error("Invalid handler result.");
@@ -250,16 +265,44 @@ export function validateAndMapMcpResult(
   return toMcpSuccessResult(parsed.data as Success<unknown>, image);
 }
 
+function maximumEncodedImageLength(metadata: ImageMetadata): number {
+  const maximumByteLength = Math.min(
+    metadata.byte_length,
+    IMAGE_BYTE_LIMITS[metadata.mime_type],
+  );
+  return 4 * Math.ceil(maximumByteLength / 3);
+}
+
+function base64Sextet(code: number): number {
+  if (code >= 0x41 && code <= 0x5a) return code - 0x41;
+  if (code >= 0x61 && code <= 0x7a) return code - 0x61 + 26;
+  if (code >= 0x30 && code <= 0x39) return code - 0x30 + 52;
+  if (code === 0x2b) return 62;
+  if (code === 0x2f) return 63;
+  return -1;
+}
+
 function isCanonicalBase64(value: string): boolean {
-  if (
-    value.length === 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      value,
-    )
-  ) {
-    return false;
+  if (value.length === 0) return true;
+  if (value.length % 4 !== 0) return false;
+
+  let padding = 0;
+  if (value.charCodeAt(value.length - 1) === 0x3d) padding += 1;
+  if (value.charCodeAt(value.length - 2) === 0x3d) padding += 1;
+
+  const dataLength = value.length - padding;
+  let finalSextet = -1;
+  for (let index = 0; index < dataLength; index += 1) {
+    finalSextet = base64Sextet(value.charCodeAt(index));
+    if (finalSextet < 0) return false;
   }
-  return Buffer.from(value, "base64").toString("base64") === value;
+  for (let index = dataLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 0x3d) return false;
+  }
+
+  if (padding === 2) return (finalSextet & 0x0f) === 0;
+  if (padding === 1) return (finalSextet & 0x03) === 0;
+  return true;
 }
 
 function isExactRecord(

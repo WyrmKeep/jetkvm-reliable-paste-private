@@ -194,40 +194,49 @@ export class DeviceRpcError extends Error {
   }
 }
 
-const wireFactMetadataSchema = z
+const cachedWireFactMetadataSchema = z
   .object({
-    observed_at: z.string().datetime().nullable(),
-    age_ms: z.number().int().nonnegative().nullable(),
-    freshness: z.enum(["fresh", "stale", "unknown"]),
-    source: z.enum(["cached_snapshot", "cached_event", "none"]),
+    observed_at: z.string().datetime(),
+    age_ms: z.number().int().nonnegative(),
+    freshness: z.enum(["fresh", "stale"]),
+    source: z.enum(["cached_snapshot", "cached_event"]),
   })
   .strict();
-const signalFactSchema = wireFactMetadataSchema
-  .extend({
-    value: z.enum([
-      "present",
-      "no_signal",
-      "no_lock",
-      "out_of_range",
-      "unknown",
-    ]),
+const unobservedWireFactMetadataSchema = z
+  .object({
+    observed_at: z.null(),
+    age_ms: z.null(),
+    freshness: z.literal("unknown"),
+    source: z.literal("none"),
   })
   .strict();
-const resolutionFactSchema = wireFactMetadataSchema
-  .extend({
-    value: z
-      .object({
-        width: z.number().int().positive(),
-        height: z.number().int().positive(),
-        refresh_hz: z.number().positive().nullable(),
-      })
-      .strict()
-      .nullable(),
+const wireFactSchema = <T extends z.ZodTypeAny, U extends z.ZodTypeAny>(
+  valueSchema: T,
+  unobservedValueSchema: U,
+) =>
+  z.discriminatedUnion("source", [
+    cachedWireFactMetadataSchema.extend({ value: valueSchema }).strict(),
+    unobservedWireFactMetadataSchema
+      .extend({ value: unobservedValueSchema })
+      .strict(),
+  ]);
+const signalFactSchema = wireFactSchema(
+  z.enum(["present", "no_signal", "no_lock", "out_of_range", "unknown"]),
+  z.literal("unknown"),
+);
+const resolutionValueSchema = z
+  .object({
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    refresh_hz: z.number().positive().nullable(),
   })
-  .strict();
-const fpsFactSchema = wireFactMetadataSchema
-  .extend({ value: z.number().nonnegative().nullable() })
-  .strict();
+  .strict()
+  .nullable();
+const resolutionFactSchema = wireFactSchema(resolutionValueSchema, z.null());
+const fpsFactSchema = wireFactSchema(
+  z.number().nonnegative().nullable(),
+  z.null(),
+);
 const displayStateResultSchema = z
   .object({
     signal: signalFactSchema,

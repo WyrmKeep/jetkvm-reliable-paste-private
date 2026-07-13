@@ -22,13 +22,13 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 const opaqueIdSchema = z.string().regex(OPAQUE_ID_PATTERN);
 const nonNegativeIntegerSchema = z.number().int().min(0).max(MAX_JSON_INTEGER);
+const positiveIntegerSchema = z.number().int().min(1).max(MAX_JSON_INTEGER);
 const nonNegativeDimensionSchema = nonNegativeIntegerSchema;
 const timestampSchema = z.string().min(1);
 const sha256Schema = z.string().regex(SHA256_PATTERN);
 const permissionSchema = z.enum(PERMISSION_NAMES);
 const capabilityNameSchema = z.enum(CAPABILITY_NAMES);
 const toolNameSchema = z.enum(JETKVM_TOOL_NAMES);
-const errorCodeSchema = z.enum(ERROR_CODES);
 const errorPhaseSchema = z.enum(ERROR_PHASES);
 
 const capabilityShape = Object.fromEntries(
@@ -91,86 +91,290 @@ const errorDetailsShape = {
   actual_generation: nonNegativeIntegerSchema.nullable(),
   observation_id: opaqueIdSchema.nullable(),
 } as const;
-const errorDetailsSchema = z.object(errorDetailsShape).strict();
-const permissionErrorDetails = (permission: z.ZodTypeAny) =>
-  z
-    .object({
-      ...errorDetailsShape,
-      permission,
-      capability: z.null(),
-    })
-    .strict();
-const capabilityErrorDetails = (capability: z.ZodTypeAny) =>
-  z
-    .object({
-      ...errorDetailsShape,
-      permission: z.null(),
-      capability,
-    })
-    .strict();
-
-const genericErrorCodeSchema = errorCodeSchema.exclude([
-  "PERMISSION_DENIED",
-  "CAPABILITY_MISSING",
-  "CONTROL_BUSY",
-  "MUTATION_OUTCOME_UNKNOWN",
-  "PARTIAL_VERIFICATION",
-  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
-]);
 const commonErrorShape = {
   message: z.string().min(1).max(512),
   phase: errorPhaseSchema,
 } as const;
-const genericCommonErrorShape = {
-  ...commonErrorShape,
-  code: genericErrorCodeSchema,
-  details: errorDetailsSchema,
-} as const;
-const readErrorOutcomeShape = {
-  outcome: z.null(),
-  verification: z.literal("none"),
-  safe_to_retry: z.boolean(),
-} as const;
+const zeroActionCountSchema = z.union([z.null(), z.literal(0)]);
 
-const readErrorBody = (permission: z.ZodTypeAny, capability: z.ZodTypeAny) =>
-  z.union([
-    z
-      .object({
-        ...genericCommonErrorShape,
-        ...readErrorOutcomeShape,
-        required_next_step: z.enum([
-          "none",
-          "capture_then_retry",
-          "reconnect_then_capture",
-          "release_then_reconnect_then_capture",
-          "inspect_device_state_before_retry",
-          "wait_or_request_takeover",
-        ]),
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("PERMISSION_DENIED"),
-        phase: z.literal("authorize"),
-        details: permissionErrorDetails(permission),
-        ...readErrorOutcomeShape,
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("grant_permission"),
-      })
-      .strict(),
-    z
-      .object({
-        ...commonErrorShape,
-        code: z.literal("CAPABILITY_MISSING"),
-        phase: z.literal("validate"),
-        details: capabilityErrorDetails(capability),
-        ...readErrorOutcomeShape,
-        safe_to_retry: z.literal(false),
-        required_next_step: z.literal("enable_capability"),
-      })
-      .strict(),
+type ReadErrorPolicy = {
+  readonly codes: readonly ErrorCode[];
+  readonly phase: ErrorPhase;
+  readonly phases?: readonly ErrorPhase[];
+  readonly safeToRetry: boolean;
+  readonly requiredNextStep: RequiredNextStep;
+  readonly downstreamStage:
+    | "none"
+    | "admission"
+    | "write"
+    | "acknowledgement"
+    | "verification";
+  readonly downstreamStages?: readonly (
+    | "none"
+    | "admission"
+    | "write"
+    | "acknowledgement"
+    | "verification"
+  )[];
+};
+
+const READ_ERROR_POLICIES: readonly ReadErrorPolicy[] = [
+  {
+    codes: ["CONFIG_INVALID"],
+    phase: "validate",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
+    codes: [
+      "AUTH_FAILED",
+      "AUTH_EXPIRED",
+      "UNSUPPORTED_UI_VERSION",
+      "FIRMWARE_INCOMPATIBLE",
+      "BROWSER_UNSUPPORTED",
+    ],
+    phase: "connect",
+    phases: ["authorize", "connect"],
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission"],
+  },
+  {
+    codes: ["AUTH_RATE_LIMITED"],
+    phase: "connect",
+    phases: ["authorize", "connect"],
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission"],
+  },
+  {
+    codes: ["OBSERVE_ONLY", "SAFETY_DENIED"],
+    phase: "authorize",
+    safeToRetry: false,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
+    codes: ["SESSION_NOT_FOUND", "STALE_SESSION_GENERATION"],
+    phase: "validate",
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission"],
+  },
+  {
+    codes: ["SESSION_TAKEN_OVER", "SESSION_DRAINED"],
+    phase: "execute",
+    phases: ["validate", "connect", "execute"],
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission", "write"],
+  },
+  {
+    codes: ["DEVICE_UNREACHABLE"],
+    phase: "connect",
+    phases: ["connect", "execute"],
+    safeToRetry: true,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "admission",
+    downstreamStages: ["none", "admission", "write"],
+  },
+  {
+    codes: ["CONNECTION_LOST"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    safeToRetry: true,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "acknowledgement",
+    downstreamStages: [
+      "none",
+      "admission",
+      "write",
+      "acknowledgement",
+      "verification",
+    ],
+  },
+  {
+    codes: ["DOWNSTREAM_MALFORMED_RESPONSE"],
+    phase: "execute",
+    phases: ["connect", "execute", "verify", "cleanup"],
+    safeToRetry: false,
+    requiredNextStep: "reconnect_then_capture",
+    downstreamStage: "acknowledgement",
+    downstreamStages: [
+      "none",
+      "admission",
+      "write",
+      "acknowledgement",
+      "verification",
+    ],
+  },
+  {
+    codes: ["CANCELLED", "DEADLINE_EXCEEDED"],
+    phase: "execute",
+    phases: [
+      "validate",
+      "authorize",
+      "queue",
+      "connect",
+      "execute",
+      "verify",
+      "cleanup",
+    ],
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+    downstreamStages: [
+      "none",
+      "admission",
+      "write",
+      "acknowledgement",
+      "verification",
+    ],
+  },
+  {
+    codes: [
+      "VIDEO_UNAVAILABLE",
+      "VIDEO_STALLED",
+      "FRAME_TIMEOUT",
+      "DISPLAY_CHANGED",
+    ],
+    phase: "execute",
+    phases: ["validate", "execute", "verify"],
+    safeToRetry: true,
+    requiredNextStep: "capture_then_retry",
+    downstreamStage: "verification",
+    downstreamStages: [
+      "none",
+      "admission",
+      "write",
+      "acknowledgement",
+      "verification",
+    ],
+  },
+  {
+    codes: ["EDID_READ_FAILED", "DISPLAY_STATUS_STALE"],
+    phase: "execute",
+    phases: ["execute", "verify"],
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "verification",
+    downstreamStages: [
+      "none",
+      "admission",
+      "write",
+      "acknowledgement",
+      "verification",
+    ],
+  },
+];
+
+const READ_PERMISSION_POLICY = {
+  codes: ["PERMISSION_DENIED"],
+  phase: "authorize",
+  safeToRetry: false,
+  requiredNextStep: "grant_permission",
+  downstreamStage: "none",
+} as const satisfies ReadErrorPolicy;
+const READ_CAPABILITY_POLICY = {
+  codes: ["CAPABILITY_MISSING"],
+  phase: "validate",
+  safeToRetry: false,
+  requiredNextStep: "enable_capability",
+  downstreamStage: "none",
+} as const satisfies ReadErrorPolicy;
+
+const readErrorDetails = (
+  permission: z.ZodTypeAny,
+  capability: z.ZodTypeAny,
+  policy: ReadErrorPolicy,
+) =>
+  z
+    .object({
+      ...errorDetailsShape,
+      permission,
+      capability,
+      failed_action_index: z.null(),
+      dispatched_action_count: zeroActionCountSchema,
+      completed_action_count: zeroActionCountSchema,
+      downstream_stage:
+        policy.downstreamStages === undefined
+          ? z.literal(policy.downstreamStage)
+          : z.enum(
+              policy.downstreamStages as [
+                ReadErrorPolicy["downstreamStage"],
+                ...ReadErrorPolicy["downstreamStage"][],
+              ],
+            ),
+    })
+    .strict();
+
+const readErrorPolicySchema = (
+  policy: ReadErrorPolicy,
+  permission: z.ZodTypeAny = z.null(),
+  capability: z.ZodTypeAny = z.null(),
+) =>
+  z
+    .object({
+      ...commonErrorShape,
+      code:
+        policy.codes.length === 1
+          ? z.literal(policy.codes[0]!)
+          : z.enum(policy.codes as [ErrorCode, ...ErrorCode[]]),
+      phase:
+        policy.phases === undefined
+          ? z.literal(policy.phase)
+          : z.enum(policy.phases as [ErrorPhase, ...ErrorPhase[]]),
+      outcome: z.null(),
+      verification: z.literal("none"),
+      safe_to_retry: z.literal(policy.safeToRetry),
+      required_next_step: z.literal(policy.requiredNextStep),
+      details: readErrorDetails(permission, capability, policy),
+    })
+    .strict();
+
+const SHARED_READ_ERROR_CODES = [
+  "CONFIG_INVALID",
+  "AUTH_FAILED",
+  "AUTH_RATE_LIMITED",
+  "AUTH_EXPIRED",
+  "OBSERVE_ONLY",
+  "SAFETY_DENIED",
+  "UNSUPPORTED_UI_VERSION",
+  "FIRMWARE_INCOMPATIBLE",
+  "BROWSER_UNSUPPORTED",
+  "SESSION_NOT_FOUND",
+  "STALE_SESSION_GENERATION",
+  "SESSION_TAKEN_OVER",
+  "SESSION_DRAINED",
+  "DEVICE_UNREACHABLE",
+  "CONNECTION_LOST",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
+  "CANCELLED",
+  "DEADLINE_EXCEEDED",
+] as const satisfies readonly ErrorCode[];
+
+const readErrorBody = (
+  permission: z.ZodTypeAny,
+  capability: z.ZodTypeAny,
+  applicableCodes: readonly ErrorCode[],
+) => {
+  const policySchemas = READ_ERROR_POLICIES.flatMap((policy) => {
+    const codes = policy.codes.filter((code) => applicableCodes.includes(code));
+    return codes.length === 0
+      ? []
+      : [readErrorPolicySchema({ ...policy, codes })];
+  });
+  return z.union([
+    readErrorPolicySchema(READ_PERMISSION_POLICY, permission, z.null()),
+    readErrorPolicySchema(READ_CAPABILITY_POLICY, z.null(), capability),
+    ...policySchemas,
   ]);
+};
 
 type MutationErrorPolicy = {
   readonly codes: readonly ErrorCode[];
@@ -252,7 +456,7 @@ const MUTATION_ERROR_POLICIES: readonly MutationErrorPolicy[] = [
     outcome: "not_sent",
     verification: "none",
     safeToRetry: false,
-    requiredNextStep: "none",
+    requiredNextStep: "reconnect_then_capture",
     downstreamStage: "admission",
   },
   {
@@ -494,6 +698,15 @@ const MUTATION_ERROR_POLICIES: readonly MutationErrorPolicy[] = [
     downstreamStage: "verification",
   },
   {
+    codes: ["ADMISSION_CAPACITY_EXCEEDED"],
+    phase: "queue",
+    outcome: "not_sent",
+    verification: "none",
+    safeToRetry: true,
+    requiredNextStep: "none",
+    downstreamStage: "none",
+  },
+  {
     codes: ["MUTATION_OUTCOME_UNKNOWN"],
     phase: "execute",
     phases: ["connect", "execute", "verify", "cleanup"],
@@ -506,25 +719,71 @@ const MUTATION_ERROR_POLICIES: readonly MutationErrorPolicy[] = [
   },
 ];
 
-const zeroWriteCountSchema = z.union([z.null(), z.literal(0)]);
-const mutationErrorDetails = (
+const enumeratedActionCountTuple = (
+  maximum: number,
+  mode: "success" | "unknown_error" | "definitive_error",
+) => {
+  const schemas = Array.from({ length: maximum }, (_, index) => {
+    const count = index + 1;
+    const shape =
+      mode === "unknown_error"
+        ? {
+            failed_action_index: z.literal(index),
+            dispatched_action_count: z.literal(count),
+            completed_action_count: z.literal(index),
+          }
+        : mode === "definitive_error"
+          ? {
+              failed_action_index: z.null(),
+              dispatched_action_count: z.literal(count),
+              completed_action_count: z.literal(count),
+            }
+          : {
+              dispatched_action_count: z.literal(count),
+              completed_action_count: z.literal(count),
+            };
+    return z.object(shape).passthrough();
+  });
+  return z.union(
+    schemas as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]],
+  );
+};
+
+const keyboardSuccessCountTuple = enumeratedActionCountTuple(64, "success");
+const keyboardUnknownErrorCountTuple = enumeratedActionCountTuple(
+  64,
+  "unknown_error",
+);
+const keyboardDefinitiveErrorCountTuple = enumeratedActionCountTuple(
+  64,
+  "definitive_error",
+);
+const mouseSuccessCountTuple = enumeratedActionCountTuple(16, "success");
+const mouseUnknownErrorCountTuple = enumeratedActionCountTuple(
+  16,
+  "unknown_error",
+);
+const mouseDefinitiveErrorCountTuple = enumeratedActionCountTuple(
+  16,
+  "definitive_error",
+);
+
+const mutationErrorDetailsObject = (
   permission: z.ZodTypeAny,
   capability: z.ZodTypeAny,
   policy: MutationErrorPolicy,
+  failedActionIndex: z.ZodTypeAny,
+  dispatchedActionCount: z.ZodTypeAny,
+  completedActionCount: z.ZodTypeAny,
 ) =>
   z
     .object({
       ...errorDetailsShape,
       permission,
       capability,
-      dispatched_action_count:
-        policy.outcome === "not_sent"
-          ? zeroWriteCountSchema
-          : errorDetailsShape.dispatched_action_count,
-      completed_action_count:
-        policy.outcome === "not_sent"
-          ? zeroWriteCountSchema
-          : errorDetailsShape.completed_action_count,
+      failed_action_index: failedActionIndex,
+      dispatched_action_count: dispatchedActionCount,
+      completed_action_count: completedActionCount,
       downstream_stage:
         policy.downstreamStages === undefined
           ? z.literal(policy.downstreamStage)
@@ -537,7 +796,46 @@ const mutationErrorDetails = (
     })
     .strict();
 
+const mutationErrorDetails = (
+  tool: JetKvmToolName,
+  permission: z.ZodTypeAny,
+  capability: z.ZodTypeAny,
+  policy: MutationErrorPolicy,
+) => {
+  if (policy.outcome === "not_sent") {
+    return mutationErrorDetailsObject(
+      permission,
+      capability,
+      policy,
+      z.null(),
+      zeroActionCountSchema,
+      zeroActionCountSchema,
+    );
+  }
+
+  const countTuple =
+    tool === "jetkvm_input_keyboard"
+      ? policy.outcome === "unknown"
+        ? keyboardUnknownErrorCountTuple
+        : keyboardDefinitiveErrorCountTuple
+      : tool === "jetkvm_input_mouse"
+        ? policy.outcome === "unknown"
+          ? mouseUnknownErrorCountTuple
+          : mouseDefinitiveErrorCountTuple
+        : null;
+  const base = mutationErrorDetailsObject(
+    permission,
+    capability,
+    policy,
+    errorDetailsShape.failed_action_index,
+    errorDetailsShape.dispatched_action_count,
+    errorDetailsShape.completed_action_count,
+  );
+  return countTuple === null ? base : base.and(countTuple);
+};
+
 const mutationErrorPolicySchema = (
+  tool: JetKvmToolName,
   policy: MutationErrorPolicy,
   permission: z.ZodTypeAny = z.null(),
   capability: z.ZodTypeAny = z.null(),
@@ -557,7 +855,7 @@ const mutationErrorPolicySchema = (
       verification: z.literal(policy.verification),
       safe_to_retry: z.literal(policy.safeToRetry),
       required_next_step: z.literal(policy.requiredNextStep),
-      details: mutationErrorDetails(permission, capability, policy),
+      details: mutationErrorDetails(tool, permission, capability, policy),
     })
     .strict();
 
@@ -604,6 +902,7 @@ const COMMON_MUTATION_ERROR_CODES = [
   "DOWNSTREAM_MALFORMED_RESPONSE",
   "CANCELLED",
   "DEADLINE_EXCEEDED",
+  "ADMISSION_CAPACITY_EXCEEDED",
   "MUTATION_OUTCOME_UNKNOWN",
   "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
 ] as const satisfies readonly ErrorCode[];
@@ -632,13 +931,23 @@ const mutationErrorBody = (
     const codes = policy.codes.filter((code) => applicableCodes.includes(code));
     return codes.length === 0
       ? []
-      : [mutationErrorPolicySchema({ ...policy, codes })];
+      : [mutationErrorPolicySchema(tool, { ...policy, codes })];
   });
   const branches = [
-    mutationErrorPolicySchema(permissionMutationPolicy, permission, z.null()),
-    mutationErrorPolicySchema(capabilityMutationPolicy, z.null(), capability),
+    mutationErrorPolicySchema(
+      tool,
+      permissionMutationPolicy,
+      permission,
+      z.null(),
+    ),
+    mutationErrorPolicySchema(
+      tool,
+      capabilityMutationPolicy,
+      z.null(),
+      capability,
+    ),
     ...(applicableCodes.includes("CONTROL_BUSY")
-      ? [mutationErrorPolicySchema(controlBusyMutationPolicy)]
+      ? [mutationErrorPolicySchema(tool, controlBusyMutationPolicy)]
       : []),
     ...policySchemas,
   ] as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]];
@@ -648,14 +957,23 @@ const mutationErrorBody = (
 const displayCaptureErrorBodySchema = readErrorBody(
   z.literal("display.capture"),
   z.literal("display_capture"),
+  [
+    ...SHARED_READ_ERROR_CODES,
+    "VIDEO_UNAVAILABLE",
+    "VIDEO_STALLED",
+    "FRAME_TIMEOUT",
+    "DISPLAY_CHANGED",
+  ],
 );
 const displayStatusErrorBodySchema = readErrorBody(
   z.literal("display.status"),
   z.literal("display_status"),
+  [...SHARED_READ_ERROR_CODES, "EDID_READ_FAILED", "DISPLAY_STATUS_STALE"],
 );
 const sessionStatusErrorBodySchema = readErrorBody(
   z.literal("session.status"),
   z.literal("session_status"),
+  SHARED_READ_ERROR_CODES,
 );
 const inputKeyboardErrorBodySchema = mutationErrorBody(
   "jetkvm_input_keyboard",
@@ -770,8 +1088,8 @@ export const successEnvelopeSchema = z
     ok: z.literal(true),
     tool: toolNameSchema,
     operation_id: opaqueIdSchema,
-    session_id: opaqueIdSchema.nullable(),
-    session_generation: nonNegativeIntegerSchema.nullable(),
+    session_id: opaqueIdSchema,
+    session_generation: positiveIntegerSchema,
     duration_ms: nonNegativeIntegerSchema,
     result: z.unknown(),
   })
@@ -1118,14 +1436,31 @@ export const sessionStatusResultSchema = z
       .strict(),
   })
   .strict();
-export const sessionReconnectResultSchema = mutationResult({
-  previous_session_generation: nonNegativeIntegerSchema,
-  new_session_generation: nonNegativeIntegerSchema,
-  connection_epoch: nonNegativeIntegerSchema,
-  state: z.literal("ready"),
-  takeover_performed: z.boolean(),
-  fresh_capture_required: z.literal(true),
-});
+export const sessionReconnectResultSchema = z
+  .object({
+    ...definitiveMutationShape,
+    previous_session_generation: nonNegativeIntegerSchema,
+    new_session_generation: positiveIntegerSchema,
+    connection_epoch: nonNegativeIntegerSchema,
+    state: z.literal("ready"),
+    takeover_performed: z.boolean(),
+    fresh_capture_required: z.literal(true),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.new_session_generation > result.previous_session_generation) {
+      return;
+    }
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["new_session_generation"],
+      message:
+        "new_session_generation must be strictly greater than previous_session_generation.",
+    });
+  })
+  .describe(
+    "new_session_generation must be strictly greater than previous_session_generation.",
+  );
 
 const edidResultSchema = z.union([
   z
@@ -1184,23 +1519,23 @@ export const displayStatusResultSchema = z
   })
   .strict();
 export const inputMouseResultSchema = mutationResult({
-  dispatched_action_count: nonNegativeIntegerSchema,
-  completed_action_count: nonNegativeIntegerSchema,
+  dispatched_action_count: positiveIntegerSchema.max(16),
+  completed_action_count: positiveIntegerSchema.max(16),
   post_capture: displayCaptureResultSchema.nullable(),
-});
+}).and(mouseSuccessCountTuple);
 export const inputKeyboardResultSchema = mutationResult({
-  dispatched_action_count: nonNegativeIntegerSchema,
-  completed_action_count: nonNegativeIntegerSchema,
+  dispatched_action_count: positiveIntegerSchema.max(64),
+  completed_action_count: positiveIntegerSchema.max(64),
   held_keys: z.array(physicalKeySchema),
   post_capture: displayCaptureResultSchema.nullable(),
-});
+}).and(keyboardSuccessCountTuple);
 export const inputPasteResultSchema = mutationResult({
   original_byte_count: nonNegativeIntegerSchema,
   normalized_byte_count: nonNegativeIntegerSchema,
   normalized_sha256: sha256Schema,
-  accepted_at: timestampSchema.nullable(),
-  completed_at: timestampSchema.nullable(),
-  terminal_state: z.enum(["succeeded", "failed", "cancelled", "unknown"]),
+  accepted_at: timestampSchema,
+  completed_at: timestampSchema,
+  terminal_state: z.literal("succeeded"),
   measured_chars_per_second: z.number().nonnegative().finite().nullable(),
   post_capture: displayCaptureResultSchema.nullable(),
 });
@@ -1217,14 +1552,24 @@ export const inputReleaseResultSchema = z
     generation_drained: z.literal(true),
   })
   .strict();
-const atxLedObservationSchema = z
-  .object({
-    power: z.boolean().nullable(),
-    hdd: z.boolean().nullable(),
-    observed_at: timestampSchema.nullable(),
-    freshness: z.enum(["fresh", "stale", "unknown"]),
-  })
-  .strict();
+const atxLedObservationSchema = z.union([
+  z
+    .object({
+      power: z.boolean().nullable(),
+      hdd: z.boolean().nullable(),
+      observed_at: timestampSchema,
+      freshness: z.enum(["fresh", "stale"]),
+    })
+    .strict(),
+  z
+    .object({
+      power: z.null(),
+      hdd: z.null(),
+      observed_at: z.null(),
+      freshness: z.literal("unknown"),
+    })
+    .strict(),
+]);
 const powerResultCommonShape = {
   ...definitiveMutationShape,
   verification: z.literal("device_ack_only"),
@@ -1284,18 +1629,36 @@ export const TOOL_RESULT_PAYLOAD_SCHEMAS = {
   jetkvm_session_status: sessionStatusResultSchema,
 } satisfies Record<JetKvmToolName, z.ZodTypeAny>;
 
-const successForTool = (tool: JetKvmToolName, result: z.ZodTypeAny) =>
-  z
+const successForTool = (tool: JetKvmToolName, result: z.ZodTypeAny) => {
+  const schema = z
     .object({
       ok: z.literal(true),
       tool: z.literal(tool),
       operation_id: opaqueIdSchema,
-      session_id: opaqueIdSchema.nullable(),
-      session_generation: nonNegativeIntegerSchema.nullable(),
+      session_id: opaqueIdSchema,
+      session_generation: positiveIntegerSchema,
       duration_ms: nonNegativeIntegerSchema,
       result,
     })
     .strict();
+  if (tool !== "jetkvm_session_reconnect") return schema;
+  return schema
+    .superRefine((envelope, context) => {
+      if (
+        envelope.session_generation === envelope.result.new_session_generation
+      ) {
+        return;
+      }
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["session_generation"],
+        message: "Reconnect envelope generation must equal the new generation.",
+      });
+    })
+    .describe(
+      "For reconnect success, session_generation must equal result.new_session_generation.",
+    );
+};
 
 export const TOOL_RESULT_SCHEMAS = {
   jetkvm_display_capture: z.union([

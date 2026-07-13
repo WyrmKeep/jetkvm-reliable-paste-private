@@ -156,6 +156,165 @@ describe("structured redacting logger", () => {
     }
   });
 
+  it("redacts every sensitive field family from malformed JSON-like strings", () => {
+    const sensitiveKeys = [
+      "address",
+      "authorization",
+      "authority",
+      "base64",
+      "bearer",
+      "bytes",
+      "clipboard",
+      "cookie",
+      "credential",
+      "endpoint",
+      "frame",
+      "host",
+      "iceCandidate",
+      "image",
+      "origin",
+      "password",
+      "pastePayload",
+      "payload",
+      "proof",
+      "screenshot",
+      "sdp",
+      "secret",
+      "text",
+      "token",
+      "uri",
+      "url",
+    ] as const;
+    const malformed = sensitiveKeys.map((key, index) =>
+      index % 2 === 0
+        ? `{"${key}": "private-${key}"`
+        : String.raw`{\"${key}\" : \"private-${key}\"`,
+    );
+
+    expect(
+      redactStructuredData({
+        malformed,
+        safeMalformed: '{"status":"still-useful"',
+      }),
+    ).toEqual({
+      malformed: sensitiveKeys.map(() => "[REDACTED]"),
+      safeMalformed: '{"status":"still-useful"',
+    });
+  });
+
+  it("redacts recursive error records without hiding safe siblings or losing cycle safety", () => {
+    const cyclicError: Record<string, unknown> = {
+      name: "RangeError",
+      message: "cyclic-message-secret",
+      stack: "cyclic-stack-secret",
+      cause: "cyclic-cause-secret",
+      reason: "cyclic-reason-secret",
+      code: "E_CYCLIC",
+      attempts: 2,
+    };
+    cyclicError.self = cyclicError;
+    const serialized = JSON.stringify({
+      wrapper: {
+        error: {
+          name: "Bearer malicious-name-secret",
+          message: "serialized-message-secret",
+          stack: "serialized-stack-secret",
+          cause: "serialized-cause-secret",
+          reason: "serialized-reason-secret",
+          code: "E_SERIALIZED",
+          retryable: true,
+        },
+        status: "serialized-safe-sibling",
+      },
+    });
+    const fields = {
+      status: "top-level-safe-sibling",
+      ordinaryRecord: {
+        message: "ordinary safe status",
+        phase: "ready",
+      },
+      nested: [
+        {
+          error: {
+            message: "nested-message-secret",
+            stack: "nested-stack-secret",
+            cause: "nested-cause-secret",
+            reason: "nested-reason-secret",
+            code: "E_NESTED",
+            stage: "dispatch",
+          },
+        },
+        cyclicError,
+      ],
+      serialized,
+    };
+
+    const redacted = redactStructuredData(fields);
+    requireRecord(redacted);
+    if (typeof redacted.serialized !== "string") {
+      throw new TypeError("Expected a serialized error record");
+    }
+    const redactedSerialized: unknown = JSON.parse(redacted.serialized);
+
+    expect(redacted).toMatchObject({
+      status: "top-level-safe-sibling",
+      ordinaryRecord: {
+        message: "ordinary safe status",
+        phase: "ready",
+      },
+      nested: [
+        {
+          error: {
+            message: "[REDACTED]",
+            stack: "[REDACTED]",
+            cause: "[REDACTED]",
+            reason: "[REDACTED]",
+            code: "E_NESTED",
+            stage: "dispatch",
+          },
+        },
+        {
+          name: "RangeError",
+          message: "[REDACTED]",
+          stack: "[REDACTED]",
+          cause: "[REDACTED]",
+          reason: "[REDACTED]",
+          code: "E_CYCLIC",
+          attempts: 2,
+          self: "[REDACTED]",
+        },
+      ],
+    });
+    expect(redactedSerialized).toEqual({
+      wrapper: {
+        error: {
+          name: "Error",
+          message: "[REDACTED]",
+          stack: "[REDACTED]",
+          cause: "[REDACTED]",
+          reason: "[REDACTED]",
+          code: "E_SERIALIZED",
+          retryable: true,
+        },
+        status: "serialized-safe-sibling",
+      },
+    });
+
+    const lines: string[] = [];
+    createStructuredLogger({ write: (line) => lines.push(line) }).error(
+      "downstream.failed",
+      fields,
+    );
+    for (const output of [JSON.stringify(redacted), lines.join("")]) {
+      expect(output).not.toMatch(
+        /cyclic-(?:message|stack|cause|reason)-secret|nested-(?:message|stack|cause|reason)-secret|serialized-(?:message|stack|cause|reason)-secret|malicious-name-secret/,
+      );
+      expect(output).toContain("top-level-safe-sibling");
+      expect(output).toContain("E_NESTED");
+      expect(output).toContain("E_SERIALIZED");
+    }
+  });
+
   it("allowlists Error names while keeping every message stably redacted", () => {
     const malicious = new Error("message-secret");
     malicious.name = "Bearer name-secret";

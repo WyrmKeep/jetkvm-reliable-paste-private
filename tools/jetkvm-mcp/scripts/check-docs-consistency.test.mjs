@@ -75,12 +75,29 @@ test("rejects drift in each of the exact ten tool inventories", () => {
   );
 
   const driftedPlan = planText.replace(
-    "| `jetkvm_power_control` | NativeControlPlane | mutation | Phase 4 |",
-    "| `jetkvm_power_cycle` | NativeControlPlane | mutation | Phase 4 |",
+    /^(\|\s*)`jetkvm_power_control`/m,
+    "$1`jetkvm_power_cycle`",
   );
   assert.throws(
     () => check({ planText: driftedPlan }),
     /exact ten tool names/i,
+  );
+});
+
+test("rejects nullable success identity in either canonical document", () => {
+  const makeSuccessIdentityNullable = (text) =>
+    text.replace(
+      /(type Success<T> = \{[\s\S]*?session_id:)\s*string;/,
+      "$1 string | null;",
+    );
+
+  assert.throws(
+    () => check({ designText: makeSuccessIdentityNullable(designText) }),
+    /Success contract must require non-null session identity/i,
+  );
+  assert.throws(
+    () => check({ planText: makeSuccessIdentityNullable(planText) }),
+    /Success contract must require non-null session identity/i,
   );
 });
 
