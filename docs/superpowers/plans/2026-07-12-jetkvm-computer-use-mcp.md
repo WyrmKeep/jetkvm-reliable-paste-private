@@ -321,7 +321,7 @@ Existing names are retained where they already exist. New names below establish 
 - [ ] Finish host-runnable race tests for manager-only maintenance leases, draining rejection, blocked/queued producer join, ordinary lease count zero before final zero, correlated receipts, stale generation no-write, and zero post-zero.
 - [ ] Finish root integration tests for current-session snapshots, session-scoped candidates/close, session-bound `quiesceAndZero(operationId)`, matching operation/generation receipts, and stale-channel no-write after replacement.
 - [ ] Fix the fired auto-release callback race by serializing callback validation/write with keyboard clear. Prove both lock orders deterministically: callback-first writes release then clear; clear-first removes the timer and the resumed callback writes zero HID reports. Preserve lock order and no timer-to-keyboard-lock cycle.
-- [ ] Extend `scripts/run-device-go-tests.mjs` with a hardware-free Foundation root-integration mode that compiles/runs the full Phase 1 root integration selection against injected seams without deploy, network, target, or device. Unit-test command selection and fail closed if hardware/target inputs are present; device-dependent execution remains Phase 6.
+- [ ] Add the `hosttest` native shim build constraint so Linux CI can compile and race-test the full hardware-free Foundation root integration selection without native device libraries, deploy, network, target, or device. Device-dependent execution remains Phase 6.
 - [ ] Audit direct current-session mutation so ownership changes are manager-backed.
 - [ ] Preserve the exact commit subject: `fix(webrtc): revoke stale HID sessions atomically`; keep the auto-release race fix as its own narrow Foundation commit when history already separates it.
 - [ ] Retain `scripts/run-device-go-tests.mjs` and its unit tests. Root/device hardware tests remain deferred to the serialized Phase 6 operator target; Phase 1 runs only hardware-free package races and host-runnable integrations.
@@ -331,7 +331,7 @@ Existing names are retained where they already exist. New names below establish 
 **Files:** `.github/workflows/jetkvm-mcp-foundation.yml`, existing Node-job workflows including `build.yml` and `ui-lint.yml`, package scripts, `scripts/check-package.mjs`, and focused script tests.
 
 - [ ] Pin every new and existing workflow Node job to exact Node 22.23.1 with `actions/setup-node`, then immediately assert `node --version` is exactly `v22.23.1`.
-- [ ] Foundation CI runs `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, `npm run test:installed-lease`, `npm run package:check`, the hardware-free Foundation root-integration mode, and `go test -race ./internal/controlsession ./internal/usbgadget`.
+- [ ] Foundation CI runs `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, `npm run test:installed-lease`, `npm run package:check`, and `go test -race -tags=hosttest . ./internal/controlsession ./internal/usbgadget` from the repository root after creating the empty embedded-resource directory.
 - [ ] `package:check` validates the production allowlist and rejects test, fixture, debug, trace, secret, lease-proof, and unallowlisted files.
 - [ ] CI receives no hardware URL, target identity, lease proof, credential, secret, self-hosted label, or live-test discovery path. It cannot read or mutate a device; device-dependent root tests remain Phase 6-only.
 - [ ] Required workflow policy covers every Phase 1 root integration/runtime path with safe gates: root `*.go`, relevant `internal/controlsession/**`, `internal/usbgadget/**`, `internal/hidrpc/**`, MCP runtime/lock/scripts, and `.github/workflows/*.yml`.
@@ -348,9 +348,9 @@ npm run typecheck
 npm run build
 npm run test:installed-lease
 npm run package:check
-npm run test:go-foundation
-
-go test -race ./internal/controlsession ./internal/usbgadget
+cd ../..
+mkdir -p static && touch static/.gitkeep
+go test -race -tags=hosttest . ./internal/controlsession ./internal/usbgadget
 ```
 
 Then validate from a separate clean checkout of the Phase 1 head:
@@ -363,8 +363,9 @@ npm run typecheck
 npm run build
 npm run test:installed-lease
 npm run package:check
-npm run test:go-foundation
-go test -race ./internal/controlsession ./internal/usbgadget
+cd ../..
+mkdir -p static && touch static/.gitkeep
+go test -race -tags=hosttest . ./internal/controlsession ./internal/usbgadget
 ```
 
 Acceptance: no test/fixture/debug file in production output; no secret or lease proof in stdout/stderr/artifacts; no old public handler exists; hardware-free controlsession/usbgadget race gates pass; deterministic auto-release tests prove no post-zero HID; root/device hardware tests remain deferred to Phase 6.

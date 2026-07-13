@@ -6,8 +6,7 @@ on:
       - ".github/workflows/*.yml"
       - "*.go"
       - "tools/jetkvm-mcp/**"
-      - "internal/controlsession/**"
-      - "internal/usbgadget/**"
+      - "internal/**/*.go"
       - "go.mod"
       - "go.sum"
   push:
@@ -15,8 +14,7 @@ on:
       - ".github/workflows/*.yml"
       - "*.go"
       - "tools/jetkvm-mcp/**"
-      - "internal/controlsession/**"
-      - "internal/usbgadget/**"
+      - "internal/**/*.go"
       - "go.mod"
       - "go.sum"
 
