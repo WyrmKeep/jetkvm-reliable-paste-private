@@ -163,16 +163,19 @@ Canonical design §11.2 is the only behavior-ID inventory. The plan, manifest, f
 | partial multi-event dispatch | `unknown` with exact dispatched/completed counts; suffix suppressed |
 | post-reconnect input without capture | fresh-capture error, zero input |
 | cleanup failure | cleanup-phase error evidence retained, no fabricated restoration |
-| cached display observation | observed time/age/provenance returned; stale policy enforced; proxy streaming omitted |
-| EDID lower-layer failure | `EDID_READ_FAILED`; no empty or qualified success |
+| per-fact status provenance | signal/resolution/FPS independently select `cached_snapshot`, `cached_event`, or `none`; unequal times/ages remain unequal; proxy streaming omitted |
+| EDID capability absent | base display status succeeds with strict `unsupported`/capability-absent/null branch |
+| EDID successful empty | strict `unavailable`/read-completed/no-EDID/null branch |
+| EDID lower-layer failure | `EDID_READ_FAILED`; no empty, unavailable, or available success |
 | reconnect evidence | new WebRTC/RPC/HID/browser-channel generation required; restart/quiesce alone rejected |
-| ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-ID reservation, exact fixed timing |
+| ATX gate and serialization | extension/serial preflight, one full-sequence mutex, request-id reservation, exact fixed timing |
 | ATX acknowledgement semantics | serial completion only; cached LED fact separate; no host-state proof |
 | SSE route security | identical MCP HTTP auth/Host/Origin boundary runs before GET creation and POST lookup |
-| SSE routing/close | session ID never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers |
+| SSE routing/close | sessionId never authenticates; exact 400/404/202 and SDK internal 500 behavior; parsed-body limit; idempotent close; no double write after headers |
 | shared DeviceRpcAdapter binding | one Browser/WebRTC RPC channel and one injected adapter instance; no direct/second channel |
 | DeviceRpcAdapter replacement | old binding invalidated before new publish; stale reads have explicit freshness; stale EDID/ATX makes zero writes |
 | DeviceRpcAdapter mid-flight loss | read errors or stale cached qualification; ATX uses pre/post-write outcome classification; no replay |
+| scroll validation | integer HID wheel steps -127..127 excluding zero accepted; fraction/zero/overflow/nonzero-X rejects whole request with zero plane calls |
 
 Every applicable handler/row cell cites both a focused unit/adapter assertion and a manifest story assertion. A non-applicable cell requires reviewed rationale. Input cells additionally cover stale/consumed/foreign observations, display change before/after first dispatch, invalid coordinates/keys, held-state cleanup, and post-operation capture failure. Paste covers event gap, cancellation, lifecycle downgrade, layout mismatch, and timeout before/after acceptance. Release races every deferred producer and writer. Power covers exactly three actions.
 ### 0.5 Story manifest is acceptance authority
@@ -441,7 +444,7 @@ Acceptance: no test/fixture/debug file in production output; no secret or lease 
 
 - [ ] Implement exactly the strict `AcceptanceStory` fields in §0.5 and reject unknown fields; generate the one JSON Schema from that type instead of maintaining a second hand-authored story schema.
 - [ ] Commit all 24 lowercase canonical IDs from §0.5 with complete requirements, tools, environments, preconditions, fault scripts, steps, pass assertions, evidence, restore, and privacy. No placeholder, uppercase alias, phase-local rename, or deferred fields are permitted.
-- [ ] Test unique exact IDs, complete tool/requirement references, unconditional restoration for mutations/faults, privacy fields, no URL/credential/topology, and no unmapped tool/matrix row. Link the three DeviceRpcAdapter rows into existing stories only: replacement/single-channel proof in story 21, cached/stale binding behavior in story 19, and ATX pre/post-write fencing in story 22; never create story 25.
+- [ ] Test unique exact IDs, complete tool/requirement references, unconditional restoration, privacy, no topology, and no unmapped matrix row. Link final rows only into the existing 24 stories: per-fact provenance and DeviceRpc replacement in story 19/21 as specified; EDID capability-absent and successful-empty in story 5; EDID lower failure in story 20; ATX mid-flight fencing in story 22; scroll validation in story 6. Never create story 25.
 
 ## Task 2.7: Implement stdio and legacy HTTP/SSE protocol adapters only
 
@@ -497,9 +500,9 @@ Repeat the same gate from a clean checkout using only committed files and a fres
 
 ## Task 3.1: Advisor gate and proven protocol mapping
 
-- [ ] Before implementation, record which existing product surfaces each method uses. Browser operations use the real browser/WebRTC path through the Phase 2 `DeviceRpcAdapter`. Native status uses `getVideoState` as `cached_snapshot`, `videoInputState` as `cached_event`, and `getEDID` only with qualified read semantics.
-- [ ] Base `jetkvm_display_status` requires `display_status`, not `edid_read`. Record explicit EDID `unsupported` (capability absent), `unavailable` (read path not currently available), and attempted-read `EDID_READ_FAILED` behavior, per-fact snapshot/event freshness, proxy-`streaming` omission, and read-only/no-mutation policy.
-- [ ] If a fact is unavailable, return its canonical unknown/null/status with provenance and freshness. Do not fabricate it, infer live state from a zero value, or add mutation.
+- [ ] Before implementation, record which existing product surfaces each method uses. Browser operations use the Phase 2 `DeviceRpcAdapter`; native status uses `getVideoState` as `cached_snapshot`, `videoInputState` as `cached_event`, and `getEDID` only with qualified read semantics.
+- [ ] Base `jetkvm_display_status` requires `display_status`, not `edid_read`. Capability absent returns strict successful `unsupported`; a completed successful read with no EDID returns strict successful `unavailable`; inability to attempt the read returns the canonical connection/device error; an attempted lower-layer failure returns `EDID_READ_FAILED`.
+- [ ] If a display fact has no observation, return canonical `none`/unknown/null provenance and freshness. Do not fabricate it, infer live state from a zero value, or add mutation.
 
 ## Task 3.2: Build the stable product automation boundary
 
@@ -527,9 +530,9 @@ Repeat the same gate from a clean checkout using only committed files and a fres
 
 - [ ] RED-test signal, width, height, refresh/FPS, and resolution facts independently. A `getVideoState` response is `cached_snapshot`; `videoInputState` is `cached_event`; each fact preserves source, observation time, age, fresh/stale/unknown classification, event supersession, and binding-loss behavior. Receipt time is never mislabeled as hardware acquisition time.
 - [ ] RED-test normal proxy omission of `Streaming`: no status/result treats the reconstructed zero value as live capture truth.
-- [ ] RED-test base status success when `display_status` exists but `edid_read` does not: display facts return and EDID is explicitly `unsupported` with null detail. Distinguish that from `unavailable` when the supported read path cannot currently be attempted.
-- [ ] Fix `videoGetEDID` to detect C `NULL` after open/`VIDIOC_G_EDID` failure before `C.GoString` and propagate a non-nil error through native gRPC/JSON-RPC. An attempted lower-level failure returns `EDID_READ_FAILED`, never unsupported, unavailable, not-reported, empty, or qualified success.
-- [ ] Return EDID summary/hash only after successful verified read; a proven successful no-EDID result uses the canonical not-reported state. Never call/register `setEDID`; contract-test no mutation. Correlate browser capture and per-fact native observations without equating render/source/native resolution or freshness.
+- [ ] RED-test base status success when `display_status` exists but `edid_read` does not: display facts return and EDID is strict `unsupported`/`read_completed:false`/capability-absent/null.
+- [ ] A supported EDID read that cannot be attempted returns the canonical connection/device error. Fix `videoGetEDID` so attempted C `NULL` after open/`VIDIOC_G_EDID` failure propagates as `EDID_READ_FAILED`, never a successful branch.
+- [ ] `unavailable` is legal only after a completed successful read reports no EDID; bytes produce `available`. Never call/register `setEDID`; contract-test no mutation. Correlate browser capture and per-fact native observations without equating render/source/native resolution or freshness.
 
 ## Task 3.5: Implement mouse and physical keyboard handlers
 
@@ -695,7 +698,7 @@ Repeat from a clean checkout and freshly packed tarball. Smokes initialize/list 
 - [ ] Generate one success E2E and every applicable fault case from each machine-readable story; tests may add assertions but not redefine story steps in a second source.
 - [ ] Run stories through real MCP server/result mapping over in-memory protocol, installed stdio, and installed legacy SSE, using only Fake/Replay planes.
 - [ ] Assert preconditions before steps, pass criteria after steps, required evidence fields, and restore after every mutation—even on test failure.
-- [ ] Drive every canonical §11.2 fault boundary from the reviewed manifest, including request-ID digest mismatch/replay, cancel-before-write, partial multi-event counts/suffix suppression, post-reconnect input without capture, cleanup failure, cached display/EDID, reconnect proof, ATX acknowledgement, SSE security/routing/close, and all three DeviceRpcAdapter rows—linked only to existing stories 21, 19, and 22.
+- [ ] Drive every canonical §11.2 boundary through reviewed stories, explicitly including per-fact status provenance, EDID capability absent, EDID successful empty, EDID lower failure, scroll validation, and all three DeviceRpc rows, in addition to request replay, cancellation, partial dispatch, reconnect, cleanup, ATX, and SSE rows. Use only existing story links; no new ID.
 
 ## Task 5.3: Prove the complete behavioral branch matrix
 
@@ -703,7 +706,7 @@ Repeat from a clean checkout and freshly packed tarball. Smokes initialize/list 
 
 - [ ] Materialize canonical design §11.2 exactly as a machine-checkable matrix keyed by all ten tools; this file contains no additional behavior IDs.
 - [ ] Require every applicable cell to cite both a focused unit/adapter test and a reviewed-manifest story assertion; non-applicable cells require reviewed rationale, never blank/skip.
-- [ ] Require explicit cells for cancellation before write, partial multi-event dispatched/completed counts and suffix suppression, post-reconnect input without capture, cleanup failure evidence, cached display/EDID, reconnect proof, ATX, SSE route-security/routing/close, and the exact three DeviceRpcAdapter binding/replacement/mid-flight-loss rows.
+- [ ] Require explicit focused+story cells for per-fact status provenance, EDID capability absent, EDID successful empty, EDID lower failure, scroll validation, cancellation before write, partial dispatch counts/suffix suppression, post-reconnect no-capture, cleanup, reconnect, ATX, SSE, and all three DeviceRpc rows.
 - [ ] Fail on skipped tests, `.only`, duplicate/extra behavior IDs, missing evidence assertions, or any handler branch absent from canonical §11.2. Source coverage is diagnostic only.
 
 ## Task 5.4: Prove end-to-end protocol contracts
@@ -723,7 +726,7 @@ Repeat from a clean checkout and freshly packed tarball. Smokes initialize/list 
 - [ ] Document operator-only device URL/auth configuration for HTTPS, LAN, and Tailscale; insecure HTTP opt-in; SSE bind/Origin/Host/bearer security; secret handling; and why tools never accept credentials.
 - [ ] List exactly ten tools with strict input/result summaries and realistic examples for connect/status/reconnect, capture/status, mouse/keyboard/paste/release, and all three power actions.
 - [ ] Explain ownership/no-steal/takeover, transport-session independence, generation/observation fencing, idempotency outcomes, safe retry, next steps, and no-silent-partial-success behavior.
-- [ ] Explain reliable paste pacing, physical keyboard versus paste, exact signed-integer wheel bounds, per-fact cached-snapshot/event display freshness, base display-status success without EDID capability, EDID unsupported/unavailable/read-failed semantics, image/paste privacy, and semantic ATX limitations.
+- [ ] Explain reliable paste pacing, physical keyboard versus paste, exact wheel bounds, per-fact snapshot/event freshness, base status without EDID capability, `unsupported`, completed-empty `unavailable`, bytes-present `available`, connection/device inability-to-attempt errors, and `EDID_READ_FAILED`.
 - [ ] Add troubleshooting for auth/permission, insecure HTTP rejection, CONTROL_BUSY, capability missing, stale generation/observation, no video/stalled frame, paste interruption, unknown input/power effect, release/reconnect/manual recovery, SSE reconnect, and runtime/browser setup.
 - [ ] Execute every example against the installed fake/replay E2E environment. Examples must fail if they drift from schemas.
 
@@ -818,7 +821,7 @@ For every reviewed manifest story whose `environments` includes `live`, the runn
 Run at minimum, in manifest order:
 
 - [ ] Session available connect/status, busy without takeover, explicit takeover with old-generation rejection, and disconnect/reconnect with fresh generation. Evidence records each composed browser/channel/native observation and its freshness; neither ping, native auto-restart, nor quiesce alone passes. MCP transport reconnect never transfers ownership.
-- [ ] Fresh display capture and read-only display status: frame hash/dimensions/age; per-fact `cached_snapshot`/`cached_event` provenance/age; base success without `edid_read`; EDID unsupported, unavailable, verified/not-reported, and explicit low-level read-failure cases; no proxy-`streaming` claim or mutation.
+- [ ] Fresh capture/status evidence covers per-fact `cached_snapshot`/`cached_event`, base success without `edid_read`, strict unsupported, completed-empty unavailable, bytes-present available, inability-to-attempt connection/device error, and attempted lower-layer `EDID_READ_FAILED`; no proxy streaming or mutation.
 - [ ] Mouse move/click/double-click/drag and signed integer vertical wheel values -127, -1, 1, and 127 with fresh observations; live-safe stale-observation negative; fraction/zero/overflow remain fake/replay zero-call evidence.
 - [ ] Physical keyboard press/chord/layout cases, stale-generation negative case, and post-action evidence.
 - [ ] Reliable paste corpus at nominal ~91 source chars/s, including normalization and representative sizes; record original/normalized counts/hashes, elapsed time, terminal lifecycle, and target-visible verification without persisting text or frame bytes.
@@ -845,9 +848,10 @@ After every story—including failure—the runner must release input, reconcile
 
 ## Task 6.6: Tag, publish, and clean-download verification
 
+- [ ] In the exact candidate preflight before tag or publish, run the complete hardware-free/package/schema/story/matrix suite and explicitly run `npm run docs:check`; any mismatch invalidates the candidate.
 - [ ] Tag the exact released candidate commit `jetkvm-mcp-v0.1.0`.
 - [ ] Create the semver GitHub release with exact tarball `T`, checksum, generated schemas, SBOM if produced, compatibility/setup/security/rollback notes, and immutable hardware manifest/evidence links.
-- [ ] From a separate clean checkout and empty install directory, download the release tarball and checksum; verify hash; install under exact Node 22.23.1; run full package/schema/story/branch-matrix tests; run installed stdio and legacy SSE smokes; run README/examples; and confirm exactly ten tools.
+- [ ] From a separate clean checkout and empty install directory, download and verify the exact tarball, install under Node 22.23.1, and run the full package/schema/story/branch-matrix suite including `npm run docs:check`, installed stdio/SSE smokes, and README/examples; confirm exactly ten tools.
 - [ ] Confirm tag, source tree, tarball, lock, schemas, story manifest, Node, firmware evidence, and release manifest identities all match. Do not rebuild or substitute another tarball.
 
 ## Task 6.7: Six-deliverable audit
@@ -902,7 +906,7 @@ The release is incomplete unless all six deliverables are present and mutually c
 - “Public-first” means operator-selectable URL/auth/configuration with secure defaults; it does not mean anonymous public Internet exposure or a hard-coded cloud path.
 - “Session” means an application-level JetKVM device session. stdio process lifetime and SSE transport session IDs are transport details only.
 - “~91 char/s” is the nominal deterministic reliable-paste pacing target measured and reported by stories; correctness and exact normalized content remain the pass authority, not optimistic throughput.
-- “Native display” means per-fact `cached_snapshot` (`getVideoState`) or `cached_event` (`videoInputState`) provenance/age. Base status succeeds without `edid_read`; unsupported, unavailable, verified/not-reported, and attempted-read failure are distinct. Proxy `streaming` is omitted and EDID remains read-only.
+- “Native display” reports per-fact snapshot/event/none provenance. Base status succeeds without `edid_read`; unsupported, completed-empty unavailable, bytes-present available, inability-to-attempt errors, and attempted-read failure are distinct. Proxy streaming is omitted; EDID is read-only.
 - “Power control” means serialized fixed 200 ms/5 s/200 ms serial press/release semantics plus separately qualified cached indicators. Serial acknowledgement and LED/video observations never claim the host OS or host power state changed.
 - “Full local” in Phases 1–5 means all hardware-free repository, package, UI, adapter, fake/replay, protocol, story, docs, and clean-install gates. Phase 6 adds the serialized real-device story suite.
 - The hardware target and lease key are protected runtime inputs. The runner derives the key from normalized target identity, and public evidence omits network topology.
