@@ -61,11 +61,11 @@ func runATXControl() {
 		newBtnRSTState := line[2] == '1'
 		newBtnPWRState := line[3] == '1'
 
-		if currentSession != nil {
+		if session := currentSessionRead(); session != nil {
 			writeJSONRPCEvent("atxState", ATXState{
 				Power: newLedPWRState,
 				HDD:   newLedHDDState,
-			}, currentSession)
+			}, session)
 		}
 
 		if newLedHDDState != ledHDDState ||
@@ -214,8 +214,8 @@ func runDCControl() {
 		// Update Prometheus metrics
 		updateDCMetrics(dcState)
 
-		if currentSession != nil {
-			writeJSONRPCEvent("dcState", dcState, currentSession)
+		if session := currentSessionRead(); session != nil {
+			writeJSONRPCEvent("dcState", dcState, session)
 		}
 	}
 }

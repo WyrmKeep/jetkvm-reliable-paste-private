@@ -1,11 +1,13 @@
 package kvm
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/usbgadget"
 )
 
@@ -32,6 +34,50 @@ var gadget *usbgadget.UsbGadget
 var usbMonitorInstance *usbMonitor
 var keyboardReportWrite = func(modifier byte, keys []byte) error {
 	return gadget.KeyboardReport(modifier, keys)
+}
+var keyboardStateClearWrite = func() error {
+	return gadget.ClearKeyboardState()
+}
+var keypressReportWrite = func(key byte, press bool) error {
+	return gadget.KeypressReport(key, press)
+}
+var absMouseReportWrite = func(x int, y int, buttons uint8) error {
+	return gadget.AbsMouseReport(x, y, buttons)
+}
+var relMouseReportWrite = func(dx int8, dy int8, buttons uint8) error {
+	return gadget.RelMouseReport(dx, dy, buttons)
+}
+var wheelReportWrite = func(wheelY int8) error {
+	return gadget.AbsMouseWheelReport(wheelY)
+}
+
+var errStaleControlSession = errors.New("control session is stale or draining")
+
+func withOrdinaryGeneration(generation controlsession.Generation, write func() error) error {
+	lease, ok := sessionManager.Acquire(generation)
+	if !ok {
+		return errStaleControlSession
+	}
+	defer lease.Release()
+	return write()
+}
+
+var maintenanceKeyboardZeroWrite = func(lease controlsession.MaintenanceLease) error {
+	if !lease.Valid() {
+		return errStaleControlSession
+	}
+	return keyboardStateClearWrite()
+}
+
+var maintenancePointerZeroWrite = func(lease controlsession.MaintenanceLease) error {
+	if !lease.Valid() {
+		return errStaleControlSession
+	}
+	return relMouseReportWrite(0, 0, 0)
+}
+
+func zeroInputWithMaintenanceLease(lease controlsession.MaintenanceLease) (error, error) {
+	return maintenanceKeyboardZeroWrite(lease), maintenancePointerZeroWrite(lease)
 }
 
 // initUsbGadget initializes the USB gadget.
@@ -63,20 +109,20 @@ func initUsbGadget() {
 	go usbStateConsumer()
 
 	gadget.SetOnKeyboardStateChange(func(state usbgadget.KeyboardState) {
-		if currentSession != nil {
-			currentSession.reportHidRPCKeyboardLedState(state)
+		if session := currentSessionRead(); session != nil {
+			session.reportHidRPCKeyboardLedState(state)
 		}
 	})
 
 	gadget.SetOnKeysDownChange(func(state usbgadget.KeysDownState) {
-		if currentSession != nil {
-			currentSession.enqueueKeysDownState(state)
+		if session := currentSessionRead(); session != nil {
+			session.enqueueKeysDownState(state)
 		}
 	})
 
 	gadget.SetOnKeepAliveReset(func() {
-		if currentSession != nil {
-			currentSession.resetKeepAliveTime()
+		if session := currentSessionRead(); session != nil {
+			session.resetKeepAliveTime()
 		}
 	})
 
@@ -86,12 +132,12 @@ func initUsbGadget() {
 	}
 }
 
-func rpcKeyboardReport(modifier byte, keys []byte) error {
+func keyboardReportWithOrdinaryLease(lease *controlsession.Lease, modifier byte, keys []byte) error {
+	if !lease.Valid() {
+		return errStaleControlSession
+	}
 	lastKeyboardReportTime.Store(time.Now().UnixNano())
 	if pasteDropEvery > 0 {
-		// Only drop "key down" reports (a non-zero modifier or key) — dropping
-		// a reset/clear report wouldn't lose a character. Simulates one missed
-		// keystroke so the host counter ends up short, exercising verify/repair.
 		nonEmpty := modifier != 0
 		for _, k := range keys {
 			if k != 0 {
@@ -107,6 +153,26 @@ func rpcKeyboardReport(modifier byte, keys []byte) error {
 	return keyboardReportWrite(modifier, keys)
 }
 
+func rpcKeyboardReportForGeneration(generation controlsession.Generation, modifier byte, keys []byte) error {
+	lease, ok := sessionManager.Acquire(generation)
+	if !ok {
+		return errStaleControlSession
+	}
+	defer lease.Release()
+	return keyboardReportWithOrdinaryLease(lease, modifier, keys)
+}
+
+func rpcKeyboardReportForSession(session *Session, modifier byte, keys []byte) error {
+	if session == nil {
+		return errStaleControlSession
+	}
+	return rpcKeyboardReportForGeneration(session.managerGeneration, modifier, keys)
+}
+
+func rpcKeyboardReport(modifier byte, keys []byte) error {
+	return rpcKeyboardReportForGeneration(currentSessionSnapshot().Generation, modifier, keys)
+}
+
 func flushKeyboardHIDTee() {
 	if gadget == nil {
 		return
@@ -116,29 +182,48 @@ func flushKeyboardHIDTee() {
 	}
 }
 
-func rpcKeypressReport(key byte, press bool) error {
-	return gadget.KeypressReport(key, press)
+func rpcKeypressReportForSession(session *Session, key byte, press bool) error {
+	if session == nil {
+		return errStaleControlSession
+	}
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		return keypressReportWrite(key, press)
+	})
 }
 
-func clearKeyboardStateForSessionTransition(reason string) {
-	if gadget == nil {
-		return
+func rpcAbsMouseReportForSession(session *Session, x int, y int, buttons uint8) error {
+	if session == nil {
+		return errStaleControlSession
 	}
-	if err := gadget.ClearKeyboardState(); err != nil {
-		usbLogger.Warn().Err(err).Str("reason", reason).Msg("failed to clear keyboard state for session transition")
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		return absMouseReportWrite(x, y, buttons)
+	})
+}
+
+func rpcRelMouseReportForSession(session *Session, dx int8, dy int8, buttons uint8) error {
+	if session == nil {
+		return errStaleControlSession
 	}
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		return relMouseReportWrite(dx, dy, buttons)
+	})
+}
+
+func rpcWheelReportForSession(session *Session, wheelY int8) error {
+	if session == nil {
+		return errStaleControlSession
+	}
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		return wheelReportWrite(wheelY)
+	})
 }
 
 func rpcAbsMouseReport(x int, y int, buttons uint8) error {
-	return gadget.AbsMouseReport(x, y, buttons)
-}
-
-func rpcRelMouseReport(dx int8, dy int8, buttons uint8) error {
-	return gadget.RelMouseReport(dx, dy, buttons)
-}
-
-func rpcWheelReport(wheelY int8) error {
-	return gadget.AbsMouseWheelReport(wheelY)
+	session := currentSessionRead()
+	if session == nil {
+		return errStaleControlSession
+	}
+	return rpcAbsMouseReportForSession(session, x, y, buttons)
 }
 
 func rpcGetKeyboardLedState() (state usbgadget.KeyboardState) {
@@ -177,8 +262,8 @@ func triggerUSBStateUpdate() {
 func usbStateConsumer() {
 	for update := range usbMonitorInstance.stateCh {
 		requestDisplayUpdate(true, "usb_state_changed")
-		if currentSession != nil {
-			writeJSONRPCEvent("usbState", update.effective, currentSession)
+		if session := currentSessionRead(); session != nil {
+			writeJSONRPCEvent("usbState", update.effective, session)
 		}
 	}
 }

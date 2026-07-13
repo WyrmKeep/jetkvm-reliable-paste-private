@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -24,6 +25,7 @@ import (
 	gin_logger "github.com/gin-contrib/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/diagnostics"
 	"github.com/jetkvm/kvm/internal/logging"
 	"github.com/jetkvm/kvm/internal/supervisor"
@@ -213,8 +215,79 @@ func setupRouter() *gin.Engine {
 	return r
 }
 
-// TODO: support multiple sessions?
-var currentSession *Session
+var (
+	sessionManager      = controlsession.New[*Session]()
+	sessionActivationMu sync.Mutex
+)
+
+func currentSessionSnapshot() controlsession.Snapshot[*Session] {
+	return sessionManager.Snapshot()
+}
+
+func currentSessionRead() *Session {
+	snapshot := currentSessionSnapshot()
+	if !snapshot.HasCurrent {
+		return nil
+	}
+	return snapshot.Current
+}
+
+const controlSessionQuiesceTimeout = 5 * time.Second
+
+func activateSession(ctx context.Context, session *Session, operationID string) (controlsession.Receipt, error) {
+	if session == nil {
+		return controlsession.Receipt{OperationID: operationID, Outcome: controlsession.OutcomeStale}, errors.New("cannot activate a nil session")
+	}
+
+	sessionActivationMu.Lock()
+	previous := currentSessionRead()
+	snapshot, receipt := sessionManager.Takeover(ctx, session, operationID, zeroInputWithMaintenanceLease)
+	if receipt.Outcome != controlsession.OutcomeReleased {
+		sessionActivationMu.Unlock()
+		return receipt, fmt.Errorf("session takeover %s: %s", operationID, receipt.Outcome)
+	}
+	session.managerGeneration = snapshot.Generation
+	session.startManagedWorkers()
+	sessionActivationMu.Unlock()
+
+	notifyAndSchedulePreviousSessionClose(previous)
+	return receipt, nil
+}
+
+func closeManagedSession(session *Session, operationID string) controlsession.Receipt {
+	if session == nil {
+		return controlsession.Receipt{OperationID: operationID, Outcome: controlsession.OutcomeStale}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), controlSessionQuiesceTimeout)
+	defer cancel()
+	return sessionManager.Close(ctx, session.managerGeneration, operationID, zeroInputWithMaintenanceLease)
+}
+
+var addICECandidateToSession = func(session *Session, candidate webrtc.ICECandidateInit) error {
+	if session == nil || session.peerConnection == nil {
+		return errors.New("signalling session is unavailable")
+	}
+	return session.peerConnection.AddICECandidate(candidate)
+}
+
+func routeSignallingCandidate(session *Session, candidate webrtc.ICECandidateInit) error {
+	return addICECandidateToSession(session, candidate)
+}
+
+func notifyAndSchedulePreviousSessionClose(session *Session) {
+	if session == nil {
+		return
+	}
+	writeJSONRPCEvent("otherSessionConnected", nil, session)
+	if session.peerConnection == nil {
+		return
+	}
+	peerConn := session.peerConnection
+	go func() {
+		time.Sleep(time.Second)
+		_ = peerConn.Close()
+	}()
+}
 
 func handleWebRTCSession(c *gin.Context) {
 	var req WebRTCSessionRequest
@@ -235,20 +308,10 @@ func handleWebRTCSession(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
 		return
 	}
-	if currentSession != nil {
-		writeJSONRPCEvent("otherSessionConnected", nil, currentSession)
-		peerConn := currentSession.peerConnection
-		go func() {
-			time.Sleep(1 * time.Second)
-			_ = peerConn.Close()
-		}()
+	if _, err := activateSession(c.Request.Context(), session, "local-takeover-"+uuid.NewString()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-
-	// Cancel any ongoing keyboard macro when session changes
-	cancelAndDrainMacroQueue()
-	clearKeyboardStateForSessionTransition("local session takeover")
-
-	currentSession = session
 	c.JSON(http.StatusOK, gin.H{"sd": sd})
 }
 
@@ -391,6 +454,8 @@ func handleWebRTCSignalWsMessages(
 		}()
 	}
 
+	var signallingSession *Session
+
 	for {
 		typ, msg, err := wsCon.Read(runCtx)
 		if err != nil {
@@ -442,7 +507,7 @@ func handleWebRTCSignalWsMessages(
 
 			metricConnectionSessionRequestCount.WithLabelValues(sourceType, source).Inc()
 			metricConnectionLastSessionRequestTimestamp.WithLabelValues(sourceType, source).SetToCurrentTime()
-			err = handleSessionRequest(runCtx, wsCon, req, isCloudConnection, source, &l)
+			signallingSession, err = handleSessionRequest(runCtx, wsCon, req, isCloudConnection, source, &l)
 			if err != nil {
 				l.Warn().Str("error", err.Error()).Msg("error starting new session")
 				continue
@@ -464,13 +529,13 @@ func handleWebRTCSignalWsMessages(
 
 			l.Info().Str("data", fmt.Sprintf("%v", candidate)).Msg("unmarshalled incoming ICE candidate")
 
-			if currentSession == nil {
-				l.Warn().Msg("no current session, skipping incoming ICE candidate")
+			if signallingSession == nil {
+				l.Warn().Msg("no session for this signalling connection, skipping incoming ICE candidate")
 				continue
 			}
 
-			l.Info().Str("data", fmt.Sprintf("%v", candidate)).Msg("adding incoming ICE candidate to current session")
-			if err = currentSession.peerConnection.AddICECandidate(candidate); err != nil {
+			l.Info().Str("data", fmt.Sprintf("%v", candidate)).Msg("adding incoming ICE candidate to originating session")
+			if err = routeSignallingCandidate(signallingSession, candidate); err != nil {
 				l.Warn().Str("error", err.Error()).Msg("failed to add incoming ICE candidate to our peer connection")
 			}
 		}
@@ -899,10 +964,10 @@ func handleDiagnosticsDownload(c *gin.Context) {
 			GetSessionInfo: func() diagnostics.SessionInfo {
 				info := diagnostics.SessionInfo{
 					ActiveSessions:    getActiveSessions(),
-					HasCurrentSession: currentSession != nil,
+					HasCurrentSession: currentSessionSnapshot().HasCurrent,
 				}
-				if currentSession != nil {
-					sessionInfo := currentSession.GetDiagnosticsInfo()
+				if session := currentSessionRead(); session != nil {
+					sessionInfo := session.GetDiagnosticsInfo()
 					info.ICEConnectionState = sessionInfo.ICEConnectionState
 					info.SignalingState = sessionInfo.SignalingState
 					info.ConnectionState = sessionInfo.ConnectionState

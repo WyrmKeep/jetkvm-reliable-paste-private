@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/hidrpc"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,6 +21,11 @@ func withKeyboardReportWrite(t *testing.T, fn func(modifier byte, keys []byte) e
 	t.Helper()
 
 	old := keyboardReportWrite
+	oldManager := sessionManager
+	sessionManager = controlsession.New[*Session]()
+	session := &Session{}
+	snapshot := sessionManager.PublishInitial(session)
+	session.managerGeneration = snapshot.Generation
 	var calls []keyboardReportCall
 	keyboardReportWrite = func(modifier byte, keys []byte) error {
 		copiedKeys := append([]byte(nil), keys...)
@@ -27,6 +34,7 @@ func withKeyboardReportWrite(t *testing.T, fn func(modifier byte, keys []byte) e
 	}
 	t.Cleanup(func() {
 		keyboardReportWrite = old
+		sessionManager = oldManager
 	})
 	return &calls
 }
@@ -64,7 +72,7 @@ func TestRPCDoExecuteKeyboardMacroSendsAllClearBeforeReturningWriteError(t *test
 		return nil
 	})
 
-	err := rpcDoExecuteKeyboardMacro(context.Background(), []hidrpc.KeyboardMacroStep{
+	err := rpcDoExecuteKeyboardMacro(context.Background(), currentSessionSnapshot().Generation, []hidrpc.KeyboardMacroStep{
 		{Modifier: 0x02, Keys: []byte{0x04, 0, 0, 0, 0, 0}, Delay: 0},
 	})
 
@@ -73,6 +81,21 @@ func TestRPCDoExecuteKeyboardMacroSendsAllClearBeforeReturningWriteError(t *test
 	require.Equal(t, byte(0x02), (*calls)[0].modifier)
 	require.Equal(t, []byte{0x04, 0, 0, 0, 0, 0}, (*calls)[0].keys)
 	requireClearReport(t, (*calls)[1])
+}
+
+func TestRPCDoExecuteKeyboardMacroDoesNotWriteAfterCancellation(t *testing.T) {
+	calls := withKeyboardReportWrite(t, func(byte, []byte) error {
+		return errors.New("unexpected keyboard report")
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := rpcDoExecuteKeyboardMacro(ctx, currentSessionSnapshot().Generation, []hidrpc.KeyboardMacroStep{
+		{Modifier: 0x02, Keys: []byte{0x04, 0, 0, 0, 0, 0}, Delay: 0},
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Empty(t, *calls)
 }
 
 func TestWakeTargetForPasteRetriesSingleReleaseFailure(t *testing.T) {
@@ -153,4 +176,36 @@ func TestWakeTargetForPasteAbortsOnWakeTapPressFailure(t *testing.T) {
 	require.Len(t, *calls, 1)
 	require.Equal(t, byte(0x02), (*calls)[0].modifier)
 	require.Contains(t, err.Error(), "paste wake tap failed")
+}
+
+func TestQuiesceAndZeroWireHandlerInjectsOriginatingSessionGeneration(t *testing.T) {
+	keyboardWrites, pointerWrites := installSessionManagerTestSeams(t)
+	origin := &Session{}
+	if _, err := activateSession(context.Background(), origin, "initial"); err != nil {
+		t.Fatal(err)
+	}
+	logger := zerolog.Nop()
+	result, err := callRPCHandler(logger, rpcHandlers["quiesceAndZero"], map[string]any{
+		"operationId": "wire-operation",
+	}, origin)
+	require.NoError(t, err)
+	receipt, ok := result.(controlsession.Receipt)
+	require.True(t, ok)
+	require.Equal(t, "wire-operation", receipt.OperationID)
+	require.Equal(t, origin.managerGeneration, receipt.Generation)
+	require.Equal(t, controlsession.OutcomeReleased, receipt.Outcome)
+	require.True(t, receipt.Draining)
+	require.True(t, receipt.ProducersJoined)
+	require.True(t, receipt.MacroInactive)
+	require.True(t, receipt.PasteInactive)
+	require.True(t, receipt.OrdinaryLeasesZero)
+	require.True(t, receipt.KeyboardZero)
+	require.True(t, receipt.PointerZero)
+	require.Equal(t, int32(1), keyboardWrites.Load())
+	require.Equal(t, int32(1), pointerWrites.Load())
+}
+
+func TestQuiesceAndZeroWireHandlerDeclaresOnlyOperationID(t *testing.T) {
+	require.Equal(t, []string{"operationId"}, rpcHandlers["quiesceAndZero"].Params)
+	require.True(t, rpcHandlers["quiesceAndZero"].SessionBound)
 }

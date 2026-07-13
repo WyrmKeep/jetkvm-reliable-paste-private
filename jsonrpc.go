@@ -17,6 +17,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/rs/zerolog"
 
+	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/hidrpc"
 	"github.com/jetkvm/kvm/internal/usbgadget"
 	"github.com/jetkvm/kvm/internal/utils"
@@ -138,7 +139,7 @@ func onRPCMessage(message webrtc.DataChannelMessage, session *Session) {
 		return
 	}
 
-	result, err := callRPCHandler(scopedLogger, handler, request.Params)
+	result, err := callRPCHandler(scopedLogger, handler, request.Params, session)
 	if err != nil {
 		scopedLogger.Error().Err(err).Msg("Error calling RPC handler")
 		errorResponse := JSONRPCResponse{
@@ -162,6 +163,20 @@ func onRPCMessage(message webrtc.DataChannelMessage, session *Session) {
 		ID:      request.ID,
 	}
 	writeJSONRPCResponse(response, session)
+}
+
+func isMaintenanceRPCMessage(message webrtc.DataChannelMessage) bool {
+	var request JSONRPCRequest
+	return json.Unmarshal(message.Data, &request) == nil && request.Method == "quiesceAndZero"
+}
+
+func rpcQuiesceAndZero(session *Session, operationID string) controlsession.Receipt {
+	if session == nil {
+		return controlsession.Receipt{OperationID: operationID, Outcome: controlsession.OutcomeStale}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), controlSessionQuiesceTimeout)
+	defer cancel()
+	return sessionManager.QuiesceAndZero(ctx, session.managerGeneration, operationID, zeroInputWithMaintenanceLease)
 }
 
 func rpcPing() (string, error) {
@@ -431,12 +446,13 @@ func rpcSetTLSState(state TLSState) error {
 }
 
 type RPCHandler struct {
-	Func   any
-	Params []string
+	Func         any
+	Params       []string
+	SessionBound bool
 }
 
 // call the handler but recover from a panic to ensure our RPC thread doesn't collapse on malformed calls
-func callRPCHandler(logger zerolog.Logger, handler RPCHandler, params map[string]any) (result any, err error) {
+func callRPCHandler(logger zerolog.Logger, handler RPCHandler, params map[string]any, session *Session) (result any, err error) {
 	// Use defer to recover from a panic
 	defer func() {
 		if r := recover(); r != nil {
@@ -450,11 +466,11 @@ func callRPCHandler(logger zerolog.Logger, handler RPCHandler, params map[string
 	}()
 
 	// Call the handler
-	result, err = riskyCallRPCHandler(logger, handler, params)
+	result, err = riskyCallRPCHandler(logger, handler, params, session)
 	return result, err // do not combine these two lines into one, as it breaks the above defer function's setting of err
 }
 
-func riskyCallRPCHandler(logger zerolog.Logger, handler RPCHandler, params map[string]any) (any, error) {
+func riskyCallRPCHandler(logger zerolog.Logger, handler RPCHandler, params map[string]any, session *Session) (any, error) {
 	handlerValue := reflect.ValueOf(handler.Func)
 	handlerType := handlerValue.Type()
 
@@ -463,19 +479,25 @@ func riskyCallRPCHandler(logger zerolog.Logger, handler RPCHandler, params map[s
 	}
 
 	numParams := handlerType.NumIn()
-	paramNames := handler.Params // Get the parameter names from the RPCHandler
-
-	if len(paramNames) != numParams {
-		err := fmt.Errorf("mismatch between handler parameters (%d) and defined parameter names (%d)", numParams, len(paramNames))
+	paramNames := handler.Params
+	offset := 0
+	args := make([]reflect.Value, numParams)
+	if handler.SessionBound {
+		if numParams == 0 || handlerType.In(0) != reflect.TypeOf((*Session)(nil)) {
+			return nil, errors.New("session-bound handler must accept *Session first")
+		}
+		args[0] = reflect.ValueOf(session)
+		offset = 1
+	}
+	if len(paramNames) != numParams-offset {
+		err := fmt.Errorf("mismatch between handler parameters (%d) and defined parameter names (%d)", numParams-offset, len(paramNames))
 		logger.Error().Strs("paramNames", paramNames).Err(err).Msg("Cannot call RPC handler")
 		return nil, err
 	}
 
-	args := make([]reflect.Value, numParams)
-
-	for i := range numParams {
+	for paramIndex, paramName := range paramNames {
+		i := paramIndex + offset
 		paramType := handlerType.In(i)
-		paramName := paramNames[i]
 		paramValue, ok := params[paramName]
 		if !ok {
 			err := fmt.Errorf("missing parameter: %s", paramName)
@@ -612,12 +634,16 @@ func rpcGetUsbEmulationState() (bool, error) {
 	return gadget.IsUDCBound()
 }
 
-func rpcSetUsbEmulationState(enabled bool) error {
-	if enabled {
-		return gadget.BindUDC()
-	} else {
-		return gadget.UnbindUDC()
+func rpcSetUsbEmulationState(session *Session, enabled bool) error {
+	if session == nil {
+		return errStaleControlSession
 	}
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		if enabled {
+			return gadget.BindUDC()
+		}
+		return gadget.UnbindUDC()
+	})
 }
 
 func rpcGetUsbConfig() (usbgadget.Config, error) {
@@ -625,11 +651,16 @@ func rpcGetUsbConfig() (usbgadget.Config, error) {
 	return *config.UsbConfig, nil
 }
 
-func rpcSetUsbConfig(usbConfig usbgadget.Config) error {
-	LoadConfig()
-	config.UsbConfig = &usbConfig
-	gadget.SetGadgetConfig(config.UsbConfig)
-	return updateUsbRelatedConfig()
+func rpcSetUsbConfig(session *Session, usbConfig usbgadget.Config) error {
+	if session == nil {
+		return errStaleControlSession
+	}
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		LoadConfig()
+		config.UsbConfig = &usbConfig
+		gadget.SetGadgetConfig(config.UsbConfig)
+		return updateUsbRelatedConfig()
+	})
 }
 
 func rpcGetWakeOnLanDevices() ([]WakeOnLanDevice, error) {
@@ -841,27 +872,37 @@ func updateUsbRelatedConfig() error {
 	return nil
 }
 
-func rpcSetUsbDevices(usbDevices usbgadget.Devices) error {
-	config.UsbDevices = &usbDevices
-	gadget.SetGadgetDevices(config.UsbDevices)
-	return updateUsbRelatedConfig()
+func rpcSetUsbDevices(session *Session, usbDevices usbgadget.Devices) error {
+	if session == nil {
+		return errStaleControlSession
+	}
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		config.UsbDevices = &usbDevices
+		gadget.SetGadgetDevices(config.UsbDevices)
+		return updateUsbRelatedConfig()
+	})
 }
 
-func rpcSetUsbDeviceState(device string, enabled bool) error {
-	switch device {
-	case "absoluteMouse":
-		config.UsbDevices.AbsoluteMouse = enabled
-	case "relativeMouse":
-		config.UsbDevices.RelativeMouse = enabled
-	case "keyboard":
-		config.UsbDevices.Keyboard = enabled
-	case "massStorage":
-		config.UsbDevices.MassStorage = enabled
-	default:
-		return fmt.Errorf("invalid device: %s", device)
+func rpcSetUsbDeviceState(session *Session, device string, enabled bool) error {
+	if session == nil {
+		return errStaleControlSession
 	}
-	gadget.SetGadgetDevices(config.UsbDevices)
-	return updateUsbRelatedConfig()
+	return withOrdinaryGeneration(session.managerGeneration, func() error {
+		switch device {
+		case "absoluteMouse":
+			config.UsbDevices.AbsoluteMouse = enabled
+		case "relativeMouse":
+			config.UsbDevices.RelativeMouse = enabled
+		case "keyboard":
+			config.UsbDevices.Keyboard = enabled
+		case "massStorage":
+			config.UsbDevices.MassStorage = enabled
+		default:
+			return fmt.Errorf("invalid device: %s", device)
+		}
+		gadget.SetGadgetDevices(config.UsbDevices)
+		return updateUsbRelatedConfig()
+	})
 }
 
 func rpcSetCloudUrl(apiUrl string, appUrl string) error {
@@ -1082,14 +1123,15 @@ func wakeTargetForPaste() error {
 	return nil
 }
 
-// queuedMacro wraps a macro batch with its paste flag and origin session so
-// drainMacroQueue and cancelAndDrainMacroQueue can report state messages back
-// to the session that enqueued the paste, not whichever global currentSession
-// happens to be live when the edge fires.
+// queuedMacro binds a macro batch to its origin session, authoritative
+// generation, and cancellable producer registration. State reports therefore
+// return to the origin and stale queue entries cannot acquire a newer lease.
 type queuedMacro struct {
-	steps   []hidrpc.KeyboardMacroStep
-	isPaste bool
-	session *Session
+	steps      []hidrpc.KeyboardMacroStep
+	isPaste    bool
+	session    *Session
+	generation controlsession.Generation
+	producer   *controlsession.Producer
 }
 
 var (
@@ -1180,20 +1222,26 @@ func drainMacroQueue() {
 
 		var err error
 		if item.isPaste {
-			err = wakeTargetForPaste()
+			wakeLease, ok := sessionManager.Acquire(item.generation)
+			if !ok {
+				err = errStaleControlSession
+			} else {
+				err = wakeTargetForPaste()
+				wakeLease.Release()
+			}
 			if err != nil {
 				discardQueuedMacrosAfterPastePreflightFailure("paste wake failed")
 			}
 		}
 
 		if err == nil {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(item.producer.Context())
 
 			macroLock.Lock()
 			macroCurrentCancel = cancel
 			macroLock.Unlock()
 
-			err = rpcDoExecuteKeyboardMacro(ctx, item.steps)
+			err = rpcDoExecuteKeyboardMacro(ctx, item.generation, item.steps)
 
 			macroLock.Lock()
 			macroCurrentCancel = nil
@@ -1229,9 +1277,10 @@ func drainMacroQueue() {
 		// tracks the burst's instantaneous rate, not the average (burst test
 		// r9: 255 cps bursts with 250ms gaps still lost 12%). This supersedes
 		// PR #41's burst-era tuning; see the 2026-06-09 spec for the data.
-		if !item.isPaste {
+		if !item.isPaste && item.producer.Context().Err() == nil {
 			time.Sleep(pasteInterMacroDrain)
 		}
+		item.producer.Done()
 	}
 }
 
@@ -1257,6 +1306,7 @@ func discardQueuedMacrosAfterPastePreflightFailure(reason string) {
 			if item.isPaste {
 				discardedPaste++
 			}
+			item.producer.Done()
 		default:
 			draining = false
 		}
@@ -1322,6 +1372,7 @@ func cancelAndDrainMacroQueue() {
 				discardedPaste++
 				lastPasteSession = item.session
 			}
+			item.producer.Done()
 		default:
 			draining = false
 		}
@@ -1339,6 +1390,9 @@ func cancelAndDrainMacroQueue() {
 }
 
 func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep, isPaste bool) error {
+	if session == nil {
+		return errStaleControlSession
+	}
 	macroID := keyboardMacroSequence.Add(1)
 	logger.Info().
 		Uint64("macro_id", macroID).
@@ -1349,11 +1403,21 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// Ensure queue is started (idempotent)
 	startMacroQueue()
 
+	kind := controlsession.ProducerMacro
+	if isPaste {
+		kind = controlsession.ProducerPaste
+	}
+	producer, ok := sessionManager.StartProducer(session.managerGeneration, kind)
+	if !ok {
+		return errStaleControlSession
+	}
+
 	// Snapshot the current enqueue cancellation context. If
 	// cancelAndDrainMacroQueue rotates the context while we're blocked on
 	// send, the snapshot we hold still fires on the old Cancel and unblocks
 	// us cleanly.
 	ctx := currentEnqueueCtx()
+	producerCtx := producer.Context()
 
 	// Pre-increment: reserve a paste-depth slot BEFORE we attempt to enqueue.
 	// Emit State:true if this Add is the 0→1 transition.
@@ -1370,9 +1434,10 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 	// the channel accepts the item, roll back the pasteDepth increment and
 	// emit State:false if the rollback is itself the 1→0 transition.
 	select {
-	case macroQueue <- queuedMacro{steps: steps, isPaste: isPaste, session: session}:
+	case macroQueue <- queuedMacro{steps: steps, isPaste: isPaste, session: session, generation: session.managerGeneration, producer: producer}:
 		return nil
 	case <-ctx.Done():
+		producer.Done()
 		if isPaste {
 			if pasteDepth.Add(-1) == 0 {
 				logger.Debug().Uint64("macro_id", macroID).Msg("paste-depth 1->0 (enqueue rollback)")
@@ -1380,6 +1445,14 @@ func rpcExecuteKeyboardMacro(session *Session, steps []hidrpc.KeyboardMacroStep,
 			}
 		}
 		return ctx.Err()
+	case <-producerCtx.Done():
+		producer.Done()
+		if isPaste {
+			if pasteDepth.Add(-1) == 0 {
+				emitPasteState(session, false, pasteFailures.Swap(0) > 0)
+			}
+		}
+		return producerCtx.Err()
 	}
 }
 
@@ -1407,6 +1480,9 @@ func isClearKeyStep(step hidrpc.KeyboardMacroStep) bool {
 	return step.Modifier == 0 && bytes.Equal(step.Keys, keyboardClearStateKeys)
 }
 
+// sendKeyboardAllClearAfterMacroWriteError is called only while the failed
+// macro generation remains ordinarily leased by executeKeyboardMacroStep.
+// The nested current-generation write therefore cannot target a replacement.
 func sendKeyboardAllClearAfterMacroWriteError(originalErr error) {
 	if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
 		logger.Warn().
@@ -1416,7 +1492,30 @@ func sendKeyboardAllClearAfterMacroWriteError(originalErr error) {
 	}
 }
 
-func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacroStep) error {
+func executeKeyboardMacroStep(generation controlsession.Generation, step hidrpc.KeyboardMacroStep) error {
+	// Keep the originating generation leased across both the attempted write
+	// and its best-effort all-clear. This prevents an error recovery write from
+	// being redirected to a replacement session between those two operations.
+	lease, ok := sessionManager.Acquire(generation)
+	if !ok {
+		return errStaleControlSession
+	}
+	defer lease.Release()
+
+	err := keyboardReportWithOrdinaryLease(lease, step.Modifier, step.Keys)
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to execute keyboard macro")
+		sendKeyboardAllClearAfterMacroWriteError(err)
+		return err
+	}
+
+	if isClearKeyStep(step) {
+		gadget.UpdateKeysDown(0, keyboardClearStateKeys)
+	}
+	return nil
+}
+
+func rpcDoExecuteKeyboardMacro(ctx context.Context, generation controlsession.Generation, macro []hidrpc.KeyboardMacroStep) error {
 	logger.Debug().Interface("macro", macro).Msg("Executing keyboard macro")
 
 	timer := time.NewTimer(time.Hour)
@@ -1437,18 +1536,15 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 	// See docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md.
 	next := time.Now()
 	for i, step := range macro {
-		next = next.Add(time.Duration(step.Delay) * time.Millisecond)
-
-		err := rpcKeyboardReport(step.Modifier, step.Keys)
-		if err != nil {
-			logger.Warn().Err(err).Msg("failed to execute keyboard macro")
-			sendKeyboardAllClearAfterMacroWriteError(err)
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
-		// notify the device that the keyboard state is being cleared
-		if isClearKeyStep(step) {
-			gadget.UpdateKeysDown(0, keyboardClearStateKeys)
+		next = next.Add(time.Duration(step.Delay) * time.Millisecond)
+		if err := executeKeyboardMacroStep(generation, step); err != nil {
+			return err
 		}
 
 		// Context-aware sleep until this step's deadline. If the write ran
@@ -1458,7 +1554,7 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 		if wait <= 0 {
 			select {
 			case <-ctx.Done():
-				if err := rpcKeyboardReport(0, keyboardClearStateKeys); err != nil {
+				if err := rpcKeyboardReportForGeneration(generation, 0, keyboardClearStateKeys); err != nil {
 					logger.Warn().Err(err).Msg("failed to reset keyboard state")
 				}
 				logger.Debug().Int("step", i).Msg("Keyboard macro cancelled between steps")
@@ -1479,7 +1575,7 @@ func rpcDoExecuteKeyboardMacro(ctx context.Context, macro []hidrpc.KeyboardMacro
 				}
 			}
 			// make sure keyboard state is reset
-			err := rpcKeyboardReport(0, keyboardClearStateKeys)
+			err := rpcKeyboardReportForGeneration(generation, 0, keyboardClearStateKeys)
 			if err != nil {
 				logger.Warn().Err(err).Msg("failed to reset keyboard state")
 			}
@@ -1504,12 +1600,13 @@ var rpcHandlers = map[string]RPCHandler{
 	"renewDHCPLease":             {Func: rpcRenewDHCPLease},
 	"getKeyboardLedState":        {Func: rpcGetKeyboardLedState},
 	"getKeyDownState":            {Func: rpcGetKeysDownState},
-	"keyboardReport":             {Func: rpcKeyboardReport, Params: []string{"modifier", "keys"}},
+	"keyboardReport":             {Func: rpcKeyboardReportForSession, Params: []string{"modifier", "keys"}, SessionBound: true},
 	"getPasteCapabilities":       {Func: rpcGetPasteCapabilities},
-	"keypressReport":             {Func: rpcKeypressReport, Params: []string{"key", "press"}},
-	"absMouseReport":             {Func: rpcAbsMouseReport, Params: []string{"x", "y", "buttons"}},
-	"relMouseReport":             {Func: rpcRelMouseReport, Params: []string{"dx", "dy", "buttons"}},
-	"wheelReport":                {Func: rpcWheelReport, Params: []string{"wheelY"}},
+	"keypressReport":             {Func: rpcKeypressReportForSession, Params: []string{"key", "press"}, SessionBound: true},
+	"absMouseReport":             {Func: rpcAbsMouseReportForSession, Params: []string{"x", "y", "buttons"}, SessionBound: true},
+	"relMouseReport":             {Func: rpcRelMouseReportForSession, Params: []string{"dx", "dy", "buttons"}, SessionBound: true},
+	"wheelReport":                {Func: rpcWheelReportForSession, Params: []string{"wheelY"}, SessionBound: true},
+	"quiesceAndZero":             {Func: rpcQuiesceAndZero, Params: []string{"operationId"}, SessionBound: true},
 	"getVideoState":              {Func: rpcGetVideoState},
 	"getUSBState":                {Func: rpcGetUSBState},
 	"unmountImage":               {Func: rpcUnmountImage},
@@ -1547,9 +1644,9 @@ var rpcHandlers = map[string]RPCHandler{
 	"getMassStorageMode":         {Func: rpcGetMassStorageMode},
 	"isUpdatePending":            {Func: rpcIsUpdatePending},
 	"getUsbEmulationState":       {Func: rpcGetUsbEmulationState},
-	"setUsbEmulationState":       {Func: rpcSetUsbEmulationState, Params: []string{"enabled"}},
+	"setUsbEmulationState":       {Func: rpcSetUsbEmulationState, Params: []string{"enabled"}, SessionBound: true},
 	"getUsbConfig":               {Func: rpcGetUsbConfig},
-	"setUsbConfig":               {Func: rpcSetUsbConfig, Params: []string{"usbConfig"}},
+	"setUsbConfig":               {Func: rpcSetUsbConfig, Params: []string{"usbConfig"}, SessionBound: true},
 	"checkMountUrl":              {Func: rpcCheckMountUrl, Params: []string{"url"}},
 	"getVirtualMediaState":       {Func: rpcGetVirtualMediaState},
 	"getStorageSpace":            {Func: rpcGetStorageSpace},
@@ -1580,8 +1677,8 @@ var rpcHandlers = map[string]RPCHandler{
 	"deleteSerialCommandHistory": {Func: rpcDeleteSerialCommandHistory},
 	"setTerminalPaused":          {Func: rpcSetTerminalPaused, Params: []string{"terminalPaused"}},
 	"getUsbDevices":              {Func: rpcGetUsbDevices},
-	"setUsbDevices":              {Func: rpcSetUsbDevices, Params: []string{"devices"}},
-	"setUsbDeviceState":          {Func: rpcSetUsbDeviceState, Params: []string{"device", "enabled"}},
+	"setUsbDevices":              {Func: rpcSetUsbDevices, Params: []string{"devices"}, SessionBound: true},
+	"setUsbDeviceState":          {Func: rpcSetUsbDeviceState, Params: []string{"device", "enabled"}, SessionBound: true},
 	"setCloudUrl":                {Func: rpcSetCloudUrl, Params: []string{"apiUrl", "appUrl"}},
 	"getKeyboardLayout":          {Func: rpcGetKeyboardLayout},
 	"setKeyboardLayout":          {Func: rpcSetKeyboardLayout, Params: []string{"layout"}},

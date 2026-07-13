@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/diagnostics"
 	"github.com/jetkvm/kvm/internal/hidrpc"
 	"github.com/jetkvm/kvm/internal/logging"
@@ -23,6 +24,8 @@ import (
 )
 
 type Session struct {
+	managerGeneration controlsession.Generation
+
 	peerConnection           *webrtc.PeerConnection
 	VideoTrack               *webrtc.TrackLocalStaticSample
 	ControlChannel           *webrtc.DataChannel
@@ -30,7 +33,7 @@ type Session struct {
 	HidChannel               *webrtc.DataChannel
 	shouldUmountVirtualMedia bool
 
-	rpcQueue chan webrtc.DataChannelMessage
+	rpcQueue chan rpcQueueMessage
 
 	hidRPCAvailable          bool
 	lastKeepAliveArrivalTime time.Time  // Track when last keep-alive packet arrived
@@ -39,7 +42,13 @@ type Session struct {
 	hidQueueLock             sync.Mutex
 	hidQueue                 []chan hidQueueMessage
 
-	keysDownStateQueue chan usbgadget.KeysDownState
+	keysDownStateQueue    chan usbgadget.KeysDownState
+	managedWorkersStarted bool
+}
+
+type rpcQueueMessage struct {
+	message  webrtc.DataChannelMessage
+	producer *controlsession.Producer
 }
 
 var (
@@ -116,7 +125,8 @@ func (s *Session) resetKeepAliveTime() {
 
 type hidQueueMessage struct {
 	webrtc.DataChannelMessage
-	channel string
+	channel  string
+	producer *controlsession.Producer
 }
 
 type SessionConfig struct {
@@ -173,6 +183,38 @@ func (s *Session) initQueues() {
 	}
 }
 
+func (s *Session) startManagedWorkers() {
+	s.hidQueueLock.Lock()
+	if s.managedWorkersStarted {
+		s.hidQueueLock.Unlock()
+		return
+	}
+	s.managedWorkersStarted = true
+	rpcQueue := s.rpcQueue
+	hidQueues := append([]chan hidQueueMessage(nil), s.hidQueue...)
+	s.hidQueueLock.Unlock()
+
+	if rpcQueue != nil {
+		go func() {
+			for item := range rpcQueue {
+				go func(item rpcQueueMessage) {
+					if item.producer == nil {
+						onRPCMessage(item.message, s)
+						return
+					}
+					defer item.producer.Done()
+					if item.producer.Context().Err() == nil {
+						onRPCMessage(item.message, s)
+					}
+				}(item)
+			}
+		}()
+	}
+	for _, queue := range hidQueues {
+		go s.handleQueues(queue)
+	}
+}
+
 func (s *Session) handleQueues(queue <-chan hidQueueMessage) {
 	for msg := range queue {
 		onHidMessage(msg, s)
@@ -181,22 +223,24 @@ func (s *Session) handleQueues(queue <-chan hidQueueMessage) {
 
 func (s *Session) enqueueHIDQueueMessage(queueIndex int, msg hidQueueMessage) (int, bool) {
 	s.hidQueueLock.Lock()
-	defer s.hidQueueLock.Unlock()
-
 	if queueIndex >= len(s.hidQueue) || queueIndex < 0 {
 		queueIndex = 3
 	}
 	if queueIndex >= len(s.hidQueue) {
+		s.hidQueueLock.Unlock()
 		return queueIndex, false
 	}
-
 	queue := s.hidQueue[queueIndex]
+	s.hidQueueLock.Unlock()
 	if queue == nil {
 		return queueIndex, false
 	}
-
-	queue <- msg
-	return queueIndex, true
+	select {
+	case queue <- msg:
+		return queueIndex, true
+	case <-msg.producer.Context().Done():
+		return queueIndex, false
+	}
 }
 
 const keysDownStateQueueSize = 64
@@ -275,16 +319,24 @@ func getOnHidMessageHandler(session *Session, scopedLogger *zerolog.Logger, chan
 
 		l.Trace().Msg("received data in HID RPC message handler")
 
-		// Enqueue to ensure ordered processing
+		// Register before the potentially blocking enqueue so draining cancels
+		// blocked and queued work as one producer.
+		producer, ok := sessionManager.StartProducer(session.managerGeneration, controlsession.ProducerHIDQueue)
+		if !ok {
+			l.Debug().Msg("rejecting HID message for stale or draining session")
+			return
+		}
 		queueIndex := hidrpc.GetQueueIndex(hidrpc.MessageType(msg.Data[0]))
 		actualQueueIndex, enqueued := session.enqueueHIDQueueMessage(queueIndex, hidQueueMessage{
 			DataChannelMessage: msg,
 			channel:            channel,
+			producer:           producer,
 		})
 		if actualQueueIndex != queueIndex {
 			l.Warn().Int("queueIndex", queueIndex).Msg("received data in HID RPC message handler, but queue index not found")
 		}
 		if !enqueued {
+			producer.Done()
 			l.Warn().Int("queueIndex", actualQueueIndex).Msg("received data in HID RPC message handler, but queue is nil or unavailable")
 			return
 		}
@@ -358,23 +410,9 @@ func newSession(config SessionConfig) (*Session, error) {
 	}
 
 	session := &Session{peerConnection: peerConnection}
-	session.rpcQueue = make(chan webrtc.DataChannelMessage, 256)
+	session.rpcQueue = make(chan rpcQueueMessage, 256)
 	session.initQueues()
 	session.initKeysDownStateQueue()
-
-	go func() {
-		for msg := range session.rpcQueue {
-			// TODO: only use goroutine if the task is asynchronous
-			go onRPCMessage(msg, session)
-		}
-	}()
-
-	session.hidQueueLock.Lock()
-	hidQueues := append([]chan hidQueueMessage(nil), session.hidQueue...)
-	session.hidQueueLock.Unlock()
-	for _, queue := range hidQueues {
-		go session.handleQueues(queue)
-	}
 
 	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
 		defer func() {
@@ -397,8 +435,20 @@ func newSession(config SessionConfig) (*Session, error) {
 		case "rpc":
 			session.RPCChannel = d
 			d.OnMessage(func(msg webrtc.DataChannelMessage) {
-				// Enqueue to ensure ordered processing
-				session.rpcQueue <- msg
+				if isMaintenanceRPCMessage(msg) {
+					session.rpcQueue <- rpcQueueMessage{message: msg}
+					return
+				}
+				producer, ok := sessionManager.StartProducer(session.managerGeneration, controlsession.ProducerRPC)
+				if !ok {
+					return
+				}
+				item := rpcQueueMessage{message: msg, producer: producer}
+				select {
+				case session.rpcQueue <- item:
+				case <-producer.Context().Done():
+					producer.Done()
+				}
 			})
 			// Wait for channel to be open before sending initial state
 			d.OnOpen(func() {
@@ -471,12 +521,7 @@ func newSession(config SessionConfig) (*Session, error) {
 		}
 		if connectionState == webrtc.ICEConnectionStateClosed {
 			scopedLogger.Debug().Msg("ICE Connection State is closed, unmounting virtual media")
-			if session == currentSession {
-				// Cancel any ongoing keyboard report multi when session closes
-				cancelAndDrainMacroQueue()
-				clearKeyboardStateForSessionTransition("session close")
-				currentSession = nil
-			}
+			closeManagedSession(session, "session-close")
 			// Stop RPC processor
 			if session.rpcQueue != nil {
 				close(session.rpcQueue)
@@ -505,12 +550,12 @@ func newSession(config SessionConfig) (*Session, error) {
 }
 
 func onActiveSessionsChanged() {
-	notifyFailsafeMode(currentSession)
+	notifyFailsafeMode(currentSessionRead())
 	requestDisplayUpdate(true, "active_sessions_changed")
 }
 
 func onFirstSessionConnected() {
-	notifyFailsafeMode(currentSession)
+	notifyFailsafeMode(currentSessionRead())
 	_ = nativeInstance.VideoStart()
 	stopVideoSleepModeTicker()
 }
