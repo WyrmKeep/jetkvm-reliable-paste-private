@@ -67,4 +67,4 @@ jobs:
           cache: true
           cache-dependency-path: "go.sum"
       - name: Run host-safe race tests
-        run: go test -race ./internal/controlsession ./internal/usbgadget
+        run: go test -race -tags=hosttest . ./internal/controlsession ./internal/usbgadget

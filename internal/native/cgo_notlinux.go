@@ -1,4 +1,7 @@
-//go:build !linux
+//go:build !linux || hosttest
+
+// hosttest uses the non-native shim so Linux CI can link host-safe root tests
+// after the device build has produced ARM-only static native libraries.
 
 package native
 
@@ -7,6 +10,31 @@ func panicPlatformNotSupported() {
 }
 
 func setUpNativeHandlers() {
+	panicPlatformNotSupported()
+}
+
+func uiInit(rotation uint16) {
+	panicPlatformNotSupported()
+}
+
+func uiTick() {
+	panicPlatformNotSupported()
+}
+
+func videoInit(factor float64) error {
+	panicPlatformNotSupported()
+	return nil
+}
+
+func videoShutdown() {
+	panicPlatformNotSupported()
+}
+
+func videoStart() {
+	panicPlatformNotSupported()
+}
+
+func videoStop() {
 	panicPlatformNotSupported()
 }
 

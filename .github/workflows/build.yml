@@ -56,10 +56,10 @@ jobs:
       - name: Build application inside Docker container
         run: |
           ./scripts/ci_helper.sh make build_dev
-      - name: Run tests
+      - name: Run host-safe tests
         run: |
           set -o pipefail
-          go test ./... -json | tee testreport.json
+          go test -tags=hosttest ./... -json | tee testreport.json
       - name: Make test cases
         run: |
           ./scripts/ci_helper.sh make build_dev_test
