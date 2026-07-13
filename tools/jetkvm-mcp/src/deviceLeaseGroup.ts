@@ -47,7 +47,7 @@ export function runDeviceLeaseGroup({
   let commandChild: LeaseCommandChild | undefined;
   let commandSettled = false;
   let cleanupStarted = false;
-  let killIssued = false;
+  let killReadySent = false;
 
   function send(
     message: object,
@@ -62,12 +62,14 @@ export function runDeviceLeaseGroup({
     }
   }
 
-  function killOwnGroup(): void {
-    if (killIssued) return;
-    killIssued = true;
-    try {
-      signalGroup("SIGKILL");
-    } catch {
+  function reportKillReady(): void {
+    if (killReadySent) return;
+    killReadySent = true;
+    if (
+      !send({ type: "kill_ready" }, (error) => {
+        if (error !== null) runtime.exitCode = 1;
+      })
+    ) {
       runtime.exitCode = 1;
     }
   }
@@ -84,7 +86,7 @@ export function runDeviceLeaseGroup({
     } catch {
       runtime.exitCode = 1;
     }
-    setTimeout(killOwnGroup, cleanupGraceMs);
+    setTimeout(reportKillReady, cleanupGraceMs);
   }
 
   function reportResult(code: number, signal: NodeJS.Signals | null): void {

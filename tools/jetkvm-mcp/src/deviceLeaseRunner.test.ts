@@ -54,6 +54,7 @@ class FakeIpcProcess extends EventEmitter {
   readonly env: NodeJS.ProcessEnv = {};
   connected = true;
   exitCode: number | undefined;
+  killError: Error | null = null;
   readonly sent: object[] = [];
   readonly signals: Array<[number, NodeJS.Signals | number]> = [];
   readonly disconnected = Promise.withResolvers<void>();
@@ -69,6 +70,7 @@ class FakeIpcProcess extends EventEmitter {
   }
 
   kill(pid: number, signal: NodeJS.Signals | number = "SIGTERM"): boolean {
+    if (this.killError !== null) throw this.killError;
     this.signals.push([pid, signal]);
     return true;
   }
@@ -77,6 +79,8 @@ class FakeIpcProcess extends EventEmitter {
 class FakeGroupChild extends EventEmitter {
   readonly pid = 404;
   connected = true;
+  exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   sendError: Error | null = null;
   readonly sent: object[] = [];
   readonly disconnect = vi.fn(() => {
@@ -85,8 +89,10 @@ class FakeGroupChild extends EventEmitter {
 
   constructor() {
     super();
-    this.once("close", () => {
+    this.once("close", (code: number | null, signal: NodeJS.Signals | null) => {
       this.connected = false;
+      this.exitCode = code;
+      this.signalCode = signal;
     });
   }
 
@@ -106,6 +112,9 @@ async function bindFakeSupervisor(group = new FakeGroupChild()) {
   runDeviceLeaseSupervisor({
     runtime,
     group,
+    killLiveGroup: () => {
+      runtime.kill(-group.pid, "SIGKILL");
+    },
     readFile: vi.fn(async () => "proof-id"),
     unlink,
     rmdir,
@@ -280,6 +289,9 @@ describe("device lease runner", () => {
     group.emit("message", { type: "stopping" });
     await Promise.resolve();
     expect(unlink).not.toHaveBeenCalled();
+    expect(runtime.signals).toEqual([]);
+    group.emit("message", { type: "kill_ready" });
+    expect(runtime.signals).toEqual([[-group.pid, "SIGKILL"]]);
     group.emit("close", null, "SIGKILL");
     await runtime.disconnected.promise;
 
@@ -290,11 +302,11 @@ describe("device lease runner", () => {
       code: 0,
       signal: null,
     });
-    expect(runtime.signals).toEqual([]);
+    expect(runtime.signals).toEqual([[-group.pid, "SIGKILL"]]);
     expect(runtime.disconnect).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when a result leader closes before acknowledging stop", async () => {
+  it("fails closed when an acknowledged leader is killed before kill-ready", async () => {
     const { runtime, group, unlink } = await bindFakeSupervisor();
     runtime.emit("message", {
       type: "start",
@@ -302,6 +314,7 @@ describe("device lease runner", () => {
       environment: {},
     });
     group.emit("message", { type: "result", code: 0, signal: null });
+    group.emit("message", { type: "stopping" });
     group.emit("close", null, "SIGKILL");
     await runtime.disconnected.promise;
 
@@ -314,6 +327,29 @@ describe("device lease runner", () => {
       signal: null,
     });
     expect(runtime.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("preserves liveness when the live-group SIGKILL fails", async () => {
+    const { runtime, group, unlink } = await bindFakeSupervisor();
+    runtime.killError = new Error("denied");
+    runtime.emit("message", {
+      type: "start",
+      command: ["/command"],
+      environment: {},
+    });
+    group.emit("message", { type: "result", code: 0, signal: null });
+    group.emit("message", { type: "stopping" });
+    group.emit("message", { type: "kill_ready" });
+    await runtime.disconnected.promise;
+
+    expect(runtime.signals).toEqual([]);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(runtime.sent).not.toContainEqual({
+      type: "result",
+      code: 0,
+      signal: null,
+    });
+    expect(group.disconnect).toHaveBeenCalledOnce();
   });
 
   it("preserves liveness when stop IPC delivery fails", async () => {
@@ -358,7 +394,7 @@ describe("device lease runner", () => {
     }
   });
 
-  it("keeps a settled command group connected through bounded self-cleanup", async () => {
+  it("reports kill readiness after grace while staying connected", async () => {
     vi.useFakeTimers();
     const runtime = new FakeIpcProcess();
     const command = new FakeCommandChild();
@@ -391,10 +427,9 @@ describe("device lease runner", () => {
       expect(runtime.sent).toContainEqual({ type: "stopping" });
       expect(runtime.signals).toEqual([[-runtime.pid, "SIGTERM"]]);
       await vi.advanceTimersByTimeAsync(100);
-      expect(runtime.signals).toEqual([
-        [-runtime.pid, "SIGTERM"],
-        [-runtime.pid, "SIGKILL"],
-      ]);
+      expect(runtime.signals).toEqual([[-runtime.pid, "SIGTERM"]]);
+      expect(runtime.sent).toContainEqual({ type: "kill_ready" });
+      expect(runtime.disconnect).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

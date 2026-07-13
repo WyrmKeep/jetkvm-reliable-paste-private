@@ -31,7 +31,8 @@ type GroupMessage =
       code?: number;
       signal?: NodeJS.Signals | null;
     }
-  | { type: "stopping" };
+  | { type: "stopping" }
+  | { type: "kill_ready" };
 
 interface LeaseSupervisorRuntime {
   readonly pid: number;
@@ -46,6 +47,8 @@ interface LeaseSupervisorRuntime {
 interface LeaseGroupChild {
   readonly pid?: number;
   connected: boolean;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
   send?: (message: object, callback?: (error: Error | null) => void) => boolean;
   disconnect?: () => void;
   on: EventEmitter["on"];
@@ -55,6 +58,7 @@ interface LeaseGroupChild {
 interface DeviceLeaseSupervisorDependencies {
   runtime: LeaseSupervisorRuntime;
   group: LeaseGroupChild;
+  killLiveGroup(): void;
   readFile(path: string): Promise<string>;
   unlink(path: string): Promise<unknown>;
   rmdir(path: string): Promise<unknown>;
@@ -79,6 +83,7 @@ function cleanupSignal(
 export function runDeviceLeaseSupervisor({
   runtime,
   group,
+  killLiveGroup,
   readFile: readLiveness,
   unlink: unlinkLiveness,
   rmdir: removeLivenessDirectory,
@@ -93,6 +98,7 @@ export function runDeviceLeaseSupervisor({
   let terminal = false;
   let stopRequested = false;
   let stopAcknowledged = false;
+  let killIssued = false;
   let reportResult = false;
   let pendingResult:
     | { code: number; signal: NodeJS.Signals | null }
@@ -141,6 +147,7 @@ export function runDeviceLeaseSupervisor({
       terminal ||
       !stopRequested ||
       !stopAcknowledged ||
+      !killIssued ||
       pendingResult === undefined
     ) {
       failClosed();
@@ -228,7 +235,12 @@ export function runDeviceLeaseSupervisor({
   });
   group.once("close", (_code: number | null, signal: NodeJS.Signals | null) => {
     if (terminal) return;
-    if (stopRequested && stopAcknowledged && signal === "SIGKILL") {
+    if (
+      stopRequested &&
+      stopAcknowledged &&
+      killIssued &&
+      signal === "SIGKILL"
+    ) {
       void completeExpectedClose();
     } else {
       failClosed();
@@ -272,6 +284,26 @@ export function runDeviceLeaseSupervisor({
         return;
       }
       stopAcknowledged = true;
+      return;
+    }
+    if (rawMessage.type === "kill_ready") {
+      if (
+        !stopRequested ||
+        !stopAcknowledged ||
+        killIssued ||
+        !group.connected ||
+        group.exitCode !== null ||
+        group.signalCode !== null
+      ) {
+        failClosed();
+        return;
+      }
+      try {
+        killLiveGroup();
+        killIssued = true;
+      } catch {
+        failClosed();
+      }
       return;
     }
     failClosed();
@@ -356,6 +388,17 @@ function runDefaultSupervisor(): void {
   runDeviceLeaseSupervisor({
     runtime: process as unknown as LeaseSupervisorRuntime,
     group: group as unknown as LeaseGroupChild,
+    killLiveGroup: () => {
+      if (
+        !group.connected ||
+        group.pid === undefined ||
+        group.exitCode !== null ||
+        group.signalCode !== null
+      ) {
+        throw new Error("Group leader is not live.");
+      }
+      process.kill(-group.pid, "SIGKILL");
+    },
     readFile: (path) => readFile(path, "utf8"),
     unlink,
     rmdir,
