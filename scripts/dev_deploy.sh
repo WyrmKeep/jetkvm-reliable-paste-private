@@ -324,6 +324,7 @@ EOF
     msg_info "▶ Running go tests"
     sshdev "DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256} ash -s" << 'EOF'
 set -e
+export LD_LIBRARY_PATH="/oem/usr/lib:${LD_LIBRARY_PATH:-}"
 DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
 DEVICE_TESTS_ARCHIVE="${DEVICE_TESTS_ROOT}/device-tests.tar.gz"
 TMP_DIR="${DEVICE_TESTS_ROOT}/extracted"

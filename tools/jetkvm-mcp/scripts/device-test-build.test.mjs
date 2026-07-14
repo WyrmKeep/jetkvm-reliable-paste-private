@@ -137,6 +137,10 @@ test("deployment verifies reviewed device tests after remote upload", async () =
       remoteScript,
       /DEVICE_TESTS_ARCHIVE="\$\{DEVICE_TESTS_ROOT\}\/device-tests\.tar\.gz"/u,
     );
+    assert.match(
+      remoteScript,
+      /LD_LIBRARY_PATH="\/oem\/usr\/lib:\$\{LD_LIBRARY_PATH:-\}"/u,
+    );
     assert.doesNotMatch(remoteScript, /\/tmp\/device-tests\.tar\.gz/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
