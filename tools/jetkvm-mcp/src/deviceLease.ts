@@ -619,6 +619,7 @@ async function assertBoundLease(
 
 export async function loadDeviceLeaseProofReference(
   referencePath: string,
+  expectedDeviceKey?: string,
 ): Promise<DeviceLeaseProof> {
   if (!isAbsolute(referencePath)) {
     throw new DeviceLeaseError(
@@ -642,6 +643,16 @@ export async function loadDeviceLeaseProofReference(
       throw new DeviceLeaseError(
         "DEVICE_LEASE_PROOF_INVALID",
         "The device lease proof reference is invalid.",
+      );
+    }
+    if (
+      expectedDeviceKey !== undefined &&
+      resolvedLeasePath !==
+        leasePath(dirname(resolvedReferencePath), expectedDeviceKey)
+    ) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_PROOF_INVALID",
+        "The device lease proof does not match the configured device.",
       );
     }
     const proof: DeviceLeaseProof = {

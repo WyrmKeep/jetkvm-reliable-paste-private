@@ -93,6 +93,7 @@ class FakeController implements BrowserControllerPort {
   public readEdidResult: ReadBridgeResult["result"] = null;
   public readEdidError: BrowserPlaneError | null = null;
   public readEdidGate: Promise<void> | null = null;
+  public reconnectGate: Promise<void> | null = null;
   public atxError: BrowserPlaneError | null = null;
   public closed = false;
   public frameSequence = 0;
@@ -293,7 +294,7 @@ class FakeController implements BrowserControllerPort {
   }
 
   public async reconnect(): Promise<void> {
-    return undefined;
+    if (this.reconnectGate !== null) await this.reconnectGate;
   }
 
   public async close(): Promise<void> {
@@ -832,15 +833,16 @@ describe("JetKvmBrowserPlane paste and release", () => {
     });
     await expect(capture(plane)).resolves.toBeTruthy();
   });
-
-  it("rejects reconnect without a new bridge channel generation", async () => {
+  it("invalidates the old binding when reconnect lacks a new channel generation", async () => {
     const { plane } = setup();
-    const first = await plane.connect(ref, deadline);
+    await plane.connect(ref, deadline);
     await expect(plane.reconnect(ref, deadline)).rejects.toMatchObject({
       code: "CONNECTION_LOST",
       outcome: "not_sent",
     });
-    expect(plane.deviceRpc.binding).toBe(first.binding);
+    expect(() => plane.deviceRpc.binding).toThrowError(
+      expect.objectContaining({ code: "CONNECTION_LOST" }),
+    );
   });
 
   it("keeps Node binding lineage monotonic when a replacement facade resets local counters", async () => {
@@ -1032,6 +1034,38 @@ describe("page-backed shared DeviceRpcAdapter", () => {
     await expect(readPromise).rejects.toMatchObject({
       code: "BINDING_REPLACED",
       acknowledged: true,
+    });
+  });
+
+  it("invalidates the old adapter while replacement is still in progress", async () => {
+    const { plane, controller } = setup();
+    const connection = await plane.connect(ref, deadline);
+    let resolveRead!: () => void;
+    controller.readEdidGate = new Promise<void>((resolve) => {
+      resolveRead = resolve;
+    });
+    let resolveReconnect!: () => void;
+    controller.reconnectGate = new Promise<void>((resolve) => {
+      resolveReconnect = resolve;
+    });
+    controller.snapshotValue = {
+      ...readySnapshot,
+      lifecycle_generation: 3,
+      channel_generation: 4,
+    };
+    const readPromise = plane.deviceRpc.readEdid(connection.binding, deadline);
+    const reconnectPromise = plane.reconnect(ref, deadline);
+
+    resolveRead();
+    await expect(readPromise).rejects.toMatchObject({
+      code: "BINDING_REPLACED",
+      acknowledged: true,
+    });
+
+    resolveReconnect();
+    await expect(reconnectPromise).resolves.toMatchObject({
+      connectionEpoch: 3,
+      browserChannelGeneration: 4,
     });
   });
 });

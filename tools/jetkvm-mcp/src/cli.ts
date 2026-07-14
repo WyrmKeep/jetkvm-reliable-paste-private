@@ -281,9 +281,15 @@ export async function runJetKvmMcpCli(
     if (parsed.explicitlyLeased && !inheritedProofPath) {
       throw new Error("Internal leased startup lacks a lease proof.");
     }
+    if (!parsed.explicitlyLeased && inheritedProofPath) {
+      throw new Error(
+        "An inherited lease proof is accepted only in internal leased startup.",
+      );
+    }
     if (inheritedProofPath) {
       await (dependencies.loadLeaseProof ?? loadDeviceLeaseProofReference)(
         inheritedProofPath,
+        configuredDeviceFingerprint(parsed.config.targetUrl),
       );
       return await runTransport(parsed, dependencies);
     }

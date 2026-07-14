@@ -939,12 +939,25 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     replacing: boolean,
   ): Promise<BrowserConnection> {
     this.assertDeadline(deadline);
+    const previous = replacing
+      ? (this.current ?? this.previous)
+      : this.current;
     if (replacing) {
+      if (previous === null) {
+        throw admissionFailure(
+          "STALE_SESSION_GENERATION",
+          "reconnect_then_capture",
+        );
+      }
+      this.previous = previous;
+      this.current = null;
+      this.gateClosed = true;
+      this.observations.clear();
+      this.clearHeldKeys();
       await this.controller.reconnect(deadline);
     }
     const snapshot = await this.controller.snapshot(deadline);
     this.assertReady(snapshot);
-    const previous = this.current ?? (replacing ? this.previous : null);
     const sameSessionLineage =
       previous !== null && previous.binding.sessionId === ref.sessionId;
     if (

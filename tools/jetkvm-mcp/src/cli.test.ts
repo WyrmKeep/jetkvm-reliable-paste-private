@@ -92,13 +92,31 @@ describe("production CLI", () => {
     );
 
     expect(result).toBe(0);
-    expect(loadLeaseProof).toHaveBeenCalledWith("/secure/proof");
+    expect(loadLeaseProof).toHaveBeenCalledWith(
+      "/secure/proof",
+      expect.stringMatching(/^jetkvm-[a-f0-9]{64}$/),
+    );
     expect(createRuntime).toHaveBeenCalledOnce();
     expect(startStdioMock).toHaveBeenCalledOnce();
     const registered = startStdioMock.mock.calls[0]?.[0] as HandlerRegistry;
     expect(Object.keys(registered).sort()).toEqual([...JETKVM_TOOL_NAMES].sort());
     expect(closeStdio).toHaveBeenCalled();
     expect(closeRuntime).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an ambient lease proof unless the internal leased mode is explicit", async () => {
+    const createRuntime = vi.fn(() => runtime());
+    const loadLeaseProof = vi.fn(async () => ({}) as never);
+
+    const result = await runJetKvmMcpCli(
+      ["--target-url", "https://jetkvm.test"],
+      { JETKVM_DEVICE_LEASE_PROOF_PATH: "/secure/unrelated-proof" },
+      { createRuntime, loadLeaseProof },
+    );
+
+    expect(result).toBe(1);
+    expect(loadLeaseProof).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
   });
 
   it("starts explicit opt-in loopback SSE and closes every owner", async () => {

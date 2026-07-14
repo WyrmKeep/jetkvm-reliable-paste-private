@@ -1,4 +1,4 @@
-name: JetKVM MCP input and display
+name: JetKVM MCP production runtime
 
 on:
   pull_request:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   mcp:
-    name: MCP Phase 2 and Phase 3 gates
+    name: MCP Phase 2 through Phase 4 gates
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -53,6 +53,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run Phase 3 focused gate
         run: npm run test:phase3
+      - name: Run Phase 4 power and session gate
+        run: npm run test:phase4
       - name: Validate canonical stories
         run: npm run stories:validate
       - name: Check documentation consistency
@@ -105,4 +107,4 @@ jobs:
       - name: Create empty resource directory
         run: mkdir -p static && touch static/.gitkeep
       - name: Run host-safe race tests
-        run: go test -race -tags=hosttest . ./internal/native ./internal/controlsession ./internal/usbgadget
+        run: go test -race -tags=hosttest . ./internal/atx ./internal/native ./internal/controlsession ./internal/usbgadget

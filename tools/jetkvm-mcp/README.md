@@ -63,7 +63,7 @@ npm run build
 node dist/bin.js
 ```
 
-The installed `jetkvm-mcp` executable invokes the same entry point. Startup acquires a private device-keyed lease before constructing Chromium or contacting the target. A second process for the same target fails closed. The detached lease supervisor and CLI remain attached to inherited stdio for the lifetime of the MCP transport; EOF closes the server, browser, and lease in bounded order. Startup errors are redacted and emitted only on stderr.
+The installed `jetkvm-mcp` executable invokes the same entry point. Startup acquires a private device-keyed lease before constructing Chromium or contacting the target. A second process for the same target fails closed. Inherited proof is accepted only in the internal `--leased` child mode, and the proof's cryptographic lease path must match the configured target fingerprint. The detached lease supervisor and CLI remain attached to inherited stdio for the lifetime of the MCP transport; EOF closes the server, browser, and lease in bounded order. Startup errors are redacted and emitted only on stderr.
 
 By default, managed Chromium is headless and uses an ephemeral profile. `JETKVM_HEADLESS=false` makes the browser visible. `JETKVM_CHROMIUM_EXECUTABLE_PATH` selects an explicit Chromium-family executable. `JETKVM_CONNECT_TIMEOUT_MS` bounds browser admission. Plain LAN HTTP requires both `JETKVM_ALLOW_INSECURE_HTTP=true` and `JETKVM_ALLOW_DANGEROUS_TARGET_HTTP=true`.
 
@@ -81,7 +81,7 @@ EDID is read-only EDID. Without the capability it is `unsupported` with no read 
 
 ## Phase 4 session and power semantics
 
-`jetkvm_session_connect` establishes the authenticated browser/WebRTC control channel, qualifies the device capabilities, and publishes ownership only after connection evidence is coherent. A capability post-read failure after an opened connection preserves the usable connection with `device_ack_only` verification rather than closing a valid channel. Reconnect drains the old generation, releases input, closes the old channel, opens a successor, and requires a fresh display capture.
+`jetkvm_session_connect` establishes the authenticated browser/WebRTC control channel, qualifies browser/HID/video observations, and performs an actual native display-state read through that connection's exact shared `DeviceRpcAdapter` binding before reporting `device_state_verified`. A failed native post-read after an opened connection preserves the usable connection with `device_ack_only` verification and conservative capabilities rather than closing a valid channel. Reconnect invalidates the old adapter before replacement begins, drains the old generation, releases input, closes the old channel, opens and qualifies a successor, and requires a fresh display capture.
 
 `jetkvm_session_status` composes ownership, browser, native, capability, and version facts without inventing a unified health field. Missing `session.status` permission or capability fails before any browser/native probe. Per-fact display provenance remains explicit.
 
