@@ -15,7 +15,11 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const examples = resolve(packageRoot, "examples");
 
-function run(command, args, { env = process.env, input = "" } = {}) {
+export function runExampleCommand(
+  command,
+  args,
+  { env = process.env, input = "" } = {},
+) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
       cwd: packageRoot,
@@ -45,6 +49,7 @@ function run(command, args, { env = process.env, input = "" } = {}) {
         ),
       );
     });
+    child.stdin.on("error", () => {});
     child.stdin.end(input);
   });
 }
@@ -82,13 +87,13 @@ async function checkClientConfig() {
 async function checkShellExamples() {
   const createCredential = resolve(examples, "create-credential-file.sh");
   const runStdio = resolve(examples, "run-stdio.sh");
-  await run("bash", ["-n", createCredential]);
-  await run("sh", ["-n", runStdio]);
+  await runExampleCommand("bash", ["-n", createCredential]);
+  await runExampleCommand("sh", ["-n", runStdio]);
 
   const temporaryRoot = await mkdtemp(resolve(tmpdir(), "jetkvm-examples-"));
   try {
     const credentialPath = resolve(temporaryRoot, "config", "credential");
-    await run(createCredential, [credentialPath], {
+    await runExampleCommand(createCredential, [credentialPath], {
       env: { ...process.env, JETKVM_EXAMPLE_CREDENTIAL_STDIN: "1" },
       input: "example-validation-credential\n",
     });
@@ -108,7 +113,7 @@ async function checkShellExamples() {
       "utf8",
     );
     await chmod(stub, 0o700);
-    await run(runStdio, [], {
+    await runExampleCommand(runStdio, [], {
       env: {
         ...process.env,
         JETKVM_TARGET_URL: "https://jetkvm.example",
@@ -128,6 +133,11 @@ async function checkShellExamples() {
   }
 }
 
-await checkClientConfig();
-await checkShellExamples();
-process.stdout.write("Executable examples verified.\n");
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  await checkClientConfig();
+  await checkShellExamples();
+  process.stdout.write("Executable examples verified.\n");
+}
