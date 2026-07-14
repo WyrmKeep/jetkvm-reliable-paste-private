@@ -449,6 +449,7 @@ async function run() {
 
   const deviceTestArtifact = resolve(outputDirectory, "device-go-tests.json");
   const deviceTests = await runDeviceGoTests({
+    target: rigEnv.KVM_PRIMARY,
     environment: process.env,
     repoRoot: REPOSITORY_ROOT,
     artifactPath: deviceTestArtifact,
