@@ -6,6 +6,7 @@ import {
   buildDirectoryManifest,
   createExecutionEvidenceResolver,
   sha256Canonical,
+  sha256Bytes,
   sha256File,
   validateReleaseCandidateManifest,
 } from "./release-evidence.mjs";
@@ -14,7 +15,11 @@ import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const PRIVATE_PATTERN =
-  /(?:\/Users\/|[A-Za-z]:\\|(?:^|[^0-9])(?:10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)\d{1,3}\.\d{1,3}\.\d{1,3}|JETKVM_PASSWORD|JETKVM_CREDENTIAL|BEGIN [A-Z ]+PRIVATE KEY)/u;
+  /(?:\/Users\/|[A-Za-z]:\\|(?:^|[^0-9])(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})(?!\d)|JETKVM_PASSWORD|JETKVM_CREDENTIAL|BEGIN [A-Z ]+PRIVATE KEY)/u;
+
+export function containsPrivateReleaseMaterial(value) {
+  return PRIVATE_PATTERN.test(value);
+}
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -25,6 +30,36 @@ function assertHash(value, label) {
     throw new Error(`${label} must be a lowercase SHA-256 digest.`);
   }
 }
+function validateStructuredPreimages(value, label) {
+  if (Array.isArray(value)) {
+    value.forEach((child, index) =>
+      validateStructuredPreimages(child, `${label}[${index}]`),
+    );
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (Object.hasOwn(value, "structured_sha256")) {
+    assertHash(value.structured_sha256, `${label} structured evidence`);
+    if (
+      !isRecord(value.structured) ||
+      sha256Canonical(value.structured) !== value.structured_sha256
+    ) {
+      throw new Error(`${label} omitted its structured evidence preimage.`);
+    }
+  }
+  for (const [key, child] of Object.entries(value)) {
+    validateStructuredPreimages(child, `${label}.${key}`);
+  }
+}
+
+function assertEvidencePreimage(value, digest, label) {
+  assertHash(digest, label);
+  if (value === null || value === undefined || sha256Canonical(value) !== digest) {
+    throw new Error(`${label} did not bind its persisted evidence preimage.`);
+  }
+  validateStructuredPreimages(value, label);
+}
+
 
 function assertPass(value, label) {
   if (!isRecord(value) || value.result !== "pass") {
@@ -112,10 +147,19 @@ function validateRecord(record, story, storyPlan, runId) {
   ) {
     throw new Error(`Hardware record ${story.id} did not pass exactly.`);
   }
-  assertHash(record.baseline_before_sha256, `${story.id} baseline before`);
-  assertHash(record.baseline_after_sha256, `${story.id} baseline after`);
+  assertEvidencePreimage(
+    record.baseline_before,
+    record.baseline_before_sha256,
+    `${story.id} baseline before`,
+  );
+  assertEvidencePreimage(
+    record.baseline_after,
+    record.baseline_after_sha256,
+    `${story.id} baseline after`,
+  );
   assertPass(record.baseline_comparison, `${story.id} baseline comparison`);
-  assertHash(
+  assertEvidencePreimage(
+    record.baseline_comparison.evidence,
     record.baseline_comparison.evidence_sha256,
     `${story.id} baseline comparison evidence`,
   );
@@ -142,7 +186,11 @@ function validateRecord(record, story, storyPlan, runId) {
         `Hardware step ${story.id}/${step.id} did not pass exactly.`,
       );
     }
-    assertHash(result.evidence_sha256, `${story.id}/${step.id} evidence`);
+    assertEvidencePreimage(
+      result.evidence,
+      result.evidence_sha256,
+      `${story.id}/${step.id} evidence`,
+    );
     if (assignment.assertion_ids !== undefined) {
       if (
         !Array.isArray(result.assertion_ids) ||
@@ -174,7 +222,8 @@ function validateRecord(record, story, storyPlan, runId) {
         `Hardware restore ${story.id}/${restore.id} did not pass.`,
       );
     }
-    assertHash(
+    assertEvidencePreimage(
+      result.evidence,
       result.evidence_sha256,
       `${story.id}/${restore.id} restore evidence`,
     );
@@ -186,6 +235,7 @@ function validateRecord(record, story, storyPlan, runId) {
 
 export function validateHardwareReleaseEvidence({
   candidate,
+  candidateSha256,
   stories,
   plan,
   summary,
@@ -206,7 +256,12 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Hardware release summary did not pass exactly.");
   }
-  assertHash(summary.candidate_sha256, "Hardware candidate checksum");
+  assertHash(candidateSha256, "Validated hardware candidate checksum");
+  if (summary.candidate_sha256 !== candidateSha256) {
+    throw new Error(
+      "Hardware candidate checksum did not bind the validated candidate bytes.",
+    );
+  }
   const liveStories = stories.filter((story) =>
     story.environments.includes("live"),
   );
@@ -230,6 +285,20 @@ export function validateHardwareReleaseEvidence({
     (count, record) => count + record.restores.length,
     0,
   );
+  assertExactKeys(
+    summary.device_identity,
+    ["revision", "app_version", "process_start_time"],
+    "Hardware device identity",
+  );
+  if (
+    !["revision", "app_version", "process_start_time"].every(
+      (field) =>
+        typeof summary.device_identity[field] === "string" &&
+        summary.device_identity[field].length > 0,
+    )
+  ) {
+    throw new Error("Hardware device identity is incomplete.");
+  }
   if (
     summary.story_count !== liveStories.length ||
     summary.step_count !== stepCount ||
@@ -270,6 +339,10 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Transport reconnect proof did not pass.");
   }
+  validateStructuredPreimages(
+    summary.transport_reconnect,
+    "Transport reconnect proof",
+  );
   return Object.freeze({
     schema_version: 1,
     result: "pass",
@@ -285,6 +358,7 @@ export function validateHardwareReleaseEvidence({
 export async function validateEvidenceDirectory({
   directory,
   candidate,
+  candidateSha256,
   stories,
   plan,
 }) {
@@ -306,6 +380,7 @@ export async function validateEvidenceDirectory({
   ]);
   const audit = validateHardwareReleaseEvidence({
     candidate,
+    candidateSha256,
     stories,
     plan,
     summary,
@@ -313,17 +388,16 @@ export async function validateEvidenceDirectory({
     finalization,
     deviceTests,
   });
-  if (
-    (await sha256File(join(directory, "manifest.json"))) !==
-    (await readFile(join(directory, "manifest.sha256"), "utf8")).split(
-      /\s+/u,
-    )[0]
-  ) {
-    throw new Error("Hardware evidence manifest checksum did not match.");
+
+  const manifestPath = join(directory, "manifest.json");
+  const sidecarPath = join(directory, "manifest.sha256");
+  const manifestBytes = await readFile(manifestPath);
+  const manifestSha256 = sha256Bytes(manifestBytes);
+  const sidecar = await readFile(sidecarPath, "utf8");
+  if (sidecar !== `${manifestSha256}  manifest.json\n`) {
+    throw new Error("Hardware evidence manifest checksum did not match exactly.");
   }
-  const manifest = JSON.parse(
-    await readFile(join(directory, "manifest.json"), "utf8"),
-  );
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
   if (!isRecord(manifest) || !Array.isArray(manifest.files)) {
     throw new Error("Hardware evidence manifest was malformed.");
   }
@@ -351,24 +425,21 @@ export async function validateEvidenceDirectory({
       throw new Error(`Hardware evidence file ${file.path} drifted.`);
     }
   }
-  const serialized = JSON.stringify({
-    summary,
-    records,
-    finalization,
-    deviceTests,
-    manifest,
-  });
-  if (PRIVATE_PATTERN.test(serialized)) {
-    throw new Error(
-      "Hardware evidence contains private path, topology, or credential material.",
-    );
-  }
-  const directoryManifest = await buildDirectoryManifest(directory);
+
   const expectedFiles = [
     ...manifest.files.map((file) => file.path),
     "manifest.json",
     "manifest.sha256",
   ].sort();
+  for (const path of expectedFiles) {
+    const raw = await readFile(join(directory, path));
+    if (containsPrivateReleaseMaterial(raw.toString("utf8"))) {
+      throw new Error(
+        `Hardware evidence file ${path} contains private path, topology, or credential material.`,
+      );
+    }
+  }
+  const directoryManifest = await buildDirectoryManifest(directory);
   const actualFiles = directoryManifest.files.map((file) => file.path).sort();
   if (
     actualFiles.length !== expectedFiles.length ||
@@ -392,8 +463,10 @@ async function run() {
     );
   }
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const candidateBytes = await readFile(candidatePath);
+  const candidateSha256 = sha256Bytes(candidateBytes);
   const candidate = validateReleaseCandidateManifest(
-    JSON.parse(await readFile(candidatePath, "utf8")),
+    JSON.parse(candidateBytes.toString("utf8")),
   );
   const { loadAcceptanceStories } = await import("../dist/stories/manifest.js");
   const stories = await loadAcceptanceStories(
@@ -410,6 +483,7 @@ async function run() {
   const audit = await validateEvidenceDirectory({
     directory,
     candidate,
+    candidateSha256,
     stories,
     plan,
   });

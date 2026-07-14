@@ -199,6 +199,7 @@ export async function runCanonicalLiveStories({
             result: "pass",
             started_at: stepStartedAt,
             duration_ms: result.duration_ms,
+            evidence: result.evidence,
             evidence_sha256: result.evidence_sha256,
             ...(assignment.assertion_ids === undefined
               ? {}
@@ -228,6 +229,7 @@ export async function runCanonicalLiveStories({
           restores.push({
             restore_id: restore.id,
             result: "pass",
+            evidence: result.evidence,
             evidence_sha256: result.evidence_sha256,
           });
         } catch (error) {
@@ -262,6 +264,8 @@ export async function runCanonicalLiveStories({
       started_at: startedAt,
       completed_at: now().toISOString(),
       precondition_ids: story.preconditions.map((condition) => condition.id),
+      baseline_before: baselineBefore ?? null,
+      baseline_after: baselineAfter ?? null,
       baseline_before_sha256:
         baselineBefore === undefined ? null : sha256Canonical(baselineBefore),
       baseline_after_sha256:
@@ -272,6 +276,7 @@ export async function runCanonicalLiveStories({
           : baselineComparison.result === "pass"
             ? {
                 result: "pass",
+                evidence: baselineComparison.evidence,
                 evidence_sha256: baselineComparison.evidence_sha256,
               }
             : baselineComparison,

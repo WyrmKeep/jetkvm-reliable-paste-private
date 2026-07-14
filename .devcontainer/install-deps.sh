@@ -67,6 +67,10 @@ if [ "${JETKVM_SKIP_BUILDKIT_INSTALL:-0}" != "1" ]; then
   sudo tar --use-compress-program="unzstd --long=31" \
     -xf buildkit.tar.zst -C /opt/jetkvm-native-buildkit
   test -x /opt/jetkvm-native-buildkit/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc
+  if ! /opt/jetkvm-native-buildkit/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc --version > /dev/null; then
+    echo "The pinned x86_64 native compiler cannot execute on ${ARCH}; use an amd64 devcontainer or configure x86 emulation." >&2
+    exit 1
+  fi
   popd > /dev/null
   rm -rf "${BUILDKIT_TMPDIR}"
   trap - EXIT

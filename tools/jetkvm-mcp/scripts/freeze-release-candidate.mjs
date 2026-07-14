@@ -25,11 +25,13 @@ import {
 
 import {
   buildDirectoryManifest,
+  buildLockedConsumerPackageLock,
   buildReleaseCandidateManifest,
   buildProductionResolution,
   isGeneratedInstalledBinLink,
   canonicalJson,
   sha256Canonical,
+  sha256Bytes,
   sha256File,
 } from "./release-evidence.mjs";
 
@@ -278,18 +280,23 @@ export async function freezeReleaseCandidate({
     );
     const artifactFilename = parsePackFilename(packOutput);
     const stagedArtifactPath = join(stagingDirectory, artifactFilename);
-    const artifactFacts = await stat(stagedArtifactPath);
-    if (!artifactFacts.isFile() || artifactFacts.size < 1) {
+    const [artifactFacts, artifactBytes] = await Promise.all([
+      stat(stagedArtifactPath),
+      readFile(stagedArtifactPath),
+    ]);
+    if (!artifactFacts.isFile() || artifactBytes.byteLength < 1) {
       throw new Error("Release artifact is not a non-empty regular file.");
     }
+    const artifactSha256 = sha256Bytes(artifactBytes);
     await assertCleanSource(runCommand, repositoryRoot);
 
     installationDirectory = await mkdtemp(
       join(tmpdir(), "jetkvm-candidate-install-"),
     );
-    await copyFile(
-      stagedArtifactPath,
+    await writeFile(
       join(installationDirectory, artifactFilename),
+      artifactBytes,
+      { flag: "wx", mode: 0o600 },
     );
     const consumerPackageFilename = "consumer-package.json";
     const consumerPackageLockFilename = "consumer-package-lock.json";
@@ -322,10 +329,23 @@ export async function freezeReleaseCandidate({
       ],
       { cwd: installationDirectory },
     );
-    const [sourcePackageLock, consumerPackageLock] = await Promise.all([
-      readFile(join(packageRoot, "package-lock.json"), "utf8").then(JSON.parse),
-      readFile(installPackageLockPath, "utf8").then(JSON.parse),
-    ]);
+    const [sourcePackageLock, generatedConsumerPackageLock] =
+      await Promise.all([
+        readFile(join(packageRoot, "package-lock.json"), "utf8").then(
+          JSON.parse,
+        ),
+        readFile(installPackageLockPath, "utf8").then(JSON.parse),
+      ]);
+    const consumerPackageLock = buildLockedConsumerPackageLock({
+      sourceLock: sourcePackageLock,
+      generatedLock: generatedConsumerPackageLock,
+      packageName: packageMetadata.name,
+    });
+    await writeFile(
+      installPackageLockPath,
+      `${JSON.stringify(consumerPackageLock, null, 2)}\n`,
+      { mode: 0o600 },
+    );
     const sourceResolution = buildProductionResolution(sourcePackageLock);
     const consumerResolution = buildProductionResolution(consumerPackageLock, [
       packageMetadata.name,
@@ -413,14 +433,22 @@ export async function freezeReleaseCandidate({
       browserCredentialSource: "environment",
       browserManagedProfile: "ephemeral",
       artifactFilename,
-      artifactSizeBytes: artifactFacts.size,
-      artifactSha256: await sha256File(stagedArtifactPath),
+      artifactSizeBytes: artifactBytes.byteLength,
+      artifactSha256,
       packageFiles: packageTree.files,
       consumerPackageJsonSha256,
       consumerPackageLockSha256,
       productionResolutionSha256,
       installationFiles: installationTree.files,
     });
+    await rm(stagedArtifactPath);
+    await writeFile(stagedArtifactPath, artifactBytes, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    if ((await sha256File(stagedArtifactPath)) !== artifactSha256) {
+      throw new Error("Final release artifact bytes drifted during staging.");
+    }
     const stagedCandidatePath = join(stagingDirectory, "candidate.json");
     await writeFile(
       stagedCandidatePath,

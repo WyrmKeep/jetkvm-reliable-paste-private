@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DeviceLeaseError,
@@ -277,7 +277,7 @@ export async function runSupervisedChild(
   lease: DeviceLease,
   supervisor: SupervisorHandle,
   signal: AbortSignal,
-): Promise<number> {
+): Promise<{ readonly code: number; readonly signal: NodeJS.Signals | null }> {
   // Listener installation is synchronous: a fast supervisor result cannot race
   // command delivery, and healthy command execution has no duration timeout.
   const result = waitForSupervisorMessage(supervisor.child, "result");
@@ -316,7 +316,10 @@ export async function runSupervisedChild(
     }
     const completed = await Promise.race([result, deliveryFailure.promise]);
     supervisor.retired = true;
-    return completed.code ?? signalExitCode(completed.signal ?? null);
+    return Object.freeze({
+      code: completed.code ?? signalExitCode(completed.signal ?? null),
+      signal: completed.signal ?? null,
+    });
   } catch (error) {
     if (error instanceof SupervisorLostError) {
       preserveLeaseAfterSupervisorLoss(lease);
@@ -396,20 +399,30 @@ export async function runDeviceLeaseCli(
         ownerId,
         runId: randomUUID(),
         supervisor,
-        ...(inheritedProof === undefined ? {} : { inheritedProof }),
+        ...(inheritedProof === undefined
+          ? {}
+          : {
+              inheritedProof,
+              directory: dirname(inheritedProof.path),
+            }),
       },
       async (lease, signal) => {
-        const code = await runSupervisedChild(
+        const completed = await runSupervisedChild(
           args.slice(separator + 1),
           environment,
           lease,
           supervisor as SupervisorHandle,
           signal,
         );
-        if (code === retainOnExitCode) {
+        if (
+          retainOnExitCode !== undefined &&
+          (completed.code === retainOnExitCode ||
+            completed.signal !== null ||
+            signal.aborted)
+        ) {
           preserveLeaseForManualRecovery(lease);
         }
-        return code;
+        return completed.code;
       },
     );
   } catch (error) {

@@ -62,7 +62,7 @@ function deepFreeze(value) {
   return value;
 }
 
-function sha256Bytes(value) {
+export function sha256Bytes(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
@@ -123,6 +123,51 @@ export function buildProductionResolution(lock, excludedNames = []) {
       .map(([, entry]) => Object.freeze(entry)),
   );
 }
+export function buildLockedConsumerPackageLock({
+  sourceLock,
+  generatedLock,
+  packageName,
+}) {
+  if (
+    sourceLock?.lockfileVersion !== 3 ||
+    generatedLock?.lockfileVersion !== 3 ||
+    typeof sourceLock.packages !== "object" ||
+    sourceLock.packages === null ||
+    Array.isArray(sourceLock.packages) ||
+    typeof generatedLock.packages !== "object" ||
+    generatedLock.packages === null ||
+    Array.isArray(generatedLock.packages) ||
+    typeof packageName !== "string" ||
+    packageName.length === 0
+  ) {
+    throw new Error("Consumer package lock input is malformed.");
+  }
+  const candidatePath = `node_modules/${packageName}`;
+  const rootEntry = generatedLock.packages[""];
+  const candidateEntry = generatedLock.packages[candidatePath];
+  if (
+    typeof rootEntry !== "object" ||
+    rootEntry === null ||
+    typeof candidateEntry !== "object" ||
+    candidateEntry === null ||
+    Object.hasOwn(sourceLock.packages, candidatePath)
+  ) {
+    throw new Error("Generated consumer package lock is incomplete.");
+  }
+  const packages = {
+    "": structuredClone(rootEntry),
+    [candidatePath]: structuredClone(candidateEntry),
+  };
+  for (const path of Object.keys(sourceLock.packages).sort()) {
+    if (path.length === 0) continue;
+    packages[path] = structuredClone(sourceLock.packages[path]);
+  }
+  return Object.freeze({
+    ...structuredClone(generatedLock),
+    packages: Object.freeze(packages),
+  });
+}
+
 
 export async function sha256File(path) {
   return sha256Bytes(await readFile(path));

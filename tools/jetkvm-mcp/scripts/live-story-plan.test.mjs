@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   buildControlledReleaseEvidence,
+  mergeControlledTraceReports,
   validateControlledReleaseEvidence,
 } from "./build-controlled-release-evidence.mjs";
 import { validateLiveExecutionPlan } from "./live-release-core.mjs";
@@ -58,13 +59,30 @@ test("materializes explicit coverage for all 18 canonical live stories", async (
 
 test("validates exact controlled evidence inventory, pass state, and hashes", async () => {
   const stories = await loadStories();
-  const [branchMatrix, storyE2e] = await Promise.all([
+  const [
+    branchMatrix,
+    storyE2e,
+    inputDisplayTraces,
+    powerSessionTraces,
+  ] = await Promise.all([
     readFile(join(packageRoot, "reports", "branch-matrix.json"), "utf8").then(
       JSON.parse,
     ),
     readFile(join(packageRoot, "reports", "story-e2e.json"), "utf8").then(
       JSON.parse,
     ),
+    readFile(
+      join(packageRoot, "reports", "controlled-traces", "input-display.json"),
+      "utf8",
+    ).then(JSON.parse),
+    readFile(
+      join(packageRoot, "reports", "controlled-traces", "power-session.json"),
+      "utf8",
+    ).then(JSON.parse),
+  ]);
+  const executionTraces = mergeControlledTraceReports([
+    inputDisplayTraces,
+    powerSessionTraces,
   ]);
   const resolver = createExecutionEvidenceResolver({ branchMatrix, storyE2e });
   const plan = materializeLiveExecutionPlan(stories, resolver);
@@ -73,8 +91,16 @@ test("validates exact controlled evidence inventory, pass state, and hashes", as
     plan,
     branchMatrix,
     storyE2e,
+    executionTraces,
   });
-  const input = { evidence, stories, plan, branchMatrix, storyE2e };
+  const input = {
+    evidence,
+    stories,
+    plan,
+    branchMatrix,
+    storyE2e,
+    executionTraces,
+  };
 
   assert.deepEqual(validateControlledReleaseEvidence(input), evidence);
   const identity = Object.keys(evidence)[0];

@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
+  buildDirectoryManifest,
   buildReleaseCandidateManifest,
   sha256Canonical,
+  sha256File,
 } from "./release-evidence.mjs";
-import { validateHardwareReleaseEvidence } from "./validate-hardware-release-evidence.mjs";
+import {
+  containsPrivateReleaseMaterial,
+  validateEvidenceDirectory,
+  validateHardwareReleaseEvidence,
+} from "./validate-hardware-release-evidence.mjs";
 
 const HASH = "a".repeat(64);
 const COMMIT = "b".repeat(40);
@@ -77,34 +86,59 @@ function fixture() {
     },
   };
   const runId = "run-one";
+  const baselineBefore = { state: "safe", phase: "before" };
+  const baselineAfter = { state: "safe", phase: "after" };
+  const baselineEvidence = { before: baselineBefore, after: baselineAfter };
+  const structured = { ok: true, tool: "jetkvm_display_status" };
+  const hardwareEvidence = {
+    tool_evidence: {
+      structured,
+      structured_sha256: sha256Canonical(structured),
+    },
+  };
+  const linkedEvidence = { assertion_id: "focused:one" };
+  const restoreEvidence = { held_input_released: true };
   const record = {
     schema_version: 1,
     run_id: runId,
     story_id: story.id,
     title: story.title,
     result: "pass",
-    baseline_before_sha256: HASH,
-    baseline_after_sha256: HASH,
-    baseline_comparison: { result: "pass", evidence_sha256: HASH },
+    baseline_before: baselineBefore,
+    baseline_after: baselineAfter,
+    baseline_before_sha256: sha256Canonical(baselineBefore),
+    baseline_after_sha256: sha256Canonical(baselineAfter),
+    baseline_comparison: {
+      result: "pass",
+      evidence: baselineEvidence,
+      evidence_sha256: sha256Canonical(baselineEvidence),
+    },
     steps: [
       {
         step_id: "hardware-step",
         mode: "hardware",
         result: "pass",
         duration_ms: 1,
-        evidence_sha256: HASH,
+        evidence: hardwareEvidence,
+        evidence_sha256: sha256Canonical(hardwareEvidence),
       },
       {
         step_id: "linked-step",
         mode: "linked",
         result: "pass",
         duration_ms: 0,
-        evidence_sha256: HASH,
+        evidence: linkedEvidence,
+        evidence_sha256: sha256Canonical(linkedEvidence),
         assertion_ids: ["focused:one"],
       },
     ],
     restores: [
-      { restore_id: "release-input", result: "pass", evidence_sha256: HASH },
+      {
+        restore_id: "release-input",
+        result: "pass",
+        evidence: restoreEvidence,
+        evidence_sha256: sha256Canonical(restoreEvidence),
+      },
     ],
     failure_count: 0,
   };
@@ -176,7 +210,11 @@ function fixture() {
       node_modules_tree_sha256:
         candidate().installation.node_modules_tree_sha256,
     },
-    device_identity: { revision: COMMIT },
+    device_identity: {
+      revision: COMMIT,
+      app_version: "0.4.0",
+      process_start_time: "1.717e+09",
+    },
     tool_listing: { tool_count: 10 },
     atx_preflight_sha256: HASH,
     device_tests_sha256: sha256Canonical(deviceTests),
@@ -185,11 +223,55 @@ function fixture() {
   };
   return { story, plan, record, summary, deviceTests, finalization };
 }
+async function evidenceDirectory(extraFile) {
+  const evidence = fixture();
+  const directory = await mkdtemp(join(tmpdir(), "jetkvm-evidence-test-"));
+  const jsonFiles = {
+    "summary.json": evidence.summary,
+    [`${evidence.story.id}.json`]: evidence.record,
+    "finalization.json": evidence.finalization,
+    "device-go-tests.json": evidence.deviceTests,
+  };
+  for (const [name, value] of Object.entries(jsonFiles)) {
+    await writeFile(
+      join(directory, name),
+      `${JSON.stringify(value, null, 2)}\n`,
+      "utf8",
+    );
+  }
+  if (extraFile !== undefined) {
+    await writeFile(
+      join(directory, extraFile.name),
+      extraFile.content,
+      "utf8",
+    );
+  }
+  const payload = await buildDirectoryManifest(directory);
+  const manifest = {
+    schema_version: 1,
+    files: payload.files,
+    sha256: payload.sha256,
+  };
+  await writeFile(
+    join(directory, "manifest.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8",
+  );
+  const manifestSha256 = await sha256File(join(directory, "manifest.json"));
+  await writeFile(
+    join(directory, "manifest.sha256"),
+    `${manifestSha256}  manifest.json\n`,
+    "utf8",
+  );
+  return { directory, evidence };
+}
+
 
 test("accepts complete canonical hardware evidence", () => {
   const { story, plan, record, summary, finalization, deviceTests } = fixture();
   const audit = validateHardwareReleaseEvidence({
     candidate: candidate(),
+    candidateSha256: summary.candidate_sha256,
     stories: [story],
     plan,
     summary,
@@ -201,6 +283,24 @@ test("accepts complete canonical hardware evidence", () => {
   assert.equal(audit.step_count, 2);
 });
 
+test("binds the summary to the exact validated candidate bytes", () => {
+  const { story, plan, record, summary, finalization, deviceTests } = fixture();
+  assert.throws(
+    () =>
+      validateHardwareReleaseEvidence({
+        candidate: candidate(),
+        candidateSha256: "f".repeat(64),
+        stories: [story],
+        plan,
+        summary,
+        records: [record],
+        finalization,
+        deviceTests,
+      }),
+    /did not bind the validated candidate bytes/u,
+  );
+});
+
 test("fails closed on a missing step or restore", () => {
   const { story, plan, record, summary, finalization, deviceTests } = fixture();
   const incomplete = structuredClone(record);
@@ -209,6 +309,7 @@ test("fails closed on a missing step or restore", () => {
     () =>
       validateHardwareReleaseEvidence({
         candidate: candidate(),
+        candidateSha256: summary.candidate_sha256,
         stories: [story],
         plan,
         summary,
@@ -231,6 +332,7 @@ test("fails closed on finalization or device-test evidence drift", () => {
     assert.throws(() =>
       validateHardwareReleaseEvidence({
         candidate: candidate(),
+        candidateSha256: evidence.summary.candidate_sha256,
         stories: [evidence.story],
         plan: evidence.plan,
         summary: evidence.summary,
@@ -240,5 +342,73 @@ test("fails closed on finalization or device-test evidence drift", () => {
         deviceTests: field === "deviceTests" ? changed : evidence.deviceTests,
       }),
     );
+  }
+});
+
+test("detects complete private IPv4 address families without partial matching", () => {
+  for (const address of [
+    "10.2.3.4",
+    "127.0.0.1",
+    "169.254.8.9",
+    "172.16.0.1",
+    "172.31.255.254",
+    "192.168.1.110",
+  ]) {
+    assert.equal(containsPrivateReleaseMaterial(`target=${address}`), true);
+  }
+  assert.equal(containsPrivateReleaseMaterial("target=172.32.0.1"), false);
+  assert.equal(containsPrivateReleaseMaterial("target=8.8.8.8"), false);
+});
+
+test("validates exact checksum sidecars and scans every raw manifested file", async () => {
+  const valid = await evidenceDirectory();
+  try {
+    const audit = await validateEvidenceDirectory({
+      directory: valid.directory,
+      candidate: candidate(),
+      candidateSha256: valid.evidence.summary.candidate_sha256,
+      stories: [valid.evidence.story],
+      plan: valid.evidence.plan,
+    });
+    assert.equal(audit.result, "pass");
+    const checksumPath = join(valid.directory, "manifest.sha256");
+    const checksum = await sha256File(join(valid.directory, "manifest.json"));
+    await writeFile(
+      checksumPath,
+      `${checksum}  manifest.json\n${checksum}  extra.json\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      validateEvidenceDirectory({
+        directory: valid.directory,
+        candidate: candidate(),
+        candidateSha256: valid.evidence.summary.candidate_sha256,
+        stories: [valid.evidence.story],
+        plan: valid.evidence.plan,
+      }),
+      /checksum did not match exactly/u,
+    );
+  } finally {
+    await rm(valid.directory, { recursive: true, force: true });
+  }
+
+  const privateEvidence = await evidenceDirectory({
+    name: "raw.log",
+    content: "unparsed target=10.2.3.4\n",
+  });
+  try {
+    await assert.rejects(
+      validateEvidenceDirectory({
+        directory: privateEvidence.directory,
+        candidate: candidate(),
+        candidateSha256:
+          privateEvidence.evidence.summary.candidate_sha256,
+        stories: [privateEvidence.evidence.story],
+        plan: privateEvidence.evidence.plan,
+      }),
+      /raw\.log contains private path, topology, or credential material/u,
+    );
+  } finally {
+    await rm(privateEvidence.directory, { recursive: true, force: true });
   }
 });

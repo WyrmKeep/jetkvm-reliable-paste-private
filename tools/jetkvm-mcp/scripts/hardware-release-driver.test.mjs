@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   mkdir,
@@ -33,6 +34,9 @@ import {
   sha256File,
 } from "./release-evidence.mjs";
 
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function successResult(overrides = {}) {
@@ -59,19 +63,101 @@ function successResult(overrides = {}) {
 }
 
 test("sanitizes MCP results to hashes, bounded facts, and image digests", () => {
+  const imageBytes = Buffer.concat([
+    PNG_SIGNATURE,
+    Buffer.from("private-image"),
+  ]);
   const result = successResult();
   result.content.push({
     type: "image",
     mimeType: "image/png",
-    data: Buffer.from("private-image").toString("base64"),
+    data: imageBytes.toString("base64"),
   });
   const evidence = sanitizeToolEvidence(result);
   const serialized = JSON.stringify(evidence);
   assert.equal(evidence.ok, true);
   assert.equal(evidence.dispatched_action_count, 2);
-  assert.equal(evidence.images[0].byte_length, 13);
+  assert.equal(evidence.images[0].byte_length, imageBytes.byteLength);
   assert.match(evidence.images[0].sha256, /^[a-f0-9]{64}$/u);
   assert.doesNotMatch(serialized, /secret|not persisted|private-image/u);
+});
+
+test("requires the exact nonempty image declared by display capture", () => {
+  const bytes = Buffer.concat([PNG_SIGNATURE, Buffer.from("real-screenshot")]);
+  const data = bytes.toString("base64");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const structuredContent = {
+    ok: true,
+    tool: "jetkvm_display_capture",
+    session_generation: 1,
+    result: {
+      image: {
+        content_index: 1,
+        mime_type: "image/png",
+        byte_length: bytes.byteLength,
+        sha256,
+      },
+    },
+  };
+  assert.throws(
+    () =>
+      sanitizeToolEvidence({
+        content: [{ type: "text", text: "{}" }],
+        structuredContent,
+      }),
+    /omitted its exact declared screenshot/u,
+  );
+  const evidence = sanitizeToolEvidence({
+    content: [
+      { type: "text", text: "{}" },
+      { type: "image", mimeType: "image/png", data },
+    ],
+    structuredContent,
+  });
+  assert.equal(evidence.images[0].content_index, 1);
+  assert.equal(evidence.images[0].sha256, sha256);
+  assert.equal(
+    evidence.structured_sha256,
+    sha256Canonical(evidence.structured),
+  );
+  assert.throws(
+    () =>
+      sanitizeToolEvidence({
+        content: [
+          { type: "text", text: "{}" },
+          { type: "image", mimeType: "image/png", data: "not-base64" },
+        ],
+        structuredContent,
+      }),
+    /strict nonempty base64/u,
+  );
+});
+
+test("refuses an ATX power pulse when host reachability is unknown", async () => {
+  const calls = [];
+  const driver = createLiveHardwareDriver({
+    mcp: {
+      call: async (...args) => {
+        calls.push(args);
+        throw new Error("must not call MCP");
+      },
+    },
+    rig: {
+      hostPowerState: async () => "unknown",
+    },
+    candidate: {
+      source: { commit_sha: "a".repeat(40) },
+      runtime: { browser: {} },
+    },
+    runId: "unknown-power",
+    executionResolver: () => [],
+    controlledExecution: {},
+  });
+  await assert.rejects(
+    driver.captureBaseline({}, "before"),
+    /power state is unknown; refusing to pulse/u,
+  );
+  assert.deepEqual(calls, []);
 });
 
 test("closes a partially started MCP child when tool listing fails", async () => {
@@ -588,6 +674,21 @@ test("finalizes with producer-zero release and the original safe baseline", asyn
           evidence: { connect: true },
         };
       }
+      if (name === "jetkvm_session_reconnect") {
+        return {
+          raw: {
+            ok: true,
+            session_id: "session-final",
+            session_generation: 3,
+            result: {
+              outcome: "applied",
+              new_session_generation: 3,
+              fresh_capture_required: true,
+            },
+          },
+          evidence: { reconnect: true },
+        };
+      }
       if (name === "jetkvm_session_status") {
         return {
           raw: {
@@ -636,7 +737,7 @@ test("finalizes with producer-zero release and the original safe baseline", asyn
     host_online: true,
   };
   const rig = {
-    isHostOnline: async () => true,
+    hostPowerState: async () => "online",
     pinUkLayout: async () => undefined,
     resetNotepad: async () => undefined,
     captureSafeBaselineFacts: async () => windows,
@@ -687,6 +788,7 @@ test("finalizes with producer-zero release and the original safe baseline", asyn
   assert.deepEqual(calls, [
     "jetkvm_input_release",
     "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
     "jetkvm_session_status",
     "jetkvm_display_capture",
     "jetkvm_input_release",

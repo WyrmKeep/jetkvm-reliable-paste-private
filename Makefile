@@ -184,7 +184,7 @@ build_gotestsum:
 	$(GO_CMD) install gotest.tools/gotestsum@latest
 	cp "$(shell $(GO_CMD) env GOPATH)/bin/linux_arm/gotestsum" "$(BIN_DIR)/gotestsum"
 
-build_dev_test: build_test2json build_gotestsum
+build_dev_test: build_native build_test2json build_gotestsum
 # collect all directories that contain tests
 	@echo "Building tests for devices ..."
 	@rm -rf "$(BIN_DIR)/tests" && mkdir -p "$(BIN_DIR)/tests"

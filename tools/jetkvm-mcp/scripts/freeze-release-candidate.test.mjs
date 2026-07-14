@@ -109,9 +109,14 @@ async function createFixture() {
   };
 }
 
-function commandHarness(fixture, statusValues = ["", ""]) {
+function commandHarness(
+  fixture,
+  statusValues = ["", ""],
+  { mutateStagedArtifact = false } = {},
+) {
   const calls = [];
   let statusIndex = 0;
+  let stagedArtifactPath;
   const runCommand = async (command, args, { cwd } = {}) => {
     calls.push([command, ...args]);
     if (command === "git" && args[0] === "status") {
@@ -137,7 +142,8 @@ function commandHarness(fixture, statusValues = ["", ""]) {
     if (command === "npm" && args[0] === "pack") {
       const filename = "wyrmkeep-jetkvm-mcp-0.1.0.tgz";
       const destination = args[args.indexOf("--pack-destination") + 1];
-      await writeFile(join(destination, filename), "frozen-tarball");
+      stagedArtifactPath = join(destination, filename);
+      await writeFile(stagedArtifactPath, "frozen-tarball");
       return `${JSON.stringify([{ filename }])}\n`;
     }
     if (
@@ -145,6 +151,9 @@ function commandHarness(fixture, statusValues = ["", ""]) {
       args[0] === "install" &&
       args.includes("--package-lock-only")
     ) {
+      if (mutateStagedArtifact) {
+        await writeFile(stagedArtifactPath, "concurrent-mutation");
+      }
       const consumer = JSON.parse(
         await readFile(join(cwd, "package.json"), "utf8"),
       );
@@ -265,6 +274,30 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
           args.includes("--package-lock-only"),
       ).length,
       1,
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("reuses the captured tarball bytes despite a concurrent path mutation", async () => {
+  const fixture = await createFixture();
+  const commands = commandHarness(fixture, ["", ""], {
+    mutateStagedArtifact: true,
+  });
+  try {
+    const result = await freezeReleaseCandidate({
+      ...fixture,
+      runCommand: commands.runCommand,
+      nodeVersion: "v22.23.1",
+      platform: "darwin",
+      architecture: "arm64",
+    });
+    assert.equal(await readFile(result.tarballPath, "utf8"), "frozen-tarball");
+    const parsed = JSON.parse(await readFile(result.candidatePath, "utf8"));
+    assert.equal(
+      parsed.artifact.sha256,
+      await sha256File(result.tarballPath),
     );
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

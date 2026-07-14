@@ -11,12 +11,112 @@ import {
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+export function mergeControlledTraceReports(reports) {
+  if (!Array.isArray(reports) || reports.length === 0) {
+    throw new Error("Controlled trace reports are required.");
+  }
+  const traces = {};
+  for (const report of reports) {
+    if (
+      !isRecord(report) ||
+      report.schema_version !== 1 ||
+      report.evidence_source !==
+        "execution-produced-focused-handler-calls" ||
+      !isRecord(report.traces)
+    ) {
+      throw new Error("Controlled trace report is malformed.");
+    }
+    for (const [identity, trace] of Object.entries(report.traces)) {
+      if (Object.hasOwn(traces, identity)) {
+        throw new Error(`Duplicate controlled trace ${identity}.`);
+      }
+      traces[identity] = trace;
+    }
+  }
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(traces).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+  );
+}
+
+function exactExecutionTrace(executionTraces, identity, scenarioEvidence) {
+  const direct = executionTraces[identity];
+  const candidates =
+    direct === undefined && identity.startsWith("scenario:")
+      ? Object.entries(executionTraces).filter(
+          ([, trace]) =>
+            scenarioEvidence[identity]?.test_identities?.includes(
+              trace?.test_identity,
+            ) && Array.isArray(trace?.calls) && trace.calls.length > 0,
+        )
+      : [[identity, direct]];
+  if (
+    candidates.length === 0 &&
+    identity.startsWith(
+      "scenario:transport-reconnect-does-not-own-device:",
+    )
+  ) {
+    return Object.freeze({
+      identity,
+      deferred_live_evidence: "summary.transport_reconnect",
+    });
+  }
+  if (
+    candidates.length === 0 ||
+    candidates.some(
+      ([, trace]) =>
+        !isRecord(trace) ||
+        typeof trace.test_identity !== "string" ||
+        trace.test_identity.length === 0 ||
+        !Array.isArray(trace.calls) ||
+        trace.calls.length === 0 ||
+        trace.calls.some(
+          (call) =>
+            !isRecord(call) ||
+            typeof call.tool !== "string" ||
+            !isRecord(call.request) ||
+            !isRecord(call.response) ||
+            call.response.tool !== call.tool,
+        ),
+    )
+  ) {
+    throw new Error(`Controlled execution trace ${identity} is incomplete.`);
+  }
+  return Object.freeze({
+    identity,
+    sources: Object.freeze(
+      candidates.map(([sourceIdentity, trace]) =>
+        Object.freeze({
+          identity: sourceIdentity,
+          test_identity: trace.test_identity,
+        }),
+      ),
+    ),
+    calls: Object.freeze(
+      candidates.flatMap(([sourceIdentity, trace]) =>
+        trace.calls.map((call) =>
+          Object.freeze({
+            source_identity: sourceIdentity,
+            tool: call.tool,
+            request: Object.freeze(structuredClone(call.request)),
+            response: Object.freeze(structuredClone(call.response)),
+          }),
+        ),
+      ),
+    ),
+  });
+}
+
 
 export function buildControlledReleaseEvidence({
   stories,
   plan,
   branchMatrix,
   storyE2e,
+  executionTraces,
 }) {
   const resolver = createExecutionEvidenceResolver({ branchMatrix, storyE2e });
   const evidence = {};
@@ -33,9 +133,18 @@ export function buildControlledReleaseEvidence({
         continue;
       const identity = `controlled:${story.id}:${step.id}`;
       const executionIdentities = resolver(story, step, "linked");
+      const requestResponseTraces = executionIdentities.map((identity) =>
+        exactExecutionTrace(
+          executionTraces,
+          identity,
+          resolver.evidence.scenarios,
+        ),
+      );
       evidence[identity] = Object.freeze({
         result: "pass",
         execution_identities: Object.freeze(executionIdentities),
+        request_response_traces: Object.freeze(requestResponseTraces),
+        request_response_traces_sha256: sha256Canonical(requestResponseTraces),
         branch_matrix_sha256: sha256Canonical(branchMatrix),
         story_e2e_sha256: sha256Canonical(storyE2e),
       });
@@ -92,6 +201,8 @@ async function run() {
     { materializeLiveExecutionPlan },
     branchMatrix,
     storyE2e,
+    inputDisplayTraces,
+    powerSessionTraces,
   ] = await Promise.all([
     import("../dist/stories/manifest.js"),
     import("./live-story-plan.mjs"),
@@ -101,6 +212,18 @@ async function run() {
     readFile(resolve(packageRoot, "reports/story-e2e.json"), "utf8").then(
       JSON.parse,
     ),
+    readFile(
+      resolve(packageRoot, "reports/controlled-traces/input-display.json"),
+      "utf8",
+    ).then(JSON.parse),
+    readFile(
+      resolve(packageRoot, "reports/controlled-traces/power-session.json"),
+      "utf8",
+    ).then(JSON.parse),
+  ]);
+  const executionTraces = mergeControlledTraceReports([
+    inputDisplayTraces,
+    powerSessionTraces,
   ]);
   const stories = await loadAcceptanceStories(
     resolve(packageRoot, "dist/stories"),
@@ -112,6 +235,7 @@ async function run() {
     plan,
     branchMatrix,
     storyE2e,
+    executionTraces,
   });
   await writeControlledReleaseEvidence(process.argv[outputIndex + 1], evidence);
   process.stdout.write(

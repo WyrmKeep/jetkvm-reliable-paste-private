@@ -125,6 +125,8 @@ export JETKVM_CREDENTIAL_FILE="$HOME/.config/jetkvm-mcp/credential"
 exec ./examples/run-stdio.sh
 ```
 
+Device leases use a stable per-user state directory across reboots: `~/Library/Application Support/jetkvm-mcp/device-leases` on macOS, `%LOCALAPPDATA%\jetkvm-mcp\device-leases` on Windows, and `$XDG_STATE_HOME/jetkvm-mcp/device-leases` or `~/.local/state/jetkvm-mcp/device-leases` on other systems. Set `JETKVM_DEVICE_LEASE_DIRECTORY` to an absolute private directory when an operator-managed location is required; use the same value for normal launch and retained-lease recovery.
+
 The wrapper requires HTTPS and an absolute regular credential file, removes ambient credential-value variables, and passes no secret or target argument on the command line. `npm run examples:check` parses the JSON examples, syntax-checks both shell examples, creates and inspects a real `0600` credential file, and executes `run-stdio.sh` against a probe executable.
 
 ## Phase 3 input and display semantics
@@ -149,7 +151,7 @@ EDID is read-only EDID. Without the capability it is `unsupported` with no read 
 
 ## Frozen candidate and serialized hardware release
 
-The live hardware gate runs only from a clean commit, an exact Node.js 22.23.1 executable, and a visible sandboxed Chromium executable. Generate controlled evidence before freezing so the candidate manifest can bind its exact file bytes:
+The live hardware gate runs only from a clean commit, an exact Node.js 22.23.1 executable, and a visible sandboxed Chromium executable. The focused handler gates produce deterministic request/response trace reports for every controlled live branch; generate controlled evidence from those execution-produced preimages before freezing so the candidate manifest can bind its exact file bytes:
 
 ```sh
 export RELEASE_ROOT='/absolute/private/release-root'
@@ -179,15 +181,23 @@ cp "$CANDIDATE/"*.tgz "$INSTALL_ROOT/"
 export JETKVM_RELEASE_INSTALLED_PACKAGE="$INSTALL_ROOT/node_modules/@wyrmkeep/jetkvm-mcp"
 ```
 
-Before device contact, the live runner requires the same clean commit/tree, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The output directory must not already exist, the rig environment file must be owner-only, and `DEVICE_KEY` must be the stable private key used for this one physical JetKVM:
+Before device contact, the live runner requires the same clean commit/tree, validates the inherited proof against the exact configured-device fingerprint, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The evidence root must already be an owner-only directory, and the new output directory must resolve beneath it without symlink escape; the rig environment file must also be owner-only. `DEVICE_KEY` must exactly equal the production runtime's `jetkvm-`-prefixed SHA-256 fingerprint of the configured target URL; the installed MCP refuses any other inherited lease:
 
 ```sh
-export DEVICE_KEY='private-stable-device-key'
+export DEVICE_KEY="$(
+  node --input-type=module -e '
+    import { createHash } from "node:crypto";
+    process.stdout.write(
+      `jetkvm-${createHash("sha256").update(process.argv[1]).digest("hex")}`,
+    );
+  ' "$JETKVM_RELEASE_TARGET_URL"
+)"
 export JETKVM_RELEASE_CANDIDATE="$CANDIDATE/candidate.json"
 export JETKVM_RELEASE_CANDIDATE_SHA256="$(
   awk '{print $1}' "$CANDIDATE/candidate.sha256"
 )"
 export JETKVM_RELEASE_CONTROLLED_EVIDENCE="$CANDIDATE/controlled-evidence.json"
+export JETKVM_RELEASE_EVIDENCE_ROOT="$RELEASE_ROOT"
 export JETKVM_RELEASE_EVIDENCE_DIR="$RELEASE_ROOT/hardware-evidence"
 export JETKVM_RELEASE_RIG_ENV='/absolute/private/rig.env'
 
@@ -198,7 +208,7 @@ node "$JETKVM_RELEASE_INSTALLED_PACKAGE/dist/deviceLeaseRunner.js" \
   "$(command -v node)" scripts/run-live-hardware-release.mjs
 ```
 
-The run validates the pre-deployment device-test artifact, all controlled identities, every canonical live story and restore, a fresh-transport reconnect/release, the final producer-zero release, the original safe device/fixture baseline, and bounded MCP shutdown. Its summary records the verified source, installation, runtime, device, and test identities. `finalization.json` is flushed before the evidence manifest. Validate the immutable directory before tagging or publishing:
+The run validates the pre-deployment device-test artifact, every controlled branch's execution-produced request/response preimage, every canonical live story and restore, fresh session reconnects and image captures at baseline boundaries, a fresh-transport reconnect/release, the final producer-zero release, the original safe device/fixture baseline, the promoted device binary hash, and bounded MCP shutdown. SSH failure alone is never treated as proof that the host is off; automatic power restoration requires a fresh post-action physical ATX power-LED observation. Each live evidence record persists its scrubbed structured MCP preimages and exact image digests, so the validator recomputes every evidence hash instead of trusting an uncheckable digest. Its summary records the final verified source, installation, runtime, device, deployment, and test identities. `finalization.json` is flushed before the evidence manifest. The validator requires an exact one-line checksum sidecar and scans every raw manifested file for private material before tagging or publishing:
 
 ```sh
 node scripts/validate-hardware-release-evidence.mjs \
@@ -206,7 +216,7 @@ node scripts/validate-hardware-release-evidence.mjs \
   "$JETKVM_RELEASE_CANDIDATE"
 ```
 
-If the final baseline is unproven, the child exits with code 75 and the outer wrapper intentionally retains the device lease; the wrapper itself reports failure because cleanup was refused. Inspect `finalization.json` `failure_stages`, manually restore and verify the physical host, display, UK layout, lock keys, held input, ATX state, browser fixture, and running revision, and ensure the failed holder has exited. Only then clear the retained lease through the safety-checked installed command:
+If the final baseline is unproven, the child exits with code 75 and the outer wrapper intentionally retains the device lease; a retention-enabled run interrupted by `SIGHUP`, `SIGINT`, or `SIGTERM` also retains it. The wrapper itself reports failure because cleanup was refused. Inspect `finalization.json` `failure_stages`, manually restore and verify the physical host, display, UK layout, lock keys, held input, ATX state, browser fixture, running revision, and deployed binary, and ensure the failed holder has exited. Only then clear the retained lease through the safety-checked installed command:
 
 ```sh
 npm --prefix "$JETKVM_RELEASE_INSTALLED_PACKAGE" \

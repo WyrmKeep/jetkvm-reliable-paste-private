@@ -6,6 +6,9 @@ import test from "node:test";
 
 import { buildDirectoryManifest, sha256File } from "./release-evidence.mjs";
 import {
+  createInstalledMcpOptions,
+  createFinalizationError,
+  createRigAdapter,
   loadInstalledMcpSdkFactories,
   validateCurrentReleaseSource,
 } from "./run-live-hardware-release.mjs";
@@ -106,6 +109,31 @@ test("fails closed on dirty, changed, or post-check source state", async () => {
   }
 });
 
+test("starts the installed MCP in inherited leased mode", () => {
+  const environment = {
+    JETKVM_DEVICE_LEASE_PROOF_PATH: "/private/proof-reference.json",
+  };
+  const clientFactory = () => ({});
+  const transportFactory = () => ({});
+  const options = createInstalledMcpOptions({
+    installedPackageRoot: "/private/installed/jetkvm-mcp",
+    environment,
+    sensitiveValues: ["sensitive"],
+    sdkFactories: { clientFactory, transportFactory },
+  });
+
+  assert.deepEqual(options.args, [
+    "/private/installed/jetkvm-mcp/dist/bin.js",
+    "--leased",
+  ]);
+  assert.equal(
+    options.environment.JETKVM_DEVICE_LEASE_PROOF_PATH,
+    "/private/proof-reference.json",
+  );
+  assert.equal(options.clientFactory, clientFactory);
+  assert.equal(options.transportFactory, transportFactory);
+});
+
 test("loads MCP SDK factories only from the installed candidate closure", async () => {
   const root = await mkdtemp(join(tmpdir(), "jetkvm-installed-sdk-"));
   const installedPackageRoot = join(
@@ -153,4 +181,59 @@ test("loads MCP SDK factories only from the installed candidate closure", async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("retains manual-recovery classification when evidence persistence fails", () => {
+  const restoreFailure = new Error("restore failed");
+  const persistenceFailure = new Error("disk full");
+  const error = createFinalizationError(
+    {
+      failures: [restoreFailure],
+      record: { manual_recovery_required: true },
+    },
+    persistenceFailure,
+  );
+  assert.equal(error.name, "ManualRecoveryRequiredError");
+  assert.deepEqual(error.errors, [restoreFailure, persistenceFailure]);
+});
+
+test("requires fresh physical power evidence before treating SSH failure as offline", async () => {
+  let online = false;
+  const rig = createRigAdapter(
+    {},
+    {
+      windowsTarget: () => "root@fixture",
+      runSshCommand: async () => ({ exitCode: online ? 0 : 255 }),
+      runPowerShell: async () => ({
+        exitCode: 0,
+        stdout: "2026-07-14T00:00:00.000Z\n",
+      }),
+    },
+    {},
+    { WIN_TARGET: "fixture" },
+  );
+  assert.equal(await rig.hostPowerState(), "unknown");
+  await assert.rejects(
+    rig.waitForHostOffline({
+      started_at: Date.parse("2026-07-14T00:00:01.000Z"),
+      atx_led_observation: {
+        power: false,
+        freshness: "stale",
+        observed_at: "2026-07-14T00:00:02.000Z",
+      },
+    }),
+    /lacked a fresh post-action ATX power LED observation/u,
+  );
+  await rig.waitForHostOffline({
+    started_at: Date.parse("2026-07-14T00:00:01.000Z"),
+    atx_led_observation: {
+      power: false,
+      freshness: "fresh",
+      observed_at: "2026-07-14T00:00:02.000Z",
+    },
+  });
+  assert.equal(await rig.hostPowerState(), "offline");
+  online = true;
+  await rig.waitForHostOnline();
+  assert.equal(await rig.hostPowerState(), "online");
 });

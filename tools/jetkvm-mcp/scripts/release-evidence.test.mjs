@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   assertCurrentRuntimeMatchesCandidate,
   buildDirectoryManifest,
+  buildLockedConsumerPackageLock,
   buildProductionResolution,
   buildReleaseCandidateManifest,
   canonicalJson,
@@ -171,6 +172,69 @@ test("normalizes only integrity-bound production lock entries", () => {
   assert.throws(
     () => buildProductionResolution(lock, ["@wyrmkeep/jetkvm-mcp"]),
     /incomplete/u,
+  );
+});
+
+test("splices the exact reviewed dependency tree into the consumer lock", () => {
+  const sourceLock = {
+    lockfileVersion: 3,
+    packages: {
+      "": {
+        name: "@wyrmkeep/jetkvm-mcp",
+        dependencies: { hono: "^4.12.0" },
+      },
+      "node_modules/hono": {
+        version: "4.12.29",
+        integrity: "sha512-reviewed",
+      },
+      "node_modules/dev-only": {
+        version: "1.0.0",
+        integrity: "sha512-dev",
+        dev: true,
+      },
+    },
+  };
+  const generatedLock = {
+    name: "consumer",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": {
+        name: "consumer",
+        version: "1.0.0",
+        dependencies: {
+          "@wyrmkeep/jetkvm-mcp": "file:./candidate.tgz",
+        },
+      },
+      "node_modules/@wyrmkeep/jetkvm-mcp": {
+        version: "0.1.0",
+        resolved: "file:candidate.tgz",
+      },
+      "node_modules/hono": {
+        version: "4.12.30",
+        integrity: "sha512-newer",
+      },
+    },
+  };
+
+  const locked = buildLockedConsumerPackageLock({
+    sourceLock,
+    generatedLock,
+    packageName: "@wyrmkeep/jetkvm-mcp",
+  });
+  assert.equal(locked.packages[""].name, "consumer");
+  assert.equal(
+    locked.packages["node_modules/@wyrmkeep/jetkvm-mcp"].resolved,
+    "file:candidate.tgz",
+  );
+  assert.deepEqual(locked.packages["node_modules/hono"], {
+    version: "4.12.29",
+    integrity: "sha512-reviewed",
+  });
+  assert.equal(
+    buildProductionResolution(locked, ["@wyrmkeep/jetkvm-mcp"])[0].version,
+    "4.12.29",
   );
 });
 

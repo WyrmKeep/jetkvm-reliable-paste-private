@@ -82,20 +82,53 @@ function scrubForHash(value) {
   return scrubbed;
 }
 
+function hasExpectedImageSignature(bytes, mimeType) {
+  if (mimeType === "image/png") {
+    return (
+      bytes.byteLength >= 8 &&
+      bytes.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      )
+    );
+  }
+  if (mimeType === "image/jpeg") {
+    return (
+      bytes.byteLength >= 5 &&
+      bytes[0] === 0xff &&
+      bytes[1] === 0xd8 &&
+      bytes[2] === 0xff &&
+      bytes.at(-2) === 0xff &&
+      bytes.at(-1) === 0xd9
+    );
+  }
+  return false;
+}
+
 function imageEvidence(content) {
-  const images = Array.isArray(content)
-    ? content.filter((block) => isRecord(block) && block.type === "image")
-    : [];
-  return images.map((block) => {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block, contentIndex) => {
+    if (!isRecord(block) || block.type !== "image") return [];
     if (typeof block.data !== "string" || typeof block.mimeType !== "string") {
       throw new Error("MCP image evidence was malformed.");
     }
     const bytes = Buffer.from(block.data, "base64");
-    return Object.freeze({
-      mime_type: block.mimeType,
-      byte_length: bytes.byteLength,
-      sha256: sha256Bytes(bytes),
-    });
+    if (
+      bytes.byteLength === 0 ||
+      bytes.toString("base64") !== block.data
+    ) {
+      throw new Error("MCP image evidence was not strict nonempty base64.");
+    }
+    if (!hasExpectedImageSignature(bytes, block.mimeType)) {
+      throw new Error("MCP image evidence did not match its declared MIME type.");
+    }
+    return [
+      Object.freeze({
+        content_index: contentIndex,
+        mime_type: block.mimeType,
+        byte_length: bytes.byteLength,
+        sha256: sha256Bytes(bytes),
+      }),
+    ];
   });
 }
 
@@ -109,6 +142,24 @@ export function sanitizeToolEvidence(result) {
   const operationResult = isRecord(structured.result)
     ? structured.result
     : undefined;
+  const scrubbedStructured = scrubForHash(structured);
+  const images = imageEvidence(result.content);
+  if (structured.tool === "jetkvm_display_capture") {
+    const declaredImage = operationResult?.image;
+    const image = images[0];
+    if (
+      images.length !== 1 ||
+      !isRecord(declaredImage) ||
+      image.content_index !== declaredImage.content_index ||
+      image.mime_type !== declaredImage.mime_type ||
+      image.byte_length !== declaredImage.byte_length ||
+      image.sha256 !== declaredImage.sha256
+    ) {
+      throw new Error(
+        "Display capture omitted its exact declared screenshot image.",
+      );
+    }
+  }
   const evidence = {
     ok: structured.ok === true,
     tool: typeof structured.tool === "string" ? structured.tool : null,
@@ -148,8 +199,9 @@ export function sanitizeToolEvidence(result) {
       : Number.isSafeInteger(error?.details?.completed_action_count)
         ? error.details.completed_action_count
         : null,
-    images: imageEvidence(result.content),
-    structured_sha256: sha256Canonical(scrubForHash(structured)),
+    images,
+    structured: scrubbedStructured,
+    structured_sha256: sha256Canonical(scrubbedStructured),
   };
   return Object.freeze(evidence);
 }
@@ -497,6 +549,7 @@ function hardwareResult(startedAt, evidence) {
   return Object.freeze({
     result: "pass",
     duration_ms: Date.now() - startedAt,
+    evidence,
     evidence_sha256: sha256Canonical(evidence),
   });
 }
@@ -677,6 +730,29 @@ export function createLiveHardwareDriver({
     updateState("jetkvm_session_connect", response.raw);
   }
 
+  async function reconnectSession() {
+    await ensureSession();
+    const response = await callRaw(
+      "jetkvm_session_reconnect",
+      {
+        session_id: state.session.id,
+        session_generation: state.session.generation,
+        request_id: stableIdentifier(
+          "req",
+          `${runId}:baseline-reconnect:${randomUUID()}`,
+        ),
+        takeover: false,
+        timeout_ms: 30_000,
+      },
+      30_000,
+    );
+    if (!isRecord(response.raw) || response.raw.ok !== true) {
+      throw new Error("Could not reconnect the live baseline session.");
+    }
+    updateState("jetkvm_session_reconnect", response.raw);
+    return response;
+  }
+
   async function captureObservation() {
     await ensureSession();
     const response = await callRaw(
@@ -713,7 +789,13 @@ export function createLiveHardwareDriver({
   }
 
   async function ensureHostOnline() {
-    if (await rig.isHostOnline()) return;
+    const powerState = await rig.hostPowerState();
+    if (powerState === "online") return;
+    if (powerState !== "offline") {
+      throw new Error(
+        "Windows host power state is unknown; refusing to pulse the ATX power input.",
+      );
+    }
     await ensureSession();
     const response = await callRaw(
       "jetkvm_power_control",
@@ -742,18 +824,16 @@ export function createLiveHardwareDriver({
       await rig.pinUkLayout();
       await rig.resetNotepad();
     }
-    const sessionResponse = await (async () => {
-      await ensureSession();
-      return callRaw(
-        "jetkvm_session_status",
-        {
-          session_id: state.session.id,
-          session_generation: state.session.generation,
-          timeout_ms: 30_000,
-        },
-        30_000,
-      );
-    })();
+    const reconnect = await reconnectSession();
+    const sessionResponse = await callRaw(
+      "jetkvm_session_status",
+      {
+        session_id: state.session.id,
+        session_generation: state.session.generation,
+        timeout_ms: 30_000,
+      },
+      30_000,
+    );
     if (!isRecord(sessionResponse.raw) || sessionResponse.raw.ok !== true) {
       throw new Error("Live release session status baseline failed.");
     }
@@ -790,6 +870,11 @@ export function createLiveHardwareDriver({
       fixture: windows.fixture,
       host_online: windows.host_online,
       held_input: Object.freeze({ keys: 0, buttons: 0 }),
+      transport_evidence: Object.freeze({
+        reconnect: reconnect.evidence,
+        status: sessionResponse.evidence,
+        capture: capture.evidence,
+      }),
       session_generation: generation,
     });
     if (phase === "before" && state.baseline === undefined)
@@ -1277,7 +1362,11 @@ export function createLiveHardwareDriver({
       const action = step.input.action;
       if (action === "press_reset") await rig.waitForHostRestart();
       if (powerActionRequiresOfflineWait(action)) {
-        await rig.waitForHostOffline();
+        await rig.waitForHostOffline({
+          started_at: executed.startedAt,
+          atx_led_observation:
+            executed.response.raw.result?.atx_led_observation,
+        });
       }
     }
     return hardwareResult(executed.startedAt, {

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DeviceLeaseError,
   acquireDeviceLease,
+  defaultDeviceLeaseDirectory,
   removeStaleDeviceLease,
   removeStaleDeviceLeaseAdminLock,
   withDeviceLease,
@@ -61,6 +62,32 @@ afterEach(async () => {
 });
 
 describe("device lease", () => {
+  it("uses stable private-user state roots instead of the temporary directory", () => {
+    expect(defaultDeviceLeaseDirectory({}, "darwin", "/Users/operator")).toBe(
+      "/Users/operator/Library/Application Support/jetkvm-mcp/device-leases",
+    );
+    expect(defaultDeviceLeaseDirectory({}, "linux", "/home/operator")).toBe(
+      "/home/operator/.local/state/jetkvm-mcp/device-leases",
+    );
+    expect(
+      defaultDeviceLeaseDirectory(
+        { XDG_STATE_HOME: "/state" },
+        "linux",
+        "/home/operator",
+      ),
+    ).toBe("/state/jetkvm-mcp/device-leases");
+  });
+
+  it("rejects a relative configured lease directory", () => {
+    expect(() =>
+      defaultDeviceLeaseDirectory(
+        { JETKVM_DEVICE_LEASE_DIRECTORY: "relative" },
+        "linux",
+        "/home/operator",
+      ),
+    ).toThrow("JETKVM_DEVICE_LEASE_DIRECTORY must be an absolute path");
+  });
+
   it("atomically creates a restrictive device-keyed lease with complete ownership proof", async () => {
     const directory = await temporaryDirectory();
     const lease = await acquireDeviceLease({

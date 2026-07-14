@@ -10,7 +10,7 @@ import {
   rename,
   unlink,
 } from "node:fs/promises";
-import { hostname as systemHostname, tmpdir } from "node:os";
+import { homedir as systemHomedir, hostname as systemHostname } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -126,10 +126,83 @@ export interface RemoveStaleDeviceLeaseAdminLockOptions {
   afterCleanupClaimAcquired?: (claimPath: string) => void | Promise<void>;
   afterAdminQuarantined?: (quarantinePath: string) => void | Promise<void>;
 }
-const DEFAULT_LEASE_DIRECTORY = join(tmpdir(), "jetkvm-device-leases");
+const LEASE_DIRECTORY_ENV = "JETKVM_DEVICE_LEASE_DIRECTORY";
 const SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 const ADMIN_LOCK_ATTEMPTS = 500;
 const ADMIN_LOCK_RETRY_MS = 10;
+
+export function defaultDeviceLeaseDirectory(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  homeDirectory: string = systemHomedir(),
+): string {
+  const configured = environment[LEASE_DIRECTORY_ENV];
+  if (configured !== undefined) {
+    if (configured.length === 0 || !isAbsolute(configured)) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_DIRECTORY_UNSAFE",
+        `${LEASE_DIRECTORY_ENV} must be an absolute path.`,
+      );
+    }
+    return resolve(configured);
+  }
+  if (!isAbsolute(homeDirectory)) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_DIRECTORY_UNSAFE",
+      "The user state directory could not be resolved safely.",
+    );
+  }
+  if (platform === "darwin") {
+    return join(
+      homeDirectory,
+      "Library",
+      "Application Support",
+      "jetkvm-mcp",
+      "device-leases",
+    );
+  }
+  if (platform === "win32") {
+    const localAppData = environment.LOCALAPPDATA;
+    if (localAppData !== undefined) {
+      if (localAppData.length === 0 || !isAbsolute(localAppData)) {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_DIRECTORY_UNSAFE",
+          "LOCALAPPDATA must be an absolute path.",
+        );
+      }
+      return join(resolve(localAppData), "jetkvm-mcp", "device-leases");
+    }
+    return join(
+      homeDirectory,
+      "AppData",
+      "Local",
+      "jetkvm-mcp",
+      "device-leases",
+    );
+  }
+  const stateHome = environment.XDG_STATE_HOME;
+  if (stateHome !== undefined) {
+    if (stateHome.length === 0 || !isAbsolute(stateHome)) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_DIRECTORY_UNSAFE",
+        "XDG_STATE_HOME must be an absolute path.",
+      );
+    }
+    return join(resolve(stateHome), "jetkvm-mcp", "device-leases");
+  }
+  return join(homeDirectory, ".local", "state", "jetkvm-mcp", "device-leases");
+}
+
+function resolvedLeaseDirectory(directory?: string): string {
+  const selected = directory ?? defaultDeviceLeaseDirectory();
+  if (!isAbsolute(selected)) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_DIRECTORY_UNSAFE",
+      "The device lease directory must be an absolute path.",
+    );
+  }
+  return resolve(selected);
+}
 
 function tokenMatches(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual);
@@ -685,7 +758,7 @@ export async function loadDeviceLeaseProofReference(
 export async function removeRetainedDeviceLease(
   options: RemoveRetainedDeviceLeaseOptions,
 ): Promise<void> {
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await assertSecureDirectory(directory);
   const path = leasePath(directory, options.deviceKey);
   await assertSecureProofFile(path);
@@ -728,7 +801,7 @@ export async function removeRetainedDeviceLease(
 export async function removeStaleDeviceLeaseAdminLock(
   options: RemoveStaleDeviceLeaseAdminLockOptions,
 ): Promise<void> {
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await assertSecureDirectory(directory);
   const path = leasePath(directory, options.deviceKey);
   const claim = await acquireCleanupClaim(path);
@@ -770,7 +843,7 @@ async function removeStaleDeviceLeaseAdminLockUnderClaim(
       "Stale device lease administration could not be proven dead.",
     );
   }
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await assertSecureDirectory(directory);
   const adminPath = `${leasePath(directory, options.deviceKey)}.admin.lock`;
   await assertSecureProofFile(adminPath);
@@ -909,7 +982,7 @@ export async function acquireDeviceLease(
       "The device lease identity is invalid.",
     );
   }
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await ensureSecureDirectory(directory);
   const path = leasePath(directory, options.deviceKey);
   const unlinkLeaseFile = options.unlinkFile ?? unlink;

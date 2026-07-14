@@ -10,10 +10,13 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { validateControlledReleaseEvidence } from "./build-controlled-release-evidence.mjs";
+import {
+  mergeControlledTraceReports,
+  validateControlledReleaseEvidence,
+} from "./build-controlled-release-evidence.mjs";
 import {
   InstalledMcpClient,
   assertPrivateEnvironmentFile,
@@ -51,6 +54,22 @@ class ManualRecoveryRequiredError extends AggregateError {
     this.name = "ManualRecoveryRequiredError";
   }
 }
+export function createFinalizationError(finalization, persistenceError) {
+  const failures = [
+    ...finalization.failures,
+    ...(persistenceError === undefined ? [] : [persistenceError]),
+  ];
+  if (failures.length === 0) return undefined;
+  if (finalization.record.manual_recovery_required === true) {
+    return new ManualRecoveryRequiredError(failures);
+  }
+  return new AggregateError(
+    failures,
+    "Live hardware resource finalization failed.",
+    { cause: failures[0] },
+  );
+}
+
 
 function requiresManualRecovery(error) {
   if (error instanceof ManualRecoveryRequiredError) return true;
@@ -76,36 +95,91 @@ function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
-async function runCommand(
+function signalProcessGroup(child, signal) {
+  if (child.pid === undefined) return;
+  try {
+    if (process.platform === "win32") child.kill(signal);
+    else process.kill(-child.pid, signal);
+  } catch (error) {
+    if ((error instanceof Error ? error.code : undefined) !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
+async function waitForProcessGroupExit(child) {
+  if (child.pid === undefined || process.platform === "win32") return;
+  for (;;) {
+    try {
+      process.kill(-child.pid, 0);
+    } catch (error) {
+      if ((error instanceof Error ? error.code : undefined) === "ESRCH") return;
+      throw error;
+    }
+    await delay(20);
+  }
+}
+
+export async function runCommand(
   command,
   args,
-  { cwd = REPOSITORY_ROOT, timeoutMs = COMMAND_TIMEOUT_MS } = {},
+  {
+    cwd = REPOSITORY_ROOT,
+    timeoutMs = COMMAND_TIMEOUT_MS,
+    terminationGraceMs = 1_000,
+  } = {},
 ) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
       cwd,
       env: process.env,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout = [];
     const stderr = [];
     let byteLength = 0;
     let settled = false;
+    let failure;
+    let forceKillTimer;
     const finish = (operation) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(deadlineTimer);
+      clearTimeout(forceKillTimer);
       operation();
     };
+    const terminate = (error) => {
+      if (failure !== undefined) return;
+      failure = error;
+      try {
+        signalProcessGroup(child, "SIGTERM");
+      } catch (signalError) {
+        failure = new AggregateError(
+          [failure, signalError],
+          "Hardware release command and process-tree termination failed.",
+          { cause: failure },
+        );
+      }
+      forceKillTimer = setTimeout(() => {
+        try {
+          signalProcessGroup(child, "SIGKILL");
+        } catch (signalError) {
+          failure = new AggregateError(
+            [failure, signalError],
+            "Hardware release command and process-tree termination failed.",
+            { cause: failure },
+          );
+        }
+      }, terminationGraceMs);
+    };
     const append = (target, chunk) => {
+      if (failure !== undefined) return;
       byteLength += chunk.byteLength;
       if (byteLength > COMMAND_OUTPUT_LIMIT) {
-        child.kill("SIGKILL");
-        finish(() =>
-          rejectRun(
-            new Error("Hardware release command output exceeded its bound."),
-          ),
+        terminate(
+          new Error("Hardware release command output exceeded its bound."),
         );
         return;
       }
@@ -113,8 +187,25 @@ async function runCommand(
     };
     child.stdout.on("data", (chunk) => append(stdout, chunk));
     child.stderr.on("data", (chunk) => append(stderr, chunk));
-    child.once("error", (error) => finish(() => rejectRun(error)));
-    child.once("close", (code, signal) => {
+    child.once("error", (error) => {
+      terminate(error);
+      if (child.pid === undefined) finish(() => rejectRun(failure));
+    });
+    child.once("close", async (code, signal) => {
+      if (failure !== undefined) {
+        try {
+          signalProcessGroup(child, "SIGKILL");
+          await waitForProcessGroupExit(child);
+        } catch (cleanupError) {
+          failure = new AggregateError(
+            [failure, cleanupError],
+            "Hardware release command and process-tree termination failed.",
+            { cause: failure },
+          );
+        }
+        finish(() => rejectRun(failure));
+        return;
+      }
       finish(() => {
         const out = Buffer.concat(stdout);
         const err = Buffer.concat(stderr);
@@ -136,11 +227,8 @@ async function runCommand(
         );
       });
     });
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(() =>
-        rejectRun(new Error("Hardware release command exceeded its deadline.")),
-      );
+    const deadlineTimer = setTimeout(() => {
+      terminate(new Error("Hardware release command exceeded its deadline."));
     }, timeoutMs);
   });
 }
@@ -269,21 +357,26 @@ async function readDeviceIdentity(metricsUrl) {
 function sameDeviceIdentity(left, right) {
   return (
     left.revision === right.revision &&
-    left.version === right.version &&
-    left.processStartTimeSeconds === right.processStartTimeSeconds
+    left.appVersion === right.appVersion &&
+    left.processStartTime === right.processStartTime
   );
 }
 
-function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) {
+export function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) {
   let lastLayout;
   let lastBootIdentity;
+  let confirmedOffline = false;
   const target = sshModule.windowsTarget(rigEnv);
 
-  async function shellOnline() {
+  async function probeHostPowerState() {
     const result = await sshModule.runSshCommand(target, "echo ready", {
       timeoutMs: 5_000,
     });
-    return result.exitCode === 0;
+    if (result.exitCode === 0) {
+      confirmedOffline = false;
+      return "online";
+    }
+    return confirmedOffline ? "offline" : "unknown";
   }
 
   async function bootIdentity() {
@@ -320,27 +413,43 @@ function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) {
         ),
       });
     },
-    isHostOnline: shellOnline,
+    hostPowerState: probeHostPowerState,
     async waitForHostOnline() {
       await waitUntil(
-        shellOnline,
-        240_000,
+        async () => (await probeHostPowerState()) === "online",
+        60_000,
         "Windows host did not return online.",
       );
+      confirmedOffline = false;
       lastBootIdentity = await bootIdentity();
     },
-    async waitForHostOffline() {
-      await waitUntil(
-        async () => !(await shellOnline()),
-        90_000,
-        "Windows host did not power off.",
-      );
+    async waitForHostOffline(evidence) {
+      const observation = evidence?.atx_led_observation;
+      const observedAt = Date.parse(observation?.observed_at ?? "");
+      if (
+        observation?.freshness !== "fresh" ||
+        observation.power !== false ||
+        !Number.isFinite(observedAt) ||
+        observedAt < evidence.started_at
+      ) {
+        throw new Error(
+          "Windows host power-off lacked a fresh post-action ATX power LED observation.",
+        );
+      }
+      if ((await probeHostPowerState()) === "online") {
+        throw new Error(
+          "Windows host remained reachable despite the power-off observation.",
+        );
+      }
+      confirmedOffline = true;
     },
     async waitForHostRestart() {
       const previous = lastBootIdentity;
       await waitUntil(
         async () => {
-          if (!(await shellOnline())) return true;
+          const state = await probeHostPowerState();
+          if (state === "offline") return true;
+          if (state === "unknown") return false;
           const current = await bootIdentity();
           return previous !== undefined && current !== previous;
         },
@@ -348,8 +457,8 @@ function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) {
         "Windows host did not begin restarting.",
       );
       await waitUntil(
-        shellOnline,
-        240_000,
+        async () => (await probeHostPowerState()) === "online",
+        60_000,
         "Windows host did not recover after restart.",
       );
       lastBootIdentity = await bootIdentity();
@@ -389,7 +498,7 @@ function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) {
           ),
           foreground_ready: true,
         }),
-        host_online: await shellOnline(),
+        host_online: (await probeHostPowerState()) === "online",
       });
     },
     async waitForSave(startedAt) {
@@ -477,6 +586,22 @@ async function reconnectTransportProof(options, state) {
   });
 }
 
+export function createInstalledMcpOptions({
+  installedPackageRoot,
+  environment,
+  sensitiveValues,
+  sdkFactories,
+}) {
+  return Object.freeze({
+    ...sdkFactories,
+    command: process.execPath,
+    args: [resolve(installedPackageRoot, "dist/bin.js"), "--leased"],
+    cwd: installedPackageRoot,
+    environment,
+    sensitiveValues: Object.freeze([...sensitiveValues]),
+  });
+}
+
 async function run() {
   const candidatePath = resolve(
     requiredEnvironment("JETKVM_RELEASE_CANDIDATE"),
@@ -487,6 +612,18 @@ async function run() {
   const outputDirectory = resolve(
     requiredEnvironment("JETKVM_RELEASE_EVIDENCE_DIR"),
   );
+  const evidenceRoot = await realpath(
+    resolve(requiredEnvironment("JETKVM_RELEASE_EVIDENCE_ROOT")),
+  );
+  const evidenceRootFacts = await stat(evidenceRoot);
+  if (
+    !evidenceRootFacts.isDirectory() ||
+    (evidenceRootFacts.mode & 0o077) !== 0
+  ) {
+    throw new Error(
+      "JETKVM_RELEASE_EVIDENCE_ROOT must be a private existing directory.",
+    );
+  }
   const installedPackageRoot = resolve(
     requiredEnvironment("JETKVM_RELEASE_INSTALLED_PACKAGE"),
   );
@@ -511,6 +648,18 @@ async function run() {
     throw new Error("Protected rig environment omitted the JetKVM credential.");
   }
   const targetUrl = `http://${rigEnv.KVM_PRIMARY}`;
+  const inheritedLeaseModule = await import(
+    pathToFileURL(resolve(installedPackageRoot, "dist/deviceLease.js")).href
+  );
+  if (
+    typeof inheritedLeaseModule.loadDeviceLeaseProofReference !== "function"
+  ) {
+    throw new Error("Installed release candidate omitted lease verification.");
+  }
+  await inheritedLeaseModule.loadDeviceLeaseProofReference(
+    requiredEnvironment("JETKVM_DEVICE_LEASE_PROOF_PATH"),
+    `jetkvm-${sha256Text(targetUrl)}`,
+  );
   await validateCandidateRuntime(
     candidate,
     candidatePath,
@@ -527,12 +676,40 @@ async function run() {
     loadInstalledMcpSdkFactories(installedPackageRoot),
   ]);
   await mkdir(outputDirectory, { recursive: false, mode: 0o700 });
+  const realOutputDirectory = await realpath(outputDirectory);
+  const relativeOutput = relative(evidenceRoot, realOutputDirectory);
+  if (
+    relativeOutput.length === 0 ||
+    relativeOutput === ".." ||
+    relativeOutput.startsWith(`..${sep}`) ||
+    resolve(evidenceRoot, relativeOutput) !== realOutputDirectory
+  ) {
+    throw new Error(
+      "JETKVM_RELEASE_EVIDENCE_DIR escaped JETKVM_RELEASE_EVIDENCE_ROOT.",
+    );
+  }
 
   const branchMatrix = await readJson(
     resolve(PACKAGE_ROOT, "reports/branch-matrix.json"),
   );
   const storyE2e = await readJson(
     resolve(PACKAGE_ROOT, "reports/story-e2e.json"),
+  );
+  const executionTraces = mergeControlledTraceReports(
+    await Promise.all([
+      readJson(
+        resolve(
+          PACKAGE_ROOT,
+          "reports/controlled-traces/input-display.json",
+        ),
+      ),
+      readJson(
+        resolve(
+          PACKAGE_ROOT,
+          "reports/controlled-traces/power-session.json",
+        ),
+      ),
+    ]),
   );
   if (
     (await sha256File(resolve(PACKAGE_ROOT, "reports/branch-matrix.json"))) !==
@@ -570,6 +747,7 @@ async function run() {
     plan,
     branchMatrix,
     storyE2e,
+    executionTraces,
   });
   const runId = `hw-${randomUUID()}`;
   const rig = createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv);
@@ -584,11 +762,8 @@ async function run() {
     JETKVM_ALLOW_DANGEROUS_TARGET_HTTP: "true",
     JETKVM_CONNECT_TIMEOUT_MS: "30000",
   };
-  const mcpOptions = {
-    ...mcpSdkFactories,
-    command: process.execPath,
-    args: [resolve(installedPackageRoot, "dist/bin.js")],
-    cwd: installedPackageRoot,
+  const mcpOptions = createInstalledMcpOptions({
+    installedPackageRoot,
     environment: mcpEnvironment,
     sensitiveValues: [
       rigEnv.JETKVM_PASSWORD,
@@ -596,7 +771,8 @@ async function run() {
       rigEnv.KVM_PRIMARY,
       rigEnv.WIN_TARGET,
     ],
-  };
+    sdkFactories: mcpSdkFactories,
+  });
   const mcp = new InstalledMcpClient(mcpOptions);
   const runtimeState = { replacementMcp: undefined };
   let driver;
@@ -605,6 +781,7 @@ async function run() {
   let finalizationWritten = false;
   let summary;
   let deviceTests;
+  let deployedIdentity;
   let deployment;
   let installation;
 
@@ -618,22 +795,20 @@ async function run() {
         { label: "initial", client: mcp },
       ],
     });
+    let persistenceError;
     if (!finalizationWritten) {
-      await writeAndFlush(
-        resolve(outputDirectory, "finalization.json"),
-        finalization.record,
-      );
-      finalizationWritten = true;
-    }
-    if (finalization.failures.length > 0) {
-      if (finalization.record.manual_recovery_required) {
-        throw new ManualRecoveryRequiredError(finalization.failures);
+      try {
+        await writeAndFlush(
+          resolve(outputDirectory, "finalization.json"),
+          finalization.record,
+        );
+        finalizationWritten = true;
+      } catch (error) {
+        persistenceError = error;
       }
-      throw new AggregateError(
-        finalization.failures,
-        "Live hardware resource finalization failed.",
-      );
     }
+    const error = createFinalizationError(finalization, persistenceError);
+    if (error !== undefined) throw error;
   };
 
   await runWithFinalization(
@@ -656,17 +831,56 @@ async function run() {
           "Device identity changed during pre-deployment Go tests.",
         );
       }
-      deployment = await runCommand(
+      const preDeploymentSourceIdentity =
+        await validateCurrentReleaseSource(candidate);
+      const deploymentCommand = await runCommand(
         resolve(REPOSITORY_ROOT, "dev_deploy.sh"),
         ["-r", rigEnv.KVM_PRIMARY, "-i", "--skip-native-build"],
         { cwd: REPOSITORY_ROOT },
       );
-      const deployedIdentity = await readDeviceIdentity(metricsUrl);
+      const postDeploymentSourceIdentity =
+        await validateCurrentReleaseSource(candidate);
+      if (
+        sha256Canonical(preDeploymentSourceIdentity) !==
+        sha256Canonical(postDeploymentSourceIdentity)
+      ) {
+        throw new Error("Release source changed during device deployment.");
+      }
+      deployedIdentity = await readDeviceIdentity(metricsUrl);
       if (deployedIdentity.revision !== candidate.source.commit_sha) {
         throw new Error(
           "Deployed device revision did not match the frozen candidate.",
         );
       }
+      const localDeviceBinarySha256 = await sha256File(
+        resolve(REPOSITORY_ROOT, "bin/jetkvm_app"),
+      );
+      const remoteBinary = await sshModule.runSshCommand(
+        sshModule.kvmTarget(rigEnv.KVM_PRIMARY),
+        "test ! -e /userdata/jetkvm/jetkvm_app.update && sha256sum /userdata/jetkvm/bin/jetkvm_app",
+        { timeoutMs: 30_000 },
+      );
+      const installedDeviceBinarySha256 =
+        /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/bin\/jetkvm_app\s*$/u.exec(
+          remoteBinary.stdout,
+        )?.[1];
+      if (
+        remoteBinary.exitCode !== 0 ||
+        installedDeviceBinarySha256 !== localDeviceBinarySha256
+      ) {
+        throw new Error(
+          "Deployed device binary did not match the locally built release artifact.",
+        );
+      }
+      deployment = Object.freeze({
+        evidence: Object.freeze({
+          ...deploymentCommand.evidence,
+          source_identity: postDeploymentSourceIdentity,
+          local_binary_sha256: localDeviceBinarySha256,
+          installed_binary_sha256: installedDeviceBinarySha256,
+          staged_update_absent: true,
+        }),
+      });
       installation = await rig.install();
       await rig.initialize();
       const listed = await mcp.start();
@@ -691,16 +905,64 @@ async function run() {
           ),
       });
       driverFinalization = await driver.finalizeRun();
+      const replacementPackageIdentity = await verifyInstalledPackageIdentity(
+        candidate,
+        installedPackageRoot,
+      );
+      if (
+        sha256Canonical(replacementPackageIdentity) !==
+        sha256Canonical(packageIdentity)
+      ) {
+        throw new Error(
+          "Installed package identity drifted before transport replacement.",
+        );
+      }
+      await validateCandidateRuntime(
+        candidate,
+        candidatePath,
+        browserPath,
+        targetUrl,
+      );
       const transportReconnect = await reconnectTransportProof(
         { mcp, mcpOptions, runId },
         runtimeState,
       );
       await finalizeResources();
       const finalIdentity = await readDeviceIdentity(metricsUrl);
-      if (finalIdentity.revision !== candidate.source.commit_sha) {
+      if (!sameDeviceIdentity(deployedIdentity, finalIdentity)) {
         throw new Error(
           "Device identity drifted during hardware release execution.",
         );
+      }
+      const finalSourceIdentity = await validateCurrentReleaseSource(candidate);
+      if (
+        sha256Canonical(finalSourceIdentity) !==
+          sha256Canonical(sourceIdentity) ||
+        sha256Canonical(finalSourceIdentity) !==
+          sha256Canonical(postDeploymentSourceIdentity)
+      ) {
+        throw new Error("Release source identity drifted before evidence seal.");
+      }
+      const finalLocalDeviceBinarySha256 = await sha256File(
+        resolve(REPOSITORY_ROOT, "bin/jetkvm_app"),
+      );
+      const finalRemoteBinary = await sshModule.runSshCommand(
+        sshModule.kvmTarget(rigEnv.KVM_PRIMARY),
+        "test ! -e /userdata/jetkvm/jetkvm_app.update && sha256sum /userdata/jetkvm/bin/jetkvm_app",
+        { timeoutMs: 30_000 },
+      );
+      const finalInstalledDeviceBinarySha256 =
+        /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/bin\/jetkvm_app\s*$/u.exec(
+          finalRemoteBinary.stdout,
+        )?.[1];
+      if (
+        finalRemoteBinary.exitCode !== 0 ||
+        finalLocalDeviceBinarySha256 !==
+          deployment.evidence.local_binary_sha256 ||
+        finalInstalledDeviceBinarySha256 !==
+          deployment.evidence.installed_binary_sha256
+      ) {
+        throw new Error("Device deployment bytes drifted before evidence seal.");
       }
       summary = Object.freeze({
         schema_version: 1,
@@ -708,7 +970,7 @@ async function run() {
         run_id: runId,
         candidate_sha256: await sha256File(candidatePath),
         candidate_commit: candidate.source.commit_sha,
-        source_identity: sourceIdentity,
+        source_identity: finalSourceIdentity,
         result: records.every((record) => record.result === "pass")
           ? "pass"
           : "fail",
@@ -721,12 +983,12 @@ async function run() {
           (count, record) => count + record.restores.length,
           0,
         ),
-        installed_package: packageIdentity,
+        installed_package: replacementPackageIdentity,
         installation,
         device_identity: Object.freeze({
           revision: finalIdentity.revision,
-          version: finalIdentity.version,
-          process_start_time_seconds: finalIdentity.processStartTimeSeconds,
+          app_version: finalIdentity.appVersion,
+          process_start_time: finalIdentity.processStartTime,
         }),
         device_tests_sha256: sha256Canonical(deviceTests),
         deployment: deployment.evidence,
