@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { crc32, inflateSync } from "node:zlib";
+import jpeg from "jpeg-js";
 
 import {
   buildDirectoryManifest,
@@ -82,26 +84,148 @@ function scrubForHash(value) {
   return scrubbed;
 }
 
-function hasExpectedImageSignature(bytes, mimeType) {
-  if (mimeType === "image/png") {
-    return (
-      bytes.byteLength >= 8 &&
-      bytes.subarray(0, 8).equals(
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      )
-    );
+function decodePng(bytes) {
+  const signature = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  ]);
+  if (bytes.byteLength < 45 || !bytes.subarray(0, 8).equals(signature)) {
+    throw new Error("MCP image evidence was not a decodable PNG.");
   }
-  if (mimeType === "image/jpeg") {
-    return (
-      bytes.byteLength >= 5 &&
-      bytes[0] === 0xff &&
-      bytes[1] === 0xd8 &&
-      bytes[2] === 0xff &&
-      bytes.at(-2) === 0xff &&
-      bytes.at(-1) === 0xd9
-    );
+  let offset = 8;
+  let width;
+  let height;
+  let bitDepth;
+  let colorType;
+  let sawHeader = false;
+  let sawEnd = false;
+  const compressed = [];
+  while (offset < bytes.byteLength) {
+    if (offset + 12 > bytes.byteLength) {
+      throw new Error("MCP image evidence was not a decodable PNG.");
+    }
+    const length = bytes.readUInt32BE(offset);
+    const chunkEnd = offset + 12 + length;
+    if (chunkEnd > bytes.byteLength) {
+      throw new Error("MCP image evidence was not a decodable PNG.");
+    }
+    const type = bytes.subarray(offset + 4, offset + 8);
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    if (
+      crc32(Buffer.concat([type, data])) >>> 0 !==
+      bytes.readUInt32BE(offset + 8 + length)
+    ) {
+      throw new Error("MCP image evidence was not a decodable PNG.");
+    }
+    const name = type.toString("ascii");
+    if (name === "IHDR") {
+      if (sawHeader || offset !== 8 || length !== 13) {
+        throw new Error("MCP image evidence was not a decodable PNG.");
+      }
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      const validDepths = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16],
+      }[colorType];
+      if (
+        !Number.isSafeInteger(width) ||
+        !Number.isSafeInteger(height) ||
+        width < 1 ||
+        height < 1 ||
+        width > 16_384 ||
+        height > 16_384 ||
+        !validDepths?.includes(bitDepth) ||
+        data[10] !== 0 ||
+        data[11] !== 0 ||
+        data[12] !== 0
+      ) {
+        throw new Error("MCP image evidence was not a decodable PNG.");
+      }
+      sawHeader = true;
+    } else if (name === "IDAT") {
+      if (!sawHeader || sawEnd) {
+        throw new Error("MCP image evidence was not a decodable PNG.");
+      }
+      compressed.push(data);
+    } else if (name === "IEND") {
+      if (!sawHeader || length !== 0 || chunkEnd !== bytes.byteLength) {
+        throw new Error("MCP image evidence was not a decodable PNG.");
+      }
+      sawEnd = true;
+    }
+    offset = chunkEnd;
   }
-  return false;
+  if (!sawEnd || compressed.length === 0) {
+    throw new Error("MCP image evidence was not a decodable PNG.");
+  }
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
+  const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
+  const expectedBytes = (rowBytes + 1) * height;
+  if (expectedBytes > 64 * 1024 * 1024) {
+    throw new Error("MCP image evidence was not a decodable PNG.");
+  }
+  let decoded;
+  try {
+    decoded = inflateSync(Buffer.concat(compressed), {
+      maxOutputLength: expectedBytes,
+    });
+  } catch {
+    throw new Error("MCP image evidence was not a decodable PNG.");
+  }
+  if (decoded.byteLength !== expectedBytes) {
+    throw new Error("MCP image evidence was not a decodable PNG.");
+  }
+  for (let row = 0; row < height; row += 1) {
+    if (decoded[row * (rowBytes + 1)] > 4) {
+      throw new Error("MCP image evidence was not a decodable PNG.");
+    }
+  }
+  return { width, height };
+}
+
+function decodeJpeg(bytes) {
+  if (
+    bytes.byteLength < 16 ||
+    bytes[0] !== 0xff ||
+    bytes[1] !== 0xd8 ||
+    bytes.at(-2) !== 0xff ||
+    bytes.at(-1) !== 0xd9
+  ) {
+    throw new Error("MCP image evidence was not a decodable JPEG.");
+  }
+  let decoded;
+  try {
+    decoded = jpeg.decode(bytes, {
+      useTArray: true,
+      formatAsRGBA: false,
+      tolerantDecoding: false,
+      maxResolutionInMP: 32,
+      maxMemoryUsageInMB: 64,
+    });
+  } catch {
+    throw new Error("MCP image evidence was not a decodable JPEG.");
+  }
+  if (
+    !Number.isSafeInteger(decoded.width) ||
+    !Number.isSafeInteger(decoded.height) ||
+    decoded.width < 1 ||
+    decoded.height < 1 ||
+    decoded.data.byteLength !== decoded.width * decoded.height * 3
+  ) {
+    throw new Error("MCP image evidence was not a decodable JPEG.");
+  }
+  return { width: decoded.width, height: decoded.height };
+}
+
+function decodeImage(bytes, mimeType) {
+  if (mimeType === "image/png") return decodePng(bytes);
+  if (mimeType === "image/jpeg") return decodeJpeg(bytes);
+  throw new Error("MCP image evidence used an unsupported MIME type.");
 }
 
 function imageEvidence(content) {
@@ -112,27 +236,24 @@ function imageEvidence(content) {
       throw new Error("MCP image evidence was malformed.");
     }
     const bytes = Buffer.from(block.data, "base64");
-    if (
-      bytes.byteLength === 0 ||
-      bytes.toString("base64") !== block.data
-    ) {
+    if (bytes.byteLength === 0 || bytes.toString("base64") !== block.data) {
       throw new Error("MCP image evidence was not strict nonempty base64.");
     }
-    if (!hasExpectedImageSignature(bytes, block.mimeType)) {
-      throw new Error("MCP image evidence did not match its declared MIME type.");
-    }
+    const dimensions = decodeImage(bytes, block.mimeType);
     return [
       Object.freeze({
         content_index: contentIndex,
         mime_type: block.mimeType,
         byte_length: bytes.byteLength,
         sha256: sha256Bytes(bytes),
+        image_width: dimensions.width,
+        image_height: dimensions.height,
       }),
     ];
   });
 }
 
-export function sanitizeToolEvidence(result) {
+export function sanitizeToolEvidence(result, context = {}) {
   if (!isRecord(result)) throw new Error("MCP tool result was malformed.");
   const structured = result.structuredContent;
   if (!isRecord(structured)) {
@@ -157,6 +278,58 @@ export function sanitizeToolEvidence(result) {
     ) {
       throw new Error(
         "Display capture omitted its exact declared screenshot image.",
+      );
+    }
+    const geometry = operationResult?.geometry;
+    const capturedAt = Date.parse(operationResult?.captured_at ?? "");
+    const sourceWidth = operationResult?.source_width;
+    const sourceHeight = operationResult?.source_height;
+    const imageWidth = operationResult?.image_width;
+    const imageHeight = operationResult?.image_height;
+    const rotation = operationResult?.rotation;
+    const rotatedWidth =
+      rotation === 90 || rotation === 270 ? sourceHeight : sourceWidth;
+    const rotatedHeight =
+      rotation === 90 || rotation === 270 ? sourceWidth : sourceHeight;
+    const requestedFormat = context.request?.format;
+    if (
+      !Number.isFinite(capturedAt) ||
+      (Number.isFinite(context.requestedAt) &&
+        (capturedAt < context.requestedAt ||
+          capturedAt > Date.now() + 1_000)) ||
+      !Number.isSafeInteger(sourceWidth) ||
+      sourceWidth < 1 ||
+      !Number.isSafeInteger(sourceHeight) ||
+      sourceHeight < 1 ||
+      !Number.isSafeInteger(imageWidth) ||
+      imageWidth !== image.image_width ||
+      !Number.isSafeInteger(imageHeight) ||
+      imageHeight !== image.image_height ||
+      ![0, 90, 180, 270].includes(rotation) ||
+      imageWidth > rotatedWidth ||
+      imageHeight > rotatedHeight ||
+      Math.abs(imageWidth * rotatedHeight - imageHeight * rotatedWidth) >
+        Math.max(rotatedWidth, rotatedHeight) ||
+      (Number.isSafeInteger(context.request?.max_width) &&
+        imageWidth > context.request.max_width) ||
+      (Number.isSafeInteger(context.request?.max_height) &&
+        imageHeight > context.request.max_height) ||
+      (requestedFormat === "png" && image.mime_type !== "image/png") ||
+      (requestedFormat === "jpeg" && image.mime_type !== "image/jpeg") ||
+      !isRecord(geometry) ||
+      !Number.isSafeInteger(geometry.content_x) ||
+      geometry.content_x < 0 ||
+      !Number.isSafeInteger(geometry.content_y) ||
+      geometry.content_y < 0 ||
+      !Number.isSafeInteger(geometry.content_width) ||
+      geometry.content_width < 1 ||
+      !Number.isSafeInteger(geometry.content_height) ||
+      geometry.content_height < 1 ||
+      geometry.content_x + geometry.content_width > imageWidth ||
+      geometry.content_y + geometry.content_height > imageHeight
+    ) {
+      throw new Error(
+        "Display capture geometry or freshness did not match the screenshot.",
       );
     }
   }
@@ -304,6 +477,7 @@ export class InstalledMcpClient {
     if (this.#stderrLeak) {
       throw new Error("MCP stderr exposed a protected value.");
     }
+    const requestedAt = Date.now();
     const result = await this.#client.callTool(
       { name, arguments: args },
       undefined,
@@ -312,9 +486,18 @@ export class InstalledMcpClient {
     if (this.#stderrLeak) {
       throw new Error("MCP stderr exposed a protected value.");
     }
+    if (
+      !isRecord(result.structuredContent) ||
+      result.structuredContent.tool !== name
+    ) {
+      throw new Error("MCP response tool identity did not match the request.");
+    }
     return Object.freeze({
       raw: result.structuredContent,
-      evidence: sanitizeToolEvidence(result),
+      evidence: sanitizeToolEvidence(result, {
+        request: args,
+        requestedAt,
+      }),
     });
   }
 
@@ -506,21 +689,44 @@ export function assertHardwareCallExpectation(
         : undefined;
     const expectedCode =
       code !== undefined &&
-      (step.expect.includes(code) ||
-        step.expect
-          .toLowerCase()
-          .includes(code.toLowerCase().replace(/^session_/u, "")));
+      (new RegExp(`\\b${code}\\b`, "u").test(step.expect) ||
+        new RegExp(
+          `\\b${code.toLowerCase().replace(/^session_/u, "")}\\b`,
+          "iu",
+        ).test(step.expect));
     if (!expectedCode) {
       throw new Error(
         `Hardware step ${step.id} returned an unexpected public error.`,
       );
     }
+    const expectsZeroWrite =
+      /\bnot_sent\b|zero (?:downstream |mutation )?writes?/iu.test(step.expect);
+    if (
+      expectsZeroWrite &&
+      (!isRecord(raw.error) ||
+        raw.error.outcome !== "not_sent" ||
+        raw.error.verification !== "none" ||
+        ![null, 0].includes(
+          raw.error.details?.dispatched_action_count ?? null,
+        ) ||
+        ![null, 0].includes(raw.error.details?.completed_action_count ?? null))
+    ) {
+      throw new Error(
+        `Hardware step ${step.id} did not prove zero-write error semantics.`,
+      );
+    }
     return;
   }
   if (/(?:already_applied|already applied)/iu.test(step.expect)) {
-    if (!isRecord(raw.result) || raw.result.outcome !== "already_applied") {
+    if (
+      !isRecord(raw.result) ||
+      raw.result.outcome !== "already_applied" ||
+      raw.result.request_id !== input?.request_id ||
+      typeof raw.result.verification !== "string" ||
+      raw.result.verification === "none"
+    ) {
       throw new Error(
-        `Hardware step ${step.id} did not prove definitive replay.`,
+        `Hardware step ${step.id} did not return a correlated cached mutation receipt.`,
       );
     }
   } else if (MUTATION_TOOLS.has(step.tool)) {
@@ -533,6 +739,24 @@ export function assertHardwareCallExpectation(
     ) {
       throw new Error(
         `Hardware step ${step.id} did not return a correlated applied verification.`,
+      );
+    }
+  }
+  if (step.tool === "jetkvm_power_control" && isRecord(raw.result)) {
+    const semantic = {
+      press_power: { wire: "power-short", duration: 200 },
+      hold_power: { wire: "power-long", duration: 5_000 },
+      press_reset: { wire: "reset", duration: 200 },
+    }[input?.action];
+    if (
+      semantic === undefined ||
+      raw.result.action !== input.action ||
+      raw.result.wire_action !== semantic.wire ||
+      raw.result.fixed_press_ms !== semantic.duration ||
+      raw.result.serial_sequence_completed !== true
+    ) {
+      throw new Error(
+        `Hardware step ${step.id} did not return its semantic ATX receipt.`,
       );
     }
   }
@@ -603,6 +827,18 @@ function assertAuthoritativeRelease(raw) {
     );
   }
   return raw;
+}
+export function heldInputFacts(releaseResult) {
+  if (
+    !isRecord(releaseResult) ||
+    releaseResult.keyboard_zero !== true ||
+    releaseResult.pointer_zero !== true
+  ) {
+    throw new Error(
+      "Authoritative release did not report an authoritative zero-input state.",
+    );
+  }
+  return Object.freeze({ keys: 0, buttons: 0 });
 }
 
 export function createLiveHardwareDriver({
@@ -840,7 +1076,7 @@ export function createLiveHardwareDriver({
     const capture = await captureObservation();
     const windows = await rig.captureSafeBaselineFacts();
     const generation = state.session.generation;
-    await releaseInput();
+    const release = await releaseInput();
     const captureResult = isRecord(capture.raw?.result)
       ? capture.raw.result
       : {};
@@ -869,11 +1105,12 @@ export function createLiveHardwareDriver({
       browser: candidate.runtime.browser,
       fixture: windows.fixture,
       host_online: windows.host_online,
-      held_input: Object.freeze({ keys: 0, buttons: 0 }),
+      held_input: heldInputFacts(release.raw?.result),
       transport_evidence: Object.freeze({
         reconnect: reconnect.evidence,
         status: sessionResponse.evidence,
         capture: capture.evidence,
+        release: release.evidence,
       }),
       session_generation: generation,
     });
@@ -1458,9 +1695,7 @@ export function createLiveHardwareDriver({
       if (restore.id === "release-input" || restore.id === "stop-paste") {
         await releaseInput();
       } else if (restore.id === "zero-held-input") {
-        if (!isRecord(state.lastRelease) || state.lastRelease.ok !== true) {
-          await releaseInput();
-        }
+        await releaseInput();
       } else if (restore.id === "close-story-session") {
         if (state.session !== undefined) await releaseInput();
       } else if (restore.id === "reset-fixture") {

@@ -871,7 +871,7 @@ async function runPowerCell(requirement: string) {
   }
 }
 
-async function runAdapterCell(requirement: string) {
+async function runAdapterCell(tool: Phase4Tool, requirement: string) {
   const adapter = new FakeDeviceRpcAdapter(BINDING);
   const browser = new FakeBrowserPlane(adapter);
   const native = new FakeNativeControlPlane(adapter);
@@ -918,15 +918,28 @@ async function runAdapterCell(requirement: string) {
       failure = error;
     }
     expect(failure).toBeInstanceOf(DeviceRpcError);
-    recordControlledExchange(
-      "device_rpc_read_display_state",
-      { binding: previous, timeout_ms: 1_000 },
-      {
-        tool: "device_rpc_read_display_state",
-        error: (failure as DeviceRpcError).toJSON(),
-      },
-    );
   }
+  if (tool === "jetkvm_power_control") {
+    await runPowerCell(
+      requirement === "branch:device-rpc-adapter-mid-flight-loss"
+        ? "branch:disconnect-after-write"
+        : requirement === "branch:device-rpc-adapter-replacement"
+          ? "branch:disconnect-before-write"
+          : "branch:atx-acknowledgement-semantics",
+    );
+    return;
+  }
+  await runSessionCell(
+    tool,
+    requirement === "branch:device-rpc-adapter-mid-flight-loss"
+      ? "branch:disconnect-after-write"
+      : requirement === "branch:device-rpc-adapter-replacement"
+        ? "branch:disconnect-before-write"
+        : requirement === "branch:shared-device-rpc-adapter-binding" &&
+            tool === "jetkvm_session_status"
+          ? "branch:per-fact-status-provenance"
+          : requirement,
+  );
 }
 
 const ADAPTER_REQUIREMENTS = new Set([
@@ -981,7 +994,7 @@ describe(SUITE_IDENTITY, () => {
   for (const cell of PHASE_4_CELLS) {
     focusedTest(cell, async () => {
       if (ADAPTER_REQUIREMENTS.has(cell.requirement)) {
-        await runAdapterCell(cell.requirement);
+        await runAdapterCell(cell.tool, cell.requirement);
       } else if (cell.tool === "jetkvm_power_control") {
         await runPowerCell(cell.requirement);
       } else {

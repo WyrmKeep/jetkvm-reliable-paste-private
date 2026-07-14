@@ -55,6 +55,12 @@ test("materializes explicit coverage for all 18 canonical live stories", async (
     ).every((assignment) => assignment.mode === "controlled_live"),
     true,
   );
+  assert.equal(
+    plan["display-status-cached-freshness-and-streaming-omission"].steps[
+      "recover-after-device-rpc-adapter-release-loss"
+    ].mode,
+    "hardware",
+  );
 });
 
 test("validates exact controlled evidence inventory, pass state, and hashes", async () => {
@@ -64,6 +70,7 @@ test("validates exact controlled evidence inventory, pass state, and hashes", as
     storyE2e,
     inputDisplayTraces,
     powerSessionTraces,
+    transportSessionTraces,
   ] = await Promise.all([
     readFile(join(packageRoot, "reports", "branch-matrix.json"), "utf8").then(
       JSON.parse,
@@ -79,10 +86,20 @@ test("validates exact controlled evidence inventory, pass state, and hashes", as
       join(packageRoot, "reports", "controlled-traces", "power-session.json"),
       "utf8",
     ).then(JSON.parse),
+    readFile(
+      join(
+        packageRoot,
+        "reports",
+        "controlled-traces",
+        "transport-session.json",
+      ),
+      "utf8",
+    ).then(JSON.parse),
   ]);
   const executionTraces = mergeControlledTraceReports([
     inputDisplayTraces,
     powerSessionTraces,
+    transportSessionTraces,
   ]);
   const resolver = createExecutionEvidenceResolver({ branchMatrix, storyE2e });
   const plan = materializeLiveExecutionPlan(stories, resolver);
@@ -101,6 +118,89 @@ test("validates exact controlled evidence inventory, pass state, and hashes", as
     storyE2e,
     executionTraces,
   };
+
+  for (const story of stories) {
+    const storyPlan = plan[story.id];
+    for (const step of story.steps) {
+      if (storyPlan?.steps?.[step.id]?.mode !== "controlled_live") continue;
+      const stepEvidence = evidence[`controlled:${story.id}:${step.id}`];
+      assert.equal(
+        JSON.stringify(stepEvidence).includes("deferred_live_evidence"),
+        false,
+        `${story.id}/${step.id} used deferred evidence`,
+      );
+      if (step.tool !== null) {
+        assert.equal(
+          stepEvidence.request_response_traces.some((trace) =>
+            trace.calls.some((call) => call.tool === step.tool),
+          ),
+          true,
+          `${story.id}/${step.id} lacked a ${step.tool} exchange`,
+        );
+      }
+    }
+  }
+
+  const controlledPermissionStory = stories.find((story) =>
+    story.steps.some(
+      (step) =>
+        step.tool !== null &&
+        /\bPERMISSION_DENIED\b/u.test(step.expect) &&
+        plan[story.id]?.steps?.[step.id]?.mode === "controlled_live",
+    ),
+  );
+  const controlledPermissionStep = controlledPermissionStory?.steps.find(
+    (step) =>
+      step.tool !== null &&
+      /\bPERMISSION_DENIED\b/u.test(step.expect) &&
+      plan[controlledPermissionStory.id]?.steps?.[step.id]?.mode ===
+        "controlled_live",
+  );
+  assert.ok(controlledPermissionStory);
+  assert.ok(controlledPermissionStep);
+  const [permissionIdentity] = resolver(
+    controlledPermissionStory,
+    controlledPermissionStep,
+    "linked",
+  );
+  const substituted = {
+    ...executionTraces,
+    [permissionIdentity]: {
+      ...executionTraces[permissionIdentity],
+      test_identity: "unrelated selected trace",
+    },
+  };
+  assert.throws(
+    () =>
+      buildControlledReleaseEvidence({
+        stories,
+        plan,
+        branchMatrix,
+        storyE2e,
+        executionTraces: substituted,
+      }),
+    /exact selected test identity/u,
+  );
+  const semanticallyTampered = structuredClone(executionTraces);
+  const permissionCall = semanticallyTampered[permissionIdentity].calls.find(
+    (call) => call.tool === controlledPermissionStep.tool,
+  );
+  permissionCall.response = {
+    ok: true,
+    tool: controlledPermissionStep.tool,
+    result: { outcome: "applied" },
+  };
+  assert.throws(
+    () =>
+      buildControlledReleaseEvidence({
+        stories,
+        plan,
+        branchMatrix,
+        storyE2e,
+        executionTraces: semanticallyTampered,
+      }),
+    /exact expected outcome/u,
+  );
 
   assert.deepEqual(validateControlledReleaseEvidence(input), evidence);
   const identity = Object.keys(evidence)[0];

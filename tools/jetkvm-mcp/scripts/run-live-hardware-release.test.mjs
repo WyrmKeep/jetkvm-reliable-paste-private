@@ -4,17 +4,144 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import * as liveReleaseModule from "./run-live-hardware-release.mjs";
+import { createDeviceReleaseProvenance } from "./device-release-provenance.mjs";
 import { buildDirectoryManifest, sha256File } from "./release-evidence.mjs";
 import {
   createInstalledMcpOptions,
   createFinalizationError,
   createRigAdapter,
+  deployReleaseDeviceBinary,
   loadInstalledMcpSdkFactories,
   validateCurrentReleaseSource,
+  validateReleaseDeviceBinary,
 } from "./run-live-hardware-release.mjs";
 
 const COMMIT = "a".repeat(40);
 const TREE = "b".repeat(40);
+
+test("accepts only an exact-commit device release artifact", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jetkvm-device-binary-"));
+  const binaryPath = join(directory, "jetkvm_app");
+  const provenancePath = join(directory, "device-binary-provenance.json");
+  try {
+    await writeFile(binaryPath, "device-binary");
+    const expectedSha256 = await sha256File(binaryPath);
+    const provenance = await createDeviceReleaseProvenance({
+      binaryPath,
+      sourceCommit: COMMIT,
+      repository: "WyrmKeep/jetkvm-reliable-paste-private",
+      workflowRef:
+        "WyrmKeep/jetkvm-reliable-paste-private/.github/workflows/build.yml@refs/heads/release",
+      runId: "123456",
+      runAttempt: 1,
+    });
+    await writeFile(provenancePath, `${JSON.stringify(provenance)}\n`);
+    const expectedProvenanceSha256 = await sha256File(provenancePath);
+    const command = async () => ({
+      stdout:
+        `jetkvm_app: go1.25.1\n` +
+        `\tbuild\t-ldflags="-s -w -X github.com/prometheus/common/version.Revision=${COMMIT}"\n`,
+    });
+    const evidence = await validateReleaseDeviceBinary({
+      candidate: { source: { commit_sha: COMMIT } },
+      binaryPath,
+      expectedSha256,
+      command,
+      provenancePath,
+      expectedProvenanceSha256,
+    });
+    assert.equal(evidence.sha256, expectedSha256);
+    assert.equal(evidence.source_commit, COMMIT);
+
+    await assert.rejects(
+      validateReleaseDeviceBinary({
+        candidate: { source: { commit_sha: "b".repeat(40) } },
+        binaryPath,
+        expectedSha256,
+        provenancePath,
+        expectedProvenanceSha256,
+        command,
+      }),
+      /did not match the candidate/u,
+    );
+    await assert.rejects(
+      validateReleaseDeviceBinary({
+        candidate: { source: { commit_sha: COMMIT } },
+        binaryPath,
+        expectedSha256,
+        provenancePath,
+        expectedProvenanceSha256,
+        command: async () => ({
+          stdout:
+            `jetkvm_app: go1.25.1\n` +
+            `\tbuild\t-ldflags="-X github.com/prometheus/common/version.Revision=${"d".repeat(40)}"\n`,
+        }),
+      }),
+      /was not built from the frozen source commit/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stages the exact device artifact before reboot", async () => {
+  const calls = [];
+  const sha256 = "c".repeat(64);
+  const sshModule = {
+    kvmTarget: (host) => `root@${host}`,
+    async runScp(source, destination) {
+      calls.push(["scp", source, destination]);
+      return {
+        command: "scp",
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      };
+    },
+    async runSshCommand(target, command) {
+      calls.push(["ssh", target, command]);
+      return {
+        command: "ssh",
+        stdout:
+          command === "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &"
+            ? ""
+            : `${sha256}  /userdata/jetkvm/jetkvm_app.update\n`,
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+      };
+    },
+  };
+  const evidence = await deployReleaseDeviceBinary({
+    sshModule,
+    host: "device.example",
+    binaryPath: "/private/jetkvm_app",
+    expectedSha256: sha256,
+  });
+
+  assert.deepEqual(calls, [
+    [
+      "scp",
+      "/private/jetkvm_app",
+      "root@device.example:/userdata/jetkvm/jetkvm_app.update",
+    ],
+    [
+      "ssh",
+      "root@device.example",
+      "sha256sum /userdata/jetkvm/jetkvm_app.update",
+    ],
+    [
+      "ssh",
+      "root@device.example",
+      "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &",
+    ],
+  ]);
+  assert.equal(evidence.staged_binary_sha256, sha256);
+});
 
 async function fixture() {
   const repositoryRoot = await mkdtemp(join(tmpdir(), "jetkvm-live-source-"));
@@ -197,7 +324,7 @@ test("retains manual-recovery classification when evidence persistence fails", (
   assert.deepEqual(error.errors, [restoreFailure, persistenceFailure]);
 });
 
-test("requires fresh physical power evidence before treating SSH failure as offline", async () => {
+test("requires a post-action physical power fact before treating SSH failure as offline", async () => {
   let online = false;
   const rig = createRigAdapter(
     {},
@@ -219,16 +346,16 @@ test("requires fresh physical power evidence before treating SSH failure as offl
       atx_led_observation: {
         power: false,
         freshness: "stale",
-        observed_at: "2026-07-14T00:00:02.000Z",
+        observed_at: "2026-07-14T00:00:00.000Z",
       },
     }),
-    /lacked a fresh post-action ATX power LED observation/u,
+    /lacked a post-action ATX power LED observation/u,
   );
   await rig.waitForHostOffline({
     started_at: Date.parse("2026-07-14T00:00:01.000Z"),
     atx_led_observation: {
       power: false,
-      freshness: "fresh",
+      freshness: "stale",
       observed_at: "2026-07-14T00:00:02.000Z",
     },
   });
@@ -236,4 +363,30 @@ test("requires fresh physical power evidence before treating SSH failure as offl
   online = true;
   await rig.waitForHostOnline();
   assert.equal(await rig.hostPowerState(), "online");
+});
+
+test("rechecks the installed package against the frozen candidate directory", async () => {
+  assert.equal(
+    typeof liveReleaseModule.verifyReplacementPackageIdentity,
+    "function",
+  );
+  const calls = [];
+  const identity = { package_tree_sha256: "tree" };
+  await liveReleaseModule.verifyReplacementPackageIdentity({
+    candidate: { package: { name: "fixture" } },
+    installedPackageRoot: "/installed/package",
+    candidatePath: "/candidate/candidate.json",
+    initialIdentity: identity,
+    verify: async (...args) => {
+      calls.push(args);
+      return { ...identity };
+    },
+  });
+  assert.deepEqual(calls, [
+    [
+      { package: { name: "fixture" } },
+      "/installed/package",
+      { candidateDirectory: "/candidate" },
+    ],
+  ]);
 });

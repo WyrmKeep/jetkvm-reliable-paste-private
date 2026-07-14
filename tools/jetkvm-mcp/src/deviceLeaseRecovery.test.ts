@@ -16,6 +16,9 @@ function record(overrides: Partial<DeviceLeaseAdminRecord> = {}) {
     pid: 4242,
     acquired_at: "2026-07-14T00:00:00.000Z",
     token: "token",
+    host_identity: "a".repeat(64),
+    boot_identity: "b".repeat(64),
+    process_start_identity: "c".repeat(64),
     ...overrides,
   };
 }
@@ -25,19 +28,55 @@ afterEach(() => {
 });
 
 describe("retained device lease recovery", () => {
-  it("confirms only a dead owner on this host", () => {
+  it("confirms death only for the same durable host and process lifetime", () => {
+    const identity = () => ({
+      hostIdentity: "a".repeat(64),
+      bootIdentity: "b".repeat(64),
+    });
     expect(
       confirmLocalLeaseOwnerDead(record(), {
+        identity,
         signal: () => {
           throw Object.assign(new Error("gone"), { code: "ESRCH" });
         },
       }),
     ).toBe(true);
     expect(
-      confirmLocalLeaseOwnerDead(record(), { signal: () => undefined }),
+      confirmLocalLeaseOwnerDead(record(), {
+        identity,
+        signal: () => undefined,
+        processStartIdentity: () => "c".repeat(64),
+      }),
     ).toBe(false);
     expect(
-      confirmLocalLeaseOwnerDead(record({ hostname: "other-host" }), {
+      confirmLocalLeaseOwnerDead(record(), {
+        identity,
+        signal: () => undefined,
+        processStartIdentity: () => "d".repeat(64),
+      }),
+    ).toBe(true);
+    expect(
+      confirmLocalLeaseOwnerDead(record({ host_identity: "d".repeat(64) }), {
+        identity,
+        signal: () => {
+          throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        },
+      }),
+    ).toBe(false);
+    expect(
+      confirmLocalLeaseOwnerDead(record({ boot_identity: "d".repeat(64) }), {
+        identity,
+        signal: () => undefined,
+        processStartIdentity: () => "c".repeat(64),
+      }),
+    ).toBe(true);
+    const legacyRecord: DeviceLeaseAdminRecord = record();
+    delete legacyRecord.host_identity;
+    delete legacyRecord.boot_identity;
+    delete legacyRecord.process_start_identity;
+    expect(
+      confirmLocalLeaseOwnerDead(legacyRecord, {
+        identity,
         signal: () => {
           throw Object.assign(new Error("gone"), { code: "ESRCH" });
         },
@@ -45,6 +84,7 @@ describe("retained device lease recovery", () => {
     ).toBe(false);
     expect(
       confirmLocalLeaseOwnerDead(record(), {
+        identity,
         signal: () => {
           throw Object.assign(new Error("denied"), { code: "EPERM" });
         },

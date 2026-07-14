@@ -724,7 +724,7 @@ describe("device lease runner", () => {
         ],
         { TMPDIR: isolatedTmp },
       );
-      expect(retained.code).toBe(1);
+      expect(retained.code).toBe(75);
       expect(retained.stderr).toContain("manual recovery is required");
       const leaseFiles = await readdir(
         join(isolatedTmp, "jetkvm-device-leases"),
@@ -799,6 +799,11 @@ describe("device lease runner", () => {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+    let stderr = "";
+    wrapper.stderr?.setEncoding("utf8");
+    wrapper.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
     const completion = Promise.withResolvers<{
       code: number | null;
       signal: NodeJS.Signals | null;
@@ -810,7 +815,7 @@ describe("device lease runner", () => {
       await waitForJsonFile(markerPath);
       wrapper.kill("SIGTERM");
       const result = await completion.promise;
-      expect(result.code).not.toBe(0);
+      expect(result, stderr).toEqual({ code: 143, signal: null });
       expect(
         (await readdir(leaseDirectory)).some((name) =>
           name.endsWith(".lease.json"),

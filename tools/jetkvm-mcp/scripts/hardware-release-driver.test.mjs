@@ -12,7 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { crc32, deflateSync } from "node:zlib";
 import test from "node:test";
+import jpeg from "jpeg-js";
 
 import {
   InstalledMcpClient,
@@ -20,6 +22,7 @@ import {
   assertPrivateEnvironmentFile,
   assertHardwareCallExpectation,
   compareSafeBaselines,
+  heldInputFacts,
   createLiveHardwareDriver,
   finalizeLiveHardwareResources,
   powerActionRequiresOfflineWait,
@@ -34,9 +37,36 @@ import {
   sha256File,
 } from "./release-evidence.mjs";
 
-const PNG_SIGNATURE = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+function pngChunk(name, data) {
+  const type = Buffer.from(name, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.byteLength);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([type, data])) >>> 0);
+  return Buffer.concat([length, type, data, checksum]);
+}
+
+const pngHeader = Buffer.alloc(13);
+pngHeader.writeUInt32BE(1, 0);
+pngHeader.writeUInt32BE(1, 4);
+pngHeader[8] = 8;
+pngHeader[9] = 6;
+const PNG_IMAGE = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  pngChunk("IHDR", pngHeader),
+  pngChunk("IDAT", deflateSync(Buffer.from([0, 255, 0, 0, 255]))),
+  pngChunk("IEND", Buffer.alloc(0)),
 ]);
+const JPEG_IMAGE = Buffer.from(
+  jpeg.encode(
+    {
+      width: 1,
+      height: 1,
+      data: Buffer.from([255, 0, 0, 255]),
+    },
+    90,
+  ).data,
+);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function successResult(overrides = {}) {
@@ -63,10 +93,7 @@ function successResult(overrides = {}) {
 }
 
 test("sanitizes MCP results to hashes, bounded facts, and image digests", () => {
-  const imageBytes = Buffer.concat([
-    PNG_SIGNATURE,
-    Buffer.from("private-image"),
-  ]);
+  const imageBytes = PNG_IMAGE;
   const result = successResult();
   result.content.push({
     type: "image",
@@ -83,7 +110,7 @@ test("sanitizes MCP results to hashes, bounded facts, and image digests", () => 
 });
 
 test("requires the exact nonempty image declared by display capture", () => {
-  const bytes = Buffer.concat([PNG_SIGNATURE, Buffer.from("real-screenshot")]);
+  const bytes = PNG_IMAGE;
   const data = bytes.toString("base64");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const structuredContent = {
@@ -91,6 +118,18 @@ test("requires the exact nonempty image declared by display capture", () => {
     tool: "jetkvm_display_capture",
     session_generation: 1,
     result: {
+      captured_at: "2026-07-14T00:00:00.000Z",
+      source_width: 1,
+      source_height: 1,
+      image_width: 1,
+      image_height: 1,
+      rotation: 0,
+      geometry: {
+        content_x: 0,
+        content_y: 0,
+        content_width: 1,
+        content_height: 1,
+      },
       image: {
         content_index: 1,
         mime_type: "image/png",
@@ -133,6 +172,110 @@ test("requires the exact nonempty image declared by display capture", () => {
   );
 });
 
+test("fully decodes JPEG screenshot evidence", () => {
+  const bytes = JPEG_IMAGE;
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const evidence = sanitizeToolEvidence({
+    content: [
+      { type: "text", text: "{}" },
+      {
+        type: "image",
+        mimeType: "image/jpeg",
+        data: bytes.toString("base64"),
+      },
+    ],
+    structuredContent: {
+      ok: true,
+      tool: "jetkvm_display_capture",
+      session_generation: 1,
+      result: {
+        captured_at: "2026-07-14T00:00:00.000Z",
+        source_width: 1,
+        source_height: 1,
+        image_width: 1,
+        image_height: 1,
+        rotation: 0,
+        geometry: {
+          content_x: 0,
+          content_y: 0,
+          content_width: 1,
+          content_height: 1,
+        },
+        image: {
+          content_index: 1,
+          mime_type: "image/jpeg",
+          byte_length: bytes.byteLength,
+          sha256,
+        },
+      },
+    },
+  });
+  assert.deepEqual(
+    {
+      width: evidence.images[0].image_width,
+      height: evidence.images[0].image_height,
+    },
+    { width: 1, height: 1 },
+  );
+});
+
+test("rejects JPEG marker shells without decodable pixels", () => {
+  const shell = Buffer.from([
+    0xff, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xc4, 0x00, 0x02, 0xff, 0xc0,
+    0x00, 0x08, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0xff, 0xda, 0x00, 0x02,
+    0x00, 0xff, 0xd9,
+  ]);
+  const result = successResult();
+  result.content.push({
+    type: "image",
+    mimeType: "image/jpeg",
+    data: shell.toString("base64"),
+  });
+  assert.throws(() => sanitizeToolEvidence(result), /not a decodable JPEG/u);
+});
+
+test("rejects an image marker shell that cannot be decoded", () => {
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.throws(
+    () =>
+      sanitizeToolEvidence({
+        content: [
+          { type: "text", text: "capture" },
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: bytes.toString("base64"),
+          },
+        ],
+        structuredContent: {
+          ok: true,
+          tool: "jetkvm_display_capture",
+          result: {
+            captured_at: "2026-07-14T00:00:00.000Z",
+            source_width: 1,
+            source_height: 1,
+            image_width: 1,
+            image_height: 1,
+            rotation: 0,
+            geometry: {
+              content_x: 0,
+              content_y: 0,
+              content_width: 1,
+              content_height: 1,
+            },
+            image: {
+              content_index: 1,
+              mime_type: "image/png",
+              byte_length: bytes.byteLength,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            },
+          },
+        },
+      }),
+    /decodable PNG/u,
+  );
+});
+
 test("refuses an ATX power pulse when host reachability is unknown", async () => {
   const calls = [];
   const driver = createLiveHardwareDriver({
@@ -158,6 +301,97 @@ test("refuses an ATX power pulse when host reachability is unknown", async () =>
     /power state is unknown; refusing to pulse/u,
   );
   assert.deepEqual(calls, []);
+});
+test("proves zero held input on every restore instead of trusting cached release state", async () => {
+  const calls = [];
+  const releaseResult = {
+    mutation_gate_closed: true,
+    deferred_producers_joined: true,
+    paste_terminal: "inactive",
+    ordinary_leases_zero: true,
+    keyboard_zero: true,
+    pointer_zero: true,
+    generation_drained: true,
+  };
+  const driver = createLiveHardwareDriver({
+    mcp: {
+      async call(name) {
+        calls.push(name);
+        if (name === "jetkvm_session_connect") {
+          return {
+            raw: {
+              ok: true,
+              session_id: "restore-session",
+              session_generation: 2,
+            },
+            evidence: { connect: true },
+          };
+        }
+        assert.equal(name, "jetkvm_input_release");
+        return {
+          raw: { ok: true, result: releaseResult },
+          evidence: { release: true },
+        };
+      },
+    },
+    rig: {},
+    candidate: {
+      source: { commit_sha: "a".repeat(40) },
+      runtime: { browser: {} },
+    },
+    runId: "zero-held-restore",
+    executionResolver: () => [],
+    controlledExecution: {},
+  });
+  driver.state.session = { id: "restore-session", generation: 1 };
+
+  await driver.restore({}, { id: "zero-held-input" });
+  await driver.restore({}, { id: "zero-held-input" });
+
+  assert.equal(
+    calls.filter((name) => name === "jetkvm_input_release").length,
+    2,
+  );
+});
+
+test("rejects an MCP response for a different tool", async () => {
+  const stderr = new EventEmitter();
+  const toolNames = [
+    "jetkvm_display_capture",
+    "jetkvm_display_status",
+    "jetkvm_input_keyboard",
+    "jetkvm_input_mouse",
+    "jetkvm_input_paste",
+    "jetkvm_input_release",
+    "jetkvm_power_control",
+    "jetkvm_session_connect",
+    "jetkvm_session_reconnect",
+    "jetkvm_session_status",
+  ];
+  const client = new InstalledMcpClient({
+    command: "unused",
+    transportFactory: () => ({
+      stderr,
+      close: async () => undefined,
+    }),
+    clientFactory: () => ({
+      connect: async () => undefined,
+      listTools: async () => ({
+        tools: toolNames.map((name) => ({ name })),
+      }),
+      callTool: async () => successResult({ tool: "jetkvm_display_status" }),
+      close: async () => undefined,
+    }),
+  });
+  try {
+    await client.start();
+    await assert.rejects(
+      client.call("jetkvm_display_capture", {}),
+      /MCP response tool identity did not match the request/u,
+    );
+  } finally {
+    await client.close();
+  }
 });
 
 test("closes a partially started MCP child when tool listing fails", async () => {
@@ -530,6 +764,102 @@ test("requires fresh mutations to return correlated applied verification", () =>
         verification: "device_ack_only",
       },
     }),
+  );
+});
+
+test("requires exact semantic ATX receipts", () => {
+  const step = {
+    id: "press-power",
+    tool: "jetkvm_power_control",
+    input: { request_id: "power-request", action: "press_power" },
+    expect: "outcome applied",
+  };
+  assert.throws(
+    () =>
+      assertHardwareCallExpectation(step, {
+        ok: true,
+        result: {
+          request_id: "power-request",
+          outcome: "applied",
+          verification: "device_ack_only",
+          action: "hold_power",
+          wire_action: "power-long",
+          fixed_press_ms: 5_000,
+          serial_sequence_completed: true,
+        },
+      }),
+    /semantic ATX receipt/u,
+  );
+});
+
+test("requires exact zero-write semantics for expected public errors", () => {
+  assert.throws(
+    () =>
+      assertHardwareCallExpectation(
+        {
+          id: "stale-power-generation",
+          tool: "jetkvm_power_control",
+          input: { request_id: "stale-request" },
+          expect:
+            "STALE_SESSION_GENERATION with outcome not_sent and zero downstream writes.",
+        },
+        {
+          ok: false,
+          error: {
+            code: "STALE_SESSION_GENERATION",
+            phase: "execute",
+            outcome: "unknown",
+            verification: "none",
+            safe_to_retry: false,
+            required_next_step: "inspect_device_state_before_retry",
+            details: {
+              dispatched_action_count: 1,
+              completed_action_count: 1,
+            },
+          },
+        },
+      ),
+    /zero-write error semantics/u,
+  );
+});
+
+test("requires replay receipts to remain correlated and cached", () => {
+  assert.throws(
+    () =>
+      assertHardwareCallExpectation(
+        {
+          id: "repeat-power-short",
+          tool: "jetkvm_power_control",
+          input: { request_id: "same-request", action: "press_power" },
+          expect: "outcome already_applied with the cached device receipt",
+        },
+        {
+          ok: true,
+          result: {
+            request_id: "other-request",
+            outcome: "already_applied",
+            verification: "device_ack_only",
+            dispatched_action_count: 1,
+            completed_action_count: 1,
+            action: "press_power",
+            wire_action: "power-short",
+            fixed_press_ms: 200,
+            serial_sequence_completed: true,
+          },
+        },
+      ),
+    /correlated cached mutation receipt/u,
+  );
+});
+
+test("derives zero held-input facts from authoritative release output", () => {
+  assert.deepEqual(
+    heldInputFacts({ keyboard_zero: true, pointer_zero: true }),
+    { keys: 0, buttons: 0 },
+  );
+  assert.throws(
+    () => heldInputFacts({ keyboard_zero: true, pointer_zero: false }),
+    /authoritative zero-input state/u,
   );
 });
 

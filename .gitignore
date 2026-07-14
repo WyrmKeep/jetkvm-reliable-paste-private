@@ -24,3 +24,8 @@ tools/jetkvm-mcp/dist/
 
 ui/reports
 .env*
+
+
+# compiler and runtime crash dumps
+core
+core.*

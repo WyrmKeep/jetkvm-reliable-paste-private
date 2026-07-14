@@ -20,8 +20,10 @@ export function mergeControlledTraceReports(reports) {
     if (
       !isRecord(report) ||
       report.schema_version !== 1 ||
-      report.evidence_source !==
-        "execution-produced-focused-handler-calls" ||
+      ![
+        "execution-produced-focused-handler-calls",
+        "execution-produced-protocol-calls",
+      ].includes(report.evidence_source) ||
       !isRecord(report.traces)
     ) {
       throw new Error("Controlled trace report is malformed.");
@@ -42,35 +44,53 @@ export function mergeControlledTraceReports(reports) {
   );
 }
 
-function exactExecutionTrace(executionTraces, identity, scenarioEvidence) {
-  const direct = executionTraces[identity];
-  const candidates =
-    direct === undefined && identity.startsWith("scenario:")
-      ? Object.entries(executionTraces).filter(
-          ([, trace]) =>
-            scenarioEvidence[identity]?.test_identities?.includes(
-              trace?.test_identity,
-            ) && Array.isArray(trace?.calls) && trace.calls.length > 0,
-        )
-      : [[identity, direct]];
+function exactExecutionTrace(executionTraces, identity, resolverEvidence) {
+  const focused = resolverEvidence.focused[identity];
+  const scenario = resolverEvidence.scenarios[identity];
+  let expectedTestIdentities;
+  let candidates;
+  if (isRecord(focused) && typeof focused.test_identity === "string") {
+    expectedTestIdentities = [focused.test_identity];
+    candidates = [[identity, executionTraces[identity]]];
+  } else if (
+    isRecord(scenario) &&
+    Array.isArray(scenario.test_identities) &&
+    scenario.test_identities.length > 0
+  ) {
+    expectedTestIdentities = scenario.test_identities;
+    const expected = new Set(expectedTestIdentities);
+    if (expected.size !== expectedTestIdentities.length) {
+      throw new Error(
+        `Controlled execution trace ${identity} lacks an exact selected test identity.`,
+      );
+    }
+    candidates = Object.entries(executionTraces).filter(([, trace]) =>
+      expected.has(trace?.test_identity),
+    );
+  } else {
+    throw new Error(
+      `Controlled execution trace ${identity} lacks an exact selected test identity.`,
+    );
+  }
+  const actualTestIdentities = candidates.map(([, trace]) =>
+    isRecord(trace) ? trace.test_identity : undefined,
+  );
   if (
-    candidates.length === 0 &&
-    identity.startsWith(
-      "scenario:transport-reconnect-does-not-own-device:",
+    candidates.length !== expectedTestIdentities.length ||
+    new Set(actualTestIdentities).size !== expectedTestIdentities.length ||
+    expectedTestIdentities.some(
+      (testIdentity) => !actualTestIdentities.includes(testIdentity),
     )
   ) {
-    return Object.freeze({
-      identity,
-      deferred_live_evidence: "summary.transport_reconnect",
-    });
+    throw new Error(
+      `Controlled execution trace ${identity} lacks an exact selected test identity.`,
+    );
   }
   if (
-    candidates.length === 0 ||
     candidates.some(
       ([, trace]) =>
         !isRecord(trace) ||
         typeof trace.test_identity !== "string" ||
-        trace.test_identity.length === 0 ||
         !Array.isArray(trace.calls) ||
         trace.calls.length === 0 ||
         trace.calls.some(
@@ -110,6 +130,105 @@ function exactExecutionTrace(executionTraces, identity, scenarioEvidence) {
   });
 }
 
+function traceResponseEnvelope(response) {
+  if (typeof response.ok === "boolean") return response;
+  if (typeof response.wire_response !== "string") return undefined;
+  for (const line of response.wire_response.split(/\r?\n/u)) {
+    if (!line.startsWith("data: ")) continue;
+    try {
+      const message = JSON.parse(line.slice("data: ".length));
+      const structured = message?.result?.structuredContent;
+      if (isRecord(structured) && typeof structured.ok === "boolean") {
+        return structured;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function expectedTraceTool(step) {
+  if (typeof step.tool === "string") return step.tool;
+  if (step.call === "mcp-transport/reconnect") return "mcp_transport_reconnect";
+  return undefined;
+}
+
+function controlledCallMatchesStep(step, call) {
+  const expectedTool = expectedTraceTool(step);
+  if (expectedTool === undefined || call.tool !== expectedTool) return false;
+  if (expectedTool === "mcp_transport_reconnect") {
+    return (
+      call.request.transport_principal === step.input.transport_principal &&
+      call.response.initialized === true &&
+      call.response.device_operation_count === 0
+    );
+  }
+  const response = traceResponseEnvelope(call.response);
+  if (response === undefined || response.tool !== expectedTool) return false;
+  const expectedErrorCodes = [
+    ...step.expect.matchAll(/\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b/gu),
+  ].map((match) => match[0]);
+  if (expectedErrorCodes.length > 0 && response.ok === false) {
+    if (
+      !isRecord(response.error) ||
+      !expectedErrorCodes.includes(response.error.code)
+    ) {
+      return false;
+    }
+    if (
+      /\bnot_sent\b/u.test(step.expect) &&
+      response.error.outcome !== "not_sent"
+    ) {
+      return false;
+    }
+    if (
+      /zero (?:downstream |mutation )?writes?/iu.test(step.expect) &&
+      (!isRecord(response.error.details) ||
+        ![null, 0].includes(
+          response.error.details.dispatched_action_count ?? null,
+        ) ||
+        ![null, 0].includes(
+          response.error.details.completed_action_count ?? null,
+        ))
+    ) {
+      return false;
+    }
+    return true;
+  }
+  const allowsSuccessAlternative = expectedErrorCodes.some((code) =>
+    new RegExp(`\\bor\\s+(?:a|an)\\s+${code}\\b`, "iu").test(step.expect),
+  );
+  if (
+    expectedErrorCodes.length > 0 &&
+    (!allowsSuccessAlternative || response.ok !== true)
+  ) {
+    return false;
+  }
+  if (response.ok !== true) return false;
+  if (
+    expectedTool === "jetkvm_session_status" &&
+    /\b(?:ready|same explicit device session)\b/iu.test(step.expect) &&
+    (response.session_id !== call.request.session_id ||
+      response.session_generation !== call.request.session_generation ||
+      response.result?.state !== "ready")
+  ) {
+    return false;
+  }
+  if (
+    /\boutcome applied\b/iu.test(step.expect) &&
+    response.result?.outcome !== "applied"
+  ) {
+    return false;
+  }
+  if (
+    /\balready_applied\b|\balready applied\b/iu.test(step.expect) &&
+    response.result?.outcome !== "already_applied"
+  ) {
+    return false;
+  }
+  return true;
+}
 
 export function buildControlledReleaseEvidence({
   stories,
@@ -134,12 +253,20 @@ export function buildControlledReleaseEvidence({
       const identity = `controlled:${story.id}:${step.id}`;
       const executionIdentities = resolver(story, step, "linked");
       const requestResponseTraces = executionIdentities.map((identity) =>
-        exactExecutionTrace(
-          executionTraces,
-          identity,
-          resolver.evidence.scenarios,
-        ),
+        exactExecutionTrace(executionTraces, identity, resolver.evidence),
       );
+      const expectedTool = expectedTraceTool(step);
+      if (
+        expectedTool === undefined ||
+        requestResponseTraces.some(
+          (trace) =>
+            !trace.calls.some((call) => controlledCallMatchesStep(step, call)),
+        )
+      ) {
+        throw new Error(
+          `Controlled step ${story.id}/${step.id} lacks its exact expected outcome.`,
+        );
+      }
       evidence[identity] = Object.freeze({
         result: "pass",
         execution_identities: Object.freeze(executionIdentities),
@@ -203,6 +330,7 @@ async function run() {
     storyE2e,
     inputDisplayTraces,
     powerSessionTraces,
+    transportSessionTraces,
   ] = await Promise.all([
     import("../dist/stories/manifest.js"),
     import("./live-story-plan.mjs"),
@@ -220,10 +348,15 @@ async function run() {
       resolve(packageRoot, "reports/controlled-traces/power-session.json"),
       "utf8",
     ).then(JSON.parse),
+    readFile(
+      resolve(packageRoot, "reports/controlled-traces/transport-session.json"),
+      "utf8",
+    ).then(JSON.parse),
   ]);
   const executionTraces = mergeControlledTraceReports([
     inputDisplayTraces,
     powerSessionTraces,
+    transportSessionTraces,
   ]);
   const stories = await loadAcceptanceStories(
     resolve(packageRoot, "dist/stories"),

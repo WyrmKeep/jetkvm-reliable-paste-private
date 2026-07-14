@@ -71,6 +71,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.1",
+    "jpeg-js": "0.4.4",
     "playwright": "1.57.0",
     "prettier": "3.7.4",
     "typescript": "5.9.3",

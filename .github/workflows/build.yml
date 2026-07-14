@@ -56,6 +56,11 @@ jobs:
       - name: Build application inside Docker container
         run: |
           ./scripts/ci_helper.sh make build_dev
+      - name: Bind device artifact to CI source
+        run: |
+          node tools/jetkvm-mcp/scripts/device-release-provenance.mjs \
+            bin/jetkvm_app \
+            device-binary-provenance.json
       - name: Run host-safe tests
         run: |
           set -o pipefail
@@ -74,4 +79,5 @@ jobs:
           name: jetkvm-app
           path: |
             bin/jetkvm_app
+            device-binary-provenance.json
             device-tests.tar.gz

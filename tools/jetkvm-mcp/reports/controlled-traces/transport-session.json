@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "evidence_source": "execution-produced-protocol-calls",
+  "traces": {
+    "scenario:transport-reconnect-does-not-own-device:protocol": {
+      "test_identity": "Phase 5 supplemental story contracts > transport reconnect preserves application session",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "tool": "jetkvm_session_status",
+            "wire_response": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"ok\\\":true,\\\"tool\\\":\\\"jetkvm_session_status\\\",\\\"operation_id\\\":\\\"transport-status\\\",\\\"session_id\\\":\\\"session-1\\\",\\\"session_generation\\\":1,\\\"duration_ms\\\":0,\\\"result\\\":{\\\"state\\\":\\\"ready\\\",\\\"connection_epoch\\\":1,\\\"browser_channel_generation\\\":1,\\\"display_generation\\\":1,\\\"dispatch_generation\\\":1,\\\"device_reachable\\\":true,\\\"setup_state\\\":\\\"complete\\\",\\\"auth_mode\\\":\\\"password\\\",\\\"rpc_reachability\\\":\\\"reachable\\\",\\\"native_process\\\":\\\"available\\\",\\\"web_rtc\\\":\\\"connected\\\",\\\"hid\\\":\\\"ready\\\",\\\"decoded_video\\\":\\\"ready\\\",\\\"native_capture_facts\\\":{\\\"signal\\\":{\\\"value\\\":\\\"unknown\\\",\\\"observed_at\\\":null,\\\"age_ms\\\":null,\\\"freshness\\\":\\\"unknown\\\",\\\"source\\\":\\\"none\\\"},\\\"resolution\\\":{\\\"value\\\":null,\\\"observed_at\\\":null,\\\"age_ms\\\":null,\\\"freshness\\\":\\\"unknown\\\",\\\"source\\\":\\\"none\\\"},\\\"fps\\\":{\\\"value\\\":null,\\\"observed_at\\\":null,\\\"age_ms\\\":null,\\\"freshness\\\":\\\"unknown\\\",\\\"source\\\":\\\"none\\\"}},\\\"active_mutation\\\":false,\\\"fresh_capture_required\\\":true,\\\"permissions\\\":[\\\"session.connect\\\",\\\"session.status\\\",\\\"session.reconnect\\\",\\\"session.takeover\\\",\\\"display.capture\\\",\\\"display.status\\\",\\\"input.mouse\\\",\\\"input.keyboard\\\",\\\"input.paste\\\",\\\"input.release\\\",\\\"power.control\\\"],\\\"capabilities\\\":{\\\"session_status\\\":true,\\\"display_capture\\\":true,\\\"display_status\\\":true,\\\"mouse\\\":true,\\\"absolute_pointer\\\":true,\\\"keyboard\\\":true,\\\"reliable_paste\\\":true,\\\"input_release\\\":true,\\\"power_control\\\":true,\\\"edid_read\\\":true},\\\"blocked_reason\\\":null,\\\"versions\\\":{\\\"server\\\":\\\"0.1.0\\\",\\\"protocol\\\":\\\"1\\\",\\\"ui_contract\\\":\\\"1\\\",\\\"firmware\\\":null}}}\"}],\"structuredContent\":{\"ok\":true,\"tool\":\"jetkvm_session_status\",\"operation_id\":\"transport-status\",\"session_id\":\"session-1\",\"session_generation\":1,\"duration_ms\":0,\"result\":{\"state\":\"ready\",\"connection_epoch\":1,\"browser_channel_generation\":1,\"display_generation\":1,\"dispatch_generation\":1,\"device_reachable\":true,\"setup_state\":\"complete\",\"auth_mode\":\"password\",\"rpc_reachability\":\"reachable\",\"native_process\":\"available\",\"web_rtc\":\"connected\",\"hid\":\"ready\",\"decoded_video\":\"ready\",\"native_capture_facts\":{\"signal\":{\"value\":\"unknown\",\"observed_at\":null,\"age_ms\":null,\"freshness\":\"unknown\",\"source\":\"none\"},\"resolution\":{\"value\":null,\"observed_at\":null,\"age_ms\":null,\"freshness\":\"unknown\",\"source\":\"none\"},\"fps\":{\"value\":null,\"observed_at\":null,\"age_ms\":null,\"freshness\":\"unknown\",\"source\":\"none\"}},\"active_mutation\":false,\"fresh_capture_required\":true,\"permissions\":[\"session.connect\",\"session.status\",\"session.reconnect\",\"session.takeover\",\"display.capture\",\"display.status\",\"input.mouse\",\"input.keyboard\",\"input.paste\",\"input.release\",\"power.control\"],\"capabilities\":{\"session_status\":true,\"display_capture\":true,\"display_status\":true,\"mouse\":true,\"absolute_pointer\":true,\"keyboard\":true,\"reliable_paste\":true,\"input_release\":true,\"power_control\":true,\"edid_read\":true},\"blocked_reason\":null,\"versions\":{\"server\":\"0.1.0\",\"protocol\":\"1\",\"ui_contract\":\"1\",\"firmware\":null}}}},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+          }
+        },
+        {
+          "tool": "mcp_transport_reconnect",
+          "request": {
+            "transport_principal": "same-authorized-principal"
+          },
+          "response": {
+            "tool": "mcp_transport_reconnect",
+            "initialized": true,
+            "device_operation_count": 0
+          }
+        },
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "tool": "jetkvm_session_status",
+            "wire_response": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"ok\\\":true,\\\"tool\\\":\\\"jetkvm_session_status\\\",\\\"operation_id\\\":\\\"transport-status\\\",\\\"session_id\\\":\\\"session-1\\\",\\\"session_generation\\\":1,\\\"duration_ms\\\":0,\\\"result\\\":{\\\"state\\\":\\\"ready\\\",\\\"connection_epoch\\\":1,\\\"browser_channel_generation\\\":1,\\\"display_generation\\\":1,\\\"dispatch_generation\\\":1,\\\"device_reachable\\\":true,\\\"setup_state\\\":\\\"complete\\\",\\\"auth_mode\\\":\\\"password\\\",\\\"rpc_reachability\\\":\\\"reachable\\\",\\\"native_process\\\":\\\"available\\\",\\\"web_rtc\\\":\\\"connected\\\",\\\"hid\\\":\\\"ready\\\",\\\"decoded_video\\\":\\\"ready\\\",\\\"native_capture_facts\\\":{\\\"signal\\\":{\\\"value\\\":\\\"unknown\\\",\\\"observed_at\\\":null,\\\"age_ms\\\":null,\\\"freshness\\\":\\\"unknown\\\",\\\"source\\\":\\\"none\\\"},\\\"resolution\\\":{\\\"value\\\":null,\\\"observed_at\\\":null,\\\"age_ms\\\":null,\\\"freshness\\\":\\\"unknown\\\",\\\"source\\\":\\\"none\\\"},\\\"fps\\\":{\\\"value\\\":null,\\\"observed_at\\\":null,\\\"age_ms\\\":null,\\\"freshness\\\":\\\"unknown\\\",\\\"source\\\":\\\"none\\\"}},\\\"active_mutation\\\":false,\\\"fresh_capture_required\\\":true,\\\"permissions\\\":[\\\"session.connect\\\",\\\"session.status\\\",\\\"session.reconnect\\\",\\\"session.takeover\\\",\\\"display.capture\\\",\\\"display.status\\\",\\\"input.mouse\\\",\\\"input.keyboard\\\",\\\"input.paste\\\",\\\"input.release\\\",\\\"power.control\\\"],\\\"capabilities\\\":{\\\"session_status\\\":true,\\\"display_capture\\\":true,\\\"display_status\\\":true,\\\"mouse\\\":true,\\\"absolute_pointer\\\":true,\\\"keyboard\\\":true,\\\"reliable_paste\\\":true,\\\"input_release\\\":true,\\\"power_control\\\":true,\\\"edid_read\\\":true},\\\"blocked_reason\\\":null,\\\"versions\\\":{\\\"server\\\":\\\"0.1.0\\\",\\\"protocol\\\":\\\"1\\\",\\\"ui_contract\\\":\\\"1\\\",\\\"firmware\\\":null}}}\"}],\"structuredContent\":{\"ok\":true,\"tool\":\"jetkvm_session_status\",\"operation_id\":\"transport-status\",\"session_id\":\"session-1\",\"session_generation\":1,\"duration_ms\":0,\"result\":{\"state\":\"ready\",\"connection_epoch\":1,\"browser_channel_generation\":1,\"display_generation\":1,\"dispatch_generation\":1,\"device_reachable\":true,\"setup_state\":\"complete\",\"auth_mode\":\"password\",\"rpc_reachability\":\"reachable\",\"native_process\":\"available\",\"web_rtc\":\"connected\",\"hid\":\"ready\",\"decoded_video\":\"ready\",\"native_capture_facts\":{\"signal\":{\"value\":\"unknown\",\"observed_at\":null,\"age_ms\":null,\"freshness\":\"unknown\",\"source\":\"none\"},\"resolution\":{\"value\":null,\"observed_at\":null,\"age_ms\":null,\"freshness\":\"unknown\",\"source\":\"none\"},\"fps\":{\"value\":null,\"observed_at\":null,\"age_ms\":null,\"freshness\":\"unknown\",\"source\":\"none\"}},\"active_mutation\":false,\"fresh_capture_required\":true,\"permissions\":[\"session.connect\",\"session.status\",\"session.reconnect\",\"session.takeover\",\"display.capture\",\"display.status\",\"input.mouse\",\"input.keyboard\",\"input.paste\",\"input.release\",\"power.control\"],\"capabilities\":{\"session_status\":true,\"display_capture\":true,\"display_status\":true,\"mouse\":true,\"absolute_pointer\":true,\"keyboard\":true,\"reliable_paste\":true,\"input_release\":true,\"power_control\":true,\"edid_read\":true},\"blocked_reason\":null,\"versions\":{\"server\":\"0.1.0\",\"protocol\":\"1\",\"ui_contract\":\"1\",\"firmware\":null}}}},\"jsonrpc\":\"2.0\",\"id\":5}\n\n"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -43,6 +43,29 @@ class SupervisorLostError extends Error {
     this.name = "SupervisorLostError";
   }
 }
+class RetainedDeviceLeaseError extends DeviceLeaseError {
+  readonly exitCode: number;
+
+  constructor(exitCode: number) {
+    super(
+      "DEVICE_LEASE_STALE_UNPROVEN",
+      "The device lease is retained because manual recovery is required.",
+    );
+    this.name = "RetainedDeviceLeaseError";
+    this.exitCode = exitCode;
+  }
+}
+
+function retainedLeaseExitCode(error: unknown): number | undefined {
+  if (error instanceof RetainedDeviceLeaseError) return error.exitCode;
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const exitCode = retainedLeaseExitCode(nested);
+      if (exitCode !== undefined) return exitCode;
+    }
+  }
+  return undefined;
+}
 
 export function buildLeaseChildEnvironment(
   baseEnvironment: NodeJS.ProcessEnv,
@@ -84,11 +107,11 @@ function preserveLeaseAfterSupervisorLoss(lease: DeviceLease): void {
   };
 }
 
-function preserveLeaseForManualRecovery(lease: DeviceLease): void {
-  const failure = new DeviceLeaseError(
-    "DEVICE_LEASE_STALE_UNPROVEN",
-    "The device lease is retained because manual recovery is required.",
-  );
+function preserveLeaseForManualRecovery(
+  lease: DeviceLease,
+  exitCode: number,
+): void {
+  const failure = new RetainedDeviceLeaseError(exitCode);
   lease.release = async () => {
     throw failure;
   };
@@ -322,7 +345,16 @@ export async function runSupervisedChild(
     });
   } catch (error) {
     if (error instanceof SupervisorLostError) {
-      preserveLeaseAfterSupervisorLoss(lease);
+      const reason = signal.reason;
+      if (
+        signal.aborted &&
+        reason instanceof DeviceLeaseError &&
+        reason.signal !== undefined
+      ) {
+        preserveLeaseForManualRecovery(lease, signalExitCode(reason.signal));
+      } else {
+        preserveLeaseAfterSupervisorLoss(lease);
+      }
     }
     throw error;
   } finally {
@@ -420,12 +452,26 @@ export async function runDeviceLeaseCli(
             completed.signal !== null ||
             signal.aborted)
         ) {
-          preserveLeaseForManualRecovery(lease);
+          const reason = signal.reason;
+          const exitCode =
+            signal.aborted &&
+            reason instanceof DeviceLeaseError &&
+            reason.signal !== undefined
+              ? signalExitCode(reason.signal)
+              : completed.code;
+          preserveLeaseForManualRecovery(lease, exitCode);
         }
         return completed.code;
       },
     );
   } catch (error) {
+    const retainedExitCode = retainedLeaseExitCode(error);
+    if (retainedExitCode !== undefined) {
+      console.error(
+        "The device lease is retained because manual recovery is required.",
+      );
+      return retainedExitCode;
+    }
     if (error instanceof DeviceLeaseError) {
       console.error(error.message);
       return error.signal === undefined ? 1 : signalExitCode(error.signal);

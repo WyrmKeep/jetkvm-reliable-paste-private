@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -255,28 +256,51 @@ export async function freezeReleaseCandidate({
     }),
     "Release tree",
   );
-  const packageMetadata = JSON.parse(
-    await readFile(join(packageRoot, "package.json"), "utf8"),
-  );
 
   await mkdir(dirname(outputDirectory), { recursive: true, mode: 0o700 });
   const stagingDirectory = await mkdtemp(
     join(dirname(outputDirectory), ".jetkvm-candidate-"),
   );
   let installationDirectory;
+  let sourceWorktreeParent;
+  let sourceRepositoryRoot;
+  let buildPackageRoot;
   try {
-    await rm(join(repositoryRoot, "tools", "paste-harness", "dist"), {
+    sourceWorktreeParent = await mkdtemp(
+      join(tmpdir(), "jetkvm-release-source-"),
+    );
+    sourceRepositoryRoot = join(sourceWorktreeParent, "checkout");
+    await runCommand(
+      "git",
+      ["worktree", "add", "--detach", sourceRepositoryRoot, commitSha],
+      { cwd: repositoryRoot },
+    );
+    buildPackageRoot = join(sourceRepositoryRoot, "tools", "jetkvm-mcp");
+    const packageMetadata = JSON.parse(
+      await readFile(join(buildPackageRoot, "package.json"), "utf8"),
+    );
+    for (const dependencyRoot of [
+      join(sourceRepositoryRoot, "tools", "paste-harness"),
+      buildPackageRoot,
+    ]) {
+      await runCommand(
+        "npm",
+        ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        { cwd: dependencyRoot },
+      );
+    }
+    await rm(join(sourceRepositoryRoot, "tools", "paste-harness", "dist"), {
       recursive: true,
       force: true,
     });
     await runCommand("npm", ["run", "build"], {
-      cwd: join(repositoryRoot, "tools", "paste-harness"),
+      cwd: join(sourceRepositoryRoot, "tools", "paste-harness"),
     });
-    await runCommand("npm", ["run", "build"], { cwd: packageRoot });
+    await runCommand("npm", ["run", "build"], { cwd: buildPackageRoot });
     const packOutput = await runCommand(
       "npm",
       ["pack", "--json", "--pack-destination", stagingDirectory],
-      { cwd: packageRoot },
+      { cwd: buildPackageRoot },
     );
     const artifactFilename = parsePackFilename(packOutput);
     const stagedArtifactPath = join(stagingDirectory, artifactFilename);
@@ -288,7 +312,21 @@ export async function freezeReleaseCandidate({
       throw new Error("Release artifact is not a non-empty regular file.");
     }
     const artifactSha256 = sha256Bytes(artifactBytes);
+    await assertCleanSource(runCommand, sourceRepositoryRoot);
     await assertCleanSource(runCommand, repositoryRoot);
+    const [finalCommitSha, finalTreeSha] = await Promise.all([
+      runCommand("git", ["rev-parse", "HEAD^{commit}"], {
+        cwd: repositoryRoot,
+      }).then((value) => trimmedIdentifier(value, "Release commit")),
+      runCommand("git", ["rev-parse", "HEAD^{tree}"], {
+        cwd: repositoryRoot,
+      }).then((value) => trimmedIdentifier(value, "Release tree")),
+    ]);
+    if (finalCommitSha !== commitSha || finalTreeSha !== treeSha) {
+      throw new Error(
+        "Release source identity changed during candidate build.",
+      );
+    }
 
     installationDirectory = await mkdtemp(
       join(tmpdir(), "jetkvm-candidate-install-"),
@@ -329,13 +367,14 @@ export async function freezeReleaseCandidate({
       ],
       { cwd: installationDirectory },
     );
-    const [sourcePackageLock, generatedConsumerPackageLock] =
-      await Promise.all([
-        readFile(join(packageRoot, "package-lock.json"), "utf8").then(
+    const [sourcePackageLock, generatedConsumerPackageLock] = await Promise.all(
+      [
+        readFile(join(buildPackageRoot, "package-lock.json"), "utf8").then(
           JSON.parse,
         ),
         readFile(installPackageLockPath, "utf8").then(JSON.parse),
-      ]);
+      ],
+    );
     const consumerPackageLock = buildLockedConsumerPackageLock({
       sourceLock: sourcePackageLock,
       generatedLock: generatedConsumerPackageLock,
@@ -402,7 +441,7 @@ export async function freezeReleaseCandidate({
       join(stagingDirectory, controlledEvidenceFilename),
       0,
     );
-    const source = await sourceIdentity(packageRoot, repositoryRoot);
+    const source = await sourceIdentity(buildPackageRoot, sourceRepositoryRoot);
     const candidate = buildReleaseCandidateManifest({
       packageName: packageMetadata.name,
       packageVersion: packageMetadata.version,
@@ -441,6 +480,14 @@ export async function freezeReleaseCandidate({
       productionResolutionSha256,
       installationFiles: installationTree.files,
     });
+    await runCommand(
+      "git",
+      ["worktree", "remove", "--force", sourceRepositoryRoot],
+      { cwd: repositoryRoot },
+    );
+    await rm(sourceWorktreeParent, { recursive: true, force: true });
+    sourceRepositoryRoot = undefined;
+    sourceWorktreeParent = undefined;
     await rm(stagedArtifactPath);
     await writeFile(stagedArtifactPath, artifactBytes, {
       flag: "wx",
@@ -464,6 +511,11 @@ export async function freezeReleaseCandidate({
       `${candidateSha256}  candidate.json\n`,
       { flag: "wx", mode: 0o600 },
     );
+    const frozenOutput = await buildDirectoryManifest(stagingDirectory);
+    for (const file of frozenOutput.files) {
+      await chmod(join(stagingDirectory, file.path), 0o400);
+    }
+    await chmod(stagingDirectory, 0o500);
     await rename(stagingDirectory, outputDirectory);
     return Object.freeze({
       candidate,
@@ -478,9 +530,20 @@ export async function freezeReleaseCandidate({
       controlledEvidencePath: join(outputDirectory, controlledEvidenceFilename),
     });
   } catch (error) {
+    await chmod(stagingDirectory, 0o700).catch(() => undefined);
     await rm(stagingDirectory, { recursive: true, force: true });
     throw error;
   } finally {
+    if (sourceRepositoryRoot !== undefined) {
+      await runCommand(
+        "git",
+        ["worktree", "remove", "--force", sourceRepositoryRoot],
+        { cwd: repositoryRoot },
+      ).catch(() => undefined);
+    }
+    if (sourceWorktreeParent !== undefined) {
+      await rm(sourceWorktreeParent, { recursive: true, force: true });
+    }
     if (installationDirectory !== undefined) {
       await rm(installationDirectory, { recursive: true, force: true });
     }

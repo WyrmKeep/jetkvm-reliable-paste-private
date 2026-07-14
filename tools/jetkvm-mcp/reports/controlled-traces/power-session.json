@@ -6,26 +6,40 @@
       "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:device-rpc-adapter-mid-flight-loss",
       "calls": [
         {
-          "tool": "device_rpc_read_display_state",
+          "tool": "jetkvm_power_control",
           "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
             "timeout_ms": 1000
           },
           "response": {
-            "tool": "device_rpc_read_display_state",
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
             "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 1,
+                "completed_action_count": 0,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
             }
           }
         }
@@ -35,26 +49,40 @@
       "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:device-rpc-adapter-replacement",
       "calls": [
         {
-          "tool": "device_rpc_read_display_state",
+          "tool": "jetkvm_power_control",
           "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
             "timeout_ms": 1000
           },
           "response": {
-            "tool": "device_rpc_read_display_state",
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
             "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
               "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
             }
           }
         }
@@ -62,196 +90,6 @@
     },
     "focused:adapter:jetkvm-power-control:shared-device-rpc-adapter-binding": {
       "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:shared-device-rpc-adapter-binding",
-      "calls": []
-    },
-    "focused:adapter:jetkvm-session-connect:device-rpc-adapter-mid-flight-loss": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:device-rpc-adapter-mid-flight-loss",
-      "calls": [
-        {
-          "tool": "device_rpc_read_display_state",
-          "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
-            "timeout_ms": 1000
-          },
-          "response": {
-            "tool": "device_rpc_read_display_state",
-            "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
-            }
-          }
-        }
-      ]
-    },
-    "focused:adapter:jetkvm-session-connect:device-rpc-adapter-replacement": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:device-rpc-adapter-replacement",
-      "calls": [
-        {
-          "tool": "device_rpc_read_display_state",
-          "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
-            "timeout_ms": 1000
-          },
-          "response": {
-            "tool": "device_rpc_read_display_state",
-            "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
-            }
-          }
-        }
-      ]
-    },
-    "focused:adapter:jetkvm-session-connect:shared-device-rpc-adapter-binding": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:shared-device-rpc-adapter-binding",
-      "calls": []
-    },
-    "focused:adapter:jetkvm-session-reconnect:device-rpc-adapter-mid-flight-loss": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:device-rpc-adapter-mid-flight-loss",
-      "calls": [
-        {
-          "tool": "device_rpc_read_display_state",
-          "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
-            "timeout_ms": 1000
-          },
-          "response": {
-            "tool": "device_rpc_read_display_state",
-            "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
-            }
-          }
-        }
-      ]
-    },
-    "focused:adapter:jetkvm-session-reconnect:device-rpc-adapter-replacement": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:device-rpc-adapter-replacement",
-      "calls": [
-        {
-          "tool": "device_rpc_read_display_state",
-          "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
-            "timeout_ms": 1000
-          },
-          "response": {
-            "tool": "device_rpc_read_display_state",
-            "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
-            }
-          }
-        }
-      ]
-    },
-    "focused:adapter:jetkvm-session-reconnect:shared-device-rpc-adapter-binding": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:shared-device-rpc-adapter-binding",
-      "calls": []
-    },
-    "focused:adapter:jetkvm-session-status:device-rpc-adapter-mid-flight-loss": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:device-rpc-adapter-mid-flight-loss",
-      "calls": [
-        {
-          "tool": "device_rpc_read_display_state",
-          "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
-            "timeout_ms": 1000
-          },
-          "response": {
-            "tool": "device_rpc_read_display_state",
-            "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
-            }
-          }
-        }
-      ]
-    },
-    "focused:adapter:jetkvm-session-status:device-rpc-adapter-replacement": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:device-rpc-adapter-replacement",
-      "calls": [
-        {
-          "tool": "device_rpc_read_display_state",
-          "request": {
-            "binding": {
-              "sessionId": "session-1",
-              "sessionGeneration": 1,
-              "connectionEpoch": 2,
-              "browserChannelGeneration": 3
-            },
-            "timeout_ms": 1000
-          },
-          "response": {
-            "tool": "device_rpc_read_display_state",
-            "error": {
-              "name": "DeviceRpcError",
-              "code": "STALE_BINDING",
-              "message": "The device RPC binding is stale.",
-              "boundary": "admission",
-              "outcome": "not_sent",
-              "writeBegan": false,
-              "acknowledged": false
-            }
-          }
-        }
-      ]
-    },
-    "focused:adapter:jetkvm-session-status:shared-device-rpc-adapter-binding": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:shared-device-rpc-adapter-binding",
-      "calls": []
-    },
-    "focused:unit:jetkvm-power-control:atx-acknowledgement-semantics": {
-      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:atx-acknowledgement-semantics",
       "calls": [
         {
           "tool": "jetkvm_power_control",
@@ -282,7 +120,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -317,7 +155,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -352,7 +190,554 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-connect:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-connect:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-connect:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_connect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "connect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "takeover_performed": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-reconnect:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-reconnect:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-reconnect:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": false,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-status:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-status:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-status:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_status",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "dispatch_generation": 5,
+              "browser_channel_generation": 3,
+              "device_reachable": true,
+              "setup_state": "complete",
+              "auth_mode": "password",
+              "rpc_reachability": "reachable",
+              "native_process": "available",
+              "web_rtc": "connected",
+              "hid": "ready",
+              "decoded_video": "ready",
+              "native_capture_facts": {
+                "signal": {
+                  "value": "unknown",
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                },
+                "resolution": {
+                  "value": null,
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                },
+                "fps": {
+                  "value": null,
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                }
+              },
+              "active_mutation": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              },
+              "blocked_reason": null,
+              "versions": {
+                "server": "0.1.0",
+                "protocol": "1",
+                "ui_contract": "1",
+                "firmware": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:atx-acknowledgement-semantics": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:atx-acknowledgement-semantics",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-press_power",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-press_power",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-hold_power",
+            "action": "hold_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-hold_power",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "hold_power",
+              "wire_action": "power-long",
+              "fixed_press_ms": 5000,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-press_reset",
+            "action": "press_reset",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-press_reset",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_reset",
+              "wire_action": "reset",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -607,7 +992,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -733,7 +1118,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -811,7 +1196,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -846,7 +1231,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -929,7 +1314,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -964,7 +1349,7 @@
               "atx_led_observation": {
                 "power": null,
                 "hdd": null,
-                "observed_at": "1970-01-01T00:00:00.000Z",
+                "observed_at": null,
                 "freshness": "unknown"
               }
             }
@@ -2763,22 +3148,22 @@
               "native_capture_facts": {
                 "signal": {
                   "value": "unknown",
-                  "observed_at": "1970-01-01T00:00:00.000Z",
-                  "age_ms": 0,
+                  "observed_at": null,
+                  "age_ms": null,
                   "freshness": "unknown",
                   "source": "none"
                 },
                 "resolution": {
                   "value": null,
-                  "observed_at": "1970-01-01T00:00:00.000Z",
-                  "age_ms": 0,
+                  "observed_at": null,
+                  "age_ms": null,
                   "freshness": "unknown",
                   "source": "none"
                 },
                 "fps": {
                   "value": null,
-                  "observed_at": "1970-01-01T00:00:00.000Z",
-                  "age_ms": 0,
+                  "observed_at": null,
+                  "age_ms": null,
                   "freshness": "unknown",
                   "source": "none"
                 }

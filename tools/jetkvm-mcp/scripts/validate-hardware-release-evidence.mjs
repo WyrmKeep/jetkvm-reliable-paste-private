@@ -54,12 +54,15 @@ function validateStructuredPreimages(value, label) {
 
 function assertEvidencePreimage(value, digest, label) {
   assertHash(digest, label);
-  if (value === null || value === undefined || sha256Canonical(value) !== digest) {
+  if (
+    value === null ||
+    value === undefined ||
+    sha256Canonical(value) !== digest
+  ) {
     throw new Error(`${label} did not bind its persisted evidence preimage.`);
   }
   validateStructuredPreimages(value, label);
 }
-
 
 function assertPass(value, label) {
   if (!isRecord(value) || value.result !== "pass") {
@@ -333,16 +336,6 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Hardware summary evidence hashes drifted.");
   }
-  if (
-    summary.transport_reconnect?.connect?.ok !== true ||
-    summary.transport_reconnect?.release?.ok !== true
-  ) {
-    throw new Error("Transport reconnect proof did not pass.");
-  }
-  validateStructuredPreimages(
-    summary.transport_reconnect,
-    "Transport reconnect proof",
-  );
   return Object.freeze({
     schema_version: 1,
     result: "pass",
@@ -363,6 +356,10 @@ export async function validateEvidenceDirectory({
   plan,
 }) {
   directory = resolve(directory);
+  const directoryFacts = await stat(directory);
+  if (!directoryFacts.isDirectory() || (directoryFacts.mode & 0o222) !== 0) {
+    throw new Error("Hardware evidence directory is not immutable.");
+  }
   const summary = JSON.parse(
     await readFile(join(directory, "summary.json"), "utf8"),
   );
@@ -391,11 +388,25 @@ export async function validateEvidenceDirectory({
 
   const manifestPath = join(directory, "manifest.json");
   const sidecarPath = join(directory, "manifest.sha256");
+  const [manifestFacts, sidecarFacts] = await Promise.all([
+    stat(manifestPath),
+    stat(sidecarPath),
+  ]);
+  if (
+    !manifestFacts.isFile() ||
+    !sidecarFacts.isFile() ||
+    (manifestFacts.mode & 0o777) !== 0o400 ||
+    (sidecarFacts.mode & 0o777) !== 0o400
+  ) {
+    throw new Error("Hardware evidence manifest is not immutable.");
+  }
   const manifestBytes = await readFile(manifestPath);
   const manifestSha256 = sha256Bytes(manifestBytes);
   const sidecar = await readFile(sidecarPath, "utf8");
   if (sidecar !== `${manifestSha256}  manifest.json\n`) {
-    throw new Error("Hardware evidence manifest checksum did not match exactly.");
+    throw new Error(
+      "Hardware evidence manifest checksum did not match exactly.",
+    );
   }
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   if (!isRecord(manifest) || !Array.isArray(manifest.files)) {

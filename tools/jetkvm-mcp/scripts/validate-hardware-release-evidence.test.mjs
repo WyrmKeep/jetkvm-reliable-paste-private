@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -219,7 +219,6 @@ function fixture() {
     atx_preflight_sha256: HASH,
     device_tests_sha256: sha256Canonical(deviceTests),
     finalization_sha256: sha256Canonical(finalization),
-    transport_reconnect: { connect: { ok: true }, release: { ok: true } },
   };
   return { story, plan, record, summary, deviceTests, finalization };
 }
@@ -240,11 +239,11 @@ async function evidenceDirectory(extraFile) {
     );
   }
   if (extraFile !== undefined) {
-    await writeFile(
-      join(directory, extraFile.name),
-      extraFile.content,
-      "utf8",
-    );
+    await writeFile(join(directory, extraFile.name), extraFile.content, "utf8");
+  }
+  const writablePayload = await buildDirectoryManifest(directory);
+  for (const file of writablePayload.files) {
+    await chmod(join(directory, file.path), 0o400);
   }
   const payload = await buildDirectoryManifest(directory);
   const manifest = {
@@ -263,9 +262,11 @@ async function evidenceDirectory(extraFile) {
     `${manifestSha256}  manifest.json\n`,
     "utf8",
   );
+  await chmod(join(directory, "manifest.json"), 0o400);
+  await chmod(join(directory, "manifest.sha256"), 0o400);
+  await chmod(directory, 0o500);
   return { directory, evidence };
 }
-
 
 test("accepts complete canonical hardware evidence", () => {
   const { story, plan, record, summary, finalization, deviceTests } = fixture();
@@ -371,13 +372,27 @@ test("validates exact checksum sidecars and scans every raw manifested file", as
       plan: valid.evidence.plan,
     });
     assert.equal(audit.result, "pass");
+    await chmod(valid.directory, 0o700);
+    await assert.rejects(
+      validateEvidenceDirectory({
+        directory: valid.directory,
+        candidate: candidate(),
+        candidateSha256: valid.evidence.summary.candidate_sha256,
+        stories: [valid.evidence.story],
+        plan: valid.evidence.plan,
+      }),
+      /not immutable/u,
+    );
     const checksumPath = join(valid.directory, "manifest.sha256");
     const checksum = await sha256File(join(valid.directory, "manifest.json"));
+    await chmod(checksumPath, 0o600);
     await writeFile(
       checksumPath,
       `${checksum}  manifest.json\n${checksum}  extra.json\n`,
       "utf8",
     );
+    await chmod(checksumPath, 0o400);
+    await chmod(valid.directory, 0o500);
     await assert.rejects(
       validateEvidenceDirectory({
         directory: valid.directory,
@@ -389,6 +404,7 @@ test("validates exact checksum sidecars and scans every raw manifested file", as
       /checksum did not match exactly/u,
     );
   } finally {
+    await chmod(valid.directory, 0o700);
     await rm(valid.directory, { recursive: true, force: true });
   }
 
@@ -401,14 +417,14 @@ test("validates exact checksum sidecars and scans every raw manifested file", as
       validateEvidenceDirectory({
         directory: privateEvidence.directory,
         candidate: candidate(),
-        candidateSha256:
-          privateEvidence.evidence.summary.candidate_sha256,
+        candidateSha256: privateEvidence.evidence.summary.candidate_sha256,
         stories: [privateEvidence.evidence.story],
         plan: privateEvidence.evidence.plan,
       }),
       /raw\.log contains private path, topology, or credential material/u,
     );
   } finally {
+    await chmod(privateEvidence.directory, 0o700);
     await rm(privateEvidence.directory, { recursive: true, force: true });
   }
 });

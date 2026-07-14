@@ -16,7 +16,6 @@ SKIP_UI_BUILD ?= 0
 ENABLE_SYNC_TRACE ?= 0
 
 CMAKE_BUILD_TYPE ?= Release
-
 # GPG signing configuration
 # SIGNING_KEY_FPR: The fingerprint of the signing subkey (on YubiKey)
 # Required for signing releases
@@ -51,7 +50,7 @@ GO_CMD := $(GO_ARGS) go
 
 BIN_DIR := $(shell pwd)/bin
 
-TEST_DIRS := $(shell go list -buildvcs=false -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
+DEVICE_TEST_LIST_COMMAND = $(GO_CMD) list $(GO_BUILD_ARGS) -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...
 
 test:
 	go test ./...
@@ -164,7 +163,13 @@ build_dev:
 		echo "Toolchain not found, running build_dev in Docker..."; \
 		rm -rf internal/native/cgo/build; \
 		docker run --rm -v "$$(pwd):/build" \
-			$(DOCKER_BUILD_TAG) make _build_dev_inner VERSION_DEV=$(VERSION_DEV); \
+			$(DOCKER_BUILD_TAG) make _build_dev_inner \
+				VERSION_DEV="$(VERSION_DEV)" \
+				BRANCH="$(BRANCH)" \
+				REVISION="$(REVISION)" \
+				SKIP_NATIVE_IF_EXISTS="$(SKIP_NATIVE_IF_EXISTS)" \
+				ENABLE_SYNC_TRACE="$(ENABLE_SYNC_TRACE)" \
+				CMAKE_BUILD_TYPE="$(CMAKE_BUILD_TYPE)"; \
 	else \
 		$(MAKE) _build_dev_inner VERSION_DEV=$(VERSION_DEV); \
 	fi
@@ -184,13 +189,35 @@ build_gotestsum:
 	$(GO_CMD) install gotest.tools/gotestsum@latest
 	cp "$(shell $(GO_CMD) env GOPATH)/bin/linux_arm/gotestsum" "$(BIN_DIR)/gotestsum"
 
+.PHONY: list_device_test_packages
+list_device_test_packages:
+	@set -e; \
+	test_dirs="$$( $(DEVICE_TEST_LIST_COMMAND) )" || { \
+		echo "device test package discovery failed" >&2; \
+		exit 1; \
+	}; \
+	if [ -z "$$test_dirs" ]; then \
+		echo "device test package discovery failed: no test packages" >&2; \
+		exit 1; \
+	fi; \
+	printf '%s\n' "$$test_dirs"
+
 build_dev_test: build_native build_test2json build_gotestsum
 # collect all directories that contain tests
 	@echo "Building tests for devices ..."
 	@rm -rf "$(BIN_DIR)/tests" && mkdir -p "$(BIN_DIR)/tests"
 
 	@cat resource/dev_test.sh > "$(BIN_DIR)/tests/run_all_tests"
-	@set -e; for test in $(TEST_DIRS); do \
+	@set -e; \
+	test_dirs="$$( $(DEVICE_TEST_LIST_COMMAND) )" || { \
+		echo "device test package discovery failed" >&2; \
+		exit 1; \
+	}; \
+	if [ -z "$$test_dirs" ]; then \
+		echo "device test package discovery failed: no test packages" >&2; \
+		exit 1; \
+	fi; \
+	for test in $$test_dirs; do \
 		test_pkg_full_name=$$test; \
 		test_pkg_name=$$(echo "$$test" | sed 's|^$(KVM_PKG_NAME)/||'); \
 		test_filename=$$(echo "$$test_pkg_name" | sed 's|/|__|g')_test; \
@@ -288,7 +315,13 @@ build_release:
 		echo "Toolchain not found, running build_release in Docker..."; \
 		rm -rf internal/native/cgo/build; \
 		docker run --rm -v "$$(pwd):/build" \
-			$(DOCKER_BUILD_TAG) make _build_release_inner VERSION=$(VERSION); \
+			$(DOCKER_BUILD_TAG) make _build_release_inner \
+				VERSION="$(VERSION)" \
+				BRANCH="$(BRANCH)" \
+				REVISION="$(REVISION)" \
+				SKIP_NATIVE_IF_EXISTS="$(SKIP_NATIVE_IF_EXISTS)" \
+				ENABLE_SYNC_TRACE="$(ENABLE_SYNC_TRACE)" \
+				CMAKE_BUILD_TYPE="$(CMAKE_BUILD_TYPE)"; \
 	else \
 		$(MAKE) _build_release_inner VERSION=$(VERSION); \
 	fi

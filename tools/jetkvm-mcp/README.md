@@ -181,7 +181,43 @@ cp "$CANDIDATE/"*.tgz "$INSTALL_ROOT/"
 export JETKVM_RELEASE_INSTALLED_PACKAGE="$INSTALL_ROOT/node_modules/@wyrmkeep/jetkvm-mcp"
 ```
 
-Before device contact, the live runner requires the same clean commit/tree, validates the inherited proof against the exact configured-device fingerprint, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The evidence root must already be an owner-only directory, and the new output directory must resolve beneath it without symlink escape; the rig environment file must also be owner-only. `DEVICE_KEY` must exactly equal the production runtime's `jetkvm-`-prefixed SHA-256 fingerprint of the configured target URL; the installed MCP refuses any other inherited lease:
+Build the device application on GitHub's native `linux/amd64` runner from the exact frozen commit. The workflow emits `jetkvm_app` plus a strict provenance sidecar binding its SHA-256 digest to `GITHUB_SHA`, the repository, workflow ref, run ID, and attempt. Select the run by both branch and commit; never use an artifact selected only by recency:
+
+```sh
+export RELEASE_COMMIT="$(git rev-parse HEAD)"
+export RELEASE_BRANCH="$(git branch --show-current)"
+gh workflow run build.yml --ref "$RELEASE_BRANCH"
+export BUILD_RUN_ID="$(
+  gh run list \
+    --workflow build.yml \
+    --branch "$RELEASE_BRANCH" \
+    --commit "$RELEASE_COMMIT" \
+    --event workflow_dispatch \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId'
+)"
+test -n "$BUILD_RUN_ID"
+gh run watch "$BUILD_RUN_ID" --compact --exit-status
+
+export DEVICE_ARTIFACT="$RELEASE_ROOT/device-artifact"
+mkdir -m 0700 "$DEVICE_ARTIFACT"
+gh run download "$BUILD_RUN_ID" \
+  --name jetkvm-app \
+  --dir "$DEVICE_ARTIFACT"
+chmod 0500 "$DEVICE_ARTIFACT/bin/jetkvm_app"
+chmod 0400 "$DEVICE_ARTIFACT/device-binary-provenance.json"
+export JETKVM_RELEASE_DEVICE_BINARY="$DEVICE_ARTIFACT/bin/jetkvm_app"
+export JETKVM_RELEASE_DEVICE_BINARY_SHA256="$(
+  shasum -a 256 "$JETKVM_RELEASE_DEVICE_BINARY" | awk '{print $1}'
+)"
+export JETKVM_RELEASE_DEVICE_PROVENANCE="$DEVICE_ARTIFACT/device-binary-provenance.json"
+export JETKVM_RELEASE_DEVICE_PROVENANCE_SHA256="$(
+  shasum -a 256 "$JETKVM_RELEASE_DEVICE_PROVENANCE" | awk '{print $1}'
+)"
+```
+
+Before device contact, the live runner requires the same clean commit/tree, validates the inherited proof against the exact configured-device fingerprint, verifies the device artifact and provenance-sidecar checksums, requires the trusted `build.yml` run to name the frozen commit, independently checks the Go binary's embedded revision, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The evidence root must already be an owner-only directory, and the new output directory must resolve beneath it without symlink escape; the rig environment file must also be owner-only. `DEVICE_KEY` must exactly equal the production runtime's `jetkvm-`-prefixed SHA-256 fingerprint of the configured target URL; the installed MCP refuses any other inherited lease:
 
 ```sh
 export DEVICE_KEY="$(

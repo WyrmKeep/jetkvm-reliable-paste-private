@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,6 +25,10 @@ const TREE = "b".repeat(40);
 async function writeJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(value)}\n`);
+}
+async function cleanupFixture(fixture) {
+  await chmod(fixture.outputDirectory, 0o700).catch(() => undefined);
+  await rm(fixture.root, { recursive: true, force: true });
 }
 
 async function createFixture() {
@@ -115,10 +120,20 @@ function commandHarness(
   { mutateStagedArtifact = false } = {},
 ) {
   const calls = [];
+  const locations = [];
   let statusIndex = 0;
   let stagedArtifactPath;
   const runCommand = async (command, args, { cwd } = {}) => {
     calls.push([command, ...args]);
+    locations.push({ command, args: [...args], cwd });
+    if (command === "git" && args[0] === "worktree" && args[1] === "add") {
+      await cp(fixture.repositoryRoot, args[3], { recursive: true });
+      return "";
+    }
+    if (command === "git" && args[0] === "worktree" && args[1] === "remove") {
+      await rm(args.at(-1), { recursive: true, force: true });
+      return "";
+    }
     if (command === "git" && args[0] === "status") {
       return statusValues[statusIndex++] ?? statusValues.at(-1) ?? "";
     }
@@ -129,7 +144,7 @@ function commandHarness(
       return `${TREE}\n`;
     }
     if (command === "npm" && args.join(" ") === "run build") {
-      if (cwd === join(fixture.repositoryRoot, "tools", "paste-harness")) {
+      if (cwd.endsWith(join("tools", "paste-harness"))) {
         const harnessDist = join(cwd, "dist");
         await mkdir(harnessDist, { recursive: true });
         await writeFile(
@@ -172,6 +187,9 @@ function commandHarness(
       });
       return "";
     }
+    if (command === "npm" && args[0] === "ci" && !args.includes("--omit=dev")) {
+      return "";
+    }
     if (command === "npm" && args[0] === "ci") {
       const installedPackage = join(
         cwd,
@@ -185,7 +203,7 @@ function commandHarness(
     }
     throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
   };
-  return { calls, runCommand };
+  return { calls, locations, runCommand };
 }
 
 test("freezes one clean candidate and binds the exact unpacked package tree", async () => {
@@ -200,6 +218,17 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
       architecture: "arm64",
     });
 
+    assert.equal((await stat(fixture.outputDirectory)).mode & 0o777, 0o500);
+    for (const path of [
+      result.candidatePath,
+      result.checksumPath,
+      result.tarballPath,
+      result.consumerPackagePath,
+      result.consumerPackageLockPath,
+      result.controlledEvidencePath,
+    ]) {
+      assert.equal((await stat(path)).mode & 0o777, 0o400);
+    }
     const parsed = validateReleaseCandidateManifest(
       JSON.parse(await readFile(result.candidatePath, "utf8")),
     );
@@ -264,7 +293,18 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
       commands.calls.filter(
         ([command, first]) => command === "npm" && first === "ci",
       ).length,
-      1,
+      3,
+    );
+    const packLocation = commands.locations.find(
+      (entry) => entry.command === "npm" && entry.args[0] === "pack",
+    );
+    assert.notEqual(packLocation.cwd, fixture.packageRoot);
+    assert.equal(
+      commands.calls.some(
+        ([command, subcommand]) =>
+          command === "git" && subcommand === "worktree",
+      ),
+      true,
     );
     assert.equal(
       commands.calls.filter(
@@ -276,7 +316,7 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
       1,
     );
   } finally {
-    await rm(fixture.root, { recursive: true, force: true });
+    await cleanupFixture(fixture);
   }
 });
 
@@ -295,12 +335,9 @@ test("reuses the captured tarball bytes despite a concurrent path mutation", asy
     });
     assert.equal(await readFile(result.tarballPath, "utf8"), "frozen-tarball");
     const parsed = JSON.parse(await readFile(result.candidatePath, "utf8"));
-    assert.equal(
-      parsed.artifact.sha256,
-      await sha256File(result.tarballPath),
-    );
+    assert.equal(parsed.artifact.sha256, await sha256File(result.tarballPath));
   } finally {
-    await rm(fixture.root, { recursive: true, force: true });
+    await cleanupFixture(fixture);
   }
 });
 
@@ -326,6 +363,6 @@ test("refuses dirty source before build or candidate output", async () => {
       readFile(join(fixture.outputDirectory, "candidate.json")),
     );
   } finally {
-    await rm(fixture.root, { recursive: true, force: true });
+    await cleanupFixture(fixture);
   }
 });

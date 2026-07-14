@@ -1,8 +1,11 @@
 import { hostname as systemHostname } from "node:os";
 
 import {
+  currentLeaseHostIdentity,
   DeviceLeaseError,
+  leaseProcessStartIdentity,
   removeRetainedDeviceLease,
+  type DeviceLeaseHostIdentity,
   type DeviceLeaseRecord,
 } from "./deviceLease.ts";
 import { assertSupportedNodeVersion } from "./runtimePolicy.ts";
@@ -12,19 +15,41 @@ export function confirmLocalLeaseOwnerDead(
   {
     hostname = systemHostname(),
     signal = process.kill,
+    identity = currentLeaseHostIdentity,
+    processStartIdentity = leaseProcessStartIdentity,
   }: {
     hostname?: string;
     signal?: (pid: number, signal: 0) => unknown;
+    identity?: () => DeviceLeaseHostIdentity;
+    processStartIdentity?: (pid: number) => string;
   } = {},
 ): boolean {
-  if (record.hostname !== hostname || !Number.isSafeInteger(record.pid)) {
+  if (
+    record.hostname !== hostname ||
+    !Number.isSafeInteger(record.pid) ||
+    typeof record.host_identity !== "string" ||
+    typeof record.boot_identity !== "string" ||
+    typeof record.process_start_identity !== "string"
+  ) {
     return false;
   }
+  let localIdentity;
+  try {
+    localIdentity = identity();
+  } catch {
+    return false;
+  }
+  if (record.host_identity !== localIdentity.hostIdentity) return false;
+  if (record.boot_identity !== localIdentity.bootIdentity) return true;
   try {
     signal(record.pid, 0);
-    return false;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+  try {
+    return processStartIdentity(record.pid) !== record.process_start_identity;
+  } catch {
+    return false;
   }
 }
 

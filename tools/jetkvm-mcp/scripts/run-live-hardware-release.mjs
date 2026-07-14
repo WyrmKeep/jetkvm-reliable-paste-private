@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import {
   chmod,
   mkdir,
+  lstat,
   open,
   realpath,
   readFile,
@@ -24,6 +25,7 @@ import {
   finalizeLiveHardwareResources,
   verifyInstalledPackageIdentity,
 } from "./hardware-release-driver.mjs";
+import { validateDeviceReleaseProvenance } from "./device-release-provenance.mjs";
 import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 import {
   runCanonicalLiveStories,
@@ -69,7 +71,6 @@ export function createFinalizationError(finalization, persistenceError) {
     { cause: failures[0] },
   );
 }
-
 
 function requiresManualRecovery(error) {
   if (error instanceof ManualRecoveryRequiredError) return true;
@@ -336,7 +337,7 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
-async function readDeviceIdentity(metricsUrl) {
+async function readDeviceIdentity(metricsUrl, accept = () => true) {
   let lastError;
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
@@ -345,11 +346,15 @@ async function readDeviceIdentity(metricsUrl) {
       });
       if (!response.ok)
         throw new Error("Metrics endpoint rejected the request.");
-      return parseDeviceIdentity(await response.text());
+      const identity = parseDeviceIdentity(await response.text());
+      if (accept(identity)) return identity;
+      lastError = new Error(
+        "Device identity did not reach the required state.",
+      );
     } catch (error) {
       lastError = error;
-      await delay(2_000);
     }
+    await delay(2_000);
   }
   throw lastError ?? new Error("Device identity was unavailable.");
 }
@@ -362,7 +367,12 @@ function sameDeviceIdentity(left, right) {
   );
 }
 
-export function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) {
+export function createRigAdapter(
+  rigModule,
+  sshModule,
+  normalizeModule,
+  rigEnv,
+) {
   let lastLayout;
   let lastBootIdentity;
   let confirmedOffline = false;
@@ -427,13 +437,14 @@ export function createRigAdapter(rigModule, sshModule, normalizeModule, rigEnv) 
       const observation = evidence?.atx_led_observation;
       const observedAt = Date.parse(observation?.observed_at ?? "");
       if (
-        observation?.freshness !== "fresh" ||
-        observation.power !== false ||
+        observation?.power !== false ||
+        observation?.freshness === "unknown" ||
         !Number.isFinite(observedAt) ||
-        observedAt < evidence.started_at
+        observedAt < evidence.started_at ||
+        observedAt > Date.now() + 1_000
       ) {
         throw new Error(
-          "Windows host power-off lacked a fresh post-action ATX power LED observation.",
+          "Windows host power-off lacked a post-action ATX power LED observation.",
         );
       }
       if ((await probeHostPowerState()) === "online") {
@@ -545,45 +556,171 @@ async function validateCandidateRuntime(
   }
 }
 
-async function reconnectTransportProof(options, state) {
-  await options.mcp.close();
-  const replacement = new InstalledMcpClient(options.mcpOptions);
-  const listed = await replacement.start();
-  const connect = await replacement.call(
-    "jetkvm_session_connect",
-    {
-      request_id: `req-${sha256Text(`${options.runId}:transport-reconnect`).slice(0, 32)}`,
-      takeover: false,
-      timeout_ms: 30_000,
-    },
-    30_000,
+export async function validateReleaseDeviceBinary({
+  candidate,
+  binaryPath,
+  expectedSha256,
+  provenancePath,
+  expectedProvenanceSha256,
+  command = runCommand,
+}) {
+  if (
+    !/^[a-f0-9]{64}$/u.test(expectedSha256) ||
+    !/^[a-f0-9]{64}$/u.test(expectedProvenanceSha256)
+  ) {
+    throw new Error("Device release artifact checksum is invalid.");
+  }
+  const [facts, provenanceFacts] = await Promise.all([
+    lstat(binaryPath),
+    lstat(provenancePath),
+  ]);
+  if (
+    !facts.isFile() ||
+    facts.isSymbolicLink() ||
+    facts.size < 1 ||
+    (facts.mode & 0o022) !== 0 ||
+    !provenanceFacts.isFile() ||
+    provenanceFacts.isSymbolicLink() ||
+    provenanceFacts.size < 1 ||
+    (provenanceFacts.mode & 0o022) !== 0
+  ) {
+    throw new Error("Device release artifact is not a protected regular file.");
+  }
+  const [actualSha256, provenanceSha256] = await Promise.all([
+    sha256File(binaryPath),
+    sha256File(provenancePath),
+  ]);
+  if (
+    actualSha256 !== expectedSha256 ||
+    provenanceSha256 !== expectedProvenanceSha256
+  ) {
+    throw new Error("Device release artifact checksum did not match.");
+  }
+  const provenance = validateDeviceReleaseProvenance(
+    await readJson(provenancePath),
+    candidate,
   );
-  if (connect.raw?.ok !== true) {
-    await replacement.close();
+  if (
+    provenance.binary.filename !== basename(binaryPath) ||
+    provenance.binary.size_bytes !== facts.size ||
+    provenance.binary.sha256 !== actualSha256
+  ) {
     throw new Error(
-      "Fresh stdio transport could not establish a fresh device session.",
+      "Device release provenance did not describe the reviewed binary.",
     );
   }
-  const release = await replacement.call(
-    "jetkvm_input_release",
-    {
-      session_id: connect.raw.session_id,
-      session_generation: connect.raw.session_generation,
-      request_id: `req-${sha256Text(`${options.runId}:transport-release`).slice(0, 32)}`,
-      timeout_ms: 30_000,
-    },
-    30_000,
-  );
-  if (release.raw?.ok !== true) {
-    await replacement.close();
-    throw new Error("Fresh stdio transport could not release input.");
-  }
-  state.replacementMcp = replacement;
-  return Object.freeze({
-    listed,
-    connect: connect.evidence,
-    release: release.evidence,
+  const inspection = await command("go", ["version", "-m", binaryPath], {
+    cwd: REPOSITORY_ROOT,
   });
+  const revision = candidate.source.commit_sha;
+  const escapedRevision = revision.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  if (
+    !new RegExp(
+      `(?:^|\\s)-X\\s+github\\.com/prometheus/common/version\\.Revision=${escapedRevision}(?:\\s|")`,
+      "u",
+    ).test(inspection.stdout)
+  ) {
+    throw new Error(
+      "Device release artifact was not built from the frozen source commit.",
+    );
+  }
+  return Object.freeze({
+    size_bytes: facts.size,
+    sha256: actualSha256,
+    provenance_sha256: provenanceSha256,
+    source_commit: revision,
+    builder: provenance.builder,
+    go_version_report_sha256: sha256Text(inspection.stdout),
+  });
+}
+
+function sshResultEvidence(result) {
+  return Object.freeze({
+    command: result.command,
+    exit_code: result.exitCode,
+    signal: result.signal,
+    timed_out: result.timedOut,
+    stdout_bytes: Buffer.byteLength(result.stdout),
+    stdout_sha256: sha256Text(result.stdout),
+    stderr_bytes: Buffer.byteLength(result.stderr),
+    stderr_sha256: sha256Text(result.stderr),
+  });
+}
+
+function assertSshResult(result, label) {
+  if (
+    result.exitCode !== 0 ||
+    result.signal !== null ||
+    result.timedOut !== false
+  ) {
+    throw new Error(`${label} failed.`);
+  }
+}
+
+export async function deployReleaseDeviceBinary({
+  sshModule,
+  host,
+  binaryPath,
+  expectedSha256,
+}) {
+  if (
+    typeof host !== "string" ||
+    !/^[A-Za-z0-9.:[\]-]+$/u.test(host) ||
+    !/^[a-f0-9]{64}$/u.test(expectedSha256)
+  ) {
+    throw new Error("Device release deployment input is invalid.");
+  }
+  const target = sshModule.kvmTarget(host);
+  const remotePath = "/userdata/jetkvm/jetkvm_app.update";
+  const upload = await sshModule.runScp(binaryPath, `${target}:${remotePath}`, {
+    timeoutMs: 60_000,
+  });
+  assertSshResult(upload, "Device release artifact upload");
+  const staged = await sshModule.runSshCommand(
+    target,
+    `sha256sum ${remotePath}`,
+    { timeoutMs: 30_000 },
+  );
+  assertSshResult(staged, "Device release artifact verification");
+  const stagedSha256 =
+    /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/jetkvm_app\.update\s*$/u.exec(
+      staged.stdout,
+    )?.[1];
+  if (stagedSha256 !== expectedSha256) {
+    throw new Error("Staged device release artifact checksum did not match.");
+  }
+  const reboot = await sshModule.runSshCommand(
+    target,
+    "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &",
+    { timeoutMs: 30_000 },
+  );
+  assertSshResult(reboot, "Device release reboot");
+  return Object.freeze({
+    upload: sshResultEvidence(upload),
+    staged_verification: sshResultEvidence(staged),
+    reboot: sshResultEvidence(reboot),
+    staged_binary_sha256: stagedSha256,
+  });
+}
+
+export async function verifyReplacementPackageIdentity({
+  candidate,
+  installedPackageRoot,
+  candidatePath,
+  initialIdentity,
+  verify = verifyInstalledPackageIdentity,
+}) {
+  const replacementIdentity = await verify(candidate, installedPackageRoot, {
+    candidateDirectory: dirname(candidatePath),
+  });
+  if (
+    sha256Canonical(replacementIdentity) !== sha256Canonical(initialIdentity)
+  ) {
+    throw new Error(
+      "Installed package identity drifted before transport replacement.",
+    );
+  }
+  return replacementIdentity;
 }
 
 export function createInstalledMcpOptions({
@@ -634,6 +771,20 @@ async function run() {
   const rigEnvFacts = await stat(rigEnvPath);
   assertPrivateEnvironmentFile(rigEnvFacts, rigEnvPath);
   const sourceIdentity = await validateCurrentReleaseSource(candidate);
+  const deviceBinaryPath = resolve(
+    requiredEnvironment("JETKVM_RELEASE_DEVICE_BINARY"),
+  );
+  const deviceBinary = await validateReleaseDeviceBinary({
+    candidate,
+    binaryPath: deviceBinaryPath,
+    expectedSha256: requiredEnvironment("JETKVM_RELEASE_DEVICE_BINARY_SHA256"),
+    provenancePath: resolve(
+      requiredEnvironment("JETKVM_RELEASE_DEVICE_PROVENANCE"),
+    ),
+    expectedProvenanceSha256: requiredEnvironment(
+      "JETKVM_RELEASE_DEVICE_PROVENANCE_SHA256",
+    ),
+  });
 
   const [rigModule, sshModule, normalizeModule] = await Promise.all([
     import(resolve(REPOSITORY_ROOT, "tools/paste-harness/dist/rig.js")),
@@ -698,16 +849,10 @@ async function run() {
   const executionTraces = mergeControlledTraceReports(
     await Promise.all([
       readJson(
-        resolve(
-          PACKAGE_ROOT,
-          "reports/controlled-traces/input-display.json",
-        ),
+        resolve(PACKAGE_ROOT, "reports/controlled-traces/input-display.json"),
       ),
       readJson(
-        resolve(
-          PACKAGE_ROOT,
-          "reports/controlled-traces/power-session.json",
-        ),
+        resolve(PACKAGE_ROOT, "reports/controlled-traces/power-session.json"),
       ),
     ]),
   );
@@ -774,7 +919,6 @@ async function run() {
     sdkFactories: mcpSdkFactories,
   });
   const mcp = new InstalledMcpClient(mcpOptions);
-  const runtimeState = { replacementMcp: undefined };
   let driver;
   let driverFinalization;
   let finalization;
@@ -790,10 +934,7 @@ async function run() {
       driver,
       driverFinalization,
       hardwareTouched: true,
-      clients: [
-        { label: "replacement", client: runtimeState.replacementMcp },
-        { label: "initial", client: mcp },
-      ],
+      clients: [{ label: "initial", client: mcp }],
     });
     let persistenceError;
     if (!finalizationWritten) {
@@ -833,11 +974,12 @@ async function run() {
       }
       const preDeploymentSourceIdentity =
         await validateCurrentReleaseSource(candidate);
-      const deploymentCommand = await runCommand(
-        resolve(REPOSITORY_ROOT, "dev_deploy.sh"),
-        ["-r", rigEnv.KVM_PRIMARY, "-i", "--skip-native-build"],
-        { cwd: REPOSITORY_ROOT },
-      );
+      const deploymentOperation = await deployReleaseDeviceBinary({
+        sshModule,
+        host: rigEnv.KVM_PRIMARY,
+        binaryPath: deviceBinaryPath,
+        expectedSha256: deviceBinary.sha256,
+      });
       const postDeploymentSourceIdentity =
         await validateCurrentReleaseSource(candidate);
       if (
@@ -846,36 +988,36 @@ async function run() {
       ) {
         throw new Error("Release source changed during device deployment.");
       }
-      deployedIdentity = await readDeviceIdentity(metricsUrl);
-      if (deployedIdentity.revision !== candidate.source.commit_sha) {
-        throw new Error(
-          "Deployed device revision did not match the frozen candidate.",
-        );
-      }
-      const localDeviceBinarySha256 = await sha256File(
-        resolve(REPOSITORY_ROOT, "bin/jetkvm_app"),
+      deployedIdentity = await readDeviceIdentity(
+        metricsUrl,
+        (identity) =>
+          identity.revision === candidate.source.commit_sha &&
+          !sameDeviceIdentity(afterDeviceTests, identity),
       );
+      const localDeviceBinarySha256 = await sha256File(deviceBinaryPath);
+      if (localDeviceBinarySha256 !== deviceBinary.sha256) {
+        throw new Error("Reviewed device release artifact changed.");
+      }
       const remoteBinary = await sshModule.runSshCommand(
         sshModule.kvmTarget(rigEnv.KVM_PRIMARY),
         "test ! -e /userdata/jetkvm/jetkvm_app.update && sha256sum /userdata/jetkvm/bin/jetkvm_app",
         { timeoutMs: 30_000 },
       );
+      assertSshResult(remoteBinary, "Installed device binary verification");
       const installedDeviceBinarySha256 =
         /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/bin\/jetkvm_app\s*$/u.exec(
           remoteBinary.stdout,
         )?.[1];
-      if (
-        remoteBinary.exitCode !== 0 ||
-        installedDeviceBinarySha256 !== localDeviceBinarySha256
-      ) {
+      if (installedDeviceBinarySha256 !== localDeviceBinarySha256) {
         throw new Error(
-          "Deployed device binary did not match the locally built release artifact.",
+          "Deployed device binary did not match the reviewed release artifact.",
         );
       }
       deployment = Object.freeze({
         evidence: Object.freeze({
-          ...deploymentCommand.evidence,
+          deployment: deploymentOperation,
           source_identity: postDeploymentSourceIdentity,
+          release_artifact: deviceBinary,
           local_binary_sha256: localDeviceBinarySha256,
           installed_binary_sha256: installedDeviceBinarySha256,
           staged_update_absent: true,
@@ -905,27 +1047,17 @@ async function run() {
           ),
       });
       driverFinalization = await driver.finalizeRun();
-      const replacementPackageIdentity = await verifyInstalledPackageIdentity(
+      await verifyReplacementPackageIdentity({
         candidate,
         installedPackageRoot,
-      );
-      if (
-        sha256Canonical(replacementPackageIdentity) !==
-        sha256Canonical(packageIdentity)
-      ) {
-        throw new Error(
-          "Installed package identity drifted before transport replacement.",
-        );
-      }
+        candidatePath,
+        initialIdentity: packageIdentity,
+      });
       await validateCandidateRuntime(
         candidate,
         candidatePath,
         browserPath,
         targetUrl,
-      );
-      const transportReconnect = await reconnectTransportProof(
-        { mcp, mcpOptions, runId },
-        runtimeState,
       );
       await finalizeResources();
       const finalIdentity = await readDeviceIdentity(metricsUrl);
@@ -941,28 +1073,30 @@ async function run() {
         sha256Canonical(finalSourceIdentity) !==
           sha256Canonical(postDeploymentSourceIdentity)
       ) {
-        throw new Error("Release source identity drifted before evidence seal.");
+        throw new Error(
+          "Release source identity drifted before evidence seal.",
+        );
       }
-      const finalLocalDeviceBinarySha256 = await sha256File(
-        resolve(REPOSITORY_ROOT, "bin/jetkvm_app"),
-      );
+      const finalLocalDeviceBinarySha256 = await sha256File(deviceBinaryPath);
       const finalRemoteBinary = await sshModule.runSshCommand(
         sshModule.kvmTarget(rigEnv.KVM_PRIMARY),
         "test ! -e /userdata/jetkvm/jetkvm_app.update && sha256sum /userdata/jetkvm/bin/jetkvm_app",
         { timeoutMs: 30_000 },
       );
+      assertSshResult(finalRemoteBinary, "Final device binary verification");
       const finalInstalledDeviceBinarySha256 =
         /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/bin\/jetkvm_app\s*$/u.exec(
           finalRemoteBinary.stdout,
         )?.[1];
       if (
-        finalRemoteBinary.exitCode !== 0 ||
         finalLocalDeviceBinarySha256 !==
           deployment.evidence.local_binary_sha256 ||
         finalInstalledDeviceBinarySha256 !==
           deployment.evidence.installed_binary_sha256
       ) {
-        throw new Error("Device deployment bytes drifted before evidence seal.");
+        throw new Error(
+          "Device deployment bytes drifted before evidence seal.",
+        );
       }
       summary = Object.freeze({
         schema_version: 1,
@@ -994,11 +1128,9 @@ async function run() {
         deployment: deployment.evidence,
         tool_listing: listed,
         atx_preflight_sha256: atxPreflight.evidence_sha256,
-        transport_reconnect: transportReconnect,
         finalization_sha256: sha256Canonical(finalization.record),
         mcp_stderr: Object.freeze({
           initial: mcp.stderrEvidence(),
-          replacement: runtimeState.replacementMcp.stderrEvidence(),
         }),
       });
       await writeAndFlush(resolve(outputDirectory, "summary.json"), summary);
@@ -1024,6 +1156,7 @@ async function run() {
       );
       await chmod(resolve(outputDirectory, "manifest.json"), 0o400);
       await chmod(resolve(outputDirectory, "manifest.sha256"), 0o400);
+      await chmod(outputDirectory, 0o500);
       process.stdout.write(
         `Hardware release evidence complete: ${summary.story_count} stories ${summary.step_count} steps\n`,
       );

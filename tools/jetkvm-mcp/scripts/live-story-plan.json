@@ -204,7 +204,7 @@
   },
   "display-status-cached-freshness-and-streaming-omission": {
     "step_ids_sha256": "af2f76bced0dcffda42307c156f7bf81005847dfc19cc8f3b111a07d6ed1486e",
-    "hardware_step_ids": [],
+    "hardware_step_ids": ["recover-after-device-rpc-adapter-release-loss"],
     "controlled_step_ids": [
       "status-with-unequal-facts",
       "session-status-after-binding-loss",
@@ -214,7 +214,6 @@
       "device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
       "device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
       "device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
-      "recover-after-device-rpc-adapter-release-loss",
       "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
       "device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
       "device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",

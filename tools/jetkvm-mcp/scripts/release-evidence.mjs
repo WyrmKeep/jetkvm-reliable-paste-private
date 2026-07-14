@@ -168,7 +168,6 @@ export function buildLockedConsumerPackageLock({
   });
 }
 
-
 export async function sha256File(path) {
   return sha256Bytes(await readFile(path));
 }
@@ -248,6 +247,7 @@ export function createExecutionEvidenceResolver({ branchMatrix, storyE2e }) {
   }
   const focusedByStep = new Map();
   const focusedEvidence = new Map();
+  const focusedByRequirementAndTool = new Map();
   for (const cell of branchMatrix.cells) {
     if (!isRecord(cell)) {
       throw new Error(
@@ -287,6 +287,16 @@ export function createExecutionEvidenceResolver({ branchMatrix, storyE2e }) {
     const identities = focusedByStep.get(key) ?? [];
     identities.push(identity);
     focusedByStep.set(key, identities);
+    if (
+      typeof cell.requirement === "string" &&
+      typeof cell.tool === "string" &&
+      cell.coverage_scope === "tool"
+    ) {
+      const reusableKey = `${cell.requirement}\u0000${cell.tool}`;
+      const reusable = focusedByRequirementAndTool.get(reusableKey) ?? [];
+      reusable.push(identity);
+      focusedByRequirementAndTool.set(reusableKey, reusable);
+    }
   }
   const scenariosByStep = new Map();
   const scenarioEvidence = new Map();
@@ -335,6 +345,34 @@ export function createExecutionEvidenceResolver({ branchMatrix, storyE2e }) {
     const focused = focusedByStep.get(key);
     if (focused !== undefined && focused.length > 0) {
       return [...focused].sort();
+    }
+    if (
+      typeof step.tool === "string" &&
+      Array.isArray(story.requirements) &&
+      typeof step.expect === "string"
+    ) {
+      const reusable = story.requirements.flatMap((requirement) => {
+        if (typeof requirement !== "string") return [];
+        if (!requirement.startsWith("branch:")) return [];
+        const requirementId = requirement.replace(/^branch:/u, "");
+        if (!/^[a-z0-9-]+$/u.test(requirementId)) {
+          return [];
+        }
+        const expectedToken = requirementId.replaceAll("-", "_").toUpperCase();
+        const exactExpectation = new RegExp(`\\b${expectedToken}\\b`, "u").test(
+          step.expect,
+        );
+        const exactStepRequirement = new RegExp(
+          `(?:^|-)${requirementId}(?:-|$)`,
+          "u",
+        ).test(step.id);
+        if (!exactExpectation && !exactStepRequirement) return [];
+        return (
+          focusedByRequirementAndTool.get(`${requirement}\u0000${step.tool}`) ??
+          []
+        );
+      });
+      if (reusable.length > 0) return [...new Set(reusable)].sort();
     }
     const scenarios = scenariosByStep.get(key);
     if (scenarios !== undefined && scenarios.length > 0) {
