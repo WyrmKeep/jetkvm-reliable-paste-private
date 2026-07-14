@@ -154,6 +154,8 @@ function fixture() {
         "--run-go-tests-only",
         "--device-tests-archive",
         "<reviewed-device-tests>",
+        "--device-tests-sha256",
+        HASH,
       ],
     },
     before: {
@@ -220,6 +222,11 @@ function fixture() {
       revision: COMMIT,
       app_version: "0.4.0",
       process_start_time: "1.717e+09",
+    },
+    deployment: {
+      release_artifact: {
+        device_tests_sha256: HASH,
+      },
     },
     tool_listing: { tool_count: 10 },
     atx_preflight_sha256: HASH,
@@ -350,6 +357,30 @@ test("fails closed on finalization or device-test evidence drift", () => {
       }),
     );
   }
+});
+
+test("binds executed device tests to the reviewed CI archive", () => {
+  const evidence = fixture();
+  const changed = structuredClone(evidence.deviceTests);
+  changed.command.args[6] = "e".repeat(64);
+  const summary = {
+    ...evidence.summary,
+    device_tests_sha256: sha256Canonical(changed),
+  };
+  assert.throws(
+    () =>
+      validateHardwareReleaseEvidence({
+        candidate: candidate(),
+        candidateSha256: summary.candidate_sha256,
+        stories: [evidence.story],
+        plan: evidence.plan,
+        summary,
+        records: [evidence.record],
+        finalization: evidence.finalization,
+        deviceTests: changed,
+      }),
+    /reviewed CI archive/u,
+  );
 });
 
 test("detects complete private IPv4 address families without partial matching", () => {

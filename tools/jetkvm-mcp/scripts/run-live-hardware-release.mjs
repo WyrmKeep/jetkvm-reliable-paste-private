@@ -1036,6 +1036,7 @@ async function run() {
       deviceTests = await runDeviceGoTests({
         target: rigEnv.KVM_PRIMARY,
         deviceTestArchive: deviceTestsPath,
+        deviceTestSha256: deviceBinary.device_tests_sha256,
         environment: process.env,
         repoRoot: REPOSITORY_ROOT,
         artifactPath: deviceTestArtifact,

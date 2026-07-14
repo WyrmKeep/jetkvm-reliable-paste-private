@@ -13,6 +13,7 @@ import {
 const FIXTURE_TARGET = "192.0.2.110";
 const FIXTURE_PROOF_REFERENCE = "/private/device-lease-proof.json";
 const FIXTURE_DEVICE_TESTS = "/private/device-tests.tar.gz";
+const FIXTURE_DEVICE_TEST_SHA256 = "f".repeat(64);
 
 const metrics = ({
   revision = "abc123",
@@ -80,6 +81,7 @@ function runHarness(h, overrides = {}) {
   return runDeviceGoTests({
     target: FIXTURE_TARGET,
     deviceTestArchive: FIXTURE_DEVICE_TESTS,
+    deviceTestSha256: FIXTURE_DEVICE_TEST_SHA256,
     environment: {
       [DEVICE_LEASE_PROOF_REFERENCE_ENV]: FIXTURE_PROOF_REFERENCE,
     },
@@ -105,11 +107,13 @@ test("reads identity, runs only the test-only command, rechecks, and flushes in 
       "--run-go-tests-only",
       "--device-tests-archive",
       "<reviewed-device-tests>",
+      "--device-tests-sha256",
+      FIXTURE_DEVICE_TEST_SHA256,
     ],
   });
   assert.deepEqual(h.events, [
     `fetch:before:http://${FIXTURE_TARGET}/metrics`,
-    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only --device-tests-archive ${FIXTURE_DEVICE_TESTS}:/repo`,
+    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only --device-tests-archive ${FIXTURE_DEVICE_TESTS} --device-tests-sha256 ${FIXTURE_DEVICE_TEST_SHA256}:/repo`,
     `fetch:after:http://${FIXTURE_TARGET}/metrics`,
     "artifact:start:/artifact.json",
     "artifact:flushed",
@@ -169,6 +173,8 @@ test("uses the configured target for both metrics and the sole allowed argv", as
     "--run-go-tests-only",
     "--device-tests-archive",
     FIXTURE_DEVICE_TESTS,
+    "--device-tests-sha256",
+    FIXTURE_DEVICE_TEST_SHA256,
   ]);
   assert.equal(
     h.spawnCalls[0].args.some((argument) =>
@@ -194,6 +200,8 @@ test("accepts target configuration from the injected environment", async () => {
     "--run-go-tests-only",
     "--device-tests-archive",
     FIXTURE_DEVICE_TESTS,
+    "--device-tests-sha256",
+    FIXTURE_DEVICE_TEST_SHA256,
   ]);
 });
 
@@ -372,7 +380,7 @@ test("spawn rejection fails closed without a postflight probe and flushes", asyn
   await assert.rejects(runHarness(h), /spawn unavailable/);
   assert.deepEqual(h.events, [
     `fetch:before:http://${FIXTURE_TARGET}/metrics`,
-    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only --device-tests-archive ${FIXTURE_DEVICE_TESTS}:/repo`,
+    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only --device-tests-archive ${FIXTURE_DEVICE_TESTS} --device-tests-sha256 ${FIXTURE_DEVICE_TEST_SHA256}:/repo`,
     "artifact:start:/artifact.json",
     "artifact:flushed",
   ]);
@@ -515,6 +523,8 @@ test("redacts target, proof, and credential sentinels from persisted failures", 
       "--run-go-tests-only",
       "--device-tests-archive",
       "<reviewed-device-tests>",
+      "--device-tests-sha256",
+      FIXTURE_DEVICE_TEST_SHA256,
     ],
   });
 });

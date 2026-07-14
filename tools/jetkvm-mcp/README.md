@@ -222,7 +222,7 @@ export JETKVM_RELEASE_DEVICE_PROVENANCE_SHA256="$(
 )"
 ```
 
-The target-side test archive is provenance-bound to the same CI run and executes directly on the JetKVM; the release path never cross-compiles it under host emulation.
+The target-side test archive is provenance-bound to the same CI run and executes directly on the JetKVM; the release path never cross-compiles it under host emulation. The reviewed digest is passed independently to the device, which verifies the uploaded archive immediately before extraction and execution.
 
 Before device contact, the live runner requires the same clean commit/tree, validates the inherited proof against the exact configured-device fingerprint, verifies the device artifact and provenance-sidecar checksums, requires the trusted `build.yml` run to name the frozen commit, independently checks the Go binary's embedded revision, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The evidence root must already be an owner-only directory, and the new output directory must resolve beneath it without symlink escape; the rig environment file must also be owner-only. `DEVICE_KEY` must exactly equal the production runtime's `jetkvm-`-prefixed SHA-256 fingerprint of the configured target URL; the installed MCP refuses any other inherited lease:
 

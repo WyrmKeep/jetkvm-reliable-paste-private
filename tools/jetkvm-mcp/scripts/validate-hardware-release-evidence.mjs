@@ -259,6 +259,14 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Hardware release summary did not pass exactly.");
   }
+  const reviewedDeviceTestsSha256 =
+    summary.deployment?.release_artifact?.device_tests_sha256;
+  assertHash(reviewedDeviceTestsSha256, "Reviewed device test archive");
+  if (deviceTests.command.args[6] !== reviewedDeviceTestsSha256) {
+    throw new Error(
+      "Executed device tests did not match the reviewed CI archive.",
+    );
+  }
   assertHash(candidateSha256, "Validated hardware candidate checksum");
   if (summary.candidate_sha256 !== candidateSha256) {
     throw new Error(

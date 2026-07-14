@@ -7,8 +7,10 @@ export const DEVICE_LEASE_PROOF_REFERENCE_ENV =
   "JETKVM_DEVICE_LEASE_PROOF_PATH";
 export const DEVICE_TEST_TARGET_ENV = "JETKVM_DEVICE_TEST_TARGET";
 export const DEVICE_TEST_ARCHIVE_ENV = "JETKVM_DEVICE_TEST_ARCHIVE";
+export const DEVICE_TEST_SHA256_ENV = "JETKVM_DEVICE_TEST_SHA256";
 
 const TEST_EXECUTABLE = "./dev_deploy.sh";
+const HASH = /^[a-f0-9]{64}$/u;
 const FORBIDDEN_RAW_PROOF_ENV = Object.freeze([
   "JETKVM_DEVICE_LEASE_OWNER",
   "JETKVM_DEVICE_LEASE_TOKEN",
@@ -115,7 +117,15 @@ function requireDeviceTestArchive(configuredArchive, environment) {
   return archive;
 }
 
-function createTestCommand(target, deviceTestArchive) {
+function requireDeviceTestSha256(configuredSha256, environment) {
+  const sha256 = configuredSha256 ?? environment?.[DEVICE_TEST_SHA256_ENV];
+  if (typeof sha256 !== "string" || !HASH.test(sha256)) {
+    throw new Error("a reviewed device test checksum is required");
+  }
+  return sha256;
+}
+
+function createTestCommand(target, deviceTestArchive, deviceTestSha256) {
   return Object.freeze({
     executable: TEST_EXECUTABLE,
     args: Object.freeze([
@@ -124,6 +134,8 @@ function createTestCommand(target, deviceTestArchive) {
       "--run-go-tests-only",
       "--device-tests-archive",
       deviceTestArchive,
+      "--device-tests-sha256",
+      deviceTestSha256,
     ]),
   });
 }
@@ -207,6 +219,19 @@ export function validateDeviceGoTestEvidence(value) {
       (field) =>
         typeof identity[field] === "string" && identity[field].length > 0,
     );
+  const commandArgsValid =
+    Array.isArray(value?.command?.args) &&
+    value.command.args.length === 7 &&
+    JSON.stringify(value.command.args.slice(0, 6)) ===
+      JSON.stringify([
+        "-r",
+        "<configured-target>",
+        "--run-go-tests-only",
+        "--device-tests-archive",
+        "<reviewed-device-tests>",
+        "--device-tests-sha256",
+      ]) &&
+    HASH.test(value.command.args[6]);
   if (
     !hasExactKeys(value, [
       "ok",
@@ -223,14 +248,7 @@ export function validateDeviceGoTestEvidence(value) {
     Date.parse(value.finishedAt) < Date.parse(value.startedAt) ||
     !hasExactKeys(value.command, ["executable", "args"]) ||
     value.command.executable !== TEST_EXECUTABLE ||
-    JSON.stringify(value.command.args) !==
-      JSON.stringify([
-        "-r",
-        "<configured-target>",
-        "--run-go-tests-only",
-        "--device-tests-archive",
-        "<reviewed-device-tests>",
-      ]) ||
+    !commandArgsValid ||
     !identityValid(value.before) ||
     !identityValid(value.after) ||
     !sameIdentity(value.before, value.after) ||
@@ -304,6 +322,7 @@ function assertValidChildResult(child) {
 export async function runDeviceGoTests({
   target,
   deviceTestArchive,
+  deviceTestSha256,
   environment = process.env,
   fetchImpl = globalThis.fetch,
   spawnImpl = defaultSpawn,
@@ -329,7 +348,8 @@ export async function runDeviceGoTests({
     requireLeaseProofReference(environment);
     const configuration = requireTarget(target, environment);
     const archive = requireDeviceTestArchive(deviceTestArchive, environment);
-    command = createTestCommand(configuration.target, archive);
+    const testSha256 = requireDeviceTestSha256(deviceTestSha256, environment);
+    command = createTestCommand(configuration.target, archive, testSha256);
     before = await readIdentity(fetchImpl, configuration.metricsUrl);
     child = await spawnImpl(command.executable, [...command.args], {
       cwd: repoRoot,
@@ -371,6 +391,8 @@ export async function runDeviceGoTests({
               "--run-go-tests-only",
               "--device-tests-archive",
               "<reviewed-device-tests>",
+              "--device-tests-sha256",
+              command.args[6],
             ],
           },
         }),

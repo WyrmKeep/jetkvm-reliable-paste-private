@@ -17,6 +17,8 @@ show_help() {
     echo "      --run-go-tests-only    Run go tests and exit"
     echo "      --device-tests-archive <path>"
     echo "                             Use reviewed prebuilt device tests"
+    echo "      --device-tests-sha256 <sha256>"
+    echo "                             Expected reviewed device-test digest"
     echo "      --skip-ui-build        Skip frontend/UI build"
     echo "      --skip-native-build    Skip native build"
     echo "      --log-trace <scopes>   Comma-separated scopes to trace"
@@ -72,6 +74,7 @@ LOG_TRACE_SCOPES="${LOG_TRACE_SCOPES:-jetkvm,cloud,websocket,native,jsonrpc}"  #
 RUN_GO_TESTS=false
 RUN_GO_TESTS_ONLY=false
 DEVICE_TESTS_ARCHIVE=""
+DEVICE_TESTS_SHA256=""
 INSTALL_APP=false
 BUILD_IN_DOCKER=true
 DOCKER_BUILD_DEBUG=false
@@ -134,6 +137,10 @@ while [[ $# -gt 0 ]]; do
             DEVICE_TESTS_ARCHIVE="$2"
             shift 2
             ;;
+        --device-tests-sha256)
+            DEVICE_TESTS_SHA256="$2"
+            shift 2
+            ;;
         --native-binary)
             BUILD_NATIVE_BINARY=true
             shift
@@ -169,13 +176,17 @@ if [ -z "$REMOTE_HOST" ]; then
     exit 1
 fi
 
-if [ -n "$DEVICE_TESTS_ARCHIVE" ]; then
+if [ -n "$DEVICE_TESTS_ARCHIVE" ] || [ -n "$DEVICE_TESTS_SHA256" ]; then
     if [ "$RUN_GO_TESTS" != true ]; then
-        msg_err "Error: --device-tests-archive requires --run-go-tests"
+        msg_err "Error: reviewed device tests require --run-go-tests"
         exit 1
     fi
     if [ ! -f "$DEVICE_TESTS_ARCHIVE" ] || [ -L "$DEVICE_TESTS_ARCHIVE" ]; then
         msg_err "Error: Device test archive is not a regular local file"
+        exit 1
+    fi
+    if [[ ! "$DEVICE_TESTS_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+        msg_err "Error: Device test archive checksum is invalid"
         exit 1
     fi
     DEVICE_TESTS_ARCHIVE=$(realpath "$DEVICE_TESTS_ARCHIVE")
@@ -259,15 +270,37 @@ if [ "$RUN_GO_TESTS" = true ]; then
     else
         msg_info "▶ Using reviewed prebuilt device tests"
     fi
+    if [ -z "$DEVICE_TESTS_SHA256" ]; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            DEVICE_TESTS_SHA256=$(sha256sum "$DEVICE_TESTS_ARCHIVE")
+            DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256%% *}
+        elif command -v shasum >/dev/null 2>&1; then
+            DEVICE_TESTS_SHA256=$(shasum -a 256 "$DEVICE_TESTS_ARCHIVE")
+            DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256%% *}
+        else
+            msg_err "Error: No SHA-256 utility is available"
+            exit 1
+        fi
+    fi
+
 
     msg_info "▶ Copying device-tests.tar.gz to remote host"
     sshdev "cat > /tmp/device-tests.tar.gz" < "$DEVICE_TESTS_ARCHIVE"
 
     msg_info "▶ Running go tests"
-    sshdev ash << 'EOF'
+    sshdev "DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256} ash -s" << 'EOF'
 set -e
+TMP_DIR=""
+cleanup() {
+    if [ -n "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"
+    fi
+    rm -f /tmp/device-tests.tar.gz
+}
+trap cleanup EXIT
+echo "${DEVICE_TESTS_SHA256}  /tmp/device-tests.tar.gz" | sha256sum -c -
 TMP_DIR=$(mktemp -d)
-cd ${TMP_DIR}
+cd "${TMP_DIR}"
 tar zxf /tmp/device-tests.tar.gz
 ./gotestsum --format=testdox \
     --jsonfile=/tmp/device-tests.json \
