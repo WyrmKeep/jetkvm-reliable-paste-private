@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -220,6 +227,82 @@ test("deployment cleans the remote workspace when test upload fails", async () =
       "remote cleanup did not follow the failed upload",
     );
     assert.doesNotMatch(result.stdout, /Running go tests/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stages source fixtures required by compiled regression tests", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "jetkvm-device-test-sources-"),
+  );
+  try {
+    const result = spawnSync(
+      "make",
+      [
+        "--no-print-directory",
+        "stage_device_test_sources",
+        `BIN_DIR=${directory}`,
+      ],
+      { cwd: REPOSITORY_ROOT, encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    for (const source of [
+      "jsonrpc.go",
+      "webrtc.go",
+      "ui/src/hooks/hidRpc.ts",
+      "ui/src/hooks/useKeyboard.ts",
+    ]) {
+      assert.equal(
+        await readFile(join(directory, "tests/source", source), "utf8"),
+        await readFile(join(REPOSITORY_ROOT, source), "utf8"),
+        `staged source drifted: ${source}`,
+      );
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("runs compiled tests from their source-relative working directory", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jetkvm-device-test-cwd-"));
+  const workingDirectory = join(directory, "source/internal/regression");
+  const marker = join(directory, "working-directory-verified");
+  try {
+    await mkdir(workingDirectory, { recursive: true });
+    await writeFile(join(directory, "source/jsonrpc.go"), "fixture", "utf8");
+    const runner = join(directory, "run_all_tests");
+    const runnerSource = await readFile(
+      join(REPOSITORY_ROOT, "resource/dev_test.sh"),
+      "utf8",
+    );
+    await writeFile(
+      runner,
+      `${runnerSource}\nrunTest ./regression_test fixture/package ./source/internal/regression\n`,
+      "utf8",
+    );
+    const test2json = join(directory, "test2json");
+    await writeFile(
+      test2json,
+      [
+        "#!/bin/sh",
+        "test -f ../../jsonrpc.go || exit 32",
+        ': > "$WORKING_DIRECTORY_MARKER"',
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(test2json, 0o755);
+
+    const result = spawnSync("sh", [runner, "-json"], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        WORKING_DIRECTORY_MARKER: marker,
+      },
+    });
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.equal(await readFile(marker, "utf8"), "");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -202,10 +202,22 @@ list_device_test_packages:
 	fi; \
 	printf '%s\n' "$$test_dirs"
 
+.PHONY: stage_device_test_sources
+stage_device_test_sources:
+	@mkdir -p \
+		"$(BIN_DIR)/tests/source/internal/regression" \
+		"$(BIN_DIR)/tests/source/ui/src/hooks"
+	@cp jsonrpc.go webrtc.go "$(BIN_DIR)/tests/source/"
+	@cp \
+		ui/src/hooks/hidRpc.ts \
+		ui/src/hooks/useKeyboard.ts \
+		"$(BIN_DIR)/tests/source/ui/src/hooks/"
+
 build_dev_test: build_native build_test2json build_gotestsum
 # collect all directories that contain tests
 	@echo "Building tests for devices ..."
 	@rm -rf "$(BIN_DIR)/tests" && mkdir -p "$(BIN_DIR)/tests"
+	@$(MAKE) --no-print-directory stage_device_test_sources
 
 	@cat resource/dev_test.sh > "$(BIN_DIR)/tests/run_all_tests"
 	@set -e; \
@@ -225,7 +237,11 @@ build_dev_test: build_native build_test2json build_gotestsum
 			-ldflags="$(GO_LDFLAGS) -X $(KVM_PKG_NAME).builtAppVersion=$(VERSION_DEV)" \
 			$(GO_BUILD_ARGS) \
 			-c -o "$(BIN_DIR)/tests/$$test_filename" "$$test"; \
-		echo "runTest ./$$test_filename $$test_pkg_full_name" >> "$(BIN_DIR)/tests/run_all_tests"; \
+		if [ "$$test_pkg_name" = "internal/regression" ]; then \
+			echo "runTest ./$$test_filename $$test_pkg_full_name ./source/internal/regression" >> "$(BIN_DIR)/tests/run_all_tests"; \
+		else \
+			echo "runTest ./$$test_filename $$test_pkg_full_name" >> "$(BIN_DIR)/tests/run_all_tests"; \
+		fi; \
 	done; \
 	chmod +x "$(BIN_DIR)/tests/run_all_tests"; \
 	cp "$(BIN_DIR)/test2json" "$(BIN_DIR)/tests/" && chmod +x "$(BIN_DIR)/tests/test2json"; \
