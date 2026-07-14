@@ -114,6 +114,13 @@ test("directory manifests are sorted, content-addressed, and reject symlinks", a
 
     await mkdir(join(root, ".bin"));
     await symlink("../z.txt", join(root, ".bin", "command"));
+    await mkdir(join(root, "nested", "node_modules", ".bin"), {
+      recursive: true,
+    });
+    await symlink(
+      "../../../z.txt",
+      join(root, "nested", "node_modules", ".bin", "nested-command"),
+    );
     const installedManifest = await buildDirectoryManifest(root, {
       excludeSymlink: isGeneratedInstalledBinLink,
     });
