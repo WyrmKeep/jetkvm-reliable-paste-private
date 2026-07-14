@@ -98,12 +98,6 @@ async function defaultRunCommand(command, args, { cwd }) {
   });
 }
 
-async function defaultExtractTarball(tarballPath, destination) {
-  await defaultRunCommand("tar", ["-xzf", tarballPath, "-C", destination], {
-    cwd: destination,
-  });
-}
-
 function parsePackFilename(stdout) {
   let parsed;
   try {
@@ -175,7 +169,6 @@ export async function freezeReleaseCandidate({
   packageRoot = PACKAGE_ROOT,
   outputDirectory,
   runCommand = defaultRunCommand,
-  extractTarball = defaultExtractTarball,
   nodeVersion = process.version,
   nodeExecutablePath = process.execPath,
   platform = process.platform,
@@ -242,7 +235,7 @@ export async function freezeReleaseCandidate({
   const stagingDirectory = await mkdtemp(
     join(dirname(outputDirectory), ".jetkvm-candidate-"),
   );
-  let extractionDirectory;
+  let installationDirectory;
   try {
     await runCommand("npm", ["run", "build"], { cwd: packageRoot });
     const packOutput = await runCommand(
@@ -258,23 +251,41 @@ export async function freezeReleaseCandidate({
     }
     await assertCleanSource(runCommand, repositoryRoot);
 
-    extractionDirectory = await mkdtemp(
-      join(tmpdir(), "jetkvm-candidate-unpack-"),
+    installationDirectory = await mkdtemp(
+      join(tmpdir(), "jetkvm-candidate-install-"),
     );
-    await extractTarball(stagedArtifactPath, extractionDirectory);
-    const unpackedPackage = join(extractionDirectory, "package");
-    const unpackedMetadata = JSON.parse(
-      await readFile(join(unpackedPackage, "package.json"), "utf8"),
+    await runCommand(
+      "npm",
+      [
+        "install",
+        "--prefix",
+        installationDirectory,
+        stagedArtifactPath,
+        "--ignore-scripts",
+        "--package-lock=false",
+        "--no-audit",
+        "--no-fund",
+      ],
+      { cwd: installationDirectory },
+    );
+    const installedPackage = join(
+      installationDirectory,
+      "node_modules",
+      "@wyrmkeep",
+      "jetkvm-mcp",
+    );
+    const installedMetadata = JSON.parse(
+      await readFile(join(installedPackage, "package.json"), "utf8"),
     );
     if (
-      unpackedMetadata.name !== packageMetadata.name ||
-      unpackedMetadata.version !== packageMetadata.version
+      installedMetadata.name !== packageMetadata.name ||
+      installedMetadata.version !== packageMetadata.version
     ) {
       throw new Error(
         "Packed package identity does not match source metadata.",
       );
     }
-    const packageTree = await buildDirectoryManifest(unpackedPackage);
+    const packageTree = await buildDirectoryManifest(installedPackage);
     const source = await sourceIdentity(packageRoot);
     const candidate = buildReleaseCandidateManifest({
       packageName: packageMetadata.name,
@@ -334,8 +345,8 @@ export async function freezeReleaseCandidate({
     await rm(stagingDirectory, { recursive: true, force: true });
     throw error;
   } finally {
-    if (extractionDirectory !== undefined) {
-      await rm(extractionDirectory, { recursive: true, force: true });
+    if (installationDirectory !== undefined) {
+      await rm(installationDirectory, { recursive: true, force: true });
     }
   }
 }

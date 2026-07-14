@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -30,6 +38,7 @@ async function createFixture() {
   await writeJson(join(packageRoot, "package.json"), {
     name: "@wyrmkeep/jetkvm-mcp",
     version: "0.1.0",
+    bin: { "jetkvm-mcp": "dist/bin.js" },
   });
   await writeJson(join(packageRoot, "package-lock.json"), {
     lockfileVersion: 3,
@@ -61,14 +70,13 @@ async function createFixture() {
   await writeJson(join(unpackedSource, "package.json"), {
     name: "@wyrmkeep/jetkvm-mcp",
     version: "0.1.0",
+    bin: { "jetkvm-mcp": "dist/bin.js" },
   });
   await mkdir(join(unpackedSource, "dist"), { recursive: true });
   await writeFile(
     join(unpackedSource, "dist", "bin.js"),
     "#!/usr/bin/env node\n",
-    {
-      mode: 0o755,
-    },
+    { mode: 0o644 },
   );
   await writeFile(nodeExecutablePath, "node-binary");
   await writeFile(browserExecutablePath, "browser-binary");
@@ -105,6 +113,18 @@ function commandHarness(fixture, statusValues = ["", ""]) {
       await writeFile(join(destination, filename), "frozen-tarball");
       return `${JSON.stringify([{ filename }])}\n`;
     }
+    if (command === "npm" && args[0] === "install") {
+      const prefix = args[args.indexOf("--prefix") + 1];
+      const installedPackage = join(
+        prefix,
+        "node_modules",
+        "@wyrmkeep",
+        "jetkvm-mcp",
+      );
+      await cp(fixture.unpackedSource, installedPackage, { recursive: true });
+      await chmod(join(installedPackage, "dist", "bin.js"), 0o755);
+      return "";
+    }
     throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
   };
   return { calls, runCommand };
@@ -117,11 +137,6 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     const result = await freezeReleaseCandidate({
       ...fixture,
       runCommand: commands.runCommand,
-      extractTarball: async (_tarball, destination) => {
-        await cp(fixture.unpackedSource, join(destination, "package"), {
-          recursive: true,
-        });
-      },
       nodeVersion: "v22.23.1",
       platform: "darwin",
       architecture: "arm64",
@@ -137,6 +152,10 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     assert.deepEqual(
       parsed.artifact.files.map((file) => file.path),
       ["dist/bin.js", "package.json"],
+    );
+    assert.equal(
+      parsed.artifact.files.find((file) => file.path === "dist/bin.js").mode,
+      0o755,
     );
     assert.equal(
       parsed.runtime.node.executable_sha256,
@@ -178,7 +197,6 @@ test("refuses dirty source before build or candidate output", async () => {
       freezeReleaseCandidate({
         ...fixture,
         runCommand: commands.runCommand,
-        extractTarball: async () => undefined,
         nodeVersion: "v22.23.1",
         platform: "darwin",
         architecture: "arm64",
