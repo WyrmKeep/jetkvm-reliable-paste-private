@@ -5,11 +5,14 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  assertCurrentRuntimeMatchesCandidate,
   buildDirectoryManifest,
   buildReleaseCandidateManifest,
   canonicalJson,
   createExecutionEvidenceResolver,
   sha256Canonical,
+  sha256File,
+  sha256Text,
   validateReleaseCandidateManifest,
 } from "./release-evidence.mjs";
 
@@ -122,6 +125,52 @@ test("candidate manifests bind every frozen source, runtime, and package identit
     sha256Canonical(candidate.artifact.files),
   );
   assert.equal(Object.isFrozen(candidate), true);
+});
+
+test("matches the executing Node, browser, platform, and target to the frozen candidate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "runtime-match-"));
+  try {
+    const nodePath = join(root, "node");
+    const browserPath = join(root, "Google Chrome");
+    await writeFile(nodePath, "node-runtime");
+    await writeFile(browserPath, "browser-runtime");
+    const targetUrl = "http://192.0.2.1";
+    const input = candidateInput();
+    input.nodeExecutableSha256 = await sha256File(nodePath);
+    input.browserExecutableSha256 = await sha256File(browserPath);
+    input.browserTargetUrlSha256 = sha256Text(targetUrl);
+    const candidate = buildReleaseCandidateManifest(input);
+    const runtime = {
+      nodeVersion: "v22.23.1",
+      nodeExecutablePath: nodePath,
+      platform: "darwin",
+      architecture: "arm64",
+      browserExecutablePath: browserPath,
+      targetUrl,
+    };
+
+    await assert.doesNotReject(
+      assertCurrentRuntimeMatchesCandidate(candidate, runtime),
+    );
+    for (const [field, value] of [
+      ["nodeVersion", "v22.23.2"],
+      ["nodeExecutablePath", browserPath],
+      ["platform", "linux"],
+      ["architecture", "x64"],
+      ["browserExecutablePath", nodePath],
+      ["targetUrl", "http://192.0.2.2"],
+    ]) {
+      await assert.rejects(
+        assertCurrentRuntimeMatchesCandidate(candidate, {
+          ...runtime,
+          [field]: value,
+        }),
+        /runtime did not match the frozen candidate/u,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("candidate validation fails closed on drift, extra fields, and private paths", () => {

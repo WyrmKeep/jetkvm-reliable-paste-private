@@ -20,6 +20,7 @@ import {
 import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 import { runCanonicalLiveStories } from "./live-release-core.mjs";
 import {
+  assertCurrentRuntimeMatchesCandidate,
   buildDirectoryManifest,
   createExecutionEvidenceResolver,
   sha256Canonical,
@@ -310,23 +311,19 @@ async function validateCandidateRuntime(
   browserPath,
   targetUrl,
 ) {
-  validateReleaseCandidateManifest(candidate);
+  await assertCurrentRuntimeMatchesCandidate(candidate, {
+    nodeVersion: process.version,
+    nodeExecutablePath: process.execPath,
+    platform: process.platform,
+    architecture: process.arch,
+    browserExecutablePath: browserPath,
+    targetUrl,
+  });
   const expectedChecksum = requiredEnvironment(
     "JETKVM_RELEASE_CANDIDATE_SHA256",
   );
   if ((await sha256File(candidatePath)) !== expectedChecksum) {
     throw new Error("Candidate manifest checksum changed after freeze.");
-  }
-  if (
-    (await sha256File(browserPath)) !==
-    candidate.runtime.browser.executable_sha256
-  ) {
-    throw new Error("Browser executable changed after candidate freeze.");
-  }
-  if (sha256Text(targetUrl) !== candidate.runtime.browser.target_url_sha256) {
-    throw new Error(
-      "Browser target configuration changed after candidate freeze.",
-    );
   }
 }
 

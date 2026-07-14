@@ -65,6 +65,10 @@ function sha256Bytes(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function sha256Text(value) {
+  return sha256Bytes(value);
+}
+
 export function canonicalJson(value) {
   return JSON.stringify(normalizeJson(value));
 }
@@ -499,6 +503,55 @@ export function validateReleaseCandidateManifest(value) {
   }
 
   return deepFreeze(value);
+}
+
+export async function assertCurrentRuntimeMatchesCandidate(candidate, current) {
+  validateReleaseCandidateManifest(candidate);
+  const node = candidate.runtime.node;
+  const browser = candidate.runtime.browser;
+  const [nodeHash, browserHash] = await Promise.all([
+    sha256File(current.nodeExecutablePath),
+    sha256File(current.browserExecutablePath),
+  ]);
+  const targetHash = sha256Text(current.targetUrl);
+  const mismatches = [];
+  const compare = (label, actual, expected) => {
+    if (actual !== expected) {
+      mismatches.push(`${label}: expected ${expected}, actual ${actual}`);
+    }
+  };
+  const compareHash = (label, actual, expected) => {
+    if (actual !== expected) {
+      mismatches.push(
+        `${label}: expected ${expected.slice(0, 12)}, actual ${actual.slice(0, 12)}`,
+      );
+    }
+  };
+  compare("Node version", current.nodeVersion, node.version);
+  compare(
+    "Node executable name",
+    basename(current.nodeExecutablePath),
+    node.executable_name,
+  );
+  compareHash("Node executable hash", nodeHash, node.executable_sha256);
+  compare("Node platform", current.platform, node.platform);
+  compare("Node architecture", current.architecture, node.architecture);
+  compare(
+    "Browser executable name",
+    basename(current.browserExecutablePath),
+    browser.executable_name,
+  );
+  compareHash(
+    "Browser executable hash",
+    browserHash,
+    browser.executable_sha256,
+  );
+  compareHash("Browser target hash", targetHash, browser.target_url_sha256);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `The executing runtime did not match the frozen candidate: ${mismatches.join("; ")}.`,
+    );
+  }
 }
 
 export function buildReleaseCandidateManifest(input) {
