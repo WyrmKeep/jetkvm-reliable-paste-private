@@ -490,6 +490,7 @@ export function parseSupplementalStoryEvidence(
         assertion.title.length === 0 ||
         !isRecord(assertion.meta)
       ) {
+        throw new Error("Supplemental story assertion evidence is malformed.");
       }
       const ids = assertion.meta.story_contract_ids;
       const identity = assertion.meta.story_test_identity;

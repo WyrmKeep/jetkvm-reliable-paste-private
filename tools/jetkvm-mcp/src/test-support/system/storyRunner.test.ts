@@ -141,6 +141,22 @@ describe("story-driven system E2E runner", () => {
     expect(() => parseSupplementalStoryEvidence(raw)).toThrowError(
       /identity.*metadata/i,
     );
+    expect(() =>
+      parseSupplementalStoryEvidence({
+        ...raw,
+        testResults: [
+          {
+            ...raw.testResults[0],
+            assertionResults: [
+              {
+                ...raw.testResults[0]!.assertionResults[0],
+                ancestorTitles: [1],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrowError(/assertion evidence is malformed/);
   });
 });
 
