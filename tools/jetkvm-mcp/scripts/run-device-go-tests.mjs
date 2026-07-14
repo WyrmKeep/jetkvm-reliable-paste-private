@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 export const DEVICE_LEASE_PROOF_REFERENCE_ENV =
   "JETKVM_DEVICE_LEASE_PROOF_PATH";
 export const DEVICE_TEST_TARGET_ENV = "JETKVM_DEVICE_TEST_TARGET";
+export const DEVICE_TEST_ARCHIVE_ENV = "JETKVM_DEVICE_TEST_ARCHIVE";
 
 const TEST_EXECUTABLE = "./dev_deploy.sh";
 const FORBIDDEN_RAW_PROOF_ENV = Object.freeze([
@@ -101,10 +102,29 @@ function requireTarget(configuredTarget, environment) {
   }
 }
 
-function createTestCommand(target) {
+function requireDeviceTestArchive(configuredArchive, environment) {
+  const archive = configuredArchive ?? environment?.[DEVICE_TEST_ARCHIVE_ENV];
+  if (
+    typeof archive !== "string" ||
+    archive.length === 0 ||
+    !path.isAbsolute(archive) ||
+    path.resolve(archive) !== archive
+  ) {
+    throw new Error("a reviewed device test archive is required");
+  }
+  return archive;
+}
+
+function createTestCommand(target, deviceTestArchive) {
   return Object.freeze({
     executable: TEST_EXECUTABLE,
-    args: Object.freeze(["-r", target, "--run-go-tests-only"]),
+    args: Object.freeze([
+      "-r",
+      target,
+      "--run-go-tests-only",
+      "--device-tests-archive",
+      deviceTestArchive,
+    ]),
   });
 }
 
@@ -204,7 +224,13 @@ export function validateDeviceGoTestEvidence(value) {
     !hasExactKeys(value.command, ["executable", "args"]) ||
     value.command.executable !== TEST_EXECUTABLE ||
     JSON.stringify(value.command.args) !==
-      JSON.stringify(["-r", "<configured-target>", "--run-go-tests-only"]) ||
+      JSON.stringify([
+        "-r",
+        "<configured-target>",
+        "--run-go-tests-only",
+        "--device-tests-archive",
+        "<reviewed-device-tests>",
+      ]) ||
     !identityValid(value.before) ||
     !identityValid(value.after) ||
     !sameIdentity(value.before, value.after) ||
@@ -277,6 +303,7 @@ function assertValidChildResult(child) {
 
 export async function runDeviceGoTests({
   target,
+  deviceTestArchive,
   environment = process.env,
   fetchImpl = globalThis.fetch,
   spawnImpl = defaultSpawn,
@@ -301,7 +328,8 @@ export async function runDeviceGoTests({
   try {
     requireLeaseProofReference(environment);
     const configuration = requireTarget(target, environment);
-    command = createTestCommand(configuration.target);
+    const archive = requireDeviceTestArchive(deviceTestArchive, environment);
+    command = createTestCommand(configuration.target, archive);
     before = await readIdentity(fetchImpl, configuration.metricsUrl);
     child = await spawnImpl(command.executable, [...command.args], {
       cwd: repoRoot,
@@ -337,7 +365,13 @@ export async function runDeviceGoTests({
       : {
           command: {
             executable: TEST_EXECUTABLE,
-            args: ["-r", "<configured-target>", "--run-go-tests-only"],
+            args: [
+              "-r",
+              "<configured-target>",
+              "--run-go-tests-only",
+              "--device-tests-archive",
+              "<reviewed-device-tests>",
+            ],
           },
         }),
     ...(before === undefined ? {} : { before }),

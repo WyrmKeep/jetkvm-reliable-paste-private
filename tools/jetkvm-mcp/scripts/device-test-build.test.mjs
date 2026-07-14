@@ -22,7 +22,11 @@ async function fakeGo(body) {
 function listPackages(goExecutable) {
   return spawnSync(
     "make",
-    ["--no-print-directory", "list_device_test_packages", `GO_CMD=${goExecutable}`],
+    [
+      "--no-print-directory",
+      "list_device_test_packages",
+      `GO_CMD=${goExecutable}`,
+    ],
     { cwd: REPOSITORY_ROOT, encoding: "utf8" },
   );
 }
@@ -42,12 +46,32 @@ test("device test discovery uses target-configured Go and fails closed", async (
 
     const rejected = listPackages(failing.executable);
     assert.notEqual(rejected.status, 0);
-    assert.match(
-      rejected.stderr,
-      /device test package discovery failed/u,
-    );
+    assert.match(rejected.stderr, /device test package discovery failed/u);
   } finally {
     await rm(passing.directory, { recursive: true, force: true });
     await rm(failing.directory, { recursive: true, force: true });
   }
+});
+
+test("deployment rejects a missing reviewed test archive before device access", () => {
+  const result = spawnSync(
+    "./dev_deploy.sh",
+    [
+      "-r",
+      "192.0.2.1",
+      "--run-go-tests-only",
+      "--device-tests-archive",
+      "/missing/device-tests.tar.gz",
+    ],
+    { cwd: REPOSITORY_ROOT, encoding: "utf8" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    `${result.stdout}${result.stderr}`,
+    /Device test archive is not a regular local file/u,
+  );
+  assert.doesNotMatch(
+    `${result.stdout}${result.stderr}`,
+    /Checking if device is reachable/u,
+  );
 });

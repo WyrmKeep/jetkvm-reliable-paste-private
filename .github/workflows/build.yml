@@ -56,11 +56,6 @@ jobs:
       - name: Build application inside Docker container
         run: |
           ./scripts/ci_helper.sh make build_dev
-      - name: Bind device artifact to CI source
-        run: |
-          node tools/jetkvm-mcp/scripts/device-release-provenance.mjs \
-            bin/jetkvm_app \
-            device-binary-provenance.json
       - name: Run host-safe tests
         run: |
           set -o pipefail
@@ -68,6 +63,12 @@ jobs:
       - name: Make test cases
         run: |
           ./scripts/ci_helper.sh make build_dev_test
+      - name: Bind device artifacts to CI source
+        run: |
+          node tools/jetkvm-mcp/scripts/device-release-provenance.mjs \
+            bin/jetkvm_app \
+            device-tests.tar.gz \
+            device-binary-provenance.json
       - name: Golang Test Report
         if: ${{ always() }}
         uses: becheran/go-testreport@v0.3.2

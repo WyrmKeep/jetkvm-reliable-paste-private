@@ -15,6 +15,8 @@ show_help() {
     echo "      --gdb-port <port>      GDB debug port (default: 2345)"
     echo "      --run-go-tests         Run go tests"
     echo "      --run-go-tests-only    Run go tests and exit"
+    echo "      --device-tests-archive <path>"
+    echo "                             Use reviewed prebuilt device tests"
     echo "      --skip-ui-build        Skip frontend/UI build"
     echo "      --skip-native-build    Skip native build"
     echo "      --log-trace <scopes>   Comma-separated scopes to trace"
@@ -69,6 +71,7 @@ RESET_USB_HID_DEVICE=false
 LOG_TRACE_SCOPES="${LOG_TRACE_SCOPES:-jetkvm,cloud,websocket,native,jsonrpc}"  # Scopes to enable TRACE logging for
 RUN_GO_TESTS=false
 RUN_GO_TESTS_ONLY=false
+DEVICE_TESTS_ARCHIVE=""
 INSTALL_APP=false
 BUILD_IN_DOCKER=true
 DOCKER_BUILD_DEBUG=false
@@ -127,6 +130,10 @@ while [[ $# -gt 0 ]]; do
             RUN_GO_TESTS=true
             shift
             ;;
+        --device-tests-archive)
+            DEVICE_TESTS_ARCHIVE="$2"
+            shift 2
+            ;;
         --native-binary)
             BUILD_NATIVE_BINARY=true
             shift
@@ -162,6 +169,18 @@ if [ -z "$REMOTE_HOST" ]; then
     exit 1
 fi
 
+if [ -n "$DEVICE_TESTS_ARCHIVE" ]; then
+    if [ "$RUN_GO_TESTS" != true ]; then
+        msg_err "Error: --device-tests-archive requires --run-go-tests"
+        exit 1
+    fi
+    if [ ! -f "$DEVICE_TESTS_ARCHIVE" ] || [ -L "$DEVICE_TESTS_ARCHIVE" ]; then
+        msg_err "Error: Device test archive is not a regular local file"
+        exit 1
+    fi
+    DEVICE_TESTS_ARCHIVE=$(realpath "$DEVICE_TESTS_ARCHIVE")
+fi
+
 SOURCE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 SOURCE_REVISION=$(git rev-parse HEAD)
 
@@ -180,7 +199,9 @@ if [ "$(uname -m)" != "x86_64" ]; then
 fi
 
 if [ "$BUILD_IN_DOCKER" = true ]; then
-    build_docker_image
+    if [ "$RUN_GO_TESTS_ONLY" != true ] || [ -z "$DEVICE_TESTS_ARCHIVE" ]; then
+        build_docker_image
+    fi
 fi
 
 if [ "$BUILD_NATIVE_BINARY" = true ]; then
@@ -231,11 +252,16 @@ if [[ "$SKIP_UI_BUILD_RELEASE" = 0 && "$BUILD_IN_DOCKER" = true ]]; then
 fi
 
 if [ "$RUN_GO_TESTS" = true ]; then
-    msg_info "▶ Building go tests"
-    do_make build_dev_test BRANCH="${SOURCE_BRANCH}" REVISION="${SOURCE_REVISION}"
+    if [ -z "$DEVICE_TESTS_ARCHIVE" ]; then
+        msg_info "▶ Building go tests"
+        do_make build_dev_test BRANCH="${SOURCE_BRANCH}" REVISION="${SOURCE_REVISION}"
+        DEVICE_TESTS_ARCHIVE="${SCRIPT_PATH}/device-tests.tar.gz"
+    else
+        msg_info "▶ Using reviewed prebuilt device tests"
+    fi
 
     msg_info "▶ Copying device-tests.tar.gz to remote host"
-    sshdev "cat > /tmp/device-tests.tar.gz" < device-tests.tar.gz
+    sshdev "cat > /tmp/device-tests.tar.gz" < "$DEVICE_TESTS_ARCHIVE"
 
     msg_info "▶ Running go tests"
     sshdev ash << 'EOF'

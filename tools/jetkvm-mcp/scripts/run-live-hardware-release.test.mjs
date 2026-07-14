@@ -23,6 +23,7 @@ const TREE = "b".repeat(40);
 test("binds a device artifact to its unique embedded source revision", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jetkvm-device-binary-"));
   const binaryPath = join(directory, "jetkvm_app");
+  const deviceTestsPath = join(directory, "device-tests.tar.gz");
   const provenancePath = join(directory, "device-binary-provenance.json");
   const command = async () => ({
     stdout:
@@ -33,9 +34,11 @@ test("binds a device artifact to its unique embedded source revision", async () 
   });
   const writeArtifact = async (contents) => {
     await writeFile(binaryPath, contents);
+    await writeFile(deviceTestsPath, "device-tests");
     const expectedSha256 = await sha256File(binaryPath);
     const provenance = await createDeviceReleaseProvenance({
       binaryPath,
+      deviceTestsPath,
       sourceCommit: COMMIT,
       repository: "WyrmKeep/jetkvm-reliable-paste-private",
       workflowRef:
@@ -46,6 +49,7 @@ test("binds a device artifact to its unique embedded source revision", async () 
     await writeFile(provenancePath, `${JSON.stringify(provenance)}\n`);
     return {
       expectedSha256,
+      expectedDeviceTestsSha256: await sha256File(deviceTestsPath),
       expectedProvenanceSha256: await sha256File(provenancePath),
     };
   };
@@ -54,17 +58,20 @@ test("binds a device artifact to its unique embedded source revision", async () 
     const evidence = await validateReleaseDeviceBinary({
       candidate: { source: { commit_sha: COMMIT } },
       binaryPath,
+      deviceTestsPath,
       ...exact,
       command,
       provenancePath,
     });
     assert.equal(evidence.sha256, exact.expectedSha256);
+    assert.equal(evidence.device_tests_sha256, exact.expectedDeviceTestsSha256);
     assert.equal(evidence.source_commit, COMMIT);
 
     await assert.rejects(
       validateReleaseDeviceBinary({
         candidate: { source: { commit_sha: "b".repeat(40) } },
         binaryPath,
+        deviceTestsPath,
         ...exact,
         provenancePath,
         command,
@@ -77,6 +84,7 @@ test("binds a device artifact to its unique embedded source revision", async () 
       validateReleaseDeviceBinary({
         candidate: { source: { commit_sha: COMMIT } },
         binaryPath,
+        deviceTestsPath,
         ...wrong,
         provenancePath,
         command,
@@ -91,11 +99,26 @@ test("binds a device artifact to its unique embedded source revision", async () 
       validateReleaseDeviceBinary({
         candidate: { source: { commit_sha: COMMIT } },
         binaryPath,
+        deviceTestsPath,
         ...duplicate,
         provenancePath,
         command,
       }),
       /was not built from the frozen source commit/u,
+    );
+
+    const testBound = await writeArtifact(`device-binary\0${COMMIT}\0`);
+    await writeFile(deviceTestsPath, "changed-device-tests");
+    await assert.rejects(
+      validateReleaseDeviceBinary({
+        candidate: { source: { commit_sha: COMMIT } },
+        binaryPath,
+        deviceTestsPath,
+        ...testBound,
+        provenancePath,
+        command,
+      }),
+      /checksum did not match/u,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

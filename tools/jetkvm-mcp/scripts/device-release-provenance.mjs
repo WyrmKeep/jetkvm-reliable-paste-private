@@ -26,16 +26,22 @@ function assertExactKeys(value, keys, label) {
 
 export async function createDeviceReleaseProvenance({
   binaryPath,
+  deviceTestsPath,
   sourceCommit,
   repository,
   workflowRef,
   runId,
   runAttempt,
 }) {
-  const facts = await stat(binaryPath);
+  const [facts, deviceTestFacts] = await Promise.all([
+    stat(binaryPath),
+    stat(deviceTestsPath),
+  ]);
   if (
     !facts.isFile() ||
     facts.size < 1 ||
+    !deviceTestFacts.isFile() ||
+    deviceTestFacts.size < 1 ||
     !COMMIT.test(sourceCommit) ||
     typeof repository !== "string" ||
     repository.length === 0 ||
@@ -57,6 +63,11 @@ export async function createDeviceReleaseProvenance({
       size_bytes: facts.size,
       sha256: await sha256File(binaryPath),
     }),
+    device_tests: Object.freeze({
+      filename: basename(deviceTestsPath),
+      size_bytes: deviceTestFacts.size,
+      sha256: await sha256File(deviceTestsPath),
+    }),
     builder: Object.freeze({
       repository,
       workflow_ref: workflowRef,
@@ -69,13 +80,25 @@ export async function createDeviceReleaseProvenance({
 export function validateDeviceReleaseProvenance(value, candidate) {
   assertExactKeys(
     value,
-    ["schema_version", "kind", "source_commit", "binary", "builder"],
+    [
+      "schema_version",
+      "kind",
+      "source_commit",
+      "binary",
+      "device_tests",
+      "builder",
+    ],
     "Device release provenance",
   );
   assertExactKeys(
     value.binary,
     ["filename", "size_bytes", "sha256"],
     "Device release binary provenance",
+  );
+  assertExactKeys(
+    value.device_tests,
+    ["filename", "size_bytes", "sha256"],
+    "Device release test provenance",
   );
   assertExactKeys(
     value.builder,
@@ -91,6 +114,10 @@ export function validateDeviceReleaseProvenance(value, candidate) {
     !Number.isSafeInteger(value.binary.size_bytes) ||
     value.binary.size_bytes < 1 ||
     !HASH.test(value.binary.sha256) ||
+    value.device_tests.filename !== "device-tests.tar.gz" ||
+    !Number.isSafeInteger(value.device_tests.size_bytes) ||
+    value.device_tests.size_bytes < 1 ||
+    !HASH.test(value.device_tests.sha256) ||
     value.builder.repository !== TRUSTED_REPOSITORY ||
     typeof value.builder.workflow_ref !== "string" ||
     !value.builder.workflow_ref.startsWith(
@@ -106,19 +133,25 @@ export function validateDeviceReleaseProvenance(value, candidate) {
   return Object.freeze({
     source_commit: value.source_commit,
     binary: Object.freeze({ ...value.binary }),
+    device_tests: Object.freeze({ ...value.device_tests }),
     builder: Object.freeze({ ...value.builder }),
   });
 }
 
 async function run() {
-  const [binaryPath, outputPath] = process.argv.slice(2);
-  if (binaryPath === undefined || outputPath === undefined) {
+  const [binaryPath, deviceTestsPath, outputPath] = process.argv.slice(2);
+  if (
+    binaryPath === undefined ||
+    deviceTestsPath === undefined ||
+    outputPath === undefined
+  ) {
     throw new Error(
-      "Usage: device-release-provenance.mjs <binary-path> <output-path>",
+      "Usage: device-release-provenance.mjs <binary-path> <device-tests-path> <output-path>",
     );
   }
   const provenance = await createDeviceReleaseProvenance({
     binaryPath: resolve(binaryPath),
+    deviceTestsPath: resolve(deviceTestsPath),
     sourceCommit: process.env.GITHUB_SHA ?? "",
     repository: process.env.GITHUB_REPOSITORY ?? "",
     workflowRef: process.env.GITHUB_WORKFLOW_REF ?? "",

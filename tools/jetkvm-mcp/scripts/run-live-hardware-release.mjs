@@ -617,18 +617,22 @@ export async function validateReleaseDeviceBinary({
   candidate,
   binaryPath,
   expectedSha256,
+  deviceTestsPath,
   provenancePath,
+  expectedDeviceTestsSha256,
   expectedProvenanceSha256,
   command = runCommand,
 }) {
   if (
     !/^[a-f0-9]{64}$/u.test(expectedSha256) ||
+    !/^[a-f0-9]{64}$/u.test(expectedDeviceTestsSha256) ||
     !/^[a-f0-9]{64}$/u.test(expectedProvenanceSha256)
   ) {
     throw new Error("Device release artifact checksum is invalid.");
   }
-  const [facts, provenanceFacts] = await Promise.all([
+  const [facts, deviceTestFacts, provenanceFacts] = await Promise.all([
     lstat(binaryPath),
+    lstat(deviceTestsPath),
     lstat(provenancePath),
   ]);
   if (
@@ -636,6 +640,10 @@ export async function validateReleaseDeviceBinary({
     facts.isSymbolicLink() ||
     facts.size < 1 ||
     (facts.mode & 0o022) !== 0 ||
+    !deviceTestFacts.isFile() ||
+    deviceTestFacts.isSymbolicLink() ||
+    deviceTestFacts.size < 1 ||
+    (deviceTestFacts.mode & 0o022) !== 0 ||
     !provenanceFacts.isFile() ||
     provenanceFacts.isSymbolicLink() ||
     provenanceFacts.size < 1 ||
@@ -644,13 +652,16 @@ export async function validateReleaseDeviceBinary({
     throw new Error("Device release artifact is not a protected regular file.");
   }
   const revision = candidate.source.commit_sha;
-  const [binaryInspection, provenanceSha256] = await Promise.all([
-    inspectStampedDeviceBinary(binaryPath, revision),
-    sha256File(provenancePath),
-  ]);
+  const [binaryInspection, deviceTestsSha256, provenanceSha256] =
+    await Promise.all([
+      inspectStampedDeviceBinary(binaryPath, revision),
+      sha256File(deviceTestsPath),
+      sha256File(provenancePath),
+    ]);
   const actualSha256 = binaryInspection.sha256;
   if (
     actualSha256 !== expectedSha256 ||
+    deviceTestsSha256 !== expectedDeviceTestsSha256 ||
     provenanceSha256 !== expectedProvenanceSha256
   ) {
     throw new Error("Device release artifact checksum did not match.");
@@ -662,7 +673,10 @@ export async function validateReleaseDeviceBinary({
   if (
     provenance.binary.filename !== basename(binaryPath) ||
     provenance.binary.size_bytes !== facts.size ||
-    provenance.binary.sha256 !== actualSha256
+    provenance.binary.sha256 !== actualSha256 ||
+    provenance.device_tests.filename !== basename(deviceTestsPath) ||
+    provenance.device_tests.size_bytes !== deviceTestFacts.size ||
+    provenance.device_tests.sha256 !== deviceTestsSha256
   ) {
     throw new Error(
       "Device release provenance did not describe the reviewed binary.",
@@ -679,6 +693,7 @@ export async function validateReleaseDeviceBinary({
   return Object.freeze({
     size_bytes: facts.size,
     sha256: actualSha256,
+    device_tests_sha256: deviceTestsSha256,
     provenance_sha256: provenanceSha256,
     source_commit: revision,
     builder: provenance.builder,
@@ -826,10 +841,17 @@ async function run() {
   const deviceBinaryPath = resolve(
     requiredEnvironment("JETKVM_RELEASE_DEVICE_BINARY"),
   );
+  const deviceTestsPath = resolve(
+    requiredEnvironment("JETKVM_RELEASE_DEVICE_TESTS"),
+  );
   const deviceBinary = await validateReleaseDeviceBinary({
     candidate,
     binaryPath: deviceBinaryPath,
+    deviceTestsPath,
     expectedSha256: requiredEnvironment("JETKVM_RELEASE_DEVICE_BINARY_SHA256"),
+    expectedDeviceTestsSha256: requiredEnvironment(
+      "JETKVM_RELEASE_DEVICE_TESTS_SHA256",
+    ),
     provenancePath: resolve(
       requiredEnvironment("JETKVM_RELEASE_DEVICE_PROVENANCE"),
     ),
@@ -1013,6 +1035,7 @@ async function run() {
       );
       deviceTests = await runDeviceGoTests({
         target: rigEnv.KVM_PRIMARY,
+        deviceTestArchive: deviceTestsPath,
         environment: process.env,
         repoRoot: REPOSITORY_ROOT,
         artifactPath: deviceTestArtifact,

@@ -12,6 +12,7 @@ import {
 
 const FIXTURE_TARGET = "192.0.2.110";
 const FIXTURE_PROOF_REFERENCE = "/private/device-lease-proof.json";
+const FIXTURE_DEVICE_TESTS = "/private/device-tests.tar.gz";
 
 const metrics = ({
   revision = "abc123",
@@ -78,6 +79,7 @@ function harness({
 function runHarness(h, overrides = {}) {
   return runDeviceGoTests({
     target: FIXTURE_TARGET,
+    deviceTestArchive: FIXTURE_DEVICE_TESTS,
     environment: {
       [DEVICE_LEASE_PROOF_REFERENCE_ENV]: FIXTURE_PROOF_REFERENCE,
     },
@@ -97,11 +99,17 @@ test("reads identity, runs only the test-only command, rechecks, and flushes in 
   assert.deepEqual(result.before, result.after);
   assert.deepEqual(result.command, {
     executable: "./dev_deploy.sh",
-    args: ["-r", "<configured-target>", "--run-go-tests-only"],
+    args: [
+      "-r",
+      "<configured-target>",
+      "--run-go-tests-only",
+      "--device-tests-archive",
+      "<reviewed-device-tests>",
+    ],
   });
   assert.deepEqual(h.events, [
     `fetch:before:http://${FIXTURE_TARGET}/metrics`,
-    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only:/repo`,
+    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only --device-tests-archive ${FIXTURE_DEVICE_TESTS}:/repo`,
     `fetch:after:http://${FIXTURE_TARGET}/metrics`,
     "artifact:start:/artifact.json",
     "artifact:flushed",
@@ -110,6 +118,7 @@ test("reads identity, runs only the test-only command, rechecks, and flushes in 
   const persistedEvidence = JSON.stringify(h.artifactWriter.artifact);
   assert.equal(persistedEvidence.includes(FIXTURE_TARGET), false);
   assert.equal(persistedEvidence.includes(FIXTURE_PROOF_REFERENCE), false);
+  assert.equal(persistedEvidence.includes(FIXTURE_DEVICE_TESTS), false);
   assert.equal(h.fetchCalls[0].options.method, "GET");
   assert.deepEqual(h.fetchCalls[0].options.headers, { accept: "text/plain" });
   assert.ok(h.fetchCalls[0].options.signal instanceof AbortSignal);
@@ -158,6 +167,8 @@ test("uses the configured target for both metrics and the sole allowed argv", as
     "-r",
     "fixture-device.invalid",
     "--run-go-tests-only",
+    "--device-tests-archive",
+    FIXTURE_DEVICE_TESTS,
   ]);
   assert.equal(
     h.spawnCalls[0].args.some((argument) =>
@@ -181,6 +192,8 @@ test("accepts target configuration from the injected environment", async () => {
     "-r",
     "configured-device.invalid",
     "--run-go-tests-only",
+    "--device-tests-archive",
+    FIXTURE_DEVICE_TESTS,
   ]);
 });
 
@@ -359,7 +372,7 @@ test("spawn rejection fails closed without a postflight probe and flushes", asyn
   await assert.rejects(runHarness(h), /spawn unavailable/);
   assert.deepEqual(h.events, [
     `fetch:before:http://${FIXTURE_TARGET}/metrics`,
-    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only:/repo`,
+    `spawn:./dev_deploy.sh:-r ${FIXTURE_TARGET} --run-go-tests-only --device-tests-archive ${FIXTURE_DEVICE_TESTS}:/repo`,
     "artifact:start:/artifact.json",
     "artifact:flushed",
   ]);
@@ -496,7 +509,13 @@ test("redacts target, proof, and credential sentinels from persisted failures", 
   assert.equal(persistedEvidence.includes(credential), false);
   assert.deepEqual(h.artifactWriter.artifact.command, {
     executable: "./dev_deploy.sh",
-    args: ["-r", "<configured-target>", "--run-go-tests-only"],
+    args: [
+      "-r",
+      "<configured-target>",
+      "--run-go-tests-only",
+      "--device-tests-archive",
+      "<reviewed-device-tests>",
+    ],
   });
 });
 

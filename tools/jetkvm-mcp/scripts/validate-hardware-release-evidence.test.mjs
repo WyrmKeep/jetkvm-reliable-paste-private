@@ -148,7 +148,13 @@ function fixture() {
     finishedAt: "2026-07-14T00:01:00.000Z",
     command: {
       executable: "./dev_deploy.sh",
-      args: ["-r", "<configured-target>", "--run-go-tests-only"],
+      args: [
+        "-r",
+        "<configured-target>",
+        "--run-go-tests-only",
+        "--device-tests-archive",
+        "<reviewed-device-tests>",
+      ],
     },
     before: {
       revision: COMMIT,
