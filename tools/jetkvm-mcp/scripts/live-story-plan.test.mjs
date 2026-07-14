@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  CONTROLLED_TRACE_REPORT_PATHS,
   buildControlledReleaseEvidence,
   mergeControlledTraceReports,
   validateControlledReleaseEvidence,
@@ -65,42 +66,18 @@ test("materializes explicit coverage for all 18 canonical live stories", async (
 
 test("validates exact controlled evidence inventory, pass state, and hashes", async () => {
   const stories = await loadStories();
-  const [
-    branchMatrix,
-    storyE2e,
-    inputDisplayTraces,
-    powerSessionTraces,
-    transportSessionTraces,
-  ] = await Promise.all([
+  const [branchMatrix, storyE2e, ...traceReports] = await Promise.all([
     readFile(join(packageRoot, "reports", "branch-matrix.json"), "utf8").then(
       JSON.parse,
     ),
     readFile(join(packageRoot, "reports", "story-e2e.json"), "utf8").then(
       JSON.parse,
     ),
-    readFile(
-      join(packageRoot, "reports", "controlled-traces", "input-display.json"),
-      "utf8",
-    ).then(JSON.parse),
-    readFile(
-      join(packageRoot, "reports", "controlled-traces", "power-session.json"),
-      "utf8",
-    ).then(JSON.parse),
-    readFile(
-      join(
-        packageRoot,
-        "reports",
-        "controlled-traces",
-        "transport-session.json",
-      ),
-      "utf8",
-    ).then(JSON.parse),
+    ...CONTROLLED_TRACE_REPORT_PATHS.map((path) =>
+      readFile(resolve(packageRoot, path), "utf8").then(JSON.parse),
+    ),
   ]);
-  const executionTraces = mergeControlledTraceReports([
-    inputDisplayTraces,
-    powerSessionTraces,
-    transportSessionTraces,
-  ]);
+  const executionTraces = mergeControlledTraceReports(traceReports);
   const resolver = createExecutionEvidenceResolver({ branchMatrix, storyE2e });
   const plan = materializeLiveExecutionPlan(stories, resolver);
   const evidence = buildControlledReleaseEvidence({

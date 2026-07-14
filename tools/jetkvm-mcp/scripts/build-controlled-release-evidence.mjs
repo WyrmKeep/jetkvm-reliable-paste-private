@@ -8,6 +8,12 @@ import {
   sha256Canonical,
 } from "./release-evidence.mjs";
 
+export const CONTROLLED_TRACE_REPORT_PATHS = Object.freeze([
+  "reports/controlled-traces/input-display.json",
+  "reports/controlled-traces/power-session.json",
+  "reports/controlled-traces/transport-session.json",
+]);
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -328,9 +334,7 @@ async function run() {
     { materializeLiveExecutionPlan },
     branchMatrix,
     storyE2e,
-    inputDisplayTraces,
-    powerSessionTraces,
-    transportSessionTraces,
+    ...traceReports
   ] = await Promise.all([
     import("../dist/stories/manifest.js"),
     import("./live-story-plan.mjs"),
@@ -340,24 +344,11 @@ async function run() {
     readFile(resolve(packageRoot, "reports/story-e2e.json"), "utf8").then(
       JSON.parse,
     ),
-    readFile(
-      resolve(packageRoot, "reports/controlled-traces/input-display.json"),
-      "utf8",
-    ).then(JSON.parse),
-    readFile(
-      resolve(packageRoot, "reports/controlled-traces/power-session.json"),
-      "utf8",
-    ).then(JSON.parse),
-    readFile(
-      resolve(packageRoot, "reports/controlled-traces/transport-session.json"),
-      "utf8",
-    ).then(JSON.parse),
+    ...CONTROLLED_TRACE_REPORT_PATHS.map((path) =>
+      readFile(resolve(packageRoot, path), "utf8").then(JSON.parse),
+    ),
   ]);
-  const executionTraces = mergeControlledTraceReports([
-    inputDisplayTraces,
-    powerSessionTraces,
-    transportSessionTraces,
-  ]);
+  const executionTraces = mergeControlledTraceReports(traceReports);
   const stories = await loadAcceptanceStories(
     resolve(packageRoot, "dist/stories"),
   );

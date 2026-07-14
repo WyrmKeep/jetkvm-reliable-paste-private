@@ -15,6 +15,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  CONTROLLED_TRACE_REPORT_PATHS,
   mergeControlledTraceReports,
   validateControlledReleaseEvidence,
 } from "./build-controlled-release-evidence.mjs";
@@ -921,14 +922,11 @@ async function run() {
     resolve(PACKAGE_ROOT, "reports/story-e2e.json"),
   );
   const executionTraces = mergeControlledTraceReports(
-    await Promise.all([
-      readJson(
-        resolve(PACKAGE_ROOT, "reports/controlled-traces/input-display.json"),
+    await Promise.all(
+      CONTROLLED_TRACE_REPORT_PATHS.map((path) =>
+        readJson(resolve(PACKAGE_ROOT, path)),
       ),
-      readJson(
-        resolve(PACKAGE_ROOT, "reports/controlled-traces/power-session.json"),
-      ),
-    ]),
+    ),
   );
   if (
     (await sha256File(resolve(PACKAGE_ROOT, "reports/branch-matrix.json"))) !==

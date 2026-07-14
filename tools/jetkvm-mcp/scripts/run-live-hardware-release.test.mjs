@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { CONTROLLED_TRACE_REPORT_PATHS } from "./build-controlled-release-evidence.mjs";
 import * as liveReleaseModule from "./run-live-hardware-release.mjs";
 import { createDeviceReleaseProvenance } from "./device-release-provenance.mjs";
 import { buildDirectoryManifest, sha256File } from "./release-evidence.mjs";
@@ -19,6 +20,14 @@ import {
 
 const COMMIT = "a".repeat(40);
 const TREE = "b".repeat(40);
+
+test("loads every frozen controlled trace family", () => {
+  assert.deepEqual(CONTROLLED_TRACE_REPORT_PATHS, [
+    "reports/controlled-traces/input-display.json",
+    "reports/controlled-traces/power-session.json",
+    "reports/controlled-traces/transport-session.json",
+  ]);
+});
 
 test("binds a device artifact to its unique embedded source revision", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jetkvm-device-binary-"));
