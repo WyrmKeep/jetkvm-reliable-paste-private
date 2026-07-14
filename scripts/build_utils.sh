@@ -36,6 +36,39 @@ DOCKER_BUILD_CONTEXT_DIR=${DOCKER_BUILD_CONTEXT_DIR:-$(mktemp -d)}
 DOCKER_GO_CACHE_DIR=${DOCKER_GO_CACHE_DIR:-$(pwd)/.cache}
 
 BUILD_IN_DOCKER=${BUILD_IN_DOCKER:-false}
+BUILDKIT_VERSION=v0.2.5
+BUILDKIT_SHA256=0f1b6d59b746ca3c894561ba2ad7bc6358a5ae2bce1f053c6e4eebc14a8780fd
+
+function prepare_native_buildkit_archive() {
+    local compressed="${DOCKER_BUILD_CONTEXT_DIR}/buildkit.tar.zst"
+    local archive="${DOCKER_BUILD_CONTEXT_DIR}/buildkit.tar"
+    if ! command -v curl > /dev/null 2>&1; then
+        msg_err "Error: curl is required to prepare the native buildkit"
+        return 1
+    fi
+    if ! command -v unzstd > /dev/null 2>&1; then
+        msg_err "Error: unzstd is required to prepare the native buildkit"
+        return 1
+    fi
+    curl --fail --location --silent --show-error \
+        --output "${compressed}" \
+        "https://github.com/jetkvm/rv1106-system/releases/download/${BUILDKIT_VERSION}/buildkit.tar.zst" \
+        || return 1
+    if command -v sha256sum > /dev/null 2>&1; then
+        echo "${BUILDKIT_SHA256}  ${compressed}" | sha256sum --check - || return 1
+    elif command -v shasum > /dev/null 2>&1; then
+        echo "${BUILDKIT_SHA256}  ${compressed}" | shasum -a 256 --check - || return 1
+    else
+        msg_err "Error: sha256sum or shasum is required to verify the native buildkit"
+        return 1
+    fi
+    unzstd --long=31 --force "${compressed}" -o "${archive}" || return 1
+    rm -f "${compressed}"
+    tar -tf "${archive}" \
+        ./bin/arm-rockchip830-linux-uclibcgnueabihf-gcc > /dev/null \
+        || return 1
+}
+
 
 
 function prepare_docker_build_context() {
@@ -51,6 +84,7 @@ git config --global --add safe.directory /build
 exec $@
 EOF
     chmod +x "${DOCKER_BUILD_CONTEXT_DIR}/entrypoint.sh"
+    prepare_native_buildkit_archive || return 1
 }
 
 function build_docker_image() {
@@ -59,7 +93,7 @@ function build_docker_image() {
         exit
     fi
 
-    BUILD_ARGS="--build-arg BUILDPLATFORM=linux/amd64"
+    BUILD_ARGS=""
     if [ "$DOCKER_BUILD_DEBUG" = true ]; then
         BUILD_ARGS="$BUILD_ARGS --progress=plain --no-cache"
     fi
@@ -76,11 +110,18 @@ function build_docker_image() {
         msg_warn "Please consider installing Docker Engine from: https://docs.docker.com/engine/install/ubuntu/"
     fi
 
-    prepare_docker_build_context
+    prepare_docker_build_context || return 1
     pushd "${DOCKER_BUILD_CONTEXT_DIR}" > /dev/null
     msg_info "▶ Building docker image ..."
-    docker build $BUILD_ARGS -t ${DOCKER_BUILD_TAG} -f Dockerfile.build .
+    local build_status
+    if docker build $BUILD_ARGS -t "${DOCKER_BUILD_TAG}" -f Dockerfile.build .; then
+        build_status=0
+    else
+        build_status=$?
+    fi
     popd > /dev/null
+    rm -f "${DOCKER_BUILD_CONTEXT_DIR}/buildkit.tar"
+    return "${build_status}"
 }
 
 function do_make() {

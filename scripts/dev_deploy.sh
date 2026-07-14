@@ -162,6 +162,9 @@ if [ -z "$REMOTE_HOST" ]; then
     exit 1
 fi
 
+SOURCE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+SOURCE_REVISION=$(git rev-parse HEAD)
+
 # Check device connectivity before proceeding
 check_ping "${REMOTE_HOST}"
 check_ssh "${REMOTE_USER}" "${REMOTE_HOST}"
@@ -229,7 +232,7 @@ fi
 
 if [ "$RUN_GO_TESTS" = true ]; then
     msg_info "▶ Building go tests"
-    make build_dev_test
+    do_make build_dev_test BRANCH="${SOURCE_BRANCH}" REVISION="${SOURCE_REVISION}"
 
     msg_info "▶ Copying device-tests.tar.gz to remote host"
     sshdev "cat > /tmp/device-tests.tar.gz" < device-tests.tar.gz
@@ -273,6 +276,8 @@ if [ "$INSTALL_APP" = true ]
 then
 	msg_info "▶ Building release binary"
 	do_make build_release \
+    BRANCH="${SOURCE_BRANCH}" \
+    REVISION="${SOURCE_REVISION}" \
     SKIP_NATIVE_IF_EXISTS=${SKIP_NATIVE_BUILD} \
     SKIP_UI_BUILD=${SKIP_UI_BUILD_RELEASE} \
     ENABLE_SYNC_TRACE=${ENABLE_SYNC_TRACE}
@@ -285,6 +290,8 @@ then
 else
 	msg_info "▶ Building development binary"
 	do_make build_dev \
+    BRANCH="${SOURCE_BRANCH}" \
+    REVISION="${SOURCE_REVISION}" \
     SKIP_NATIVE_IF_EXISTS=${SKIP_NATIVE_BUILD} \
     SKIP_UI_BUILD=${SKIP_UI_BUILD_RELEASE} \
     ENABLE_SYNC_TRACE=${ENABLE_SYNC_TRACE}

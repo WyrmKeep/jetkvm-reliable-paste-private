@@ -1,7 +1,7 @@
-BRANCH    := $(shell git rev-parse --abbrev-ref HEAD)
+BRANCH    ?= $(shell git rev-parse --abbrev-ref HEAD)
 BUILDDATE := $(shell date -u +%FT%T%z)
 BUILDTS   := $(shell date -u +%s)
-REVISION  := $(shell git rev-parse HEAD)
+REVISION  ?= $(shell git rev-parse HEAD)
 VERSION := 0.5.5
 VERSION_DEV := $(VERSION)-dev$(shell date -u +%Y%m%d%H%M)
 
@@ -22,7 +22,7 @@ CMAKE_BUILD_TYPE ?= Release
 # Required for signing releases
 SIGNING_KEY_FPR ?=
 
-GO_BUILD_ARGS := -tags netgo,timetzdata,nomsgpack
+GO_BUILD_ARGS := -buildvcs=false -tags netgo,timetzdata,nomsgpack
 ifeq ($(ENABLE_SYNC_TRACE), 1)
 	GO_BUILD_ARGS := $(GO_BUILD_ARGS),synctrace
 endif
@@ -51,7 +51,7 @@ GO_CMD := $(GO_ARGS) go
 
 BIN_DIR := $(shell pwd)/bin
 
-TEST_DIRS := $(shell find . -name "*_test.go" -type f -exec dirname {} \; | sort -u)
+TEST_DIRS := $(shell go list -buildvcs=false -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
 
 test:
 	go test ./...
@@ -174,36 +174,36 @@ _build_dev_inner: build_native
 	$(GO_CMD) build \
 		-ldflags="$(GO_LDFLAGS) -X $(KVM_PKG_NAME).builtAppVersion=$(VERSION_DEV)" \
 		$(GO_RELEASE_BUILD_ARGS) \
-		-o $(BIN_DIR)/jetkvm_app -v cmd/main.go
+		-o "$(BIN_DIR)/jetkvm_app" -v cmd/main.go
 
 build_test2json:
-	$(GO_CMD) build -o $(BIN_DIR)/test2json cmd/test2json
+	$(GO_CMD) build $(GO_BUILD_ARGS) -o "$(BIN_DIR)/test2json" cmd/test2json
 
 build_gotestsum:
 	@echo "Building gotestsum..."
 	$(GO_CMD) install gotest.tools/gotestsum@latest
-	cp $(shell $(GO_CMD) env GOPATH)/bin/linux_arm/gotestsum $(BIN_DIR)/gotestsum
+	cp "$(shell $(GO_CMD) env GOPATH)/bin/linux_arm/gotestsum" "$(BIN_DIR)/gotestsum"
 
 build_dev_test: build_test2json build_gotestsum
 # collect all directories that contain tests
 	@echo "Building tests for devices ..."
-	@rm -rf $(BIN_DIR)/tests && mkdir -p $(BIN_DIR)/tests
+	@rm -rf "$(BIN_DIR)/tests" && mkdir -p "$(BIN_DIR)/tests"
 
-	@cat resource/dev_test.sh > $(BIN_DIR)/tests/run_all_tests
-	@for test in $(TEST_DIRS); do \
-		test_pkg_name=$$(echo $$test | sed 's/^.\///g'); \
-		test_pkg_full_name=$(KVM_PKG_NAME)/$$(echo $$test | sed 's/^.\///g'); \
-		test_filename=$$(echo $$test_pkg_name | sed 's/\//__/g')_test; \
+	@cat resource/dev_test.sh > "$(BIN_DIR)/tests/run_all_tests"
+	@set -e; for test in $(TEST_DIRS); do \
+		test_pkg_full_name=$$test; \
+		test_pkg_name=$$(echo "$$test" | sed 's|^$(KVM_PKG_NAME)/||'); \
+		test_filename=$$(echo "$$test_pkg_name" | sed 's|/|__|g')_test; \
 		$(GO_CMD) test -v \
 			-ldflags="$(GO_LDFLAGS) -X $(KVM_PKG_NAME).builtAppVersion=$(VERSION_DEV)" \
 			$(GO_BUILD_ARGS) \
-			-c -o $(BIN_DIR)/tests/$$test_filename $$test; \
-		echo "runTest ./$$test_filename $$test_pkg_full_name" >> $(BIN_DIR)/tests/run_all_tests; \
+			-c -o "$(BIN_DIR)/tests/$$test_filename" "$$test"; \
+		echo "runTest ./$$test_filename $$test_pkg_full_name" >> "$(BIN_DIR)/tests/run_all_tests"; \
 	done; \
-	chmod +x $(BIN_DIR)/tests/run_all_tests; \
-	cp $(BIN_DIR)/test2json $(BIN_DIR)/tests/ && chmod +x $(BIN_DIR)/tests/test2json; \
-	cp $(BIN_DIR)/gotestsum $(BIN_DIR)/tests/ && chmod +x $(BIN_DIR)/tests/gotestsum; \
-	tar czfv device-tests.tar.gz -C $(BIN_DIR)/tests .
+	chmod +x "$(BIN_DIR)/tests/run_all_tests"; \
+	cp "$(BIN_DIR)/test2json" "$(BIN_DIR)/tests/" && chmod +x "$(BIN_DIR)/tests/test2json"; \
+	cp "$(BIN_DIR)/gotestsum" "$(BIN_DIR)/tests/" && chmod +x "$(BIN_DIR)/tests/gotestsum"; \
+	tar czfv device-tests.tar.gz -C "$(BIN_DIR)/tests" .
 
 frontend:
 	@if [ "$(SKIP_UI_BUILD)" = "1" ] && [ -f "static/index.html" ]; then \
