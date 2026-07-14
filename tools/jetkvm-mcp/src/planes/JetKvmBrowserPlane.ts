@@ -10,11 +10,13 @@ import {
 import {
   DeviceRpcError,
   isCanonicalOpaqueId,
+  parseAtxWireReceipt,
   validateDeviceRpcBindingReplacement,
   type AtxWireReceipt,
   type CachedDisplayState,
   type Deadline,
   type DeviceRpcAdapter,
+  type DeviceRpcErrorCode,
   type DeviceRpcBinding,
   type NativeResolution,
   type NativeSignal,
@@ -264,6 +266,7 @@ export function expandKeyboardActions(
 interface PlaneState {
   readonly ref: SessionRef;
   readonly binding: DeviceRpcBinding;
+  readonly controllerIdentity: object;
   snapshot: AutomationSnapshot;
   lastFrameSequence: number;
 }
@@ -366,6 +369,15 @@ function bindingsEqual(
     left.browserChannelGeneration === right.browserChannelGeneration
   );
 }
+const ATX_DEVICE_ERROR_CODES = new Set<DeviceRpcErrorCode>([
+  "ATX_EXTENSION_INACTIVE",
+  "ATX_SERIAL_UNAVAILABLE",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+  "STALE_SESSION_GENERATION",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "CONFIG_INVALID",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
+]);
 
 function remapOperationError(
   error: BrowserPlaneError,
@@ -443,6 +455,7 @@ export class JetKvmBrowserPlane implements BrowserPlane {
   private readonly heldKeys = new Set<PhysicalKey>();
   private readonly heldKeyAutoReleaseAtMs = new Map<PhysicalKey, number>();
   private current: PlaneState | null = null;
+  private previous: PlaneState | null = null;
   private gateClosed = false;
   private releaseAttempted = false;
   private pasteActive = false;
@@ -478,24 +491,15 @@ export class JetKvmBrowserPlane implements BrowserPlane {
         binding: DeviceRpcBinding,
         deadline: Deadline,
       ): Promise<QualifiedEdidRead> => plane.readEdid(binding, deadline),
-      performAtx: async (
+      performAtx: (
         binding: DeviceRpcBinding,
-        _request: {
+        request: {
           readonly requestId: string;
           readonly action: "press_power" | "hold_power" | "press_reset";
         },
         deadline: Deadline,
-      ): Promise<AtxWireReceipt> => {
-        plane.assertDeviceBinding(binding);
-        plane.assertDeviceDeadline(deadline, 60_000);
-        throw new DeviceRpcError(
-          "INCOMPATIBLE_DOWNSTREAM",
-          "admission",
-          "not_sent",
-          false,
-          false,
-        );
-      },
+      ): Promise<AtxWireReceipt> =>
+        plane.performAtx(binding, request, deadline),
     });
   }
 
@@ -523,6 +527,30 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     deadline: Deadline,
   ): Promise<BrowserConnection> {
     return this.publishConnection(ref, deadline, true);
+  }
+
+  public async observeSession(ref: SessionRef, deadline: Deadline) {
+    const state = await this.preflight(ref, deadline, true, true);
+    const snapshot = state.snapshot;
+    return {
+      deviceReachable: true,
+      setupState: "complete" as const,
+      authMode: "unknown" as const,
+      lifecycleState: "ready" as const,
+      webRtc: snapshot.rpc_ready ? ("connected" as const) : ("unknown" as const),
+      hid: snapshot.hid_ready ? ("ready" as const) : ("not_ready" as const),
+      decodedVideo:
+        snapshot.video_ready &&
+        snapshot.source_width !== null &&
+        snapshot.source_height !== null
+          ? ("ready" as const)
+          : ("unavailable" as const),
+      dispatchGeneration: snapshot.dispatch_generation,
+      activeMutation: this.pasteActive,
+      blockedReason: this.gateClosed ? "session_drained" : null,
+      uiContractVersion: String(snapshot.version),
+      firmwareVersion: null,
+    };
   }
 
   public async capture(
@@ -900,6 +928,8 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     this.gateClosed = true;
     this.observations.clear();
     this.clearHeldKeys();
+    this.previous = this.current;
+    this.current = null;
     await this.controller.close(deadline);
   }
 
@@ -909,14 +939,31 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     replacing: boolean,
   ): Promise<BrowserConnection> {
     this.assertDeadline(deadline);
+    const previous = replacing
+      ? (this.current ?? this.previous)
+      : this.current;
+    if (replacing) {
+      if (previous === null) {
+        throw admissionFailure(
+          "STALE_SESSION_GENERATION",
+          "reconnect_then_capture",
+        );
+      }
+      this.previous = previous;
+      this.current = null;
+      this.gateClosed = true;
+      this.observations.clear();
+      this.clearHeldKeys();
+      await this.controller.reconnect(deadline);
+    }
     const snapshot = await this.controller.snapshot(deadline);
     this.assertReady(snapshot);
-    const previous = this.current;
     const sameSessionLineage =
       previous !== null && previous.binding.sessionId === ref.sessionId;
     if (
       replacing &&
       sameSessionLineage &&
+      this.controller.connectionIdentity() === previous.controllerIdentity &&
       snapshot.channel_generation === previous.snapshot.channel_generation
     ) {
       throw admissionFailure("CONNECTION_LOST", "reconnect_then_capture");
@@ -941,19 +988,20 @@ export class JetKvmBrowserPlane implements BrowserPlane {
         connectionEpoch,
         browserChannelGeneration,
       }),
+      controllerIdentity: this.controller.connectionIdentity(),
       snapshot,
       lastFrameSequence: 0,
     };
-    if (replacing && this.current !== null) {
+    if (replacing && previous !== null) {
       try {
-        validateDeviceRpcBindingReplacement(this.current.binding, next.binding);
+        validateDeviceRpcBindingReplacement(previous.binding, next.binding);
       } catch {
         throw admissionFailure(
           "STALE_SESSION_GENERATION",
           "reconnect_then_capture",
         );
       }
-    } else if (replacing && this.current === null) {
+    } else if (replacing) {
       throw admissionFailure(
         "STALE_SESSION_GENERATION",
         "reconnect_then_capture",
@@ -964,6 +1012,7 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     this.gateClosed = false;
     this.releaseAttempted = false;
     this.current = next;
+    this.previous = null;
     return this.connection(next);
   }
 
@@ -1442,6 +1491,52 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     return this.mapEdid(parsed.data, result.acknowledged_at);
   }
 
+  private async performAtx(
+    binding: DeviceRpcBinding,
+    request: {
+      readonly requestId: string;
+      readonly action: "press_power" | "hold_power" | "press_reset";
+    },
+    deadline: Deadline,
+  ): Promise<AtxWireReceipt> {
+    this.assertDeviceBinding(binding);
+    this.assertDeviceDeadline(deadline, 60_000);
+    if (!isCanonicalOpaqueId(request.requestId)) {
+      throw new DeviceRpcError(
+        "INVALID_REQUEST",
+        "admission",
+        "not_sent",
+        false,
+        false,
+      );
+    }
+    const current = this.requireCurrent();
+    const expected = current.binding;
+    const bridgeSnapshot = current.snapshot;
+    let result: ReadBridgeResult;
+    try {
+      result = await this.controller.performAtx(
+        {
+          operation_id: request.requestId,
+          expected_lifecycle_generation: bridgeSnapshot.lifecycle_generation,
+          expected_channel_generation: bridgeSnapshot.channel_generation,
+          timeout_ms: deadline.timeoutMs,
+          request_id: request.requestId,
+          action: request.action,
+        },
+        deadline,
+      );
+    } catch (error) {
+      throw this.deviceReadError(error, expected);
+    }
+    this.assertDeviceBindingAfterAwait(binding, expected);
+    try {
+      return parseAtxWireReceipt(result.result, request);
+    } catch {
+      throw this.malformedDeviceRead();
+    }
+  }
+
   private assertDeviceBindingAfterAwait(
     requested: DeviceRpcBinding,
     expectedObject: DeviceRpcBinding,
@@ -1477,17 +1572,22 @@ export class JetKvmBrowserPlane implements BrowserPlane {
             : error.boundary === "send"
               ? "send"
               : "ack";
+      const qualifiedAtxCode =
+        ATX_DEVICE_ERROR_CODES.has(error.code as DeviceRpcErrorCode)
+          ? (error.code as DeviceRpcErrorCode)
+          : null;
       const code = replaced
         ? "BINDING_REPLACED"
-        : error.code === "EDID_READ_FAILED"
-          ? "EDID_READ_FAILED"
-          : error.code === "CANCELLED"
-            ? "CANCELLED"
-            : error.code === "DEADLINE_EXCEEDED"
-              ? "DEADLINE_EXCEEDED"
-              : error.code === "DOWNSTREAM_MALFORMED_RESPONSE"
-                ? "MALFORMED_RESPONSE"
-                : "CONNECTION_LOST";
+        : qualifiedAtxCode ??
+          (error.code === "EDID_READ_FAILED"
+            ? "EDID_READ_FAILED"
+            : error.code === "CANCELLED"
+              ? "CANCELLED"
+              : error.code === "DEADLINE_EXCEEDED"
+                ? "DEADLINE_EXCEEDED"
+                : error.code === "DOWNSTREAM_MALFORMED_RESPONSE"
+                  ? "MALFORMED_RESPONSE"
+                  : "CONNECTION_LOST");
       return new DeviceRpcError(
         code,
         boundary,

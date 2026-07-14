@@ -325,6 +325,7 @@ function isInputGenerationClosed(
 
 function closeInputGeneration(
   sessions: DeviceSessionClient,
+  principal: string,
   input: ParsedInput,
 ): void {
   let generations = CLOSED_GENERATION_BY_SESSION_CLIENT.get(sessions);
@@ -333,6 +334,10 @@ function closeInputGeneration(
     CLOSED_GENERATION_BY_SESSION_CLIENT.set(sessions, generations);
   }
   generations.set(input.session_id, input.session_generation);
+  sessions.markGenerationDrained(principal, {
+    sessionId: input.session_id,
+    sessionGeneration: input.session_generation,
+  });
 }
 
 function closedGenerationFailure(): MutationFailure {
@@ -456,6 +461,7 @@ function mutationErrorResult(
 
 function resolveMutationSession(
   dependencies: InputHandlerDependencies,
+  tool: InputTool,
   context: JetKvmHandlerContext,
   input: ParsedInput,
 ): DeviceSessionSnapshot | MutationFailure {
@@ -471,10 +477,14 @@ function resolveMutationSession(
     };
   }
   try {
-    return dependencies.sessions.resolveSession(context.principalId, {
-      sessionId: input.session_id,
-      sessionGeneration: input.session_generation,
-    });
+    return dependencies.sessions.resolveSession(
+      context.principalId,
+      {
+        sessionId: input.session_id,
+        sessionGeneration: input.session_generation,
+      },
+      { allowDrained: tool === "jetkvm_input_release" },
+    );
   } catch (error) {
     if (error instanceof DeviceSessionClientError) {
       return {
@@ -1260,7 +1270,7 @@ async function executeInputMutation(
     context.signal,
     dependencies.clock,
   );
-  const resolved = resolveMutationSession(dependencies, context, input);
+  const resolved = resolveMutationSession(dependencies, tool, context, input);
   if (isMutationFailure(resolved)) {
     return mutationErrorResult(
       tool,
@@ -1404,7 +1414,7 @@ async function executeInputMutation(
   } catch (error) {
     const failure = planeMutationFailure(tool, input, error);
     if (tool === "jetkvm_input_release" && failure.outcome !== "not_sent") {
-      closeInputGeneration(dependencies.sessions, input);
+      closeInputGeneration(dependencies.sessions, context.principalId!, input);
     }
     return failure.outcome === "not_sent"
       ? releaseNotSentReservation(
@@ -1429,7 +1439,7 @@ async function executeInputMutation(
         );
   }
   if (tool === "jetkvm_input_release") {
-    closeInputGeneration(dependencies.sessions, input);
+    closeInputGeneration(dependencies.sessions, context.principalId!, input);
   }
   if (!validateMutationReceipt(tool, input, receipt)) {
     return persistedFailureResult(

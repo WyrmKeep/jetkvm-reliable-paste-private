@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   BrowserConnection,
   BrowserPlane,
+  ReleaseReceipt,
 } from "../planes/BrowserPlane.js";
 import type {
   CapabilitySnapshot,
@@ -72,7 +73,7 @@ class FakeScheduler implements DeviceSessionScheduler {
 }
 
 type BrowserEvent = {
-  kind: "connect" | "reconnect" | "close";
+  kind: "connect" | "reconnect" | "release" | "close";
   ref: SessionRef;
   deadline: Deadline;
 };
@@ -94,6 +95,7 @@ class FakeBrowserPlane implements BrowserPlane {
   holdReconnect = false;
   advanceReconnectEvidence = true;
   rejectClose: Error | null = null;
+  rejectRelease: Error | null = null;
   connectFailure: Error | null = null;
   reconnectFailure: Error | null = null;
   afterConnect: (() => void) | null = null;
@@ -157,8 +159,31 @@ class FakeBrowserPlane implements BrowserPlane {
     throw new Error("unexpected paste");
   }
 
-  async release(): Promise<never> {
-    throw new Error("unexpected release");
+  async release(
+    ref: SessionRef,
+    request: { readonly requestId: string },
+    deadline: Deadline,
+  ): Promise<ReleaseReceipt> {
+    this.events.push({ kind: "release", ref, deadline });
+    if (this.rejectRelease !== null) {
+      throw this.rejectRelease;
+    }
+    return {
+      requestId: request.requestId,
+      outcome: "applied",
+      verification: "device_state_verified",
+      dispatchedCount: 1,
+      completedCount: 1,
+      acknowledgedAt: "2026-07-14T00:00:00.000Z",
+      mutationGateClosed: true,
+      deferredProducersJoined: true,
+      pasteTerminal: "inactive",
+      ordinaryLeasesZero: true,
+      keyboardZero: true,
+      pointerZero: true,
+      generationDrained: true,
+      heldKeys: [],
+    };
   }
 
   #connection(ref: SessionRef): BrowserConnection {
@@ -336,6 +361,35 @@ describe("DeviceSessionClient", () => {
     expect(snapshot.capabilities).toEqual(ALL_CAPABILITIES);
     expect(Object.isFrozen(snapshot.permissions)).toBe(true);
     expect(Object.isFrozen(snapshot.capabilities)).toBe(true);
+  });
+
+  it("retains ownership while exposing a generation as drained after release", async () => {
+    const { client } = makeClient();
+    const connected = await client.connect("principal-a", connectInput());
+
+    expect(client.markGenerationDrained("principal-a", connected.ref)).toBe(
+      true,
+    );
+    expect(client.inspectSession("principal-a", connected.ref)).toMatchObject({
+      ref: connected.ref,
+      state: "drained",
+      active: true,
+      inputDrained: true,
+      capabilities: ALL_CAPABILITIES,
+    });
+    await expectClientError(
+      Promise.resolve().then(() =>
+        client.resolveSession("principal-a", connected.ref),
+      ),
+      "SESSION_DRAINED",
+    );
+    await expectClientError(
+      client.connect(
+        "principal-b",
+        connectInput({ request_id: "connect-request-2" }),
+      ),
+      "CONTROL_BUSY",
+    );
   });
 
   it("replaces authorization snapshots atomically with the reconnected generation", async () => {
@@ -616,7 +670,7 @@ describe("DeviceSessionClient", () => {
     );
   });
 
-  it("plumbs authorized takeover by closing the incumbent before publishing the successor", async () => {
+  it("quiesces and closes the incumbent before publishing a takeover successor", async () => {
     const { client, browser } = makeClient({
       permissions: [...BASE_PERMISSIONS, "session.takeover"],
     });
@@ -631,6 +685,7 @@ describe("DeviceSessionClient", () => {
       browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
     ).toEqual([
       "connect:app-session-1",
+      "release:app-session-1",
       "close:app-session-1",
       "connect:app-session-2",
     ]);
@@ -642,6 +697,35 @@ describe("DeviceSessionClient", () => {
       "SESSION_TAKEN_OVER",
     );
     expect(error.outcome).toBe("not_sent");
+  });
+
+  it("does not grant takeover when incumbent quiesce is unacknowledged", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({
+      browser,
+      permissions: [...BASE_PERMISSIONS, "session.takeover"],
+    });
+    const incumbent = await client.connect("principal-a", connectInput());
+    browser.rejectRelease = new Error("release acknowledgement lost");
+
+    const error = await expectClientError(
+      client.connect(
+        "principal-b",
+        connectInput({ request_id: "connect-request-2", takeover: true }),
+      ),
+      "CONNECTION_LOST",
+    );
+
+    expect(error.outcome).toBe("unknown");
+    expect(
+      browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
+    ).toEqual(["connect:app-session-1", "release:app-session-1"]);
+    await expectClientError(
+      Promise.resolve().then(() =>
+        client.resolveSession("principal-a", incumbent.ref),
+      ),
+      "SESSION_DRAINED",
+    );
   });
 
   it("never republishes the incumbent when takeover cleanup fails", async () => {
@@ -665,7 +749,7 @@ describe("DeviceSessionClient", () => {
       Promise.resolve().then(() =>
         client.resolveSession("principal-a", incumbent.ref),
       ),
-      "SESSION_TAKEN_OVER",
+      "SESSION_DRAINED",
     );
     expect(
       browser.events.filter((event) => event.kind === "connect"),
@@ -698,7 +782,11 @@ describe("DeviceSessionClient", () => {
 
     expect(
       browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
-    ).toEqual(["connect:app-session-1", "close:app-session-1"]);
+    ).toEqual([
+      "connect:app-session-1",
+      "release:app-session-1",
+      "close:app-session-1",
+    ]);
   });
 
   it("retains unknown after takeover starts even when cleanup reports not_sent", async () => {
@@ -755,7 +843,11 @@ describe("DeviceSessionClient", () => {
     );
     expect(
       browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
-    ).toEqual(["connect:app-session-1", "close:app-session-1"]);
+    ).toEqual([
+      "connect:app-session-1",
+      "release:app-session-1",
+      "close:app-session-1",
+    ]);
 
     browser.rejectClose = null;
     const recovered = await client.connect(
@@ -768,6 +860,7 @@ describe("DeviceSessionClient", () => {
       browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
     ).toEqual([
       "connect:app-session-1",
+      "release:app-session-1",
       "close:app-session-1",
       "close:app-session-1",
       "connect:app-session-2",
@@ -844,6 +937,7 @@ describe("DeviceSessionClient", () => {
     expect(retried.result.outcome).toBe("applied");
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
+      "release",
       "close",
       "reconnect",
     ]);
@@ -876,6 +970,7 @@ describe("DeviceSessionClient", () => {
     });
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
+      "release",
       "close",
       "reconnect",
     ]);
@@ -1003,8 +1098,10 @@ describe("DeviceSessionClient", () => {
       browser.events.map((event) => `${event.kind}:${event.ref.sessionId}`),
     ).toEqual([
       "connect:app-session-1",
+      "release:app-session-1",
       "close:app-session-1",
       "connect:app-session-2",
+      "release:app-session-2",
       "close:app-session-2",
       "reconnect:app-session-1",
     ]);
@@ -1077,6 +1174,7 @@ describe("DeviceSessionClient", () => {
     expect(browser.deviceRpc).not.toBe(oldAdapter);
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
+      "release",
       "close",
       "reconnect",
       "close",
@@ -1212,6 +1310,7 @@ describe("DeviceSessionClient", () => {
     expect(capabilityProbes).toBe(2);
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
+      "release",
       "close",
       "reconnect",
       "close",
@@ -1329,7 +1428,7 @@ describe("DeviceSessionClient", () => {
     );
   });
 
-  it("closes a newly opened browser connection when post-connect qualification fails", async () => {
+  it("publishes an opened connection with device-only verification when the capability post-read fails", async () => {
     const browser = new FakeBrowserPlane();
     const { client } = makeClient({
       browser,
@@ -1338,15 +1437,62 @@ describe("DeviceSessionClient", () => {
       },
     });
 
-    const error = await expectClientError(
-      client.connect("principal-a", connectInput()),
-      "CONNECTION_LOST",
+    const connected = await client.connect("principal-a", connectInput());
+    const replay = await client.connect("principal-a", connectInput());
+
+    expect(connected.result).toMatchObject({
+      outcome: "applied",
+      verification: "device_ack_only",
+      capabilities: Object.fromEntries(
+        Object.keys(ALL_CAPABILITIES).map((capability) => [capability, false]),
+      ),
+    });
+    expect(replay.result.outcome).toBe("already_applied");
+    expect(client.resolveSession("principal-a", connected.ref).state).toBe(
+      "ready",
+    );
+    expect(browser.events.map((event) => event.kind)).toEqual(["connect"]);
+  });
+
+  it("publishes a reconnect successor with device-only verification when its post-read fails", async () => {
+    let probes = 0;
+    const { client, browser } = makeClient({
+      capabilitiesForConnection: async () => {
+        probes += 1;
+        if (probes === 2) throw new Error("reconnect capability probe failed");
+        return ALL_CAPABILITIES;
+      },
+    });
+    const connected = await client.connect("principal-a", connectInput());
+
+    const reconnected = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+    const replay = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
     );
 
-    expect(error.outcome).toBe("unknown");
+    expect(reconnected.result).toMatchObject({
+      outcome: "applied",
+      verification: "device_ack_only",
+      new_session_generation: 2,
+      fresh_capture_required: true,
+    });
+    expect(replay.result.outcome).toBe("already_applied");
+    expect(
+      client.resolveSession("principal-a", reconnected.ref).capabilities,
+    ).toEqual(
+      Object.fromEntries(
+        Object.keys(ALL_CAPABILITIES).map((capability) => [capability, false]),
+      ),
+    );
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
+      "release",
       "close",
+      "reconnect",
     ]);
   });
 
@@ -1359,14 +1505,17 @@ describe("DeviceSessionClient", () => {
       permissions: [...BASE_PERMISSIONS, "session.takeover"],
       capabilitiesForConnection: async () => {
         if (rejectCapabilities) {
-          throw new DeviceSessionPlaneError("DEVICE_UNREACHABLE", "not_sent");
+          throw new DeviceSessionPlaneError(
+            "DOWNSTREAM_MALFORMED_RESPONSE",
+            "not_sent",
+          );
         }
         return ALL_CAPABILITIES;
       },
     });
     const cleanupFailure = await expectClientError(
       client.connect("principal-a", connectInput()),
-      "DEVICE_UNREACHABLE",
+      "DOWNSTREAM_MALFORMED_RESPONSE",
     );
     expect(cleanupFailure.outcome).toBe("unknown");
     await expectClientError(
@@ -1406,6 +1555,7 @@ describe("DeviceSessionClient", () => {
     ).toEqual([
       "connect:app-session-1",
       "close:app-session-1",
+      "release:app-session-1",
       "close:app-session-1",
       "connect:app-session-2",
     ]);
@@ -1581,7 +1731,10 @@ describe("DeviceSessionClient", () => {
       capabilitiesForConnection: async () => {
         if (failQualification) {
           failQualification = false;
-          throw new DeviceSessionPlaneError("DEVICE_UNREACHABLE", "not_sent");
+          throw new DeviceSessionPlaneError(
+            "DOWNSTREAM_MALFORMED_RESPONSE",
+            "not_sent",
+          );
         }
         return ALL_CAPABILITIES;
       },
@@ -1589,7 +1742,7 @@ describe("DeviceSessionClient", () => {
 
     const failure = await expectClientError(
       client.connect("principal-a", connectInput()),
-      "DEVICE_UNREACHABLE",
+      "DOWNSTREAM_MALFORMED_RESPONSE",
     );
     expect(failure.outcome).toBe("not_sent");
     expect(browser.events.map((event) => event.kind)).toEqual([
@@ -1649,7 +1802,10 @@ describe("DeviceSessionClient", () => {
       capabilitiesForConnection: async () => {
         if (failQualification) {
           failQualification = false;
-          throw new Error("qualification failed");
+          throw new DeviceSessionPlaneError(
+            "DOWNSTREAM_MALFORMED_RESPONSE",
+            "unknown",
+          );
         }
         return ALL_CAPABILITIES;
       },
@@ -1673,7 +1829,10 @@ describe("DeviceSessionClient", () => {
     );
 
     cleanup.resolve();
-    const oldFailure = await expectClientError(oldAttempt, "CONNECTION_LOST");
+    const oldFailure = await expectClientError(
+      oldAttempt,
+      "DOWNSTREAM_MALFORMED_RESPONSE",
+    );
     expect(oldFailure.outcome).toBe("unknown");
     const connected = await successor;
 
@@ -1852,6 +2011,35 @@ describe("DeviceSessionClient", () => {
     const error = await expectClientError(pending, "DEADLINE_EXCEEDED");
     expect(error.outcome).toBe("unknown");
     expect(browser.lastConnectSignal?.aborted).toBe(true);
+  });
+
+  it("preserves deadline provenance when a plane translates its aborted wait", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.holdConnect = true;
+    const originalConnect = browser.connect.bind(browser);
+    browser.connect = async (ref, deadline) => {
+      try {
+        return await originalConnect(ref, deadline);
+      } catch {
+        throw new DeviceSessionPlaneError("CANCELLED", "not_sent", false, "none");
+      }
+    };
+    const scheduler = new FakeScheduler();
+    const { client } = makeClient({ browser, scheduler });
+
+    const pending = client.connect(
+      "principal-a",
+      connectInput({ timeout_ms: 100 }),
+    );
+    await waitForBrowserAdmission(browser);
+    scheduler.advance(100);
+
+    await expect(pending).rejects.toMatchObject({
+      code: "DEADLINE_EXCEEDED",
+      outcome: "unknown",
+      safeToRetry: false,
+      requiredNextStep: "inspect_device_state_before_retry",
+    });
   });
 
   it("closing and reopening an SSE carrier cannot mint, steal, or transfer ownership", async () => {

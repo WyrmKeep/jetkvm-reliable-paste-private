@@ -4,16 +4,17 @@ Computer-use MCP server for one operator-configured JetKVM per process.
 
 ## Implementation status
 
-The current `0.1.0` source tree contains the reviewed Phase 1 safety foundation, Phase 2 public contracts, and the Phase 3 input/display implementation:
+The current `0.1.0` source tree contains the reviewed Phase 1 safety foundation, Phase 2 public contracts, the Phase 3 input/display implementation, and the Phase 4 power/session composition:
 
 - the exact ten-tool catalogue and generated JSON Schemas;
 - transport-independent application sessions, request-id ledger, and a generation-fenced `DeviceRpcAdapter`;
 - capability-shaped browser/native interfaces plus deterministic test-only fake and sanitized replay seams;
 - MCP SDK 1.29 stdio and opt-in legacy HTTP/SSE protocol adapters;
-- a strict 24-story acceptance manifest and execution-produced Phase 3 assertion gate; and
-- implemented and focused-tested display capture/status, mouse, physical keyboard, Reliable Paste, and emergency input release handlers.
+- a strict 24-story acceptance manifest with execution-produced focused-assertion gates;
+- implemented display capture/status, mouse, physical keyboard, Reliable Paste, emergency input release, session, and power handlers; and
+- a first-party CLI that creates the managed browser/native planes, validates the operator configuration before device contact, registers all ten handlers atomically, and serves MCP over stdio while a device-keyed lease is held.
 
-Phase 3 input/display implementation is present and tested, but the all-ten production registry remains inactive until the Phase 4 power/session handlers and Phase 5 composition gate are complete. `createMcpServer({})` therefore still lists no production tools: a registry must be either empty or contain all ten complete handlers. This package is not yet a standalone usable release and has no public CLI entry point.
+The all-ten production registry is active. The package is a standalone release candidate; Phase 5 system E2E, documentation/release evidence, and publication are still pending.
 
 The v0.1 catalogue is exactly:
 
@@ -50,6 +51,22 @@ Legacy HTTP/SSE is a separate, explicit adapter, not a JetKVM endpoint. `LegacyS
 
 V0.1 deliberately supports stdio plus legacy SSE only. Project-owned Streamable HTTP is out of scope pending a separate design and security review.
 
+## Standalone CLI
+
+Build the package, configure one target and one credential source, then launch the stdio server:
+
+```sh
+export JETKVM_TARGET_URL='https://jetkvm.example'
+export JETKVM_CREDENTIAL_ENV='JETKVM_CREDENTIAL'
+export JETKVM_CREDENTIAL='operator-secret'
+npm run build
+node dist/bin.js
+```
+
+The installed `jetkvm-mcp` executable invokes the same entry point. Startup acquires a private device-keyed lease before constructing Chromium or contacting the target. A second process for the same target fails closed. Inherited proof is accepted only in the internal `--leased` child mode, and the proof's cryptographic lease path must match the configured target fingerprint. The detached lease supervisor and CLI remain attached to inherited stdio for the lifetime of the MCP transport; EOF closes the server, browser, and lease in bounded order. Startup errors are redacted and emitted only on stderr.
+
+By default, managed Chromium is headless and uses an ephemeral profile. `JETKVM_HEADLESS=false` makes the browser visible. `JETKVM_CHROMIUM_EXECUTABLE_PATH` selects an explicit Chromium-family executable. `JETKVM_CONNECT_TIMEOUT_MS` bounds browser admission. Plain LAN HTTP requires both `JETKVM_ALLOW_INSECURE_HTTP=true` and `JETKVM_ALLOW_DANGEROUS_TARGET_HTTP=true`.
+
 ## Phase 3 input and display semantics
 
 `jetkvm_display_capture` returns a fresh frame, an opaque observation ID, immutable source and rendered geometry, and exactly one authorized image content block. Coordinates are interpreted against the source image geometry recorded by the fresh single-use observation; absolute mouse input must present that observation, and reconnect, age, consumption, or a display-generation change invalidates it. Coordinates are never guessed from a browser viewport or a later frame.
@@ -62,6 +79,14 @@ Display status has per-fact provenance: signal, native resolution, and FPS each 
 
 EDID is read-only EDID. Without the capability it is `unsupported` with no read attempt; a completed successful empty read is `unavailable`; returned data is `available`; and an attempted lower-layer failure is `EDID_READ_FAILED`. There is no EDID mutation tool. Image bytes remain only in the authorized MCP image content block, paste text is never retained, and the managed browser runs with its sandbox and artifact recorders preserved.
 
+## Phase 4 session and power semantics
+
+`jetkvm_session_connect` establishes the authenticated browser/WebRTC control channel, qualifies browser/HID/video observations, and performs an actual native display-state read through that connection's exact shared `DeviceRpcAdapter` binding before reporting `device_state_verified`. A failed native post-read after an opened connection preserves the usable connection with `device_ack_only` verification and conservative capabilities rather than closing a valid channel. Reconnect invalidates the old adapter before replacement begins, drains the old generation, releases input, closes the old channel, opens and qualifies a successor, and requires a fresh display capture.
+
+`jetkvm_session_status` composes ownership, browser, native, capability, and version facts without inventing a unified health field. Missing `session.status` permission or capability fails before any browser/native probe. Per-fact display provenance remains explicit.
+
+`jetkvm_power_control` exposes only `press_power`, `hold_power`, and `press_reset`. Wire timing is fixed at 200 ms, 5 s, and 200 ms respectively; callers cannot supply a duration. ATX extension state, serial availability, acknowledgement, and post-read evidence remain distinct. A definitive acknowledgement followed by an unavailable post-read returns `applied` with `device_ack_only`; it is never replayed. Cancellation or deadline expiry before the wire call releases the request reservation and reports `not_sent`.
+
 ## Contract and protocol checks
 
 From this directory:
@@ -70,6 +95,7 @@ From this directory:
 npm ci
 npm run test:phase2
 npm run test:phase3
+npm run test:phase4
 npm run typecheck
 npm run build
 npm run schemas:check
@@ -77,9 +103,11 @@ npm run docs:check
 npm run smoke:installed-contracts
 npm run smoke:installed-stdio-protocol
 npm run smoke:installed-sse-protocol
+npm run smoke:installed-first-party
+
 ```
 
-The installed smokes pack and install the tarball in a clean temporary directory. They use external deterministic handlers only; production output excludes `src/test-support`.
+The installed smokes pack and install the tarball in a clean temporary directory. The contract and protocol smokes use external deterministic handlers. The first-party smoke launches the installed executable with a deterministic managed-browser/native fixture, verifies that all ten production tools are listed, calls session connect and display capture over real stdio, validates the returned image, and confirms bounded shutdown. Production output excludes `src/test-support`.
 
 ## Device lease wrapper
 

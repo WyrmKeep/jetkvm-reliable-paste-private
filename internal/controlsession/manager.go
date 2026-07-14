@@ -23,6 +23,7 @@ const (
 	ProducerRPC      ProducerKind = "rpc"
 	ProducerMacro    ProducerKind = "macro"
 	ProducerPaste    ProducerKind = "paste"
+	ProducerATX      ProducerKind = "atx"
 )
 
 type Snapshot[T comparable] struct {

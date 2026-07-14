@@ -5,6 +5,7 @@ import {
   BrowserPlaneError,
   parseAutomationSnapshot,
   parseBridgeCallEnvelope,
+  parseAtxBridgeRequest,
   parseCaptureBridgeRequest,
   parseCaptureBridgeResult,
   parseKeyboardBridgeRequest,
@@ -17,6 +18,7 @@ import {
   parseReleaseBridgeReceipt,
   parseReleaseBridgeRequest,
   type AutomationSnapshot,
+  type AtxBridgeRequest,
   type BrowserPlaneErrorInit,
   type CaptureBridgeRequest,
   type CaptureBridgeResult,
@@ -62,6 +64,12 @@ export interface BrowserControllerPort {
     request: ReadBridgeRequest,
     deadline: Deadline,
   ): Promise<ReadBridgeResult>;
+  performAtx(
+    request: AtxBridgeRequest,
+    deadline: Deadline,
+  ): Promise<ReadBridgeResult>;
+  connectionIdentity(): object;
+  reconnect(deadline: Deadline): Promise<void>;
   close(deadline: Deadline): Promise<void>;
 }
 
@@ -80,6 +88,7 @@ type PageFacade = {
   release(request: ReleaseBridgeRequest): Promise<unknown>;
   readVideoState(request: ReadBridgeRequest): Promise<unknown>;
   readEdid(request: ReadBridgeRequest): Promise<unknown>;
+  performAtx(request: AtxBridgeRequest): Promise<unknown>;
 };
 type AutomationWindow = Window & { __JETKVM_AUTOMATION__?: PageFacade };
 
@@ -152,8 +161,12 @@ function normalizePasteText(text: string): string {
 
 export class BrowserController implements BrowserControllerPort {
   private closed = false;
+  private identity: object = Object.freeze({});
 
   public constructor(private readonly page: Page) {}
+  public connectionIdentity(): object {
+    return this.identity;
+  }
 
   public async snapshot(deadline: Deadline): Promise<AutomationSnapshot> {
     assertDeadline(deadline);
@@ -438,6 +451,48 @@ export class BrowserController implements BrowserControllerPort {
     );
   }
 
+  public async performAtx(
+    request: AtxBridgeRequest,
+    deadline: Deadline,
+  ): Promise<ReadBridgeResult> {
+    return this.runRead(
+      validateRequest(parseAtxBridgeRequest, request),
+      deadline,
+      (bridgeRequest) =>
+        this.page.evaluate(async (pageRequest): Promise<FacadeCallEnvelope> => {
+          const facade = (window as AutomationWindow).__JETKVM_AUTOMATION__;
+          if (!facade || facade.version !== 1) {
+            throw new Error("JetKVM automation facade v1 is unavailable.");
+          }
+          try {
+            return { ok: true, value: await facade.performAtx(pageRequest) };
+          } catch (error) {
+            return { ok: false, error };
+          }
+        }, bridgeRequest),
+      true,
+      1,
+    );
+  }
+
+  public async reconnect(deadline: Deadline): Promise<void> {
+    assertDeadline(deadline);
+    if (this.closed) {
+      throw inputTimeoutError("CANCELLED");
+    }
+    await this.awaitPageEvaluation(
+      this.page.reload({ waitUntil: "domcontentloaded" }),
+      deadline,
+      false,
+      0,
+    );
+    const snapshot = await this.snapshot(deadline);
+    if (snapshot.state !== "ready") {
+      throw malformedBridgeError(false, 0);
+    }
+    this.identity = Object.freeze({});
+  }
+
   public async close(deadline: Deadline): Promise<void> {
     assertDeadline(deadline);
     if (this.closed) return;
@@ -488,25 +543,27 @@ export class BrowserController implements BrowserControllerPort {
     return receipt;
   }
 
-  private async runRead(
-    request: ReadBridgeRequest,
+  private async runRead<Request extends ReadBridgeRequest>(
+    request: Request,
     deadline: Deadline,
-    invoke: (request: ReadBridgeRequest) => Promise<unknown>,
+    invoke: (request: Request) => Promise<unknown>,
+    mutationInvoked = false,
+    requestedCount = 0,
   ): Promise<ReadBridgeResult> {
     assertDeadline(deadline, request.timeout_ms);
     await this.assertPreSnapshot(request, deadline, false);
     const envelope = await this.awaitPageEvaluation(
       invoke(request),
       deadline,
-      false,
-      0,
+      mutationInvoked,
+      requestedCount,
       request.operation_id,
     );
     const result = this.parseCallResult(
       envelope,
       request.operation_id,
-      0,
-      false,
+      requestedCount,
+      mutationInvoked,
       parseReadBridgeResult,
     );
     this.assertReadCorrelation(result, request);
@@ -551,7 +608,8 @@ export class BrowserController implements BrowserControllerPort {
       | KeyboardBridgeRequest
       | PasteBridgeRequest
       | ReleaseBridgeRequest
-      | ReadBridgeRequest,
+      | ReadBridgeRequest
+      | AtxBridgeRequest,
     deadline: Deadline,
     input: boolean,
   ): Promise<void> {

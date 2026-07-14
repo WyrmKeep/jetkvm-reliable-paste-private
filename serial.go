@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -19,29 +20,47 @@ var port serial.Port
 var serialMux *SerialMux
 var consoleBroker *ConsoleBroker
 
-func mountATXControl() error {
-	_ = port.SetMode(defaultMode)
-	go runATXControl()
+type atxSerialPort interface {
+	io.Reader
+	io.Writer
+	SetMode(*serial.Mode) error
+}
 
+func mountATXControl() error {
+	if port == nil {
+		return errATXSerialUnavailable
+	}
+	return mountATXControlWithPort(port, runATXControl)
+}
+
+func mountATXControlWithPort(
+	candidate atxSerialPort,
+	run func(atxSerialPort, uint64),
+) error {
+	if candidate == nil {
+		return errATXSerialUnavailable
+	}
+	if err := candidate.SetMode(defaultMode); err != nil {
+		return fmt.Errorf("configure ATX serial mode: %w", err)
+	}
+	generation := setATXSerialReady(candidate)
+	go run(candidate, generation)
 	return nil
 }
 
 func unmountATXControl() error {
-	_ = reopenSerialPort()
+	clearATXSerialReady(0)
+	if err := reopenSerialPort(); err != nil {
+		return fmt.Errorf("reopen serial port after ATX unmount: %w", err)
+	}
 	return nil
 }
 
-var (
-	ledHDDState bool
-	ledPWRState bool
-	btnRSTState bool
-	btnPWRState bool
-)
-
-func runATXControl() {
+func runATXControl(activePort atxSerialPort, serialGeneration uint64) {
+	defer clearATXSerialReady(serialGeneration)
 	scopedLogger := serialLogger.With().Str("service", "atx_control").Logger()
 
-	reader := bufio.NewReader(port)
+	reader := bufio.NewReader(activePort)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -55,11 +74,17 @@ func runATXControl() {
 			continue
 		}
 
-		// Parse new states
 		newLedHDDState := line[0] == '0'
 		newLedPWRState := line[1] == '0'
 		newBtnRSTState := line[2] == '1'
 		newBtnPWRState := line[3] == '1'
+		changed := updateATXCachedState(
+			newLedPWRState,
+			newLedHDDState,
+			newBtnRSTState,
+			newBtnPWRState,
+			time.Now(),
+		)
 
 		if session := currentSessionRead(); session != nil {
 			writeJSONRPCEvent("atxState", ATXState{
@@ -68,66 +93,15 @@ func runATXControl() {
 			}, session)
 		}
 
-		if newLedHDDState != ledHDDState ||
-			newLedPWRState != ledPWRState ||
-			newBtnRSTState != btnRSTState ||
-			newBtnPWRState != btnPWRState {
+		if changed {
 			scopedLogger.Debug().
 				Bool("hdd", newLedHDDState).
 				Bool("pwr", newLedPWRState).
 				Bool("rst", newBtnRSTState).
-				Bool("pwr", newBtnPWRState).
+				Bool("power_button", newBtnPWRState).
 				Msg("Status changed")
-
-			// Update states
-			ledHDDState = newLedHDDState
-			ledPWRState = newLedPWRState
-			btnRSTState = newBtnRSTState
-			btnPWRState = newBtnPWRState
 		}
 	}
-}
-
-func pressATXPowerButton(duration time.Duration) error {
-	_, err := port.Write([]byte("\n"))
-	if err != nil {
-		return err
-	}
-
-	_, err = port.Write([]byte("BTN_PWR_ON\n"))
-	if err != nil {
-		return err
-	}
-
-	time.Sleep(duration)
-
-	_, err = port.Write([]byte("BTN_PWR_OFF\n"))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func pressATXResetButton(duration time.Duration) error {
-	_, err := port.Write([]byte("\n"))
-	if err != nil {
-		return err
-	}
-
-	_, err = port.Write([]byte("BTN_RST_ON\n"))
-	if err != nil {
-		return err
-	}
-
-	time.Sleep(duration)
-
-	_, err = port.Write([]byte("BTN_RST_OFF\n"))
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func mountDCControl() error {
@@ -546,12 +520,19 @@ func setTerminalPaused(paused bool) {
 }
 
 func initSerialPort() {
-	_ = reopenSerialPort()
+	if err := reopenSerialPort(); err != nil {
+		serialLogger.Error().Err(err).Msg("Unable to initialize serial port")
+		return
+	}
 	switch config.ActiveExtension {
 	case "atx-power":
-		_ = mountATXControl()
+		if err := mountATXControl(); err != nil {
+			serialLogger.Error().Err(err).Msg("Unable to mount ATX control")
+		}
 	case "dc-power":
-		_ = mountDCControl()
+		if err := mountDCControl(); err != nil {
+			serialLogger.Error().Err(err).Msg("Unable to mount DC control")
+		}
 	}
 }
 

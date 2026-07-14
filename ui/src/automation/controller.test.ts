@@ -323,6 +323,68 @@ describe("AutomationController lifecycle", () => {
       write_began: true,
     });
   });
+  it("routes a semantic ATX request through the receipt-bearing product RPC", async () => {
+    const receipt = {
+      requestId: "power-1",
+      action: "press_power",
+      wireAction: "power-short",
+      fixedPressMs: 200,
+      serialSequenceCompleted: true,
+      acknowledgedAt: "2026-07-13T00:00:03.000Z",
+      atxLedObservation: {
+        power: true,
+        hdd: false,
+        observedAt: "2026-07-13T00:00:02.000Z",
+        freshness: "stale",
+      },
+      verification: "device_ack_only",
+      postRead: { status: "available" },
+    } as const;
+    const rpc = makeRpc(async () => receipt);
+    const { controller } = readyController(rpc);
+    const snapshot = controller.snapshot();
+
+    await expect(
+      controller.performAtx({
+        operation_id: "power-1",
+        expected_lifecycle_generation: snapshot.lifecycle_generation,
+        expected_channel_generation: snapshot.channel_generation,
+        timeout_ms: 1000,
+        request_id: "power-1",
+        action: "press_power",
+      }),
+    ).resolves.toMatchObject({ result: receipt });
+    expect(rpc.calls).toEqual([
+      {
+        method: "performATXAction",
+        params: { requestId: "power-1", action: "press_power" },
+      },
+    ]);
+  });
+
+  it("preserves acknowledged definitive ATX admission failures", async () => {
+    const rpc = makeRpc(async () => {
+      throw new JsonRpcRequestFailure("ATX_EXTENSION_INACTIVE", true);
+    });
+    const { controller } = readyController(rpc);
+    const snapshot = controller.snapshot();
+
+    await expect(
+      controller.performAtx({
+        operation_id: "power-inactive",
+        expected_lifecycle_generation: snapshot.lifecycle_generation,
+        expected_channel_generation: snapshot.channel_generation,
+        timeout_ms: 1000,
+        request_id: "power-inactive",
+        action: "press_power",
+      }),
+    ).rejects.toMatchObject({
+      code: "ATX_EXTENSION_INACTIVE",
+      outcome: "not_sent",
+      write_began: true,
+      acknowledged: true,
+    });
+  });
   it("cancels an in-flight operation by its exact public operation id", async () => {
     const started = Promise.withResolvers<void>();
     const rpc = makeRpc(async (_method, _params, options) => {

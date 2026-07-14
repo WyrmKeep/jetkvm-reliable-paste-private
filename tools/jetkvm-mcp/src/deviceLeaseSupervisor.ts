@@ -383,7 +383,7 @@ function runDefaultSupervisor(): void {
   const group = spawn(process.execPath, [groupModulePath()], {
     detached: true,
     env: process.env,
-    stdio: ["ignore", "inherit", "inherit", "ipc"],
+    stdio: ["inherit", "inherit", "inherit", "ipc"],
   });
   runDeviceLeaseSupervisor({
     runtime: process as unknown as LeaseSupervisorRuntime,

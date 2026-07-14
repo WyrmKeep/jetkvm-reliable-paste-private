@@ -31,6 +31,34 @@ function displayWireResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function atxWireResult(
+  requestId: string,
+  action: "press_power" | "hold_power" | "press_reset",
+  overrides: Record<string, unknown> = {},
+) {
+  const semantics = {
+    press_power: { wireAction: "power-short", fixedPressMs: 200 },
+    hold_power: { wireAction: "power-long", fixedPressMs: 5000 },
+    press_reset: { wireAction: "reset", fixedPressMs: 200 },
+  } as const;
+  return {
+    requestId,
+    action,
+    ...semantics[action],
+    serialSequenceCompleted: true,
+    acknowledgedAt: "2026-07-14T01:02:04Z",
+    atxLedObservation: {
+      power: true,
+      hdd: false,
+      observedAt: "2026-07-14T01:02:03Z",
+      freshness: "stale",
+    },
+    verification: "device_ack_only",
+    postRead: { status: "available" },
+    ...overrides,
+  };
+}
+
 const SHARED_CHANNEL_MAX_UTF8_BYTES = 1_048_576;
 const SHARED_CHANNEL_MAX_CODE_UNITS = SHARED_CHANNEL_MAX_UTF8_BYTES;
 const PRIVATE_CORRELATION_ID_MAX_CODE_UNITS =
@@ -1837,25 +1865,98 @@ describe("DeviceRpcAdapter correlation, validation, and boundaries", () => {
     },
   );
 
-  it("fails a current compatible-looking ATX request closed without calling the best-effort router", async () => {
-    const requestId = `r${"a".repeat(127)}`;
+  it.each([
+    ["press_power", "power-short", 200],
+    ["hold_power", "power-long", 5000],
+    ["press_reset", "reset", 200],
+  ] as const)(
+    "routes %s through the receipt-bearing device method",
+    async (action, wireAction, fixedPressMs) => {
+      const requestId = `request-${action}`;
+      const channel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+
+      const pending = adapter.performAtx(
+        BINDING,
+        { requestId, action },
+        deadline(),
+      );
+      await channel.waitForWrites(1);
+      expect(channel.decodedWrite(0)).toMatchObject({
+        method: "performATXAction",
+        params: {
+          requestId,
+          action,
+          binding: mapDeviceRpcBindingToWire(BINDING),
+        },
+      });
+      channel.respondToWrite(0, atxWireResult(requestId, action));
+
+      await expect(pending).resolves.toMatchObject({
+        requestId,
+        action,
+        wireAction,
+        fixedPressMs,
+        serialSequenceCompleted: true,
+        verification: "device_ack_only",
+      });
+    },
+  );
+
+  it.each([
+    ["ATX_EXTENSION_INACTIVE", "not_sent"],
+    ["ATX_SERIAL_UNAVAILABLE", "not_sent"],
+    ["MUTATION_OUTCOME_UNKNOWN", "unknown"],
+  ] as const)(
+    "preserves qualified ATX failure %s",
+    async (code, outcome) => {
+      const channel = new FakeDeviceRpcChannel();
+      const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+      const pending = adapter.performAtx(
+        BINDING,
+        { requestId: "request-atx-error", action: "press_power" },
+        deadline(),
+      );
+      await channel.waitForWrites(1);
+      channel.emitRaw(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: correlationIdForWrite(channel, 0),
+          error: { code: -32603, message: "Internal error", data: code },
+        }),
+      );
+
+      await expect(pending).rejects.toMatchObject({
+        code,
+        boundary: "ack",
+        outcome,
+        writeBegan: true,
+        acknowledged: true,
+      });
+    },
+  );
+
+  it("rejects a mismatched ATX semantic receipt as malformed", async () => {
     const channel = new FakeDeviceRpcChannel();
     const adapter = new GenerationFencedDeviceRpcAdapter(BINDING, channel);
+    const pending = adapter.performAtx(
+      BINDING,
+      { requestId: "request-atx-mismatch", action: "press_power" },
+      deadline(),
+    );
+    await channel.waitForWrites(1);
+    channel.respondToWrite(
+      0,
+      atxWireResult("request-atx-mismatch", "press_power", {
+        wireAction: "power-long",
+        fixedPressMs: 5000,
+      }),
+    );
 
-    await expect(
-      adapter.performAtx(
-        BINDING,
-        { requestId, action: "press_power" },
-        deadline(),
-      ),
-    ).rejects.toMatchObject({
-      code: "INCOMPATIBLE_DOWNSTREAM",
-      boundary: "admission",
-      outcome: "not_sent",
-      writeBegan: false,
-      acknowledged: false,
+    await expect(pending).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      outcome: "unknown",
     });
-    expect(channel.writes()).toHaveLength(0);
   });
 
   it("rejects unsafe flat native.VideoState dimensions", async () => {

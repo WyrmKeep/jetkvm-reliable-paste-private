@@ -181,6 +181,13 @@ export type JsonRpcRequestFailureCode =
   | "DEADLINE_EXCEEDED"
   | "MALFORMED_RESPONSE"
   | "EDID_READ_FAILED"
+  | "ATX_EXTENSION_INACTIVE"
+  | "ATX_SERIAL_UNAVAILABLE"
+  | "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+  | "STALE_SESSION_GENERATION"
+  | "MUTATION_OUTCOME_UNKNOWN"
+  | "CONFIG_INVALID"
+  | "DOWNSTREAM_MALFORMED_RESPONSE"
   | "DOWNSTREAM_ERROR";
 
 const REQUEST_FAILURE_MESSAGE: Record<JsonRpcRequestFailureCode, string> = {
@@ -191,6 +198,14 @@ const REQUEST_FAILURE_MESSAGE: Record<JsonRpcRequestFailureCode, string> = {
   MALFORMED_RESPONSE: "The product RPC response was invalid.",
   EDID_READ_FAILED: "The product EDID read failed.",
   DOWNSTREAM_ERROR: "The product RPC request failed.",
+  ATX_EXTENSION_INACTIVE: "The ATX extension is inactive.",
+  ATX_SERIAL_UNAVAILABLE: "The ATX serial controller is unavailable.",
+  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
+    "The ATX request id was reused with different input.",
+  STALE_SESSION_GENERATION: "The device session generation is stale.",
+  MUTATION_OUTCOME_UNKNOWN: "The ATX mutation outcome is unknown.",
+  CONFIG_INVALID: "The ATX action configuration is invalid.",
+  DOWNSTREAM_MALFORMED_RESPONSE: "The ATX response was malformed.",
 };
 
 export class JsonRpcRequestFailure extends Error {
@@ -204,6 +219,16 @@ export class JsonRpcRequestFailure extends Error {
     this.writeBegan = writeBegan;
   }
 }
+
+const ATX_REQUEST_FAILURE_CODES = new Set<JsonRpcRequestFailureCode>([
+  "ATX_EXTENSION_INACTIVE",
+  "ATX_SERIAL_UNAVAILABLE",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+  "STALE_SESSION_GENERATION",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "CONFIG_INVALID",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
+]);
 
 export function requestJsonRpc(
   channel: JsonRpcRequestChannel,
@@ -260,8 +285,15 @@ export function requestJsonRpc(
     }
     if (hasError) {
       const error = decoded.error;
-      if (method === "getEDID" && isRecord(error) && error.data === "EDID_READ_FAILED") {
+      const marker = isRecord(error) ? error.data : undefined;
+      if (method === "getEDID" && marker === "EDID_READ_FAILED") {
         reject("EDID_READ_FAILED");
+      } else if (
+        method === "performATXAction" &&
+        typeof marker === "string" &&
+        ATX_REQUEST_FAILURE_CODES.has(marker as JsonRpcRequestFailureCode)
+      ) {
+        reject(marker as JsonRpcRequestFailureCode);
       } else {
         reject("DOWNSTREAM_ERROR");
       }

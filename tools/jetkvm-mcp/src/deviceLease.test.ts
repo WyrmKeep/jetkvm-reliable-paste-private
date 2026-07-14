@@ -517,8 +517,13 @@ describe("device lease", () => {
     });
 
     await expect(
-      loadDeviceLeaseProofReference(parent.proof.referencePath),
+      loadDeviceLeaseProofReference(parent.proof.referencePath, "device-a"),
     ).resolves.toEqual(parent.proof);
+    await expect(
+      loadDeviceLeaseProofReference(parent.proof.referencePath, "device-b"),
+    ).rejects.toMatchObject({
+      code: "DEVICE_LEASE_PROOF_INVALID",
+    });
     await expect(
       loadDeviceLeaseProofReference("relative-proof"),
     ).rejects.toMatchObject({

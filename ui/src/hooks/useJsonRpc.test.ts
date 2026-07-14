@@ -205,6 +205,32 @@ describe("requestJsonRpc", () => {
     });
     await expect(near).rejects.toMatchObject({ code: "DOWNSTREAM_ERROR" });
   });
+  it("allowlists only exact qualified ATX markers on the ATX method", async () => {
+    for (const [marker, expected] of [
+      ["ATX_EXTENSION_INACTIVE", "ATX_EXTENSION_INACTIVE"],
+      ["ATX_EXTENSION_INACTIVE ", "DOWNSTREAM_ERROR"],
+    ] as const) {
+      const channel = new FakeRpcChannel();
+      const response = requestJsonRpc(
+        channel,
+        "performATXAction",
+        { requestId: "power-1", action: "press_power" },
+        {
+          operationId: "power-1",
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
+          onWrite: () => undefined,
+        },
+      );
+      const write = JSON.parse(channel.writes[0]) as { id: string };
+      channel.emit({
+        jsonrpc: "2.0",
+        id: write.id,
+        error: { code: -32603, message: "Internal error", data: marker },
+      });
+      await expect(response).rejects.toMatchObject({ code: expected });
+    }
+  });
 
   it("uses one bounded response router and rejects excessive nesting", async () => {
     const channel = new FakeRpcChannel();

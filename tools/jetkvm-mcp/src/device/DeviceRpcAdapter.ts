@@ -176,7 +176,14 @@ export type DeviceRpcErrorCode =
   | "DUPLICATE_RESPONSE"
   | "DOWNSTREAM_ERROR"
   | "EDID_READ_FAILED"
-  | "INCOMPATIBLE_DOWNSTREAM";
+  | "INCOMPATIBLE_DOWNSTREAM"
+  | "ATX_EXTENSION_INACTIVE"
+  | "ATX_SERIAL_UNAVAILABLE"
+  | "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+  | "STALE_SESSION_GENERATION"
+  | "MUTATION_OUTCOME_UNKNOWN"
+  | "CONFIG_INVALID"
+  | "DOWNSTREAM_MALFORMED_RESPONSE";
 export type DeviceRpcBoundary = "admission" | "queue" | "send" | "ack";
 export type DeviceRpcOutcome = "not_sent" | "unknown" | "applied";
 
@@ -196,6 +203,14 @@ const SAFE_ERROR_MESSAGES: Record<DeviceRpcErrorCode, string> = {
   EDID_READ_FAILED: "The native EDID read failed.",
   INCOMPATIBLE_DOWNSTREAM:
     "The current device RPC router cannot provide the required receipt.",
+  ATX_EXTENSION_INACTIVE: "The ATX extension is inactive.",
+  ATX_SERIAL_UNAVAILABLE: "The ATX serial controller is unavailable.",
+  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
+    "The ATX request id was reused with different input.",
+  STALE_SESSION_GENERATION: "The device session generation is stale.",
+  MUTATION_OUTCOME_UNKNOWN: "The ATX mutation outcome is unknown.",
+  CONFIG_INVALID: "The ATX action configuration is invalid.",
+  DOWNSTREAM_MALFORMED_RESPONSE: "The ATX response was malformed.",
 };
 
 export class DeviceRpcError extends Error {
@@ -299,6 +314,70 @@ const responseEnvelopeSchema = z.union([
 ]);
 
 const atxActionSchema = z.enum(["press_power", "hold_power", "press_reset"]);
+const atxLedObservationSchema = z.union([
+  z
+    .object({
+      power: z.boolean().nullable(),
+      hdd: z.boolean().nullable(),
+      observedAt: z.string().datetime(),
+      freshness: z.enum(["fresh", "stale"]),
+    })
+    .strict(),
+  z
+    .object({
+      power: z.null(),
+      hdd: z.null(),
+      observedAt: z.null(),
+      freshness: z.literal("unknown"),
+    })
+    .strict(),
+]);
+const atxWireReceiptSchema = z
+  .object({
+    requestId: opaqueIdSchema,
+    action: atxActionSchema,
+    wireAction: z.enum(["power-short", "power-long", "reset"]),
+    fixedPressMs: z.union([z.literal(200), z.literal(5000)]),
+    serialSequenceCompleted: z.literal(true),
+    acknowledgedAt: z.string().datetime(),
+    atxLedObservation: atxLedObservationSchema,
+    verification: z.literal("device_ack_only"),
+    postRead: z
+      .object({ status: z.enum(["available", "unavailable"]) })
+      .strict(),
+  })
+  .strict();
+const ATX_ERROR_MARKERS = new Set<DeviceRpcErrorCode>([
+  "ATX_EXTENSION_INACTIVE",
+  "ATX_SERIAL_UNAVAILABLE",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+  "STALE_SESSION_GENERATION",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "CONFIG_INVALID",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
+]);
+
+export function parseAtxWireReceipt(
+  value: unknown,
+  request: { readonly requestId: string; readonly action: AtxAction },
+): AtxWireReceipt {
+  const parsed = atxWireReceiptSchema.parse(value);
+  const expected =
+    request.action === "press_power"
+      ? { wireAction: "power-short", fixedPressMs: 200 }
+      : request.action === "hold_power"
+        ? { wireAction: "power-long", fixedPressMs: 5000 }
+        : { wireAction: "reset", fixedPressMs: 200 };
+  if (
+    parsed.requestId !== request.requestId ||
+    parsed.action !== request.action ||
+    parsed.wireAction !== expected.wireAction ||
+    parsed.fixedPressMs !== expected.fixedPressMs
+  ) {
+    throw new Error("ATX receipt semantics do not match the request.");
+  }
+  return parsed;
+}
 
 const CORRELATION_ID_PREFIX = "device-rpc";
 const MAX_SAFE_INTEGER_CODE_UNITS = String(Number.MAX_SAFE_INTEGER).length;
@@ -653,7 +732,7 @@ function freezeBinding(binding: DeviceRpcBinding): DeviceRpcBinding {
   });
 }
 
-type RpcMethod = "getVideoState" | "getEDID";
+type RpcMethod = "getVideoState" | "getEDID" | "performATXAction";
 type CancelKind = "cancelled" | "deadline" | "replaced";
 
 interface CallCancellation {
@@ -828,13 +907,23 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
         false,
       );
     }
-    throw new DeviceRpcError(
-      "INCOMPATIBLE_DOWNSTREAM",
-      "admission",
-      "not_sent",
-      false,
-      false,
+    const expectedRevision = this.revision;
+    const expectedChannel = this.channel;
+    const result = await this.enqueue(
+      ref,
+      deadline,
+      "performATXAction",
+      { requestId: request.requestId, action: request.action },
+      60_000,
     );
+    let parsed: AtxWireReceipt;
+    try {
+      parsed = parseAtxWireReceipt(result, request);
+    } catch {
+      throw this.protocolError("MALFORMED_RESPONSE", true);
+    }
+    this.validateReadContinuation(ref, expectedRevision, expectedChannel);
+    return parsed;
   }
 
   private validateAdmission(
@@ -1190,14 +1279,28 @@ export class GenerationFencedDeviceRpcAdapter implements DeviceRpcAdapter {
     }
     pending.responseSeen = true;
     if ("error" in envelope.data) {
+      const marker = envelope.data.error.data;
+      const atxCode =
+        pending.method === "performATXAction" &&
+        typeof marker === "string" &&
+        ATX_ERROR_MARKERS.has(marker as DeviceRpcErrorCode)
+          ? (marker as DeviceRpcErrorCode)
+          : null;
       const code: DeviceRpcErrorCode =
-        pending.method === "getEDID" &&
-        envelope.data.error.data === EDID_READ_FAILED_MARKER
+        pending.method === "getEDID" && marker === EDID_READ_FAILED_MARKER
           ? "EDID_READ_FAILED"
-          : "DOWNSTREAM_ERROR";
+          : (atxCode ?? "DOWNSTREAM_ERROR");
+      const definitiveNotSent =
+        atxCode !== null && atxCode !== "MUTATION_OUTCOME_UNKNOWN";
       this.finishExchangeError(
         pending,
-        new DeviceRpcError(code, "ack", "unknown", true, false),
+        new DeviceRpcError(
+          code,
+          "ack",
+          definitiveNotSent ? "not_sent" : "unknown",
+          true,
+          atxCode !== null,
+        ),
       );
       return;
     }

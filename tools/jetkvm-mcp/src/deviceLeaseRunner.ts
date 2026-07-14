@@ -186,7 +186,7 @@ async function startSupervisor(
     {
       detached: true,
       env: environment,
-      stdio: ["ignore", "inherit", "inherit", "ipc"],
+      stdio: ["inherit", "inherit", "inherit", "ipc"],
     },
   );
   child.on("error", () => undefined);

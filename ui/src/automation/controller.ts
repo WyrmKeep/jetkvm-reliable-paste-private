@@ -15,6 +15,8 @@ import {
 } from "./inputGuard";
 import type {
   AutomationBridgeError,
+  AtxBridgeRequest,
+  AutomationBridgeErrorCode,
   AutomationSnapshot,
   CaptureBridgeRequest,
   CaptureBridgeResult,
@@ -44,7 +46,8 @@ export type ProductRpcMethod =
   | "getPasteCapabilities"
   | "quiesceAndZero"
   | "getVideoState"
-  | "getEDID";
+  | "getEDID"
+  | "performATXAction";
 
 export interface ProductRpcRequestOptions {
   readonly operationId: string;
@@ -165,6 +168,36 @@ function isQualifiedEdidReadFailure(value: unknown): boolean {
     value.code === "EDID_READ_FAILED"
   );
 }
+const ATX_FAILURE_CODES = new Set<AutomationBridgeErrorCode>([
+  "ATX_EXTENSION_INACTIVE",
+  "ATX_SERIAL_UNAVAILABLE",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+  "STALE_SESSION_GENERATION",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "CONFIG_INVALID",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
+]);
+function qualifiedAtxFailure(value: unknown): AutomationBridgeErrorCode | null {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("code" in value) ||
+    typeof value.code !== "string" ||
+    !ATX_FAILURE_CODES.has(value.code as AutomationBridgeErrorCode)
+  ) {
+    return null;
+  }
+  return value.code as AutomationBridgeErrorCode;
+}
+function validAtxRequest(request: AtxBridgeRequest): boolean {
+  return (
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(request.request_id) &&
+    (request.action === "press_power" ||
+      request.action === "hold_power" ||
+      request.action === "press_reset")
+  );
+}
+
 
 function isJsonValue(value: unknown): value is JsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true;
@@ -881,6 +914,21 @@ export class AutomationController implements AutomationOwner {
     return this.readRpc("getEDID", request);
   }
 
+  performAtx(request: AtxBridgeRequest): Promise<ReadBridgeResult> {
+    if (!validAtxRequest(request)) {
+      throw makeBridgeError("INVALID_REQUEST", "admission", {
+        snapshot: this.snapshot(),
+        operationId: request.operation_id,
+      });
+    }
+    return this.readRpc(
+      "performATXAction",
+      request,
+      { requestId: request.request_id, action: request.action },
+      60_000,
+    );
+  }
+
   private requireReady(operationId: string | null): AutomationSnapshot {
     const snapshot = this.snapshot();
     if (snapshot.state !== "ready") {
@@ -1056,11 +1104,13 @@ export class AutomationController implements AutomationOwner {
   }
 
   private async readRpc(
-    method: "getVideoState" | "getEDID",
-    request: ReadBridgeRequest,
+    method: "getVideoState" | "getEDID" | "performATXAction",
+    request: ReadBridgeRequest | AtxBridgeRequest,
+    params: JsonValue = {},
+    maximumMs = 30_000,
   ): Promise<ReadBridgeResult> {
     const admitted = this.requireReady(request.operation_id);
-    validateBridgeRequest(request, admitted, 30_000);
+    validateBridgeRequest(request, admitted, maximumMs);
     const rpcRequest = this.rpcRequest;
     const rpcIdentity = this.rpcIdentity;
     if (!rpcRequest || !rpcIdentity) {
@@ -1080,7 +1130,7 @@ export class AutomationController implements AutomationOwner {
     try {
       const result = await rpcRequest(
         method,
-        {},
+        params,
         {
           operationId: request.operation_id,
           timeoutMs: request.timeout_ms,
@@ -1119,15 +1169,26 @@ export class AutomationController implements AutomationOwner {
         });
       }
       fence.verify("acknowledgement", this.monotonicNow());
+      const atxFailure =
+        method === "performATXAction" ? qualifiedAtxFailure(error) : null;
       throw makeBridgeError(
         method === "getEDID" && isQualifiedEdidReadFailure(error)
           ? "EDID_READ_FAILED"
-          : "DOWNSTREAM_ERROR",
+          : (atxFailure ?? "DOWNSTREAM_ERROR"),
         "acknowledgement",
         {
           snapshot: this.snapshot(),
           operationId: request.operation_id,
           writeBegan,
+          ...(atxFailure === null
+            ? {}
+            : {
+                acknowledged: true,
+                outcome:
+                  atxFailure === "MUTATION_OUTCOME_UNKNOWN"
+                    ? ("unknown" as const)
+                    : ("not_sent" as const),
+              }),
         },
       );
     } finally {
