@@ -17,6 +17,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/rs/zerolog"
 
+	"github.com/jetkvm/kvm/internal/atx"
 	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/hidrpc"
 	"github.com/jetkvm/kvm/internal/native"
@@ -68,6 +69,10 @@ func newJSONRPCHandlerErrorResponse(id any, err error) JSONRPCResponse {
 	}
 	if errors.Is(err, native.ErrEDIDReadFailed) {
 		errorBody["data"] = native.ErrEDIDReadFailed.Error()
+	}
+	var atxFailure *atxRPCError
+	if errors.As(err, &atxFailure) {
+		errorBody["data"] = atxFailure.Code
 	}
 	return JSONRPCResponse{
 		JSONRPC: "2.0",
@@ -770,44 +775,166 @@ func rpcGetActiveExtension() (string, error) {
 	return config.ActiveExtension, nil
 }
 
-func rpcSetActiveExtension(extensionId string) error {
-	if config.ActiveExtension == extensionId {
+func rpcSetActiveExtension(extensionID string) error {
+	if config.ActiveExtension == extensionID {
 		return nil
 	}
 	switch config.ActiveExtension {
 	case "atx-power":
-		_ = unmountATXControl()
+		if err := unmountATXControl(); err != nil {
+			return err
+		}
 	case "dc-power":
-		_ = unmountDCControl()
+		if err := unmountDCControl(); err != nil {
+			return err
+		}
 	}
-	config.ActiveExtension = extensionId
+	config.ActiveExtension = extensionID
 	if err := SaveConfig(); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
-	switch extensionId {
+	switch extensionID {
 	case "atx-power":
-		_ = mountATXControl()
+		if err := mountATXControl(); err != nil {
+			return err
+		}
 	case "dc-power":
-		_ = mountDCControl()
+		if err := mountDCControl(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func rpcSetATXPowerAction(action string) error {
-	logger.Debug().Str("action", action).Msg("Executing ATX power action")
+type atxRPCError struct {
+	Code string
+}
+
+func (e *atxRPCError) Error() string {
+	return e.Code
+}
+
+type ATXLEDObservation struct {
+	Power      *bool   `json:"power"`
+	HDD        *bool   `json:"hdd"`
+	ObservedAt *string `json:"observedAt"`
+	Freshness  string  `json:"freshness"`
+}
+
+type ATXPostRead struct {
+	Status string `json:"status"`
+}
+
+type ATXActionResponse struct {
+	RequestID               string            `json:"requestId"`
+	Action                  string            `json:"action"`
+	WireAction              string            `json:"wireAction"`
+	FixedPressMS            int               `json:"fixedPressMs"`
+	SerialSequenceCompleted bool              `json:"serialSequenceCompleted"`
+	AcknowledgedAt          string            `json:"acknowledgedAt"`
+	ATXLEDObservation       ATXLEDObservation `json:"atxLedObservation"`
+	Verification            string            `json:"verification"`
+	PostRead                ATXPostRead       `json:"postRead"`
+}
+
+func rpcPerformATXAction(session *Session, requestID, action string) (ATXActionResponse, error) {
+	return rpcPerformATXActionWith(session, requestID, action, performATXAction)
+}
+
+func rpcPerformATXActionWith(
+	session *Session,
+	requestID string,
+	action string,
+	execute func(*Session, string, atx.Action) atx.Receipt,
+) (ATXActionResponse, error) {
+	semanticAction, ok := mapATXAction(action)
+	if !ok {
+		return ATXActionResponse{}, &atxRPCError{Code: "CONFIG_INVALID"}
+	}
+	receipt := execute(session, requestID, semanticAction)
+	if receipt.Outcome != atx.OutcomeApplied && receipt.Outcome != atx.OutcomeAlreadyApplied {
+		return ATXActionResponse{}, atxReceiptError(receipt)
+	}
+	if !receipt.SerialSequenceCompleted || receipt.AcknowledgedAt.IsZero() {
+		return ATXActionResponse{}, &atxRPCError{Code: "DOWNSTREAM_MALFORMED_RESPONSE"}
+	}
+	cached := readATXCachedState()
+	led := ATXLEDObservation{Freshness: "unknown"}
+	postRead := ATXPostRead{Status: "unavailable"}
+	if cached.Available {
+		power := cached.Power
+		hdd := cached.HDD
+		observedAt := cached.ObservedAt.Format(time.RFC3339Nano)
+		led = ATXLEDObservation{
+			Power:      &power,
+			HDD:        &hdd,
+			ObservedAt: &observedAt,
+			Freshness:  "stale",
+		}
+		postRead.Status = "available"
+	}
+	return ATXActionResponse{
+		RequestID:               receipt.RequestID,
+		Action:                  string(receipt.Action),
+		WireAction:              receipt.WireAction,
+		FixedPressMS:            receipt.FixedPressMS,
+		SerialSequenceCompleted: true,
+		AcknowledgedAt:          receipt.AcknowledgedAt.Format(time.RFC3339Nano),
+		ATXLEDObservation:       led,
+		Verification:            "device_ack_only",
+		PostRead:                postRead,
+	}, nil
+}
+
+func mapATXAction(action string) (atx.Action, bool) {
+	switch action {
+	case string(atx.ActionPressPower):
+		return atx.ActionPressPower, true
+	case string(atx.ActionHoldPower):
+		return atx.ActionHoldPower, true
+	case string(atx.ActionPressReset):
+		return atx.ActionPressReset, true
+	default:
+		return "", false
+	}
+}
+
+func atxReceiptError(receipt atx.Receipt) error {
+	code := "ATX_SERIAL_UNAVAILABLE"
+	switch receipt.ErrorCode {
+	case atx.ErrorExtensionInactive:
+		code = "ATX_EXTENSION_INACTIVE"
+	case atx.ErrorGenerationStale:
+		code = "STALE_SESSION_GENERATION"
+	case atx.ErrorRequestConflict:
+		code = "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+	case atx.ErrorCancelled:
+		code = "CANCELLED"
+	case atx.ErrorGateClosed:
+		code = "MUTATION_OUTCOME_UNKNOWN"
+	case atx.ErrorInvalidRequest:
+		code = "CONFIG_INVALID"
+	}
+	if receipt.Outcome == atx.OutcomeUnknown {
+		code = "MUTATION_OUTCOME_UNKNOWN"
+	}
+	return &atxRPCError{Code: code}
+}
+
+func rpcSetATXPowerAction(session *Session, action string) error {
+	semantic := ""
 	switch action {
 	case "power-short":
-		logger.Debug().Msg("Simulating short power button press")
-		return pressATXPowerButton(200 * time.Millisecond)
+		semantic = string(atx.ActionPressPower)
 	case "power-long":
-		logger.Debug().Msg("Simulating long power button press")
-		return pressATXPowerButton(5 * time.Second)
+		semantic = string(atx.ActionHoldPower)
 	case "reset":
-		logger.Debug().Msg("Simulating reset button press")
-		return pressATXResetButton(200 * time.Millisecond)
+		semantic = string(atx.ActionPressReset)
 	default:
-		return fmt.Errorf("invalid action: %s", action)
+		return &atxRPCError{Code: "CONFIG_INVALID"}
 	}
+	_, err := rpcPerformATXAction(session, nextLegacyATXRequestID(), semantic)
+	return err
 }
 
 type ATXState struct {
@@ -816,11 +943,8 @@ type ATXState struct {
 }
 
 func rpcGetATXState() (ATXState, error) {
-	state := ATXState{
-		Power: ledPWRState,
-		HDD:   ledHDDState,
-	}
-	return state, nil
+	cached := readATXCachedState()
+	return ATXState{Power: cached.Power, HDD: cached.HDD}, nil
 }
 
 func rpcSendCustomCommand(command string) error {
@@ -1754,7 +1878,8 @@ var rpcHandlers = map[string]RPCHandler{
 	"getActiveExtension":         {Func: rpcGetActiveExtension},
 	"setActiveExtension":         {Func: rpcSetActiveExtension, Params: []string{"extensionId"}},
 	"getATXState":                {Func: rpcGetATXState},
-	"setATXPowerAction":          {Func: rpcSetATXPowerAction, Params: []string{"action"}},
+	"setATXPowerAction":          {Func: rpcSetATXPowerAction, Params: []string{"action"}, SessionBound: true},
+	"performATXAction":           {Func: rpcPerformATXAction, Params: []string{"requestId", "action"}, SessionBound: true},
 	"getSerialSettings":          {Func: rpcGetSerialSettings},
 	"setSerialSettings":          {Func: rpcSetSerialSettings, Params: []string{"settings"}},
 	"sendCustomCommand":          {Func: rpcSendCustomCommand, Params: []string{"command"}},

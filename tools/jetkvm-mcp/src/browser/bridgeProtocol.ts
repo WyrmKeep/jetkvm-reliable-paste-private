@@ -133,6 +133,10 @@ export interface ReleaseBridgeReceipt {
   readonly released_at: string;
 }
 export type ReadBridgeRequest = BridgeRequest;
+export interface AtxBridgeRequest extends BridgeRequest {
+  readonly request_id: string;
+  readonly action: "press_power" | "hold_power" | "press_reset";
+}
 export interface ReadBridgeResult {
   readonly operation_id: string;
   readonly lifecycle_generation: number;
@@ -154,6 +158,13 @@ export const AUTOMATION_BRIDGE_ERROR_CODES = [
   "DISPATCH_REPLACED",
   "DOWNSTREAM_ERROR",
   "EDID_READ_FAILED",
+  "ATX_EXTENSION_INACTIVE",
+  "ATX_SERIAL_UNAVAILABLE",
+  "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+  "STALE_SESSION_GENERATION",
+  "MUTATION_OUTCOME_UNKNOWN",
+  "CONFIG_INVALID",
+  "DOWNSTREAM_MALFORMED_RESPONSE",
   "MALFORMED_ACKNOWLEDGEMENT",
   "VIDEO_STALLED",
   "CAPTURE_FAILED",
@@ -473,6 +484,14 @@ const readBridgeRequestSchema = z
     timeout_ms: z.number().int().min(100).max(30_000),
   })
   .strict();
+const atxBridgeRequestSchema = z
+  .object({
+    ...bridgeRequestShape,
+    timeout_ms: z.number().int().min(100).max(60_000),
+    request_id: operationIdSchema,
+    action: z.enum(["press_power", "hold_power", "press_reset"]),
+  })
+  .strict();
 
 const jsonPrimitiveSchema = z.union([
   z.boolean(),
@@ -529,6 +548,14 @@ const SAFE_BRIDGE_MESSAGES: Readonly<
   DISPATCH_REPLACED: "The input dispatch generation changed.",
   DOWNSTREAM_ERROR: "The product operation failed.",
   EDID_READ_FAILED: "The native EDID read failed.",
+  ATX_EXTENSION_INACTIVE: "The ATX extension is inactive.",
+  ATX_SERIAL_UNAVAILABLE: "The ATX serial controller is unavailable.",
+  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
+    "The ATX request id was reused with different input.",
+  STALE_SESSION_GENERATION: "The device session generation is stale.",
+  MUTATION_OUTCOME_UNKNOWN: "The ATX mutation outcome is unknown.",
+  CONFIG_INVALID: "The ATX action configuration is invalid.",
+  DOWNSTREAM_MALFORMED_RESPONSE: "The ATX response was malformed.",
   MALFORMED_ACKNOWLEDGEMENT: "The product acknowledgement was invalid.",
   VIDEO_STALLED: "The decoded video did not advance.",
   CAPTURE_FAILED: "The decoded frame could not be captured.",
@@ -565,11 +592,13 @@ const automationBridgeErrorSchema = z
         message: "Bridge error message is not the fixed sanitized value.",
       });
     }
-    if (error.outcome !== (error.write_began ? "unknown" : "not_sent")) {
+    const expectedOutcome =
+      error.write_began && !error.acknowledged ? "unknown" : "not_sent";
+    if (error.outcome !== expectedOutcome) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["outcome"],
-        message: "Bridge error outcome does not match its write boundary.",
+        message: "Bridge error outcome does not match its acknowledgement boundary.",
       });
     }
     if (error.completed_count > error.dispatched_count) {
@@ -642,6 +671,9 @@ export function parseReleaseBridgeReceipt(
 }
 export function parseReadBridgeRequest(value: unknown): ReadBridgeRequest {
   return readBridgeRequestSchema.parse(value);
+}
+export function parseAtxBridgeRequest(value: unknown): AtxBridgeRequest {
+  return atxBridgeRequestSchema.parse(value);
 }
 export function parseReadBridgeResult(value: unknown): ReadBridgeResult {
   return readBridgeResultSchema.parse(value);
@@ -727,6 +759,29 @@ function mapBridgeCode(error: AutomationBridgeError): {
   readonly code: ErrorCode;
   readonly requiredNextStep: RequiredNextStep;
 } {
+  switch (error.code) {
+    case "ATX_EXTENSION_INACTIVE":
+      return { code: error.code, requiredNextStep: "enable_capability" };
+    case "ATX_SERIAL_UNAVAILABLE":
+      return { code: error.code, requiredNextStep: "reconnect_then_capture" };
+    case "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT":
+    case "CONFIG_INVALID":
+      return { code: error.code, requiredNextStep: "none" };
+    case "STALE_SESSION_GENERATION":
+      return { code: error.code, requiredNextStep: "reconnect_then_capture" };
+    case "MUTATION_OUTCOME_UNKNOWN":
+      return {
+        code: error.code,
+        requiredNextStep: "inspect_device_state_before_retry",
+      };
+    case "DOWNSTREAM_MALFORMED_RESPONSE":
+      return {
+        code: error.code,
+        requiredNextStep: error.write_began
+          ? "inspect_device_state_before_retry"
+          : "reconnect_then_capture",
+      };
+  }
   if (error.acknowledged) {
     return { code: "PARTIAL_VERIFICATION", requiredNextStep: "none" };
   }

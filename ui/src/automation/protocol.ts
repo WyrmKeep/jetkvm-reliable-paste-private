@@ -146,6 +146,10 @@ export interface ReleaseBridgeReceipt {
 }
 
 export type ReadBridgeRequest = BridgeRequest;
+export interface AtxBridgeRequest extends BridgeRequest {
+  readonly request_id: string;
+  readonly action: "press_power" | "hold_power" | "press_reset";
+}
 
 export interface ReadBridgeResult {
   readonly operation_id: string;
@@ -168,6 +172,13 @@ export type AutomationBridgeErrorCode =
   | "DISPATCH_REPLACED"
   | "DOWNSTREAM_ERROR"
   | "EDID_READ_FAILED"
+  | "ATX_EXTENSION_INACTIVE"
+  | "ATX_SERIAL_UNAVAILABLE"
+  | "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT"
+  | "STALE_SESSION_GENERATION"
+  | "MUTATION_OUTCOME_UNKNOWN"
+  | "CONFIG_INVALID"
+  | "DOWNSTREAM_MALFORMED_RESPONSE"
   | "MALFORMED_ACKNOWLEDGEMENT"
   | "VIDEO_STALLED"
   | "CAPTURE_FAILED"
@@ -213,6 +224,7 @@ export interface JetKvmAutomationV1 {
   release(request: ReleaseBridgeRequest): Promise<ReleaseBridgeReceipt>;
   readVideoState(request: ReadBridgeRequest): Promise<ReadBridgeResult>;
   readEdid(request: ReadBridgeRequest): Promise<ReadBridgeResult>;
+  performAtx(request: AtxBridgeRequest): Promise<ReadBridgeResult>;
 }
 
 declare global {

@@ -24,11 +24,18 @@ import {
 import type {
   BrowserConnection,
   BrowserPlane,
+  ReleaseReceipt,
 } from "../planes/BrowserPlane.js";
 import {
   RequestLedger,
   type LedgerReservation,
 } from "../idempotency/RequestLedger.js";
+
+const UNVERIFIED_CAPABILITIES = Object.freeze(
+  Object.fromEntries(
+    CAPABILITY_NAMES.map((capability) => [capability, false]),
+  ) as unknown as CapabilitySnapshot,
+);
 
 export interface DeviceSessionScheduler {
   now(): number;
@@ -70,6 +77,19 @@ export interface DeviceSessionSnapshot {
   readonly permissions: readonly PermissionName[];
   readonly capabilities: CapabilitySnapshot;
 }
+export interface DeviceSessionInspection {
+  readonly ref: SessionRef;
+  readonly state: DeviceSessionState;
+  readonly active: boolean;
+  readonly inputDrained: boolean;
+  readonly connectionEpoch: number;
+  readonly displayGeneration: number;
+  readonly browserChannelGeneration: number | null;
+  readonly freshCaptureRequired: boolean;
+  readonly permissions: readonly PermissionName[];
+  readonly capabilities: CapabilitySnapshot | null;
+}
+
 
 export interface CurrentCaptureEvidence {
   readonly ref: SessionRef;
@@ -157,6 +177,7 @@ type SessionRecord = {
   displayGeneration: number;
   browserChannelGeneration: number | null;
   freshCaptureRequired: boolean;
+  inputDrained: boolean;
   permissions: readonly PermissionName[];
   capabilities: CapabilitySnapshot | null;
   lifecycle: AbortController;
@@ -392,10 +413,16 @@ export class DeviceSessionClient {
           }
           takeoverPerformed = true;
           irreversibleTransition = true;
+          const incumbentRef = this.#ref(incumbent);
+          planeInvoked = true;
+          await this.#quiesce(
+            incumbent,
+            input.request_id,
+            scope.remaining(),
+          );
+          await this.#browser.close(incumbentRef, scope.remaining());
           incumbent.state = "taken_over";
           incumbent.lifecycle.abort(new DeadlineAbort("caller"));
-          planeInvoked = true;
-          await this.#browser.close(this.#ref(incumbent), scope.remaining());
           if (this.#activeSessionId === incumbent.sessionId) {
             this.#activeSessionId = null;
           }
@@ -415,6 +442,7 @@ export class DeviceSessionClient {
           displayGeneration: 0,
           browserChannelGeneration: null,
           freshCaptureRequired: true,
+          inputDrained: false,
           permissions,
           capabilities: null,
           lifecycle: new AbortController(),
@@ -432,13 +460,11 @@ export class DeviceSessionClient {
           this.#assertConnection(connection, ref);
           const connectionEvidence =
             this.#captureConnectionEvidence(connection);
-          const capabilities = immutableCapabilities(
-            await this.#capabilitiesForConnection(
-              connection,
-              scope.remaining(),
-            ),
+          const qualification = await this.#qualifyCapabilities(
+            connection,
+            scope.remaining(),
           );
-          this.#throwIfAborted(scope, true);
+          const capabilities = qualification.capabilities;
           this.#assertConnection(connection, ref);
           this.#assertConnectionUnchanged(connection, connectionEvidence);
           const result: DeviceSessionConnectSuccess = {
@@ -446,7 +472,7 @@ export class DeviceSessionClient {
             result: {
               request_id: input.request_id,
               outcome: "applied",
-              verification: "device_state_verified",
+              verification: qualification.verification,
               safe_to_retry: false,
               required_next_step: "none",
               state: "ready",
@@ -461,7 +487,7 @@ export class DeviceSessionClient {
           if (
             !this.#requestLedger.complete(activeReservation, {
               outcome: "applied",
-              verification: "device_state_verified",
+              verification: qualification.verification,
               value: result,
             })
           ) {
@@ -478,6 +504,7 @@ export class DeviceSessionClient {
           record.browserChannelGeneration = connection.browserChannelGeneration;
           record.permissions = permissions;
           record.capabilities = capabilities;
+          record.inputDrained = false;
           this.#activeSessionId = sessionId;
           return result;
         } catch (error) {
@@ -658,10 +685,16 @@ export class DeviceSessionClient {
           }
           takeoverPerformed = true;
           irreversibleTransition = true;
+          const incumbentRef = this.#ref(incumbent);
+          planeInvoked = true;
+          await this.#quiesce(
+            incumbent,
+            input.request_id,
+            scope.remaining(),
+          );
+          await this.#browser.close(incumbentRef, scope.remaining());
           incumbent.state = "taken_over";
           incumbent.lifecycle.abort(new DeadlineAbort("caller"));
-          planeInvoked = true;
-          await this.#browser.close(this.#ref(incumbent), scope.remaining());
           if (this.#activeSessionId === incumbent.sessionId) {
             this.#activeSessionId = null;
           }
@@ -677,16 +710,21 @@ export class DeviceSessionClient {
         const previousGeneration = record.sessionGeneration;
         const previousRef = this.#ref(record);
         irreversibleTransition = true;
-        record.state = "closing";
         record.lifecycle.abort(new DeadlineAbort("caller"));
         if (!recordWasTakenOver) {
           planeInvoked = true;
+          await this.#quiesce(
+            record,
+            input.request_id,
+            scope.remaining(),
+          );
           await this.#browser.close(previousRef, scope.remaining());
           if (this.#activeSessionId === record.sessionId) {
             this.#activeSessionId = null;
           }
           this.#throwIfAborted(scope, true);
         }
+        record.state = "closing";
 
         record.sessionGeneration += 1;
         record.state = "reconnecting";
@@ -707,13 +745,11 @@ export class DeviceSessionClient {
           });
           const connectionEvidence =
             this.#captureConnectionEvidence(connection);
-          const capabilities = immutableCapabilities(
-            await this.#capabilitiesForConnection(
-              connection,
-              scope.remaining(),
-            ),
+          const qualification = await this.#qualifyCapabilities(
+            connection,
+            scope.remaining(),
           );
-          this.#throwIfAborted(scope, true);
+          const capabilities = qualification.capabilities;
           this.#assertConnection(connection, nextRef, {
             connectionEpoch: previousConnectionEpoch,
             browserChannelGeneration: previousBrowserChannelGeneration,
@@ -724,7 +760,7 @@ export class DeviceSessionClient {
             result: {
               request_id: input.request_id,
               outcome: "applied",
-              verification: "device_state_verified",
+              verification: qualification.verification,
               safe_to_retry: false,
               required_next_step: "none",
               previous_session_generation: previousGeneration,
@@ -738,7 +774,7 @@ export class DeviceSessionClient {
           if (
             !this.#requestLedger.complete(activeReservation, {
               outcome: "applied",
-              verification: "device_state_verified",
+              verification: qualification.verification,
               value: result,
             })
           ) {
@@ -755,6 +791,7 @@ export class DeviceSessionClient {
           record.browserChannelGeneration = connection.browserChannelGeneration;
           record.permissions = permissions;
           record.capabilities = capabilities;
+          record.inputDrained = false;
           this.#activeSessionId = record.sessionId;
           return result;
         } catch (error) {
@@ -778,6 +815,7 @@ export class DeviceSessionClient {
                   "unknown",
                   false,
                   "inspect_device_state_before_retry",
+
                 );
               }
             }
@@ -800,9 +838,48 @@ export class DeviceSessionClient {
     }
   }
 
+  public inspectSession(
+    principal: string,
+    ref: SessionRef,
+  ): DeviceSessionInspection {
+    const record = this.#recordForPrincipal(principal, ref.sessionId);
+    this.#assertSessionGeneration(record, ref);
+    return {
+      ref: this.#ref(record),
+      state: record.state,
+      active: this.#activeSessionId === record.sessionId,
+      inputDrained: record.inputDrained,
+      connectionEpoch: record.connectionEpoch,
+      displayGeneration: record.displayGeneration,
+      browserChannelGeneration: record.browserChannelGeneration,
+      freshCaptureRequired: record.freshCaptureRequired,
+      permissions: record.permissions,
+      capabilities: record.capabilities,
+    };
+  }
+
+  public markGenerationDrained(
+    principal: string,
+    ref: SessionRef,
+  ): boolean {
+    const record = this.#recordForPrincipal(principal, ref.sessionId);
+    this.#assertSessionGeneration(record, ref);
+    if (
+      this.#activeSessionId !== record.sessionId ||
+      (record.state !== "ready" && record.state !== "drained")
+    ) {
+      return false;
+    }
+    record.state = "drained";
+    record.inputDrained = true;
+    record.freshCaptureRequired = true;
+    return true;
+  }
+
   public resolveSession(
     principal: string,
     ref: SessionRef,
+    options: { readonly allowDrained?: boolean } = {},
   ): DeviceSessionSnapshot {
     const record = this.#recordForPrincipal(principal, ref.sessionId);
     if (record.sessionGeneration !== ref.sessionGeneration) {
@@ -821,10 +898,10 @@ export class DeviceSessionClient {
         "reconnect_then_capture",
       );
     }
-    if (
-      record.state !== "ready" ||
-      this.#activeSessionId !== record.sessionId
-    ) {
+    const stateAllowed =
+      record.state === "ready" ||
+      (options.allowDrained === true && record.state === "drained");
+    if (!stateAllowed || this.#activeSessionId !== record.sessionId) {
       throw clientError(
         "SESSION_DRAINED",
         "not_sent",
@@ -868,6 +945,36 @@ export class DeviceSessionClient {
     record.freshCaptureRequired = false;
     return true;
   }
+  async #qualifyCapabilities(
+    connection: BrowserConnection,
+    deadline: Deadline,
+  ): Promise<{
+    readonly capabilities: CapabilitySnapshot;
+    readonly verification: "device_state_verified" | "device_ack_only";
+  }> {
+    let candidate: CapabilitySnapshot;
+    try {
+      candidate = await this.#capabilitiesForConnection(connection, deadline);
+    } catch (error) {
+      if (
+        isDeviceSessionPlaneFailure(error) &&
+        error.code === "DOWNSTREAM_MALFORMED_RESPONSE"
+      ) {
+        throw error;
+      }
+      return {
+        capabilities: UNVERIFIED_CAPABILITIES,
+        verification: "device_ack_only",
+      };
+    }
+    return {
+      capabilities: immutableCapabilities(candidate),
+      verification: deadline.signal.aborted
+        ? "device_ack_only"
+        : "device_state_verified",
+    };
+  }
+
 
   #deadline(timeoutMs: number, callerSignal?: AbortSignal): DeadlineScope {
     if (
@@ -966,16 +1073,6 @@ export class DeviceSessionClient {
       }
       return error;
     }
-    if (isDeviceSessionPlaneFailure(error)) {
-      return clientError(
-        error.code,
-        irreversibleTransition ? "unknown" : error.outcome,
-        irreversibleTransition ? false : error.safeToRetry,
-        irreversibleTransition
-          ? "inspect_device_state_before_retry"
-          : error.requiredNextStep,
-      );
-    }
     if (scope.signal.aborted || error instanceof DeadlineAbort) {
       const kind =
         scope.abortKind() ??
@@ -985,6 +1082,16 @@ export class DeviceSessionClient {
         planeInvoked ? "unknown" : "not_sent",
         !planeInvoked,
         planeInvoked ? "inspect_device_state_before_retry" : "none",
+      );
+    }
+    if (isDeviceSessionPlaneFailure(error)) {
+      return clientError(
+        error.code,
+        irreversibleTransition ? "unknown" : error.outcome,
+        irreversibleTransition ? false : error.safeToRetry,
+        irreversibleTransition
+          ? "inspect_device_state_before_retry"
+          : error.requiredNextStep,
       );
     }
     return clientError(
@@ -1011,8 +1118,62 @@ export class DeviceSessionClient {
     this.#requestLedger.complete(reservation, {
       outcome: "unknown",
       verification: "none",
+
       value: { downstream_stage: "write" },
     });
+  }
+
+  #assertSessionGeneration(record: SessionRecord, ref: SessionRef): void {
+    if (record.sessionGeneration !== ref.sessionGeneration) {
+      throw clientError(
+        "STALE_SESSION_GENERATION",
+        "not_sent",
+        false,
+        "reconnect_then_capture",
+      );
+    }
+  }
+
+  async #quiesce(
+    record: SessionRecord,
+    requestId: string,
+    deadline: Deadline,
+  ): Promise<void> {
+    record.state = "drained";
+    if (record.inputDrained) {
+      return;
+    }
+    const receipt = await this.#browser.release(
+      this.#ref(record),
+      { requestId },
+      deadline,
+    );
+    this.#assertReleaseReceipt(receipt, requestId);
+    record.inputDrained = true;
+  }
+
+  #assertReleaseReceipt(receipt: ReleaseReceipt, requestId: string): void {
+    if (
+      receipt.requestId !== requestId ||
+      (receipt.outcome !== "applied" && receipt.outcome !== "already_applied") ||
+      receipt.verification !== "device_state_verified" ||
+      !receipt.mutationGateClosed ||
+      !receipt.deferredProducersJoined ||
+      (receipt.pasteTerminal !== "cancelled" &&
+        receipt.pasteTerminal !== "inactive") ||
+      receipt.ordinaryLeasesZero !== true ||
+      receipt.keyboardZero !== true ||
+      receipt.pointerZero !== true ||
+      !receipt.generationDrained ||
+      receipt.heldKeys.length !== 0
+    ) {
+      throw clientError(
+        "DOWNSTREAM_MALFORMED_RESPONSE",
+        "unknown",
+        false,
+        "inspect_device_state_before_retry",
+      );
+    }
   }
 
   async #closeForCleanup(ref: SessionRef): Promise<boolean> {

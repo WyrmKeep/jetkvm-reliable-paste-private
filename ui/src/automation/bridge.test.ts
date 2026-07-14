@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createAutomationFacadeRegistry, type AutomationOwner } from "./bridge";
 import type {
+  AtxBridgeRequest,
   AutomationSnapshot,
   CaptureBridgeRequest,
   CaptureBridgeResult,
@@ -59,6 +60,7 @@ function owner(
     release: notImplemented as (request: ReleaseBridgeRequest) => Promise<ReleaseBridgeReceipt>,
     readVideoState: notImplemented as (request: ReadBridgeRequest) => Promise<ReadBridgeResult>,
     readEdid: notImplemented as (request: ReadBridgeRequest) => Promise<ReadBridgeResult>,
+    performAtx: notImplemented as (request: AtxBridgeRequest) => Promise<ReadBridgeResult>,
     invalidate: reason => events.push(`${name}:invalidate:${reason}`),
   };
 }

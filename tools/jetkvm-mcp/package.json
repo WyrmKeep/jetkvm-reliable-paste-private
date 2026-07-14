@@ -4,6 +4,9 @@
   "description": "Computer-use MCP server for JetKVM",
   "license": "GPL-2.0-only",
   "type": "module",
+  "bin": {
+    "jetkvm-mcp": "dist/bin.js"
+  },
   "engines": {
     "node": ">=22.23.1 <23"
   },
@@ -19,6 +22,7 @@
     "test:task1": "vitest run src/domain.test.ts src/errors.test.ts src/runtimePolicy.test.ts src/deviceLease.test.ts src/deviceLeaseRunner.test.ts",
     "test:phase2": "vitest run src/config.test.ts src/domain.test.ts src/errors.test.ts src/browser/auth.test.ts src/observability/logger.test.ts src/mcp/toolCatalogue.test.ts src/mcp/schemas.test.ts src/mcp/results.test.ts src/mcp/server.test.ts src/mcp/stdio.test.ts src/mcp/legacySse.test.ts src/session/deviceSessionClient.test.ts src/idempotency/RequestLedger.test.ts src/device/DeviceRpcAdapter.test.ts src/test-support/PlaneSeams.test.ts src/test-support/DeviceRpcTestSupport.test.ts src/test-support/ReplayPlanes.test.ts src/stories/manifest.test.ts && node --test scripts/check-docs-consistency.test.mjs",
     "test:phase3": "vitest run src/browser/bridgeProtocol.test.ts src/browser/BrowserController.test.ts src/browser/frames.test.ts src/browser/geometry.test.ts src/handlers/inputDisplay.matrix.test.ts src/native/JetKvmNativeControlPlane.test.ts src/planes/JetKvmBrowserPlane.test.ts src/test-support/PlaneSeams.test.ts src/test-support/ReplayPlanes.test.ts src/test-support/uiFixture.test.ts src/stories/manifest.test.ts src/stories/phase3.acceptance.test.ts && node --test scripts/check-docs-consistency.test.mjs",
+    "test:phase4": "vitest run src/ToolHandlers.test.ts src/handlers/power.test.ts src/runtime.test.ts src/cli.test.ts src/handlers/inputDisplay.matrix.test.ts src/handlers/powerSession.matrix.test.ts src/session/SessionService.test.ts src/session/deviceSessionClient.test.ts && npm run smoke:installed-first-party",
     "test:device-go-runner": "node --test scripts/run-device-go-tests.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
@@ -30,6 +34,7 @@
     "smoke:installed-contracts": "npm run build && node scripts/installed-contracts-smoke.mjs",
     "smoke:installed-stdio-protocol": "npm run build && node scripts/installed-stdio-protocol-smoke.mjs",
     "smoke:installed-sse-protocol": "npm run build && node scripts/installed-sse-protocol-smoke.mjs",
+    "smoke:installed-first-party": "npm run build && node scripts/installed-first-party-runtime-smoke.mjs",
     "package:check": "npm run build && node scripts/check-package.mjs"
   },
   "dependencies": {

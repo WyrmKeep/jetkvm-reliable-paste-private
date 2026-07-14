@@ -299,17 +299,19 @@ function assertCanonicalStatusProvenance(text, label) {
   }
 }
 
-function assertPhase3OperatorDocumentation(readmeText, securityText) {
+function assertOperatorDocumentation(readmeText, securityText) {
   const status =
-    "Phase 3 input/display implementation is present and tested, but the all-ten production registry remains inactive until the Phase 4 power/session handlers and Phase 5 composition gate are complete.";
+    "The all-ten production registry is active. The package is a standalone release candidate; Phase 5 system E2E, documentation/release evidence, and publication are still pending.";
   if (
     !readmeText.includes(status) ||
-    /(?:all ten production handlers are registered and active|production tool handlers are active)/i.test(
+    /(?:production registry remains inactive|lists no production tools|no public CLI entry point)/i.test(
       readmeText,
-    )
+    ) ||
+    !readmeText.includes("## Standalone CLI") ||
+    !/device-keyed lease/i.test(readmeText)
   ) {
     throw new Error(
-      "Phase 3 production registry status must remain explicitly inactive; false activation claims are prohibited",
+      "Phase 4 production activation and standalone CLI documentation drifted",
     );
   }
   if (
@@ -384,7 +386,7 @@ export function checkDocsConsistency({
     assertCanonicalBrowserPlaneContract(text, label);
     assertCanonicalStatusProvenance(text, label);
   }
-  assertPhase3OperatorDocumentation(readmeText, securityText);
+  assertOperatorDocumentation(readmeText, securityText);
   if (
     countOccurrences(designText, "    content_index: 1;") !== 1 ||
     !planText.includes(

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jetkvm/kvm/internal/atx"
 	"github.com/jetkvm/kvm/internal/controlsession"
 	"github.com/jetkvm/kvm/internal/hidrpc"
 	"github.com/rs/zerolog"
@@ -210,4 +211,90 @@ func TestQuiesceAndZeroWireHandlerInjectsOriginatingSessionGeneration(t *testing
 func TestQuiesceAndZeroWireHandlerDeclaresOnlyOperationID(t *testing.T) {
 	require.Equal(t, []string{"operationId"}, rpcHandlers["quiesceAndZero"].Params)
 	require.True(t, rpcHandlers["quiesceAndZero"].SessionBound)
+}
+
+func TestPerformATXActionMapsDefinitiveReceiptAndCachedLEDProvenance(t *testing.T) {
+	observedAt := time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC)
+	updateATXCachedState(true, false, false, false, observedAt)
+	acknowledgedAt := observedAt.Add(time.Second)
+
+	response, err := rpcPerformATXActionWith(
+		nil,
+		"request-1",
+		"press_power",
+		func(*Session, string, atx.Action) atx.Receipt {
+			return atx.Receipt{
+				RequestID:               "request-1",
+				Action:                  atx.ActionPressPower,
+				WireAction:              "power-short",
+				FixedPressMS:            200,
+				Outcome:                 atx.OutcomeApplied,
+				AcknowledgedAt:          acknowledgedAt,
+				SerialSequenceCompleted: true,
+			}
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "request-1", response.RequestID)
+	require.Equal(t, "press_power", response.Action)
+	require.Equal(t, "power-short", response.WireAction)
+	require.Equal(t, 200, response.FixedPressMS)
+	require.True(t, response.SerialSequenceCompleted)
+	require.Equal(t, acknowledgedAt.Format(time.RFC3339Nano), response.AcknowledgedAt)
+	require.Equal(t, "device_ack_only", response.Verification)
+	require.Equal(t, "available", response.PostRead.Status)
+	require.NotNil(t, response.ATXLEDObservation.Power)
+	require.True(t, *response.ATXLEDObservation.Power)
+	require.NotNil(t, response.ATXLEDObservation.ObservedAt)
+	require.Equal(t, observedAt.Format(time.RFC3339Nano), *response.ATXLEDObservation.ObservedAt)
+}
+
+func TestPerformATXActionMapsAdmissionAndUnknownFailuresWithoutSuccess(t *testing.T) {
+	tests := []struct {
+		name       string
+		receipt    atx.Receipt
+		publicCode string
+	}{
+		{
+			name: "inactive",
+			receipt: atx.Receipt{
+				Outcome:    atx.OutcomeNotSent,
+				ErrorCode:  atx.ErrorExtensionInactive,
+				ErrorPhase: atx.PhaseAdmission,
+			},
+			publicCode: "ATX_EXTENSION_INACTIVE",
+		},
+		{
+			name: "off unknown",
+			receipt: atx.Receipt{
+				Outcome:    atx.OutcomeUnknown,
+				ErrorCode:  atx.ErrorWriteRejected,
+				ErrorPhase: atx.PhaseOFF,
+			},
+			publicCode: "MUTATION_OUTCOME_UNKNOWN",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := rpcPerformATXActionWith(
+				nil,
+				"request-1",
+				"press_power",
+				func(*Session, string, atx.Action) atx.Receipt {
+					return test.receipt
+				},
+			)
+			var qualified *atxRPCError
+			require.ErrorAs(t, err, &qualified)
+			require.Equal(t, test.publicCode, qualified.Code)
+		})
+	}
+}
+
+func TestPerformATXActionWireHandlerIsSessionBound(t *testing.T) {
+	require.Equal(t, []string{"requestId", "action"}, rpcHandlers["performATXAction"].Params)
+	require.True(t, rpcHandlers["performATXAction"].SessionBound)
+	require.Equal(t, []string{"action"}, rpcHandlers["setATXPowerAction"].Params)
+	require.True(t, rpcHandlers["setATXPowerAction"].SessionBound)
 }

@@ -692,6 +692,48 @@ describe("device lease runner", () => {
     expect(result.stderr).not.toMatch(/[a-f0-9]{64}/i);
   });
 
+  it("preserves interactive stdin through the detached lease supervisor", async () => {
+    const isolatedTmp = await mkdtemp(join(tmpdir(), "jetkvm-runner-stdin-"));
+    const child = spawn(
+      process.execPath,
+      [
+        wrapperPath,
+        "--device-key",
+        `stdin-${randomUUID()}`,
+        "--",
+        process.execPath,
+        "-e",
+        "process.stdin.pipe(process.stdout)",
+      ],
+      {
+        env: { ...scrubDeviceLeaseEnvironment(), TMPDIR: isolatedTmp },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    const completion = Promise.withResolvers<number | null>();
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", completion.reject);
+    child.once("close", completion.resolve);
+    try {
+      child.stdin.end("leased-stdio-round-trip");
+      expect(await completion.promise).toBe(0);
+      expect(stdout).toBe("leased-stdio-round-trip");
+      expect(stderr).toBe("");
+    } finally {
+      child.kill("SIGKILL");
+      await rm(isolatedTmp, { recursive: true, force: true });
+    }
+  });
+
   it("supports nested inheritance through the protected proof reference", async () => {
     const deviceKey = `nested-${randomUUID()}`;
     const result = await runWrapper([

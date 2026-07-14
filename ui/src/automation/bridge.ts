@@ -4,6 +4,7 @@ import type {
   AutomationBridgeStage,
   AutomationSnapshot,
   CaptureBridgeRequest,
+  AtxBridgeRequest,
   CaptureBridgeResult,
   JetKvmAutomationV1,
   KeyboardBridgeReceipt,
@@ -30,6 +31,7 @@ export interface AutomationOwner {
   release(request: ReleaseBridgeRequest): Promise<ReleaseBridgeReceipt>;
   readVideoState(request: ReadBridgeRequest): Promise<ReadBridgeResult>;
   readEdid(request: ReadBridgeRequest): Promise<ReadBridgeResult>;
+  performAtx(request: AtxBridgeRequest): Promise<ReadBridgeResult>;
   activate?(lifecycleGeneration: number): void;
   invalidate(reason: AutomationInvalidationReason): void;
 }
@@ -57,6 +59,7 @@ export interface BridgeErrorContext {
   readonly acknowledged?: boolean;
   readonly dispatchedCount?: number;
   readonly completedCount?: number;
+  readonly outcome?: "not_sent" | "unknown";
 }
 
 const REGISTRY_KEY = Symbol.for("jetkvm.automation.registry.v1");
@@ -74,6 +77,14 @@ const SAFE_ERROR_MESSAGES: Record<AutomationBridgeErrorCode, string> = {
   DISPATCH_REPLACED: "The input dispatch generation changed.",
   DOWNSTREAM_ERROR: "The product operation failed.",
   EDID_READ_FAILED: "The native EDID read failed.",
+  ATX_EXTENSION_INACTIVE: "The ATX extension is inactive.",
+  ATX_SERIAL_UNAVAILABLE: "The ATX serial controller is unavailable.",
+  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
+    "The ATX request id was reused with different input.",
+  STALE_SESSION_GENERATION: "The device session generation is stale.",
+  MUTATION_OUTCOME_UNKNOWN: "The ATX mutation outcome is unknown.",
+  CONFIG_INVALID: "The ATX action configuration is invalid.",
+  DOWNSTREAM_MALFORMED_RESPONSE: "The ATX response was malformed.",
   MALFORMED_ACKNOWLEDGEMENT: "The product acknowledgement was invalid.",
   VIDEO_STALLED: "The decoded video did not advance.",
   CAPTURE_FAILED: "The decoded frame could not be captured.",
@@ -95,7 +106,7 @@ export function makeBridgeError(
     name: "JetKvmAutomationError",
     code,
     stage,
-    outcome: context.writeBegan ? "unknown" : "not_sent",
+    outcome: context.outcome ?? (context.writeBegan ? "unknown" : "not_sent"),
     operation_id: context.operationId ?? null,
     lifecycle_generation: snapshot.lifecycle_generation,
     channel_generation: snapshot.channel_generation,
@@ -175,6 +186,9 @@ class Registry implements AutomationFacadeRegistry {
         owner.readVideoState(request),
       ),
       readEdid: delegate((owner, request: ReadBridgeRequest) => owner.readEdid(request)),
+      performAtx: delegate((owner, request: AtxBridgeRequest) =>
+        owner.performAtx(request),
+      ),
     });
   }
 

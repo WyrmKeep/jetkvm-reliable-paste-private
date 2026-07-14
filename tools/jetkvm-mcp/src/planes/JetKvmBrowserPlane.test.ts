@@ -19,6 +19,7 @@ import type { BrowserControllerPort } from "../browser/BrowserController.js";
 import {
   BrowserPlaneError,
   type AutomationSnapshot,
+  type AtxBridgeRequest,
   type CaptureBridgeRequest,
   type CaptureBridgeResult,
   type KeyboardBridgeRequest,
@@ -69,6 +70,7 @@ class TestClock {
 }
 
 class FakeController implements BrowserControllerPort {
+  public identity: object = {};
   public snapshotValue: AutomationSnapshot = readySnapshot;
   public readonly captureRequests: CaptureBridgeRequest[] = [];
   public readonly mouseRequests: MouseBridgeRequest[] = [];
@@ -79,6 +81,7 @@ class FakeController implements BrowserControllerPort {
     readonly normalizedByteCount: number;
   }> = [];
   public readonly releaseRequests: ReleaseBridgeRequest[] = [];
+  public readonly atxRequests: AtxBridgeRequest[] = [];
   public mouseError: BrowserPlaneError | null = null;
   public keyboardError: BrowserPlaneError | null = null;
   public pasteError: BrowserPlaneError | null = null;
@@ -90,6 +93,7 @@ class FakeController implements BrowserControllerPort {
   public readEdidResult: ReadBridgeResult["result"] = null;
   public readEdidError: BrowserPlaneError | null = null;
   public readEdidGate: Promise<void> | null = null;
+  public atxError: BrowserPlaneError | null = null;
   public closed = false;
   public frameSequence = 0;
 
@@ -247,6 +251,49 @@ class FakeController implements BrowserControllerPort {
       acknowledged_at: "2026-07-13T00:00:00.000Z",
       result: this.readEdidResult,
     };
+  }
+
+  public async performAtx(
+    request: AtxBridgeRequest,
+    _deadline: Deadline,
+  ): Promise<ReadBridgeResult> {
+    this.atxRequests.push(request);
+    if (this.atxError) throw this.atxError;
+    const semantics =
+      request.action === "press_power"
+        ? { wireAction: "power-short", fixedPressMs: 200 }
+        : request.action === "hold_power"
+          ? { wireAction: "power-long", fixedPressMs: 5000 }
+          : { wireAction: "reset", fixedPressMs: 200 };
+    return {
+      operation_id: request.operation_id,
+      lifecycle_generation: request.expected_lifecycle_generation,
+      channel_generation: request.expected_channel_generation,
+      acknowledged_at: "2026-07-13T00:00:00.000Z",
+      result: {
+        requestId: request.request_id,
+        action: request.action,
+        ...semantics,
+        serialSequenceCompleted: true,
+        acknowledgedAt: "2026-07-13T00:00:00.000Z",
+        atxLedObservation: {
+          power: true,
+          hdd: false,
+          observedAt: "2026-07-13T00:00:00.000Z",
+          freshness: "stale",
+        },
+        verification: "device_ack_only",
+        postRead: { status: "available" },
+      },
+    };
+  }
+
+  public connectionIdentity(): object {
+    return this.identity;
+  }
+
+  public async reconnect(): Promise<void> {
+    return undefined;
   }
 
   public async close(): Promise<void> {
@@ -898,7 +945,7 @@ describe("page-backed shared DeviceRpcAdapter", () => {
     ).rejects.toMatchObject({ code: "MALFORMED_RESPONSE" });
   });
 
-  it("uses the same adapter for EDID and rejects ATX without a raw method escape", async () => {
+  it("uses the same adapter for EDID and receipt-bearing ATX calls", async () => {
     const { plane, controller } = setup();
     const connection = await plane.connect(ref, deadline);
     expect(connection.deviceRpc).toBe(plane.deviceRpc);
@@ -935,19 +982,25 @@ describe("page-backed shared DeviceRpcAdapter", () => {
       acknowledged: false,
     });
     controller.readEdidError = null;
-    const atx = await plane.deviceRpc
-      .performAtx(
+    await expect(
+      plane.deviceRpc.performAtx(
         connection.binding,
         { requestId: "power-1", action: "press_power" },
         deadline,
-      )
-      .catch((error: unknown) => error);
-    expect(atx).toBeInstanceOf(DeviceRpcError);
-    expect(atx).toMatchObject({
-      code: "INCOMPATIBLE_DOWNSTREAM",
-      outcome: "not_sent",
-      writeBegan: false,
-    });
+      ),
+    ).resolves.toMatchObject({
+      requestId: "power-1",
+      action: "press_power",
+      wireAction: "power-short",
+      fixedPressMs: 200,
+      serialSequenceCompleted: true,
+    } satisfies Partial<AtxWireReceipt>);
+    expect(controller.atxRequests).toEqual([
+      expect.objectContaining({
+        request_id: "power-1",
+        action: "press_power",
+      }),
+    ]);
   });
 
   it("fences exact binding before and after page awaits", async () => {

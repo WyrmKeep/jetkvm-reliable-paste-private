@@ -712,49 +712,49 @@ Run the equivalent committed-file gate in a clean checkout, including the real P
 
 ## Task 4.1: Advisor gate and native action proof
 
-- [ ] Record explicit ownership, no-steal default, transport independence, composed health/reconnect semantics, fixed ATX timing, serial readiness/serialization, and partial-release recovery decisions before code.
-- [ ] Confirm mappings against existing JetKVM behavior: public `press_power` is `power-short` with 200 ms between ON/OFF, `hold_power` is `power-long` with 5 s, and `press_reset` is `reset` with 200 ms. Do not expose native duration parameters.
-- [ ] Record that `getATXState` returns cached LED globals, not a synchronous serial read or host-power confirmation. Record extension state, serial-controller readiness, ON/OFF write receipts, cached LED/video observations, and their provenance separately; missing indicators remain typed unavailable.
+- [x] Record explicit ownership, no-steal default, transport independence, composed health/reconnect semantics, fixed ATX timing, serial readiness/serialization, and partial-release recovery decisions before code.
+- [x] Confirm mappings against existing JetKVM behavior: public `press_power` is `power-short` with 200 ms between ON/OFF, `hold_power` is `power-long` with 5 s, and `press_reset` is `reset` with 200 ms. Do not expose native duration parameters.
+- [x] Record that `getATXState` returns cached LED globals, not a synchronous serial read or host-power confirmation. Record extension state, serial-controller readiness, ON/OFF write receipts, cached LED/video observations, and their provenance separately; missing indicators remain typed unavailable.
 
 ## Task 4.2: Implement explicit SessionService ownership
 
 **Files:** `session/SessionService.ts`, tests; `handlers/session.ts`, tests.
 
-- [ ] Implement `jetkvm_session_connect` with exactly required `request_id`, optional `takeover`, and required bounded `timeout_ms`. On success the common envelope issues `session_id` and `session_generation`; the result is exactly `state`, connection/display generations, takeover flag, `fresh_capture_required`, permissions, capabilities, and `MutationState`. No mode, lease, target, URL, credential, or additional result shape is accepted.
-- [ ] A normal connect never steals. Busy ownership returns `CONTROL_BUSY`, `not_sent/none`, `safe_to_retry:true`, and `required_next_step:"wait_or_request_takeover"`; the incumbent is unchanged.
-- [ ] Explicit takeover invokes Go generation-scoped quiesce, waits for its input-release receipt, revokes old plane work, rotates generation, and invalidates old observations. The quiesce receipt proves only input drain/zero; it does not prove browser/native health or reconnect. Failure never grants ambiguous ownership.
-- [ ] Implement `jetkvm_session_status` with exact canonical §9.2 input/result. It composes separate ownership, browser, WebRTC, RPC/HID, native-process, cached capture, capabilities, mutation, blocker, and version observations without adding mode, lease, or unified-health fields.
-- [ ] `ping` proves only that one RPC handler ran on the current channel. Private/hard-coded `IsReady`, opaque `getVideoLogStatus`, cached `getVideoState`/`getATXState`, and native proxy auto-restart are not unified health proof and must never be promoted as such.
-- [ ] Implement `jetkvm_session_reconnect` with exact §9.3 input/result: preserve logical session, close/observe old generation, rebuild browser/WebRTC RPC/HID channels, boundedly re-probe actual native reads through the same `DeviceRpcAdapter`, publish new generation, and require fresh capture. Native auto-restart, reboot launch, ping, and quiesce cannot satisfy reconnect.
-- [ ] Test every applicable canonical §11.2 cell and stories `session-connect-without-takeover-busy`, `session-explicit-authorized-takeover`, `session-reconnect-invalidates-observations`, `transport-reconnect-does-not-own-device`, and `reconnect-requires-new-channel-observations`, including partially rebuilt planes and two-client/cross-transport cases.
+- [x] Implement `jetkvm_session_connect` with exactly required `request_id`, optional `takeover`, and required bounded `timeout_ms`. On success the common envelope issues `session_id` and `session_generation`; the result is exactly `state`, connection/display generations, takeover flag, `fresh_capture_required`, permissions, capabilities, and `MutationState`. No mode, lease, target, URL, credential, or additional result shape is accepted.
+- [x] A normal connect never steals. Busy ownership returns `CONTROL_BUSY`, `not_sent/none`, `safe_to_retry:true`, and `required_next_step:"wait_or_request_takeover"`; the incumbent is unchanged.
+- [x] Explicit takeover invokes Go generation-scoped quiesce, waits for its input-release receipt, revokes old plane work, rotates generation, and invalidates old observations. The quiesce receipt proves only input drain/zero; it does not prove browser/native health or reconnect. Failure never grants ambiguous ownership.
+- [x] Implement `jetkvm_session_status` with exact canonical §9.2 input/result. It composes separate ownership, browser, WebRTC, RPC/HID, native-process, cached capture, capabilities, mutation, blocker, and version observations without adding mode, lease, or unified-health fields.
+- [x] `ping` proves only that one RPC handler ran on the current channel. Private/hard-coded `IsReady`, opaque `getVideoLogStatus`, cached `getVideoState`/`getATXState`, and native proxy auto-restart are not unified health proof and must never be promoted as such.
+- [x] Implement `jetkvm_session_reconnect` with exact §9.3 input/result: preserve logical session, close/observe old generation, rebuild browser/WebRTC RPC/HID channels, boundedly re-probe actual native reads through the same `DeviceRpcAdapter`, publish new generation, and require fresh capture. Native auto-restart, reboot launch, ping, and quiesce cannot satisfy reconnect.
+- [x] Test every applicable canonical §11.2 cell and stories `session-connect-without-takeover-busy`, `session-explicit-authorized-takeover`, `session-reconnect-invalidates-observations`, `transport-reconnect-does-not-own-device`, and `reconnect-requires-new-channel-observations`, including partially rebuilt planes and two-client/cross-transport cases.
 
 ## Task 4.3: Implement semantic ATX power control
 
 **Files:** create `internal/atx/controller.go`, `controller_test.go`; modify `serial.go`, `serial_test.go`, `jsonrpc.go`, `jsonrpc_test.go`; extend `native/JetKvmNativeControlPlane.ts`; create `handlers/power.ts`, `power.test.ts`; add sanitized replay tapes.
 
-- [ ] Implement one Go ATX controller/adaptor that checks `atx-power` is active and the serial controller is actually ready before admission, then holds a mutex across the complete newline/ON/sleep/OFF sequence. Mount/`SetMode` failure cannot result in ready state; unmount clears readiness.
-- [ ] Preserve exactly the existing semantic wire actions and timing: power ON then OFF after 200 ms, power-long ON then OFF after 5 s, reset ON then OFF after 200 ms. The public and Node layers cannot choose or alter these durations.
-- [ ] Return a structured internal receipt that distinguishes not admitted, ON write attempted/completed, fixed hold completed, OFF write attempted/completed, and serial error phase. Do not expose the existing unscoped/best-effort `setATXPowerAction` directly as the MCP completion contract.
-- [ ] Treat ON-write failure as `not_sent` only when the writer proves no ON command was accepted. Treat OFF-write failure after ON as `unknown`, close the ATX gate, perform bounded best-effort OFF/release cleanup without repeating ON/the action, and require `inspect_device_state_before_retry`.
-- [ ] Implement `jetkvm_power_control` with exactly session ID/generation, request ID, one of three actions, and required bounded timeout. There is no second idempotency key, precondition, duration, delay, or sequence field.
-- [ ] A complete correlated serial ON/OFF receipt is `applied/device_ack_only` even when the subsequent cached LED read is unavailable or unchanged; persist it and never replay. Report cached LED observation separately with provenance/age and never upgrade it to host-state proof.
-- [ ] Test extension/readiness failure, two concurrent requests serialized across ON/OFF, exact fake-clock durations, ON failure, OFF-after-ON failure and cleanup evidence, cancel-before-write, partial verification preserved as applied, malformed reply, terminal persistence, and every applicable canonical §11.2 cell with Fake/Replay seams.
-- [ ] Never label an action or observation as host shutdown/start/reboot, never claim host-state change, and never infer action success from cached LEDs/video alone.
+- [x] Implement one Go ATX controller/adaptor that checks `atx-power` is active and the serial controller is actually ready before admission, then holds a mutex across the complete newline/ON/sleep/OFF sequence. Mount/`SetMode` failure cannot result in ready state; unmount clears readiness.
+- [x] Preserve exactly the existing semantic wire actions and timing: power ON then OFF after 200 ms, power-long ON then OFF after 5 s, reset ON then OFF after 200 ms. The public and Node layers cannot choose or alter these durations.
+- [x] Return a structured internal receipt that distinguishes not admitted, ON write attempted/completed, fixed hold completed, OFF write attempted/completed, and serial error phase. Do not expose the existing unscoped/best-effort `setATXPowerAction` directly as the MCP completion contract.
+- [x] Treat ON-write failure as `not_sent` only when the writer proves no ON command was accepted. Treat OFF-write failure after ON as `unknown`, close the ATX gate, perform bounded best-effort OFF/release cleanup without repeating ON/the action, and require `inspect_device_state_before_retry`.
+- [x] Implement `jetkvm_power_control` with exactly session ID/generation, request ID, one of three actions, and required bounded timeout. There is no second idempotency key, precondition, duration, delay, or sequence field.
+- [x] A complete correlated serial ON/OFF receipt is `applied/device_ack_only` even when the subsequent cached LED read is unavailable or unchanged; persist it and never replay. Report cached LED observation separately with provenance/age and never upgrade it to host-state proof.
+- [x] Test extension/readiness failure, two concurrent requests serialized across ON/OFF, exact fake-clock durations, ON failure, OFF-after-ON failure and cleanup evidence, cancel-before-write, partial verification preserved as applied, malformed reply, terminal persistence, and every applicable canonical §11.2 cell with Fake/Replay seams.
+- [x] Never label an action or observation as host shutdown/start/reboot, never claim host-state change, and never infer action success from cached LEDs/video alone.
 
 ## Task 4.4: Compose and register exactly ten real handlers
 
 **Files:** `ToolHandlers.ts`, tests; `mcp/server.ts`, catalogue/results integration tests; CLI entry points.
 
-- [ ] Build a production handler registry from `SessionService`, `JetKvmBrowserPlane`, and `JetKvmNativeControlPlane`; production imports no fake/replay/test fixture.
-- [ ] Register all and only the ten catalogue tools. Every registered handler implements timeout cancellation, common envelopes, redaction, and stable errors.
-- [ ] Activate production stdio and legacy SSE CLI modes now that every tool has a real handler. Startup asserts runtime/config before transport or device effects; stdout remains protocol-only.
-- [ ] Run inventory and packed-schema checks against production `tools/list` for both transports.
+- [x] Build a production handler registry from `SessionService`, `JetKvmBrowserPlane`, and `JetKvmNativeControlPlane`; production imports no fake/replay/test fixture.
+- [x] Register all and only the ten catalogue tools. Every registered handler implements timeout cancellation, common envelopes, redaction, and stable errors.
+- [x] Activate production stdio and legacy SSE CLI modes now that every tool has a real handler. Startup asserts runtime/config before transport or device effects; stdout remains protocol-only.
+- [x] Run inventory and packed-schema checks against production `tools/list` for both transports.
 
 ## Task 4.5: Complete Phase 4 stories and docs
 
-- [ ] Execute reviewed stories `session-connect-without-takeover-busy`, `session-explicit-authorized-takeover`, `session-reconnect-invalidates-observations`, `reconnect-requires-new-channel-observations`, `power-three-semantic-actions`, and `atx-extension-serialization-idempotency-and-nonproof`; do not add phase-local story IDs.
-- [ ] Assert canonical mutation outcomes/verification, evidence, and unconditional restoration through the reviewed manifest.
-- [ ] Document ownership and takeover risk, reconnect/fresh-capture recovery, capability blockers, semantic ATX meaning, and unknown-effect handling. No host-OS claim is made.
+- [x] Execute reviewed stories `session-connect-without-takeover-busy`, `session-explicit-authorized-takeover`, `session-reconnect-invalidates-observations`, `reconnect-requires-new-channel-observations`, `power-three-semantic-actions`, and `atx-extension-serialization-idempotency-and-nonproof`; do not add phase-local story IDs.
+- [x] Assert canonical mutation outcomes/verification, evidence, and unconditional restoration through the reviewed manifest.
+- [x] Document ownership and takeover risk, reconnect/fresh-capture recovery, capability blockers, semantic ATX meaning, and unknown-effect handling. No host-OS claim is made.
 
 ## Task 4.6: Phase-wide and clean-checkout gates
 

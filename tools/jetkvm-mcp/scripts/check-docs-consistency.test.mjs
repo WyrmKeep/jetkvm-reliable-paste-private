@@ -593,7 +593,7 @@ test("rejects missing or drifted Phase 3 MCP/UI test and typecheck hooks", () =>
   }
 });
 
-test("rejects Phase 3 documentation drift or a false production activation claim", () => {
+test("rejects Phase 3 semantic drift or Phase 4 production activation drift", () => {
   for (const [replacement, expected] of [
     [
       "Coordinates are interpreted against the source image geometry",
@@ -617,9 +617,19 @@ test("rejects Phase 3 documentation drift or a false production activation claim
   assert.throws(
     () =>
       check({
-        readmeText: `${readmeText}\nAll ten production handlers are registered and active.\n`,
+        readmeText: readmeText.replace(
+          "The all-ten production registry is active.",
+          "The production registry remains inactive.",
+        ),
       }),
-    /production registry.*inactive|false activation/i,
+    /Phase 4 production activation/i,
+  );
+  assert.throws(
+    () =>
+      check({
+        readmeText: readmeText.replace("## Standalone CLI", "## Library only"),
+      }),
+    /Phase 4 production activation/i,
   );
   assert.throws(
     () =>
