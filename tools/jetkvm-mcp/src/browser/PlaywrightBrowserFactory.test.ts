@@ -66,10 +66,36 @@ describe("PlaywrightBrowserFactory", () => {
           signal: new AbortController().signal,
         }),
       ).resolves.toBeDefined();
-      expect(delayed.password.fill).toHaveBeenCalledWith(
-        "delayed-password",
-        { timeout: 2_000 },
-      );
+      expect(delayed.password.fill).toHaveBeenCalledWith("delayed-password", {
+        timeout: 2_000,
+      });
+    } finally {
+      await factory.dispose();
+      secret.dispose();
+    }
+  });
+  it("passes the configured headless mode and executable path to Chromium", async () => {
+    const delayed = delayedLoginBrowser();
+    const secret = DisposableSecret.fromBytes(
+      new TextEncoder().encode("delayed-password"),
+    );
+    const factory = new PlaywrightBrowserFactory({
+      targetUrl: "https://jetkvm.test",
+      credential: secret,
+      headless: false,
+      executablePath: "/operator/chromium",
+      launch: delayed.launch,
+    });
+    try {
+      await factory.open({
+        timeoutMs: 2_000,
+        signal: new AbortController().signal,
+      });
+      expect(delayed.launch).toHaveBeenCalledWith({
+        headless: false,
+        chromiumSandbox: true,
+        executablePath: "/operator/chromium",
+      });
     } finally {
       await factory.dispose();
       secret.dispose();

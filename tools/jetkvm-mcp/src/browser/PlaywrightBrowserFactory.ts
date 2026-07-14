@@ -1,8 +1,16 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright-core";
 
 import type { Deadline } from "../device/DeviceRpcAdapter.js";
 import { BrowserPlaneError } from "./bridgeProtocol.js";
-import { BrowserController, type BrowserControllerPort } from "./BrowserController.js";
+import {
+  BrowserController,
+  type BrowserControllerPort,
+} from "./BrowserController.js";
 import type { BrowserControllerFactory } from "./ManagedBrowserController.js";
 import type { DisposableSecret } from "./auth.js";
 
@@ -12,6 +20,7 @@ export interface PlaywrightBrowserFactoryOptions {
   readonly targetUrl: string;
   readonly credential: DisposableSecret;
   readonly headless?: boolean;
+  readonly executablePath?: string;
   readonly launch?: typeof chromium.launch;
 }
 
@@ -19,6 +28,7 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
   readonly #targetUrl: string;
   readonly #credential: DisposableSecret;
   readonly #headless: boolean;
+  readonly #executablePath: string | undefined;
   readonly #launch: typeof chromium.launch;
   #browser: Browser | null = null;
   #context: BrowserContext | null = null;
@@ -28,12 +38,14 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
     this.#targetUrl = options.targetUrl;
     this.#credential = options.credential;
     this.#headless = options.headless ?? true;
+    this.#executablePath = options.executablePath;
     this.#launch = options.launch ?? chromium.launch.bind(chromium);
   }
 
   public async open(deadline: Deadline): Promise<BrowserControllerPort> {
     this.#assertDeadline(deadline);
-    if (this.#disposed) throw new Error("Playwright browser factory is disposed.");
+    if (this.#disposed)
+      throw new Error("Playwright browser factory is disposed.");
     const context = await this.#contextFor(deadline);
     const page = await context.newPage();
     try {
@@ -67,7 +79,13 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
   async #contextFor(deadline: Deadline): Promise<BrowserContext> {
     if (this.#context !== null) return this.#context;
     this.#assertDeadline(deadline);
-    const browser = await this.#launch({ headless: this.#headless });
+    const browser = await this.#launch({
+      headless: this.#headless,
+      chromiumSandbox: true,
+      ...(this.#executablePath === undefined
+        ? {}
+        : { executablePath: this.#executablePath }),
+    });
     if (this.#disposed || deadline.signal.aborted) {
       await browser.close();
       throw this.#failure("CANCELLED", "none");
@@ -108,10 +126,9 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
     const form = password.locator("xpath=ancestor::form[1]");
     await form.press("Enter", { timeout: deadline.timeoutMs });
     try {
-      await page.waitForURL(
-        (url) => url.pathname !== "/login-local",
-        { timeout: deadline.timeoutMs },
-      );
+      await page.waitForURL((url) => url.pathname !== "/login-local", {
+        timeout: deadline.timeoutMs,
+      });
     } catch {
       throw this.#failure("AUTH_FAILED", "none");
     }
@@ -156,11 +173,7 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
   }
 
   #failure(
-    code:
-      | "AUTH_FAILED"
-      | "CANCELLED"
-      | "CONFIG_INVALID"
-      | "DEVICE_UNREACHABLE",
+    code: "AUTH_FAILED" | "CANCELLED" | "CONFIG_INVALID" | "DEVICE_UNREACHABLE",
     requiredNextStep: "none" | "reconnect_then_capture",
   ): BrowserPlaneError {
     return new BrowserPlaneError({

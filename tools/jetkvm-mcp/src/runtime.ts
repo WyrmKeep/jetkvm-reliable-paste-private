@@ -11,10 +11,7 @@ import { ManagedBrowserController } from "./browser/ManagedBrowserController.js"
 import { PlaywrightBrowserFactory } from "./browser/PlaywrightBrowserFactory.js";
 import type { OperatorConfig } from "./config.js";
 import type { CapabilitySnapshot } from "./domain.js";
-import {
-  DeviceRpcError,
-  type Deadline,
-} from "./device/DeviceRpcAdapter.js";
+import { DeviceRpcError, type Deadline } from "./device/DeviceRpcAdapter.js";
 import type { HandlerRegistry } from "./mcp/server.js";
 import { JetKvmNativeControlPlane } from "./native/JetKvmNativeControlPlane.js";
 import { JetKvmBrowserPlane } from "./planes/JetKvmBrowserPlane.js";
@@ -87,6 +84,10 @@ export function createProductionRuntime(
   const factory = new PlaywrightBrowserFactory({
     targetUrl: config.targetUrl,
     credential,
+    headless: config.headless,
+    ...(config.chromiumExecutablePath === undefined
+      ? {}
+      : { executablePath: config.chromiumExecutablePath }),
   });
   const controller = new ManagedBrowserController(factory);
   const browser = new JetKvmBrowserPlane(controller);

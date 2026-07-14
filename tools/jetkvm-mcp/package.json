@@ -46,7 +46,7 @@
     "test:phase4": "vitest run src/ToolHandlers.test.ts src/handlers/power.test.ts src/runtime.test.ts src/cli.test.ts src/handlers/inputDisplay.matrix.test.ts src/handlers/powerSession.matrix.test.ts src/session/SessionService.test.ts src/session/deviceSessionClient.test.ts && npm run smoke:installed-first-party",
     "test:device-go-runner": "node --test scripts/run-device-go-tests.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/copy-runtime-assets.mjs",
     "device-lease:run": "node dist/deviceLeaseRunner.js",
     "test:installed-lease": "npm run build && node scripts/installed-device-lease-smoke.mjs",
     "stories:validate": "vitest run src/stories/manifest.test.ts",
