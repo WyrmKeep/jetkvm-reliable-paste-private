@@ -34,6 +34,7 @@ async function createFixture() {
   const unpackedSource = join(root, "unpacked-source");
   const nodeExecutablePath = join(root, "node");
   const browserExecutablePath = join(root, "Google Chrome");
+  const controlledEvidencePath = join(root, "controlled-evidence.json");
   await mkdir(packageRoot, { recursive: true });
   await writeJson(join(packageRoot, "package.json"), {
     name: "@wyrmkeep/jetkvm-mcp",
@@ -41,7 +42,16 @@ async function createFixture() {
     bin: { "jetkvm-mcp": "dist/bin.js" },
   });
   await writeJson(join(packageRoot, "package-lock.json"), {
+    name: "@wyrmkeep/jetkvm-mcp",
+    version: "0.1.0",
     lockfileVersion: 3,
+    requires: true,
+    packages: {
+      "": {
+        name: "@wyrmkeep/jetkvm-mcp",
+        version: "0.1.0",
+      },
+    },
   });
   for (let index = 1; index <= 24; index += 1) {
     await writeJson(
@@ -67,6 +77,9 @@ async function createFixture() {
   await writeJson(join(packageRoot, "reports", "story-e2e.json"), {
     schema_version: 1,
   });
+  const harnessDist = join(repositoryRoot, "tools", "paste-harness", "dist");
+  await mkdir(harnessDist, { recursive: true });
+  await writeFile(join(harnessDist, "rig.js"), "export const rig = true;\n");
   await writeJson(join(unpackedSource, "package.json"), {
     name: "@wyrmkeep/jetkvm-mcp",
     version: "0.1.0",
@@ -80,6 +93,9 @@ async function createFixture() {
   );
   await writeFile(nodeExecutablePath, "node-binary");
   await writeFile(browserExecutablePath, "browser-binary");
+  await writeJson(controlledEvidencePath, {
+    "controlled:story:step": { result: "pass" },
+  });
   return {
     root,
     repositoryRoot,
@@ -89,13 +105,14 @@ async function createFixture() {
     nodeExecutablePath,
     browserExecutablePath,
     browserTargetUrl: "http://192.0.2.1",
+    controlledEvidencePath,
   };
 }
 
 function commandHarness(fixture, statusValues = ["", ""]) {
   const calls = [];
   let statusIndex = 0;
-  const runCommand = async (command, args) => {
+  const runCommand = async (command, args, { cwd } = {}) => {
     calls.push([command, ...args]);
     if (command === "git" && args[0] === "status") {
       return statusValues[statusIndex++] ?? statusValues.at(-1) ?? "";
@@ -106,17 +123,49 @@ function commandHarness(fixture, statusValues = ["", ""]) {
     if (command === "git" && args.join(" ") === "rev-parse HEAD^{tree}") {
       return `${TREE}\n`;
     }
-    if (command === "npm" && args.join(" ") === "run build") return "";
+    if (command === "npm" && args.join(" ") === "run build") {
+      if (cwd === join(fixture.repositoryRoot, "tools", "paste-harness")) {
+        const harnessDist = join(cwd, "dist");
+        await mkdir(harnessDist, { recursive: true });
+        await writeFile(
+          join(harnessDist, "rig.js"),
+          "export const rig = true;\n",
+        );
+      }
+      return "";
+    }
     if (command === "npm" && args[0] === "pack") {
       const filename = "wyrmkeep-jetkvm-mcp-0.1.0.tgz";
       const destination = args[args.indexOf("--pack-destination") + 1];
       await writeFile(join(destination, filename), "frozen-tarball");
       return `${JSON.stringify([{ filename }])}\n`;
     }
-    if (command === "npm" && args[0] === "install") {
-      const prefix = args[args.indexOf("--prefix") + 1];
+    if (
+      command === "npm" &&
+      args[0] === "install" &&
+      args.includes("--package-lock-only")
+    ) {
+      const consumer = JSON.parse(
+        await readFile(join(cwd, "package.json"), "utf8"),
+      );
+      await writeJson(join(cwd, "package-lock.json"), {
+        name: consumer.name,
+        version: consumer.version,
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": consumer,
+          "node_modules/@wyrmkeep/jetkvm-mcp": {
+            version: "0.1.0",
+            resolved: "file:wyrmkeep-jetkvm-mcp-0.1.0.tgz",
+          },
+        },
+      });
+      return "";
+    }
+    if (command === "npm" && args[0] === "ci") {
       const installedPackage = join(
-        prefix,
+        cwd,
         "node_modules",
         "@wyrmkeep",
         "jetkvm-mcp",
@@ -149,6 +198,7 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     assert.equal(parsed.source.tree_sha, TREE);
     assert.equal(parsed.source.story_manifest.count, 24);
     assert.equal(parsed.source.schemas.count, 21);
+    assert.match(parsed.source.paste_harness.sha256, /^[a-f0-9]{64}$/u);
     assert.deepEqual(
       parsed.artifact.files.map((file) => file.path),
       ["dist/bin.js", "package.json"],
@@ -168,6 +218,23 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     assert.equal(parsed.runtime.browser.headless, false);
     assert.equal(parsed.runtime.browser.chromium_sandbox, true);
     assert.equal(
+      parsed.source.controlled_evidence_sha256,
+      await sha256File(fixture.controlledEvidencePath),
+    );
+    assert.equal(
+      await sha256File(result.controlledEvidencePath),
+      await sha256File(fixture.controlledEvidencePath),
+    );
+    assert.equal(
+      await sha256File(result.consumerPackagePath),
+      parsed.installation.package_json.sha256,
+    );
+    assert.equal(
+      await sha256File(result.consumerPackageLockPath),
+      parsed.installation.package_lock.sha256,
+    );
+    assert.equal(parsed.installation.files.length, 2);
+    assert.equal(
       await readFile(result.checksumPath, "utf8"),
       `${await sha256File(result.candidatePath)}  candidate.json\n`,
     );
@@ -176,11 +243,26 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
         ([command, first, second]) =>
           command === "npm" && first === "run" && second === "build",
       ).length,
-      1,
+      2,
     );
     assert.equal(
       commands.calls.filter(
         ([command, first]) => command === "npm" && first === "pack",
+      ).length,
+      1,
+    );
+    assert.equal(
+      commands.calls.filter(
+        ([command, first]) => command === "npm" && first === "ci",
+      ).length,
+      1,
+    );
+    assert.equal(
+      commands.calls.filter(
+        ([command, first, ...args]) =>
+          command === "npm" &&
+          first === "install" &&
+          args.includes("--package-lock-only"),
       ).length,
       1,
     );

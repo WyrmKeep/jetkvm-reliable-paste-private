@@ -7,9 +7,11 @@ import test from "node:test";
 import {
   assertCurrentRuntimeMatchesCandidate,
   buildDirectoryManifest,
+  buildProductionResolution,
   buildReleaseCandidateManifest,
   canonicalJson,
   createExecutionEvidenceResolver,
+  isGeneratedInstalledBinLink,
   sha256Canonical,
   sha256File,
   sha256Text,
@@ -38,8 +40,10 @@ function candidateInput() {
     storyCount: 24,
     schemasSha256: HASH_E,
     schemaCount: 21,
+    pasteHarnessSha256: HASH_F,
     branchMatrixSha256: HASH_F,
     storyE2eSha256: HASH_1,
+    controlledEvidenceSha256: HASH_2,
     nodeVersion: "v22.23.1",
     nodeExecutableName: "node",
     nodeExecutableSha256: HASH_2,
@@ -56,6 +60,17 @@ function candidateInput() {
     artifactFilename: "wyrmkeep-jetkvm-mcp-0.1.0.tgz",
     artifactSizeBytes: 1234,
     artifactSha256: HASH_A,
+    consumerPackageJsonSha256: HASH_B,
+    consumerPackageLockSha256: HASH_C,
+    productionResolutionSha256: HASH_D,
+    installationFiles: [
+      {
+        path: "@wyrmkeep/jetkvm-mcp/package.json",
+        mode: 0o644,
+        size_bytes: 12,
+        sha256: HASH_E,
+      },
+    ],
     packageFiles: [
       {
         path: "package.json",
@@ -97,6 +112,16 @@ test("directory manifests are sorted, content-addressed, and reject symlinks", a
     assert.equal(manifest.files[0].size_bytes, 5);
     assert.equal(manifest.files[1].mode, 0o600);
 
+    await mkdir(join(root, ".bin"));
+    await symlink("../z.txt", join(root, ".bin", "command"));
+    const installedManifest = await buildDirectoryManifest(root, {
+      excludeSymlink: isGeneratedInstalledBinLink,
+    });
+    assert.deepEqual(
+      installedManifest.files.map((file) => file.path),
+      ["nested/a.txt", "z.txt"],
+    );
+
     await symlink("z.txt", join(root, "linked.txt"));
     await assert.rejects(
       buildDirectoryManifest(root),
@@ -105,6 +130,41 @@ test("directory manifests are sorted, content-addressed, and reject symlinks", a
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("normalizes only integrity-bound production lock entries", () => {
+  const lock = {
+    lockfileVersion: 3,
+    packages: {
+      "": { name: "consumer", version: "1.0.0" },
+      "node_modules/prod": {
+        version: "2.0.0",
+        integrity: "sha512-production",
+      },
+      "node_modules/dev": {
+        version: "3.0.0",
+        integrity: "sha512-development",
+        dev: true,
+      },
+      "node_modules/@wyrmkeep/jetkvm-mcp": {
+        version: "0.1.0",
+        resolved: "file:candidate.tgz",
+      },
+    },
+  };
+
+  assert.deepEqual(buildProductionResolution(lock, ["@wyrmkeep/jetkvm-mcp"]), [
+    {
+      name: "prod",
+      version: "2.0.0",
+      integrity: "sha512-production",
+    },
+  ]);
+  delete lock.packages["node_modules/prod"].integrity;
+  assert.throws(
+    () => buildProductionResolution(lock, ["@wyrmkeep/jetkvm-mcp"]),
+    /incomplete/u,
+  );
 });
 
 test("candidate manifests bind every frozen source, runtime, and package identity", () => {
@@ -119,11 +179,13 @@ test("candidate manifests bind every frozen source, runtime, and package identit
   assert.equal(candidate.runtime.browser.headless, false);
   assert.deepEqual(candidate.runtime.browser.launch_args, []);
   assert.equal(candidate.runtime.browser.target_url_sha256, HASH_B);
+  assert.equal(candidate.source.controlled_evidence_sha256, HASH_2);
   assert.equal(candidate.artifact.files.length, 2);
   assert.equal(
     candidate.artifact.package_tree_sha256,
     sha256Canonical(candidate.artifact.files),
   );
+  assert.equal(candidate.installation.files.length, 1);
   assert.equal(Object.isFrozen(candidate), true);
 });
 

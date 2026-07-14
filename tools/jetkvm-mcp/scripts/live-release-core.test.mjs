@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  runWithFinalization,
   runCanonicalLiveStories,
   validateLiveExecutionPlan,
 } from "./live-release-core.mjs";
@@ -67,6 +68,31 @@ const PLAN = {
     },
   },
 };
+
+test("runs finalization once and preserves operation plus cleanup failures", async () => {
+  const order = [];
+  await assert.rejects(
+    runWithFinalization(
+      async () => {
+        order.push("operation");
+        throw new Error("operation failed");
+      },
+      async (operationError) => {
+        order.push("finalize");
+        assert.match(operationError.message, /operation failed/u);
+        throw new Error("finalization failed");
+      },
+    ),
+    (error) => {
+      assert.equal(error instanceof AggregateError, true);
+      assert.equal(error.errors.length, 2);
+      assert.match(error.errors[0].message, /operation failed/u);
+      assert.match(error.errors[1].message, /finalization failed/u);
+      return true;
+    },
+  );
+  assert.deepEqual(order, ["operation", "finalize"]);
+});
 
 test("validates explicit one-to-one step coverage and rejects silent linking", () => {
   assert.doesNotThrow(() => validateLiveExecutionPlan(STORIES, PLAN));

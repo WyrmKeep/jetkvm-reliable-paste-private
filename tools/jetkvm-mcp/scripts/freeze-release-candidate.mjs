@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -25,6 +26,10 @@ import {
 import {
   buildDirectoryManifest,
   buildReleaseCandidateManifest,
+  buildProductionResolution,
+  isGeneratedInstalledBinLink,
+  canonicalJson,
+  sha256Canonical,
   sha256File,
 } from "./release-evidence.mjs";
 
@@ -143,7 +148,7 @@ async function assertCleanSource(runCommand, repositoryRoot) {
   }
 }
 
-async function sourceIdentity(packageRoot) {
+async function sourceIdentity(packageRoot, repositoryRoot) {
   const storyManifest = await buildDirectoryManifest(
     join(packageRoot, "src", "stories"),
     { include: (path) => path.endsWith(".json") },
@@ -151,9 +156,13 @@ async function sourceIdentity(packageRoot) {
   const schemas = await buildDirectoryManifest(join(packageRoot, "schemas"), {
     include: (path) => path.endsWith(".json"),
   });
+  const pasteHarness = await buildDirectoryManifest(
+    join(repositoryRoot, "tools", "paste-harness", "dist"),
+  );
   return {
     packageLockSha256: await sha256File(join(packageRoot, "package-lock.json")),
     storyManifest,
+    pasteHarness,
     schemas,
     branchMatrixSha256: await sha256File(
       join(packageRoot, "reports", "branch-matrix.json"),
@@ -174,6 +183,7 @@ export async function freezeReleaseCandidate({
   platform = process.platform,
   browserExecutablePath,
   browserTargetUrl,
+  controlledEvidencePath,
   architecture = process.arch,
 }) {
   repositoryRoot = resolve(repositoryRoot);
@@ -209,6 +219,22 @@ export async function freezeReleaseCandidate({
       "Release freeze requires exact browser executable and target URL.",
     );
   }
+  if (
+    typeof controlledEvidencePath !== "string" ||
+    !isAbsolute(controlledEvidencePath)
+  ) {
+    throw new Error(
+      "Release freeze requires an absolute controlled evidence path.",
+    );
+  }
+  controlledEvidencePath = resolve(controlledEvidencePath);
+  const controlledEvidenceFacts = await stat(controlledEvidencePath);
+  if (!controlledEvidenceFacts.isFile() || controlledEvidenceFacts.size < 1) {
+    throw new Error(
+      "Controlled release evidence must be a non-empty regular file.",
+    );
+  }
+
   const browserFacts = await stat(browserExecutablePath);
   if (!browserFacts.isFile()) {
     throw new Error("Release browser executable is not a regular file.");
@@ -237,6 +263,13 @@ export async function freezeReleaseCandidate({
   );
   let installationDirectory;
   try {
+    await rm(join(repositoryRoot, "tools", "paste-harness", "dist"), {
+      recursive: true,
+      force: true,
+    });
+    await runCommand("npm", ["run", "build"], {
+      cwd: join(repositoryRoot, "tools", "paste-harness"),
+    });
     await runCommand("npm", ["run", "build"], { cwd: packageRoot });
     const packOutput = await runCommand(
       "npm",
@@ -254,18 +287,57 @@ export async function freezeReleaseCandidate({
     installationDirectory = await mkdtemp(
       join(tmpdir(), "jetkvm-candidate-install-"),
     );
+    await copyFile(
+      stagedArtifactPath,
+      join(installationDirectory, artifactFilename),
+    );
+    const consumerPackageFilename = "consumer-package.json";
+    const consumerPackageLockFilename = "consumer-package-lock.json";
+    const installPackageJsonPath = join(installationDirectory, "package.json");
+    const installPackageLockPath = join(
+      installationDirectory,
+      "package-lock.json",
+    );
+    const consumerPackage = {
+      name: "jetkvm-mcp-release-consumer",
+      version: "1.0.0",
+      private: true,
+      dependencies: {
+        [packageMetadata.name]: `file:./${artifactFilename}`,
+      },
+    };
+    await writeFile(
+      installPackageJsonPath,
+      `${JSON.stringify(consumerPackage, null, 2)}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
     await runCommand(
       "npm",
       [
         "install",
-        "--prefix",
-        installationDirectory,
-        stagedArtifactPath,
+        "--package-lock-only",
         "--ignore-scripts",
-        "--package-lock=false",
         "--no-audit",
         "--no-fund",
       ],
+      { cwd: installationDirectory },
+    );
+    const [sourcePackageLock, consumerPackageLock] = await Promise.all([
+      readFile(join(packageRoot, "package-lock.json"), "utf8").then(JSON.parse),
+      readFile(installPackageLockPath, "utf8").then(JSON.parse),
+    ]);
+    const sourceResolution = buildProductionResolution(sourcePackageLock);
+    const consumerResolution = buildProductionResolution(consumerPackageLock, [
+      packageMetadata.name,
+    ]);
+    if (canonicalJson(sourceResolution) !== canonicalJson(consumerResolution)) {
+      throw new Error(
+        "Consumer production dependency resolution drifted from the reviewed source lock.",
+      );
+    }
+    await runCommand(
+      "npm",
+      ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
       { cwd: installationDirectory },
     );
     const installedPackage = join(
@@ -286,7 +358,31 @@ export async function freezeReleaseCandidate({
       );
     }
     const packageTree = await buildDirectoryManifest(installedPackage);
-    const source = await sourceIdentity(packageRoot);
+    const installationTree = await buildDirectoryManifest(
+      join(installationDirectory, "node_modules"),
+      { excludeSymlink: isGeneratedInstalledBinLink },
+    );
+    await Promise.all([
+      copyFile(
+        installPackageJsonPath,
+        join(stagingDirectory, consumerPackageFilename),
+      ),
+      copyFile(
+        installPackageLockPath,
+        join(stagingDirectory, consumerPackageLockFilename),
+      ),
+    ]);
+    const consumerPackageJsonSha256 = await sha256File(installPackageJsonPath);
+    const consumerPackageLockSha256 = await sha256File(installPackageLockPath);
+    const productionResolutionSha256 = sha256Canonical(sourceResolution);
+    const controlledEvidenceFilename = "controlled-evidence.json";
+    const controlledEvidenceSha256 = await sha256File(controlledEvidencePath);
+    await copyFile(
+      controlledEvidencePath,
+      join(stagingDirectory, controlledEvidenceFilename),
+      0,
+    );
+    const source = await sourceIdentity(packageRoot, repositoryRoot);
     const candidate = buildReleaseCandidateManifest({
       packageName: packageMetadata.name,
       packageVersion: packageMetadata.version,
@@ -297,8 +393,10 @@ export async function freezeReleaseCandidate({
       storyCount: source.storyManifest.files.length,
       schemasSha256: source.schemas.sha256,
       schemaCount: source.schemas.files.length,
+      pasteHarnessSha256: source.pasteHarness.sha256,
       branchMatrixSha256: source.branchMatrixSha256,
       storyE2eSha256: source.storyE2eSha256,
+      controlledEvidenceSha256,
       nodeVersion,
       nodeExecutableName: basename(nodeExecutablePath),
       nodeExecutableSha256: await sha256File(nodeExecutablePath),
@@ -318,6 +416,10 @@ export async function freezeReleaseCandidate({
       artifactSizeBytes: artifactFacts.size,
       artifactSha256: await sha256File(stagedArtifactPath),
       packageFiles: packageTree.files,
+      consumerPackageJsonSha256,
+      consumerPackageLockSha256,
+      productionResolutionSha256,
+      installationFiles: installationTree.files,
     });
     const stagedCandidatePath = join(stagingDirectory, "candidate.json");
     await writeFile(
@@ -340,6 +442,12 @@ export async function freezeReleaseCandidate({
       candidatePath: join(outputDirectory, "candidate.json"),
       checksumPath: join(outputDirectory, "candidate.sha256"),
       tarballPath: join(outputDirectory, artifactFilename),
+      consumerPackagePath: join(outputDirectory, consumerPackageFilename),
+      consumerPackageLockPath: join(
+        outputDirectory,
+        consumerPackageLockFilename,
+      ),
+      controlledEvidencePath: join(outputDirectory, controlledEvidenceFilename),
     });
   } catch (error) {
     await rm(stagingDirectory, { recursive: true, force: true });
@@ -370,6 +478,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       outputDirectory: parseOutputArgument(process.argv.slice(2)),
       browserExecutablePath: process.env.JETKVM_RELEASE_BROWSER_EXECUTABLE_PATH,
       browserTargetUrl: process.env.JETKVM_RELEASE_TARGET_URL,
+      controlledEvidencePath: process.env.JETKVM_RELEASE_CONTROLLED_EVIDENCE,
     });
     process.stdout.write(
       `Release candidate frozen: ${basename(result.tarballPath)} ${result.candidate.source.commit_sha}\n`,

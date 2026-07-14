@@ -6,6 +6,7 @@ import {
   DEVICE_TEST_TARGET_ENV,
   parseDeviceIdentity,
   runDeviceGoTests,
+  validateDeviceGoTestEvidence,
   runDeviceGoTestsCli,
 } from "./run-device-go-tests.mjs";
 
@@ -112,6 +113,32 @@ test("reads identity, runs only the test-only command, rechecks, and flushes in 
   assert.equal(h.fetchCalls[0].options.method, "GET");
   assert.deepEqual(h.fetchCalls[0].options.headers, { accept: "text/plain" });
   assert.ok(h.fetchCalls[0].options.signal instanceof AbortSignal);
+});
+
+test("validates only a complete passing device-test artifact", async () => {
+  const result = await runHarness(harness());
+  assert.doesNotThrow(() => validateDeviceGoTestEvidence(result));
+  for (const mutate of [
+    (value) => {
+      value.ok = false;
+    },
+    (value) => {
+      value.child.code = 1;
+    },
+    (value) => {
+      value.after.revision = "changed";
+    },
+    (value) => {
+      value.extra = true;
+    },
+  ]) {
+    const changed = structuredClone(result);
+    mutate(changed);
+    assert.throws(
+      () => validateDeviceGoTestEvidence(changed),
+      /device Go test evidence/u,
+    );
+  }
 });
 
 test("uses the configured target for both metrics and the sole allowed argv", async () => {

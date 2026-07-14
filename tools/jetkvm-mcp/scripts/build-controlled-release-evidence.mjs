@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   createExecutionEvidenceResolver,
+  canonicalJson,
   sha256Canonical,
 } from "./release-evidence.mjs";
 
@@ -47,6 +48,19 @@ export function buildControlledReleaseEvidence({
       ),
     ),
   );
+}
+
+export function validateControlledReleaseEvidence(input) {
+  if (!isRecord(input?.evidence)) {
+    throw new Error("Controlled release evidence must be an object.");
+  }
+  const expected = buildControlledReleaseEvidence(input);
+  if (canonicalJson(input.evidence) !== canonicalJson(expected)) {
+    throw new Error(
+      "Controlled release evidence does not match the reviewed inventory and hashes.",
+    );
+  }
+  return expected;
 }
 
 export async function writeControlledReleaseEvidence(path, evidence) {

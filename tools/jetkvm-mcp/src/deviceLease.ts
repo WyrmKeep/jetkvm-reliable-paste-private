@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   readFile,
   rename,
   unlink,
@@ -106,6 +107,13 @@ export interface RemoveStaleDeviceLeaseOptions {
     record: Readonly<DeviceLeaseRecord>,
   ) => boolean | Promise<boolean>;
   unlinkFile?: (path: string) => Promise<void>;
+}
+export interface RemoveRetainedDeviceLeaseOptions {
+  directory?: string;
+  deviceKey: string;
+  confirmOwnerDead?: (
+    record: Readonly<DeviceLeaseRecord>,
+  ) => boolean | Promise<boolean>;
 }
 
 export interface RemoveStaleDeviceLeaseAdminLockOptions {
@@ -672,6 +680,49 @@ export async function loadDeviceLeaseProofReference(
       "The device lease proof reference is invalid.",
     );
   }
+}
+
+export async function removeRetainedDeviceLease(
+  options: RemoveRetainedDeviceLeaseOptions,
+): Promise<void> {
+  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  await assertSecureDirectory(directory);
+  const path = leasePath(directory, options.deviceKey);
+  await assertSecureProofFile(path);
+  const stableIdentity = await lstat(path);
+  const capabilityPaths: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!/^capability-[a-f0-9]{64}\.json$/u.test(entry.name)) continue;
+    const candidatePath = join(directory, entry.name);
+    try {
+      await assertSecureProofFile(candidatePath);
+      const candidateIdentity = await lstat(candidatePath);
+      if (
+        candidateIdentity.dev === stableIdentity.dev &&
+        candidateIdentity.ino === stableIdentity.ino
+      ) {
+        capabilityPaths.push(candidatePath);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  if (capabilityPaths.length !== 1) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The retained device lease proof reference is invalid.",
+    );
+  }
+  const proof = await loadDeviceLeaseProofReference(
+    capabilityPaths[0] as string,
+    options.deviceKey,
+  );
+  await removeStaleDeviceLease({
+    proof,
+    ...(options.confirmOwnerDead === undefined
+      ? {}
+      : { confirmOwnerDead: options.confirmOwnerDead }),
+  });
 }
 
 export async function removeStaleDeviceLeaseAdminLock(

@@ -4,8 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import {
+  buildControlledReleaseEvidence,
+  validateControlledReleaseEvidence,
+} from "./build-controlled-release-evidence.mjs";
 import { validateLiveExecutionPlan } from "./live-release-core.mjs";
 import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
+import { createExecutionEvidenceResolver } from "./release-evidence.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -49,6 +54,51 @@ test("materializes explicit coverage for all 18 canonical live stories", async (
     ).every((assignment) => assignment.mode === "controlled_live"),
     true,
   );
+});
+
+test("validates exact controlled evidence inventory, pass state, and hashes", async () => {
+  const stories = await loadStories();
+  const [branchMatrix, storyE2e] = await Promise.all([
+    readFile(join(packageRoot, "reports", "branch-matrix.json"), "utf8").then(
+      JSON.parse,
+    ),
+    readFile(join(packageRoot, "reports", "story-e2e.json"), "utf8").then(
+      JSON.parse,
+    ),
+  ]);
+  const resolver = createExecutionEvidenceResolver({ branchMatrix, storyE2e });
+  const plan = materializeLiveExecutionPlan(stories, resolver);
+  const evidence = buildControlledReleaseEvidence({
+    stories,
+    plan,
+    branchMatrix,
+    storyE2e,
+  });
+  const input = { evidence, stories, plan, branchMatrix, storyE2e };
+
+  assert.deepEqual(validateControlledReleaseEvidence(input), evidence);
+  const identity = Object.keys(evidence)[0];
+  for (const mutate of [
+    (value) => {
+      value[identity].result = "fail";
+    },
+    (value) => {
+      value[identity].branch_matrix_sha256 = "0".repeat(64);
+    },
+    (value) => {
+      value["controlled:extra:step"] = value[identity];
+    },
+    (value) => {
+      delete value[identity];
+    },
+  ]) {
+    const changed = structuredClone(evidence);
+    mutate(changed);
+    assert.throws(
+      () => validateControlledReleaseEvidence({ ...input, evidence: changed }),
+      /reviewed inventory and hashes/u,
+    );
+  }
 });
 
 test("fails closed when canonical story steps drift from the reviewed live plan", async () => {

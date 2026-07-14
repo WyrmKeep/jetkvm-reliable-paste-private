@@ -129,6 +129,32 @@ async function executeStep(driver, story, step, assignment) {
   }
 }
 
+export async function runWithFinalization(operation, finalize) {
+  let operationResult;
+  let operationError;
+  try {
+    operationResult = await operation();
+  } catch (error) {
+    operationError = error;
+  }
+  let finalizationError;
+  try {
+    await finalize(operationError);
+  } catch (error) {
+    finalizationError = error;
+  }
+  if (operationError !== undefined && finalizationError !== undefined) {
+    throw new AggregateError(
+      [operationError, finalizationError],
+      "Live hardware operation and finalization both failed.",
+      { cause: operationError },
+    );
+  }
+  if (operationError !== undefined) throw operationError;
+  if (finalizationError !== undefined) throw finalizationError;
+  return operationResult;
+}
+
 export async function runCanonicalLiveStories({
   stories,
   plan,

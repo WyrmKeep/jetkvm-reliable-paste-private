@@ -2,11 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
 import {
   buildDirectoryManifest,
+  buildProductionResolution,
+  isGeneratedInstalledBinLink,
   canonicalJson,
   sha256Canonical,
   sha256File,
@@ -23,11 +22,22 @@ const SESSION_TOOLS = new Set([
   "jetkvm_input_release",
   "jetkvm_power_control",
 ]);
+const MUTATION_TOOLS = new Set([
+  "jetkvm_input_mouse",
+  "jetkvm_input_keyboard",
+  "jetkvm_input_paste",
+  "jetkvm_input_release",
+  "jetkvm_power_control",
+]);
 const OBSERVATION_TOOLS = new Set([
   "jetkvm_input_mouse",
   "jetkvm_input_keyboard",
   "jetkvm_input_paste",
 ]);
+
+export function powerActionRequiresOfflineWait(action) {
+  return action === "press_power" || action === "hold_power";
+}
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const OMITTED_KEYS = new Set([
@@ -164,13 +174,20 @@ export class InstalledMcpClient {
   async start() {
     if (this.#client !== undefined)
       throw new Error("MCP client is already running.");
-    const transport = new StdioClientTransport({
+    if (
+      typeof this.#options.transportFactory !== "function" ||
+      typeof this.#options.clientFactory !== "function"
+    ) {
+      throw new Error("Verified MCP SDK factories are required.");
+    }
+    const transportOptions = {
       command: this.#options.command,
       args: this.#options.args ?? [],
       cwd: this.#options.cwd,
       env: this.#options.environment,
       stderr: "pipe",
-    });
+    };
+    const transport = this.#options.transportFactory(transportOptions);
     const maximumSensitiveLength = Math.max(
       0,
       ...this.#sensitiveValues.map((value) => value.length),
@@ -189,32 +206,44 @@ export class InstalledMcpClient {
       this.#stderrBytes += bytes.byteLength;
       this.#stderrHash.update(bytes);
     });
-    const client = new Client({
-      name: "jetkvm-release-hardware",
-      version: "1.0.0",
-    });
-    await client.connect(transport);
-    const listed = await client.listTools(
-      {},
-      { timeout: 30_000, maxTotalTimeout: 30_000 },
-    );
-    if (this.#stderrLeak) {
-      await client.close();
-      throw new Error("MCP stderr exposed a protected value.");
-    }
-    const names = listed.tools.map((tool) => tool.name);
-    if (names.length !== 10 || new Set(names).size !== 10) {
-      await client.close();
-      throw new Error(
-        "Installed MCP candidate did not expose exactly ten tools.",
+    const client = this.#options.clientFactory();
+    try {
+      await client.connect(transport);
+      const listed = await client.listTools(
+        {},
+        { timeout: 30_000, maxTotalTimeout: 30_000 },
       );
+      if (this.#stderrLeak) {
+        throw new Error("MCP stderr exposed a protected value.");
+      }
+      const names = listed.tools.map((tool) => tool.name);
+      if (names.length !== 10 || new Set(names).size !== 10) {
+        throw new Error(
+          "Installed MCP candidate did not expose exactly ten tools.",
+        );
+      }
+      this.#transport = transport;
+      this.#client = client;
+      return Object.freeze({
+        tool_names_sha256: sha256Canonical(names),
+        tool_count: names.length,
+      });
+    } catch (error) {
+      const cleanup = await Promise.allSettled([
+        client.close(),
+        transport.close(),
+      ]);
+      const cleanupFailures = cleanup
+        .filter((result) => result.status === "rejected")
+        .map((result) => result.reason);
+      if (cleanupFailures.length > 0) {
+        throw new AggregateError(
+          [error, ...cleanupFailures],
+          "MCP startup and cleanup both failed.",
+        );
+      }
+      throw error;
     }
-    this.#transport = transport;
-    this.#client = client;
-    return Object.freeze({
-      tool_names_sha256: sha256Canonical(names),
-      tool_count: names.length,
-    });
   }
 
   async call(name, args, timeoutMs = 60_000) {
@@ -239,9 +268,11 @@ export class InstalledMcpClient {
 
   async close() {
     const client = this.#client;
+    if (client === undefined) return false;
+    await client.close();
     this.#client = undefined;
     this.#transport = undefined;
-    if (client !== undefined) await client.close();
+    return true;
   }
 
   stderrEvidence() {
@@ -253,6 +284,79 @@ export class InstalledMcpClient {
       sha256: this.#stderrHash.copy().digest("hex"),
     });
   }
+}
+
+export async function finalizeLiveHardwareResources({
+  driver,
+  driverFinalization,
+  clients = [],
+  hardwareTouched = driver !== undefined,
+  now = () => new Date(),
+}) {
+  const failures = [];
+  const failureStages = [];
+  let releaseAndBaseline = driverFinalization;
+  if (driver !== undefined && releaseAndBaseline === undefined) {
+    try {
+      releaseAndBaseline = await driver.finalizeRun();
+    } catch (error) {
+      failures.push(error);
+      failureStages.push("driver-finalization");
+    }
+  }
+  const clientRecords = [];
+  const seenClients = new Set();
+  for (const entry of clients) {
+    if (entry?.client === undefined || seenClients.has(entry.client)) continue;
+    seenClients.add(entry.client);
+    let closed = false;
+    let stderr;
+    try {
+      await entry.client.close();
+      closed = true;
+    } catch (error) {
+      failures.push(error);
+      failureStages.push(`${entry.label}-close`);
+    }
+    try {
+      stderr = entry.client.stderrEvidence();
+    } catch (error) {
+      failures.push(error);
+      failureStages.push(`${entry.label}-stderr`);
+    }
+    clientRecords.push(
+      Object.freeze({
+        label: entry.label,
+        closed,
+        stderr: stderr ?? null,
+      }),
+    );
+  }
+  const safeBaselineProven = driver?.state?.safeBaselineProven === true;
+  if (hardwareTouched && !safeBaselineProven) {
+    failures.push(
+      new Error(
+        "The post-run device baseline is unproven; manual recovery is required.",
+      ),
+    );
+    failureStages.push("safe-baseline");
+  }
+  return Object.freeze({
+    record: Object.freeze({
+      schema_version: 1,
+      kind: "jetkvm-mcp-hardware-finalization",
+      result: failures.length === 0 ? "pass" : "fail",
+      completed_at: now().toISOString(),
+      release_and_baseline_evidence_sha256:
+        releaseAndBaseline?.evidence_sha256 ?? null,
+      safe_baseline_proven: safeBaselineProven,
+      manual_recovery_required: hardwareTouched && !safeBaselineProven,
+      clients: clientRecords,
+      failure_count: failures.length,
+      failure_stages: Object.freeze(failureStages),
+    }),
+    failures: Object.freeze(failures),
+  });
 }
 
 export class LiveStepBindings {
@@ -267,7 +371,9 @@ export class LiveStepBindings {
   adapt(step, state) {
     const input = structuredClone(step.input ?? {});
     const staleSession =
-      /(?:stale|closed|old-generation|replaced-session)/u.test(step.id);
+      /(?:stale[^/]*generation|old-generation|replaced-session|closed-session)/u.test(
+        step.id,
+      );
     const staleObservation = /(?:old-observation|foreign-observation)/u.test(
       step.id,
     );
@@ -321,7 +427,12 @@ export class LiveStepBindings {
   }
 }
 
-export function assertHardwareCallExpectation(step, raw, protocolError) {
+export function assertHardwareCallExpectation(
+  step,
+  raw,
+  protocolError,
+  input = step.input,
+) {
   if (protocolError !== undefined) {
     const schemaRejectionExpected =
       /reject-strict-schema/u.test(step.id) ||
@@ -358,6 +469,18 @@ export function assertHardwareCallExpectation(step, raw, protocolError) {
     if (!isRecord(raw.result) || raw.result.outcome !== "already_applied") {
       throw new Error(
         `Hardware step ${step.id} did not prove definitive replay.`,
+      );
+    }
+  } else if (MUTATION_TOOLS.has(step.tool)) {
+    if (
+      !isRecord(raw.result) ||
+      raw.result.outcome !== "applied" ||
+      raw.result.request_id !== input?.request_id ||
+      typeof raw.result.verification !== "string" ||
+      raw.result.verification === "none"
+    ) {
+      throw new Error(
+        `Hardware step ${step.id} did not return a correlated applied verification.`,
       );
     }
   }
@@ -408,6 +531,27 @@ export function compareSafeBaselines(before, after) {
   });
 }
 
+function assertAuthoritativeRelease(raw) {
+  const result = isRecord(raw?.result) ? raw.result : undefined;
+  if (
+    !isRecord(raw) ||
+    raw.ok !== true ||
+    !isRecord(result) ||
+    result.mutation_gate_closed !== true ||
+    result.deferred_producers_joined !== true ||
+    !["cancelled", "inactive"].includes(result.paste_terminal) ||
+    result.ordinary_leases_zero !== true ||
+    result.keyboard_zero !== true ||
+    result.pointer_zero !== true ||
+    result.generation_drained !== true
+  ) {
+    throw new Error(
+      "Authoritative input release did not prove producer join and zero input.",
+    );
+  }
+  return raw;
+}
+
 export function createLiveHardwareDriver({
   mcp,
   rig,
@@ -424,8 +568,12 @@ export function createLiveHardwareDriver({
     baseline: undefined,
     lastRelease: undefined,
     emergencyPaste: undefined,
+    emergencyProducers: undefined,
+    emergencyPendingAtRelease: undefined,
+    emergencyHeldKeyEvidence: undefined,
     pasteVerification: undefined,
     atxProof: undefined,
+    safeBaselineProven: false,
   };
   const bindings = new LiveStepBindings(runId);
 
@@ -480,7 +628,7 @@ export function createLiveHardwareDriver({
     } catch (error) {
       protocolError = error;
     }
-    assertHardwareCallExpectation(step, response?.raw, protocolError);
+    assertHardwareCallExpectation(step, response?.raw, protocolError, input);
     if (response !== undefined) updateState(step.tool, response.raw);
     return {
       startedAt,
@@ -559,9 +707,7 @@ export function createLiveHardwareDriver({
       },
       30_000,
     );
-    if (!isRecord(response.raw) || response.raw.ok !== true) {
-      throw new Error("Authoritative input release failed.");
-    }
+    assertAuthoritativeRelease(response.raw);
     updateState("jetkvm_input_release", response.raw);
     return response;
   }
@@ -592,6 +738,7 @@ export function createLiveHardwareDriver({
   async function baselineFacts(phase) {
     await ensureHostOnline();
     if (phase === "before") {
+      state.safeBaselineProven = false;
       await rig.pinUkLayout();
       await rig.resetNotepad();
     }
@@ -710,20 +857,97 @@ export function createLiveHardwareDriver({
         "Could not establish active held input for emergency release.",
       );
     }
-    await captureObservation();
-    state.emergencyPaste = callRaw(
-      "jetkvm_input_paste",
+    state.emergencyHeldKeyEvidence = heldKey.evidence;
+
+    const observations = [];
+    for (let index = 0; index < 4; index += 1) {
+      await captureObservation();
+      observations.push(state.observation.id);
+    }
+    const session = { ...state.session };
+    const requests = [
       {
-        session_id: state.session.id,
-        session_generation: state.session.generation,
-        observation_id: state.observation.id,
-        request_id: stableIdentifier("req", `${runId}:emergency-paste`),
-        text: "EmergencyReleaseRace".repeat(80),
-        timeout_ms: 60_000,
+        label: "keyboard-macro",
+        tool: "jetkvm_input_keyboard",
+        observationId: observations[0],
+        input: {
+          actions: Array.from({ length: 64 }, () => ({
+            type: "key_press",
+            key: "KeyA",
+          })),
+        },
       },
-      60_000,
-    ).catch((error) => ({ error: publicError(error) }));
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 750));
+      {
+        label: "pointer-drag",
+        tool: "jetkvm_input_mouse",
+        observationId: observations[1],
+        input: {
+          actions: [
+            {
+              type: "drag",
+              button: "left",
+              path: Array.from({ length: 64 }, (_, index) => ({
+                x: 40 + index,
+                y: 50 + (index % 8),
+              })),
+            },
+          ],
+        },
+      },
+      {
+        label: "wheel",
+        tool: "jetkvm_input_mouse",
+        observationId: observations[2],
+        input: {
+          actions: Array.from({ length: 16 }, (_, index) => ({
+            type: "scroll",
+            x: 100,
+            y: 100,
+            delta_y: index % 2 === 0 ? 1 : -1,
+            delta_x: 0,
+          })),
+        },
+      },
+      {
+        label: "reliable-paste",
+        tool: "jetkvm_input_paste",
+        observationId: observations[3],
+        input: {
+          text: "EmergencyReleaseRace".repeat(80),
+        },
+      },
+    ];
+    const producers = requests.map((request) => {
+      const producer = {
+        label: request.label,
+        settled: false,
+        promise: undefined,
+      };
+      producer.promise = callRaw(
+        request.tool,
+        {
+          session_id: session.id,
+          session_generation: session.generation,
+          observation_id: request.observationId,
+          request_id: stableIdentifier(
+            "req",
+            `${runId}:emergency:${request.label}:${randomUUID()}`,
+          ),
+          ...request.input,
+          timeout_ms: 60_000,
+        },
+        60_000,
+      )
+        .catch((error) => ({ error: publicError(error) }))
+        .finally(() => {
+          producer.settled = true;
+        });
+      return producer;
+    });
+    state.emergencyProducers = producers;
+    state.emergencyPaste = producers.find(
+      (producer) => producer.label === "reliable-paste",
+    ).promise;
   }
 
   async function executeFixtureStep(story, step) {
@@ -759,8 +983,6 @@ export function createLiveHardwareDriver({
       await rig.resetNotepad();
       await ensureSession();
       await captureObservation();
-    } else if (/start-concurrent-writers/u.test(call)) {
-      await startEmergencyInput();
     } else if (/save-and-read-correlated-terminal/u.test(call)) {
       if (state.pasteVerification === undefined) {
         throw new Error("Paste verification had no expected corpus.");
@@ -940,6 +1162,12 @@ export function createLiveHardwareDriver({
     }
     if (step.id === "release-all-input") {
       await startEmergencyInput();
+      state.emergencyPendingAtRelease = Object.fromEntries(
+        state.emergencyProducers.map((producer) => [
+          producer.label,
+          !producer.settled,
+        ]),
+      );
     }
     if (step.id === "submit-correlated-terminal-paste") {
       state.pasteVerification = step.input.text;
@@ -970,7 +1198,10 @@ export function createLiveHardwareDriver({
     if (step.id === "scroll-positive-bound") {
       extraEvidence.push(await supplementalScroll(1));
     }
-    if (step.id === "release-all-input" && state.emergencyPaste !== undefined) {
+    if (
+      step.id === "release-all-input" &&
+      state.emergencyProducers !== undefined
+    ) {
       const releaseResult = executed.response?.raw?.result;
       if (
         !isRecord(releaseResult) ||
@@ -985,14 +1216,52 @@ export function createLiveHardwareDriver({
           "Emergency release did not prove authoritative zero state.",
         );
       }
-      const pasteResult = await state.emergencyPaste;
-      if (!isRecord(pasteResult.raw) || pasteResult.raw.ok !== false) {
+      const producerResults = await Promise.all(
+        state.emergencyProducers.map(async (producer) => ({
+          label: producer.label,
+          result: await producer.promise,
+        })),
+      );
+      const expectedLabels = [
+        "keyboard-macro",
+        "pointer-drag",
+        "wheel",
+        "reliable-paste",
+      ];
+      const producersWerePending = expectedLabels.every(
+        (label) => state.emergencyPendingAtRelease?.[label] === true,
+      );
+      const malformedProducer = producerResults.find(
+        ({ result }) =>
+          isRecord(result.error) ||
+          !isRecord(result.raw) ||
+          typeof result.raw.ok !== "boolean",
+      );
+      const pasteResult = producerResults.find(
+        ({ label }) => label === "reliable-paste",
+      )?.result;
+      if (
+        !producersWerePending ||
+        malformedProducer !== undefined ||
+        !isRecord(pasteResult?.raw) ||
+        pasteResult.raw.ok !== false
+      ) {
         throw new Error(
-          "Emergency release did not interrupt the active paste.",
+          "Emergency release did not race and join every input producer.",
         );
       }
-      extraEvidence.push(pasteResult.evidence);
+      extraEvidence.push({
+        held_key: state.emergencyHeldKeyEvidence,
+        pending_at_release: state.emergencyPendingAtRelease,
+        producers: producerResults.map(({ label, result }) => ({
+          label,
+          evidence: result.evidence,
+        })),
+      });
       state.emergencyPaste = undefined;
+      state.emergencyProducers = undefined;
+      state.emergencyPendingAtRelease = undefined;
+      state.emergencyHeldKeyEvidence = undefined;
     }
     if (
       step.tool === "jetkvm_power_control" &&
@@ -1007,7 +1276,7 @@ export function createLiveHardwareDriver({
       });
       const action = step.input.action;
       if (action === "press_reset") await rig.waitForHostRestart();
-      if (action === "press_power" || action === "hold_power_5s") {
+      if (powerActionRequiresOfflineWait(action)) {
         await rig.waitForHostOffline();
       }
     }
@@ -1122,10 +1391,94 @@ export function createLiveHardwareDriver({
     async compareBaseline(_story, before, after) {
       return compareSafeBaselines(before, after);
     },
+    async finalizeRun() {
+      const startedAt = Date.now();
+      const failures = [];
+      let releaseEvidence;
+      let baselineEvidence;
+      try {
+        releaseEvidence = (await releaseInput()).evidence;
+      } catch (error) {
+        failures.push(error);
+      }
+      const unfinishedProducers =
+        state.emergencyProducers ??
+        (state.emergencyPaste === undefined
+          ? []
+          : [{ label: "reliable-paste", promise: state.emergencyPaste }]);
+      if (unfinishedProducers.length > 0) {
+        try {
+          const results = await Promise.all(
+            unfinishedProducers.map(async (producer) => ({
+              label: producer.label,
+              result: await producer.promise,
+            })),
+          );
+          if (
+            results.some(
+              ({ result }) =>
+                isRecord(result.error) ||
+                !isRecord(result.raw) ||
+                typeof result.raw.ok !== "boolean",
+            )
+          ) {
+            throw new Error(
+              "Final input release did not join every active producer.",
+            );
+          }
+        } catch (error) {
+          failures.push(error);
+        } finally {
+          state.emergencyPaste = undefined;
+          state.emergencyProducers = undefined;
+          state.emergencyPendingAtRelease = undefined;
+          state.emergencyHeldKeyEvidence = undefined;
+        }
+      }
+      try {
+        if (state.baseline === undefined) {
+          throw new Error("No pre-run safe baseline was captured.");
+        }
+        await ensureHostOnline();
+        await rig.pinUkLayout();
+        await rig.resetNotepad();
+        const after = await baselineFacts("after");
+        const comparison = compareSafeBaselines(state.baseline, after);
+        state.safeBaselineProven = true;
+        baselineEvidence = comparison.evidence_sha256;
+      } catch (error) {
+        state.safeBaselineProven = false;
+        failures.push(error);
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(
+          failures,
+          "Live hardware run finalization failed.",
+        );
+      }
+      return hardwareResult(startedAt, {
+        release: releaseEvidence,
+        baseline_evidence_sha256: baselineEvidence,
+        safe_baseline_proven: true,
+      });
+    },
   });
 }
 
-export async function verifyInstalledPackageIdentity(candidate, packageRoot) {
+export async function verifyInstalledPackageIdentity(
+  candidate,
+  packageRoot,
+  { installationRoot, candidateDirectory } = {},
+) {
+  packageRoot = resolve(packageRoot);
+  installationRoot ??= resolve(packageRoot, "../../..");
+  if (
+    typeof candidateDirectory !== "string" ||
+    candidateDirectory.length === 0
+  ) {
+    throw new Error("Candidate artifact directory is required.");
+  }
+  candidateDirectory = resolve(candidateDirectory);
   const packageJsonPath = resolve(packageRoot, "package.json");
   const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
   if (
@@ -1137,9 +1490,6 @@ export async function verifyInstalledPackageIdentity(candidate, packageRoot) {
     );
   }
   const packageJsonSha256 = await sha256File(packageJsonPath);
-  if (!HASH_PATTERN.test(packageJsonSha256)) {
-    throw new Error("Installed package hash failed.");
-  }
   const packageTree = await buildDirectoryManifest(packageRoot);
   if (packageTree.sha256 !== candidate.artifact.package_tree_sha256) {
     throw new Error(
@@ -1164,6 +1514,63 @@ export async function verifyInstalledPackageIdentity(candidate, packageRoot) {
       "Installed contracts did not match the frozen source manifests.",
     );
   }
+  const consumerPackagePath = resolve(installationRoot, "package.json");
+  const consumerPackageLockPath = resolve(
+    installationRoot,
+    "package-lock.json",
+  );
+  const [
+    consumerPackageSha256,
+    consumerPackageLockSha256,
+    shippedConsumerPackageSha256,
+    shippedConsumerPackageLockSha256,
+  ] = await Promise.all([
+    sha256File(consumerPackagePath),
+    sha256File(consumerPackageLockPath),
+    sha256File(
+      resolve(candidateDirectory, candidate.installation.package_json.filename),
+    ),
+    sha256File(
+      resolve(candidateDirectory, candidate.installation.package_lock.filename),
+    ),
+  ]);
+  if (
+    consumerPackageSha256 !== candidate.installation.package_json.sha256 ||
+    shippedConsumerPackageSha256 !==
+      candidate.installation.package_json.sha256 ||
+    consumerPackageLockSha256 !== candidate.installation.package_lock.sha256 ||
+    shippedConsumerPackageLockSha256 !==
+      candidate.installation.package_lock.sha256
+  ) {
+    throw new Error(
+      "Installed or shipped consumer lock artifacts drifted from the candidate.",
+    );
+  }
+  const consumerLock = JSON.parse(
+    await readFile(consumerPackageLockPath, "utf8"),
+  );
+  const productionResolutionSha256 = sha256Canonical(
+    buildProductionResolution(consumerLock, [candidate.package.name]),
+  );
+  if (
+    productionResolutionSha256 !==
+    candidate.installation.production_resolution_sha256
+  ) {
+    throw new Error(
+      "Installed production dependency resolution drifted from the candidate.",
+    );
+  }
+  const installationTree = await buildDirectoryManifest(
+    resolve(installationRoot, "node_modules"),
+    { excludeSymlink: isGeneratedInstalledBinLink },
+  );
+  if (
+    installationTree.sha256 !== candidate.installation.node_modules_tree_sha256
+  ) {
+    throw new Error(
+      "Installed node_modules tree did not match the frozen candidate.",
+    );
+  }
   return Object.freeze({
     package_name: packageJson.name,
     package_version: packageJson.version,
@@ -1171,6 +1578,10 @@ export async function verifyInstalledPackageIdentity(candidate, packageRoot) {
     package_tree_sha256: packageTree.sha256,
     installed_story_manifest_sha256: installedStories.sha256,
     installed_schemas_sha256: installedSchemas.sha256,
+    consumer_package_sha256: consumerPackageSha256,
+    consumer_package_lock_sha256: consumerPackageLockSha256,
+    production_resolution_sha256: productionResolutionSha256,
+    node_modules_tree_sha256: installationTree.sha256,
   });
 }
 

@@ -147,6 +147,75 @@ EDID is read-only EDID. Without the capability it is `unsupported` with no read 
 
 `jetkvm_power_control` exposes only `press_power`, `hold_power`, and `press_reset`. Wire timing is fixed at 200 ms, 5 s, and 200 ms respectively; callers cannot supply a duration. ATX extension state, serial availability, acknowledgement, and post-read evidence remain distinct. A definitive acknowledgement followed by an unavailable post-read returns `applied` with `device_ack_only`; it is never replayed. Cancellation or deadline expiry before the wire call releases the request reservation and reports `not_sent`.
 
+## Frozen candidate and serialized hardware release
+
+The live hardware gate runs only from a clean commit, an exact Node.js 22.23.1 executable, and a visible sandboxed Chromium executable. Generate controlled evidence before freezing so the candidate manifest can bind its exact file bytes:
+
+```sh
+export RELEASE_ROOT='/absolute/private/release-root'
+export JETKVM_RELEASE_BROWSER_EXECUTABLE_PATH='/absolute/path/to/Google Chrome'
+export JETKVM_RELEASE_TARGET_URL='http://jetkvm.example'
+export JETKVM_RELEASE_CONTROLLED_EVIDENCE="$RELEASE_ROOT/controlled-evidence.json"
+
+npm run build
+node scripts/build-controlled-release-evidence.mjs \
+  --output "$JETKVM_RELEASE_CONTROLLED_EVIDENCE"
+node scripts/freeze-release-candidate.mjs \
+  --output "$RELEASE_ROOT/candidate"
+```
+
+The freeze fails on a dirty source tree. It rebuilds and binds the generated paste-harness runtime before packing. Its immutable output contains `candidate.json`, `candidate.sha256`, the package tarball, `controlled-evidence.json`, `consumer-package.json`, and `consumer-package-lock.json`. The candidate binds the source commit/tree, source lock, paste-harness runtime, all story and schema files, generated reports, controlled evidence, exact Node/browser/target identity, package tarball and unpacked package tree, normalized production dependency resolution, and every regular file in the installed `node_modules` closure. Generated `node_modules/.bin` symlinks are excluded and never invoked. Freeze itself generates the portable consumer lock, proves its production resolution equals the reviewed source lock, and installs it with `npm ci --ignore-scripts --omit=dev`.
+
+Install only with the shipped consumer lock; an unlocked `npm install` is not release evidence:
+
+```sh
+export CANDIDATE="$RELEASE_ROOT/candidate"
+export INSTALL_ROOT="$RELEASE_ROOT/installed"
+mkdir -m 700 "$INSTALL_ROOT"
+cp "$CANDIDATE/consumer-package.json" "$INSTALL_ROOT/package.json"
+cp "$CANDIDATE/consumer-package-lock.json" "$INSTALL_ROOT/package-lock.json"
+cp "$CANDIDATE/"*.tgz "$INSTALL_ROOT/"
+(cd "$INSTALL_ROOT" && npm ci --ignore-scripts --omit=dev --no-audit --no-fund)
+export JETKVM_RELEASE_INSTALLED_PACKAGE="$INSTALL_ROOT/node_modules/@wyrmkeep/jetkvm-mcp"
+```
+
+Before device contact, the live runner requires the same clean commit/tree, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The output directory must not already exist, the rig environment file must be owner-only, and `DEVICE_KEY` must be the stable private key used for this one physical JetKVM:
+
+```sh
+export DEVICE_KEY='private-stable-device-key'
+export JETKVM_RELEASE_CANDIDATE="$CANDIDATE/candidate.json"
+export JETKVM_RELEASE_CANDIDATE_SHA256="$(
+  awk '{print $1}' "$CANDIDATE/candidate.sha256"
+)"
+export JETKVM_RELEASE_CONTROLLED_EVIDENCE="$CANDIDATE/controlled-evidence.json"
+export JETKVM_RELEASE_EVIDENCE_DIR="$RELEASE_ROOT/hardware-evidence"
+export JETKVM_RELEASE_RIG_ENV='/absolute/private/rig.env'
+
+node "$JETKVM_RELEASE_INSTALLED_PACKAGE/dist/deviceLeaseRunner.js" \
+  --device-key "$DEVICE_KEY" \
+  --retain-on-exit-code 75 \
+  -- \
+  "$(command -v node)" scripts/run-live-hardware-release.mjs
+```
+
+The run validates the pre-deployment device-test artifact, all controlled identities, every canonical live story and restore, a fresh-transport reconnect/release, the final producer-zero release, the original safe device/fixture baseline, and bounded MCP shutdown. Its summary records the verified source, installation, runtime, device, and test identities. `finalization.json` is flushed before the evidence manifest. Validate the immutable directory before tagging or publishing:
+
+```sh
+node scripts/validate-hardware-release-evidence.mjs \
+  "$JETKVM_RELEASE_EVIDENCE_DIR" \
+  "$JETKVM_RELEASE_CANDIDATE"
+```
+
+If the final baseline is unproven, the child exits with code 75 and the outer wrapper intentionally retains the device lease; the wrapper itself reports failure because cleanup was refused. Inspect `finalization.json` `failure_stages`, manually restore and verify the physical host, display, UK layout, lock keys, held input, ATX state, browser fixture, and running revision, and ensure the failed holder has exited. Only then clear the retained lease through the safety-checked installed command:
+
+```sh
+npm --prefix "$JETKVM_RELEASE_INSTALLED_PACKAGE" \
+  run device-lease:remove-stale -- \
+  --device-key "$DEVICE_KEY" --confirm-recovered
+```
+
+Recovery refuses a different host, a live owner PID, a live supervisor process group, changed lease records, or an unsafe lease directory. Never delete lease files directly.
+
 ## Contract and protocol checks
 
 From this directory:

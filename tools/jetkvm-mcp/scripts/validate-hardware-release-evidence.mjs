@@ -9,6 +9,7 @@ import {
   sha256File,
   validateReleaseCandidateManifest,
 } from "./release-evidence.mjs";
+import { validateDeviceGoTestEvidence } from "./run-device-go-tests.mjs";
 import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
@@ -29,6 +30,71 @@ function assertPass(value, label) {
   if (!isRecord(value) || value.result !== "pass") {
     throw new Error(`${label} did not pass.`);
   }
+}
+
+function assertExactKeys(value, expected, label) {
+  if (!isRecord(value)) throw new Error(`${label} is malformed.`);
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (
+    actual.length !== wanted.length ||
+    actual.some((key, index) => key !== wanted[index])
+  ) {
+    throw new Error(`${label} fields drifted.`);
+  }
+}
+
+function validateFinalization(record) {
+  assertExactKeys(
+    record,
+    [
+      "schema_version",
+      "kind",
+      "result",
+      "completed_at",
+      "release_and_baseline_evidence_sha256",
+      "safe_baseline_proven",
+      "manual_recovery_required",
+      "clients",
+      "failure_count",
+      "failure_stages",
+    ],
+    "Hardware finalization",
+  );
+  if (
+    record.schema_version !== 1 ||
+    record.kind !== "jetkvm-mcp-hardware-finalization" ||
+    record.result !== "pass" ||
+    !Number.isFinite(Date.parse(record.completed_at)) ||
+    record.safe_baseline_proven !== true ||
+    record.manual_recovery_required !== false ||
+    record.failure_count !== 0 ||
+    !Array.isArray(record.failure_stages) ||
+    record.failure_stages.length !== 0 ||
+    !Array.isArray(record.clients) ||
+    record.clients.length !== 2
+  ) {
+    throw new Error("Hardware finalization did not pass exactly.");
+  }
+  assertHash(
+    record.release_and_baseline_evidence_sha256,
+    "Hardware finalization evidence",
+  );
+  const expectedLabels = ["replacement", "initial"];
+  record.clients.forEach((client, index) => {
+    assertExactKeys(client, ["label", "closed", "stderr"], "MCP finalization");
+    if (
+      client.label !== expectedLabels[index] ||
+      client.closed !== true ||
+      !isRecord(client.stderr) ||
+      !Number.isSafeInteger(client.stderr.byte_length) ||
+      client.stderr.byte_length < 0
+    ) {
+      throw new Error("MCP finalization did not close every transport.");
+    }
+    assertExactKeys(client.stderr, ["byte_length", "sha256"], "MCP stderr");
+    assertHash(client.stderr.sha256, "MCP stderr evidence");
+  });
 }
 
 function validateRecord(record, story, storyPlan, runId) {
@@ -124,8 +190,12 @@ export function validateHardwareReleaseEvidence({
   plan,
   summary,
   records,
+  finalization,
+  deviceTests,
 }) {
   validateReleaseCandidateManifest(candidate);
+  validateFinalization(finalization);
+  validateDeviceGoTestEvidence(deviceTests);
   if (
     !isRecord(summary) ||
     summary.schema_version !== 1 ||
@@ -165,14 +235,35 @@ export function validateHardwareReleaseEvidence({
     summary.step_count !== stepCount ||
     summary.restore_count !== restoreCount ||
     summary.device_identity?.revision !== candidate.source.commit_sha ||
+    summary.source_identity?.commit_sha !== candidate.source.commit_sha ||
+    summary.source_identity?.tree_sha !== candidate.source.tree_sha ||
+    summary.source_identity?.package_lock_sha256 !==
+      candidate.source.package_lock.sha256 ||
+    summary.source_identity?.paste_harness_sha256 !==
+      candidate.source.paste_harness.sha256 ||
     summary.installed_package?.package_name !== candidate.package.name ||
     summary.installed_package?.package_version !== candidate.package.version ||
+    summary.installed_package?.consumer_package_sha256 !==
+      candidate.installation.package_json.sha256 ||
+    summary.installed_package?.consumer_package_lock_sha256 !==
+      candidate.installation.package_lock.sha256 ||
+    summary.installed_package?.production_resolution_sha256 !==
+      candidate.installation.production_resolution_sha256 ||
+    summary.installed_package?.node_modules_tree_sha256 !==
+      candidate.installation.node_modules_tree_sha256 ||
     summary.tool_listing?.tool_count !== 10
   ) {
     throw new Error("Hardware release summary counts or identities drifted.");
   }
   assertHash(summary.atx_preflight_sha256, "ATX preflight evidence");
   assertHash(summary.device_tests_sha256, "Device test evidence");
+  assertHash(summary.finalization_sha256, "Finalization evidence");
+  if (
+    summary.finalization_sha256 !== sha256Canonical(finalization) ||
+    summary.device_tests_sha256 !== sha256Canonical(deviceTests)
+  ) {
+    throw new Error("Hardware summary evidence hashes drifted.");
+  }
   if (
     summary.transport_reconnect?.connect?.ok !== true ||
     summary.transport_reconnect?.release?.ok !== true
@@ -209,12 +300,18 @@ export async function validateEvidenceDirectory({
       readFile(join(directory, `${story.id}.json`), "utf8").then(JSON.parse),
     ),
   );
+  const [finalization, deviceTests] = await Promise.all([
+    readFile(join(directory, "finalization.json"), "utf8").then(JSON.parse),
+    readFile(join(directory, "device-go-tests.json"), "utf8").then(JSON.parse),
+  ]);
   const audit = validateHardwareReleaseEvidence({
     candidate,
     stories,
     plan,
     summary,
     records,
+    finalization,
+    deviceTests,
   });
   if (
     (await sha256File(join(directory, "manifest.json"))) !==
@@ -254,7 +351,13 @@ export async function validateEvidenceDirectory({
       throw new Error(`Hardware evidence file ${file.path} drifted.`);
     }
   }
-  const serialized = JSON.stringify({ summary, records, manifest });
+  const serialized = JSON.stringify({
+    summary,
+    records,
+    finalization,
+    deviceTests,
+    manifest,
+  });
   if (PRIVATE_PATTERN.test(serialized)) {
     throw new Error(
       "Hardware evidence contains private path, topology, or credential material.",

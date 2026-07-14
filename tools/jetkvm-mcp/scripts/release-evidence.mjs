@@ -12,6 +12,7 @@ const CANDIDATE_KEYS = Object.freeze([
   "source",
   "runtime",
   "artifact",
+  "installation",
 ]);
 
 function isRecord(value) {
@@ -77,6 +78,52 @@ export function sha256Canonical(value) {
   return sha256Bytes(canonicalJson(value));
 }
 
+function packageNameFromLockPath(path) {
+  const marker = "node_modules/";
+  const index = path.lastIndexOf(marker);
+  return index < 0 ? undefined : path.slice(index + marker.length);
+}
+
+export function buildProductionResolution(lock, excludedNames = []) {
+  if (
+    lock?.lockfileVersion !== 3 ||
+    typeof lock.packages !== "object" ||
+    lock.packages === null ||
+    Array.isArray(lock.packages)
+  ) {
+    throw new Error("Production package lock is malformed.");
+  }
+  const excluded = new Set(excludedNames);
+  const resolutions = new Map();
+  for (const [path, entry] of Object.entries(lock.packages)) {
+    const name = packageNameFromLockPath(path);
+    if (name === undefined || excluded.has(name) || entry?.dev === true) {
+      continue;
+    }
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      typeof entry.version !== "string" ||
+      entry.version.length === 0 ||
+      typeof entry.integrity !== "string" ||
+      entry.integrity.length === 0
+    ) {
+      throw new Error(`Production lock entry ${path} is incomplete.`);
+    }
+    const resolved = {
+      name,
+      version: entry.version,
+      integrity: entry.integrity,
+    };
+    resolutions.set(canonicalJson(resolved), resolved);
+  }
+  return Object.freeze(
+    [...resolutions.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([, entry]) => Object.freeze(entry)),
+  );
+}
+
 export async function sha256File(path) {
   return sha256Bytes(await readFile(path));
 }
@@ -94,18 +141,27 @@ function portableRelativePath(root, path) {
   }
   return value;
 }
+export function isGeneratedInstalledBinLink(path) {
+  return path.startsWith(".bin/");
+}
 
-async function collectFiles(root, directory, files, include) {
+async function collectFiles(root, directory, files, include, excludeSymlink) {
   const entries = await readdir(directory, { withFileTypes: true });
   entries.sort((left, right) => left.name.localeCompare(right.name));
   for (const entry of entries) {
     const path = join(directory, entry.name);
     const facts = await lstat(path);
+    if (
+      facts.isSymbolicLink() &&
+      excludeSymlink(portableRelativePath(root, path))
+    ) {
+      continue;
+    }
     if (facts.isSymbolicLink()) {
       throw new Error("Release manifests forbid symbolic links.");
     }
     if (facts.isDirectory()) {
-      await collectFiles(root, path, files, include);
+      await collectFiles(root, path, files, include, excludeSymlink);
       continue;
     }
     if (!facts.isFile()) {
@@ -124,10 +180,10 @@ async function collectFiles(root, directory, files, include) {
 
 export async function buildDirectoryManifest(
   root,
-  { include = () => true } = {},
+  { include = () => true, excludeSymlink = () => false } = {},
 ) {
   const files = [];
-  await collectFiles(root, root, files, include);
+  await collectFiles(root, root, files, include, excludeSymlink);
   files.sort((left, right) => left.path.localeCompare(right.path));
   const frozenFiles = files.map((file) => Object.freeze(file));
   return Object.freeze({
@@ -366,8 +422,10 @@ export function validateReleaseCandidateManifest(value) {
       "package_lock",
       "story_manifest",
       "schemas",
+      "paste_harness",
       "branch_matrix_sha256",
       "story_e2e_sha256",
+      "controlled_evidence_sha256",
     ],
     "candidate source",
   );
@@ -375,10 +433,15 @@ export function validateReleaseCandidateManifest(value) {
   assertGitObject(value.source.tree_sha, "Candidate tree");
   assertHash(value.source.branch_matrix_sha256, "Branch matrix hash");
   assertHash(value.source.story_e2e_sha256, "Story E2E hash");
+  assertHash(
+    value.source.controlled_evidence_sha256,
+    "Controlled release evidence hash",
+  );
   for (const [name, expectedPath, expectedCount] of [
     ["package_lock", "tools/jetkvm-mcp/package-lock.json", null],
     ["story_manifest", "tools/jetkvm-mcp/src/stories", 24],
     ["schemas", "tools/jetkvm-mcp/schemas", 21],
+    ["paste_harness", "tools/paste-harness/dist", null],
   ]) {
     const identity = value.source[name];
     assertExactKeys(
@@ -502,6 +565,65 @@ export function validateReleaseCandidateManifest(value) {
     );
   }
 
+  assertExactKeys(
+    value.installation,
+    [
+      "package_json",
+      "package_lock",
+      "production_resolution_sha256",
+      "node_modules_tree_sha256",
+      "files",
+    ],
+    "candidate installation",
+  );
+  for (const [name, filename] of [
+    ["package_json", "consumer-package.json"],
+    ["package_lock", "consumer-package-lock.json"],
+  ]) {
+    const identity = value.installation[name];
+    assertExactKeys(
+      identity,
+      ["filename", "sha256"],
+      `candidate installation ${name}`,
+    );
+    if (identity.filename !== filename) {
+      throw new Error(`Candidate installation ${name} filename is invalid.`);
+    }
+    assertHash(identity.sha256, `Candidate installation ${name} hash`);
+  }
+  assertHash(
+    value.installation.production_resolution_sha256,
+    "Production resolution hash",
+  );
+  assertHash(
+    value.installation.node_modules_tree_sha256,
+    "Installed node_modules tree hash",
+  );
+  if (
+    !Array.isArray(value.installation.files) ||
+    value.installation.files.length === 0
+  ) {
+    throw new Error("Candidate installation must contain node_modules files.");
+  }
+  previousPath = "";
+  for (const file of value.installation.files) {
+    validateArtifactFile(file);
+    if (file.path.localeCompare(previousPath) <= 0) {
+      throw new Error(
+        "Installed node_modules files must be uniquely sorted by path.",
+      );
+    }
+    previousPath = file.path;
+  }
+  if (
+    sha256Canonical(value.installation.files) !==
+    value.installation.node_modules_tree_sha256
+  ) {
+    throw new Error(
+      "Candidate node_modules tree hash does not match its file manifest.",
+    );
+  }
+
   return deepFreeze(value);
 }
 
@@ -557,6 +679,10 @@ export async function assertCurrentRuntimeMatchesCandidate(candidate, current) {
 export function buildReleaseCandidateManifest(input) {
   const files = input.packageFiles.map((file) => ({ ...file }));
   files.sort((left, right) => left.path.localeCompare(right.path));
+  const installationFiles = input.installationFiles.map((file) => ({
+    ...file,
+  }));
+  installationFiles.sort((left, right) => left.path.localeCompare(right.path));
   const candidate = {
     schema_version: 1,
     kind: "jetkvm-mcp-release-candidate",
@@ -581,8 +707,13 @@ export function buildReleaseCandidateManifest(input) {
         count: input.schemaCount,
         sha256: input.schemasSha256,
       },
+      paste_harness: {
+        path: "tools/paste-harness/dist",
+        sha256: input.pasteHarnessSha256,
+      },
       branch_matrix_sha256: input.branchMatrixSha256,
       story_e2e_sha256: input.storyE2eSha256,
+      controlled_evidence_sha256: input.controlledEvidenceSha256,
     },
     runtime: {
       node: {
@@ -609,6 +740,19 @@ export function buildReleaseCandidateManifest(input) {
       sha256: input.artifactSha256,
       package_tree_sha256: sha256Canonical(files),
       files,
+    },
+    installation: {
+      package_json: {
+        filename: "consumer-package.json",
+        sha256: input.consumerPackageJsonSha256,
+      },
+      package_lock: {
+        filename: "consumer-package-lock.json",
+        sha256: input.consumerPackageLockSha256,
+      },
+      production_resolution_sha256: input.productionResolutionSha256,
+      node_modules_tree_sha256: sha256Canonical(installationFiles),
+      files: installationFiles,
     },
   };
   return validateReleaseCandidateManifest(candidate);

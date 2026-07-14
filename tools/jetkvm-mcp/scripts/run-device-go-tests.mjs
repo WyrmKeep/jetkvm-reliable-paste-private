@@ -168,6 +168,57 @@ function sameIdentity(before, after) {
   );
 }
 
+function hasExactKeys(value, expected) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return (
+    actual.length === wanted.length &&
+    actual.every((key, index) => key === wanted[index])
+  );
+}
+
+export function validateDeviceGoTestEvidence(value) {
+  const identityValid = (identity) =>
+    hasExactKeys(identity, ["revision", "appVersion", "processStartTime"]) &&
+    ["revision", "appVersion", "processStartTime"].every(
+      (field) =>
+        typeof identity[field] === "string" && identity[field].length > 0,
+    );
+  if (
+    !hasExactKeys(value, [
+      "ok",
+      "startedAt",
+      "finishedAt",
+      "command",
+      "before",
+      "after",
+      "child",
+    ]) ||
+    value.ok !== true ||
+    !Number.isFinite(Date.parse(value.startedAt)) ||
+    !Number.isFinite(Date.parse(value.finishedAt)) ||
+    Date.parse(value.finishedAt) < Date.parse(value.startedAt) ||
+    !hasExactKeys(value.command, ["executable", "args"]) ||
+    value.command.executable !== TEST_EXECUTABLE ||
+    JSON.stringify(value.command.args) !==
+      JSON.stringify(["-r", "<configured-target>", "--run-go-tests-only"]) ||
+    !identityValid(value.before) ||
+    !identityValid(value.after) ||
+    !sameIdentity(value.before, value.after) ||
+    !hasExactKeys(value.child, ["code", "signal"]) ||
+    value.child.code !== 0 ||
+    value.child.signal !== null
+  ) {
+    throw new Error(
+      "The device Go test evidence is not a complete passing result.",
+    );
+  }
+  return Object.freeze(value);
+}
+
 function normalizeError(error) {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -281,17 +332,18 @@ export async function runDeviceGoTests({
     ok: failure === undefined,
     startedAt,
     finishedAt: new Date().toISOString(),
-    command:
-      command === undefined
-        ? undefined
-        : {
+    ...(command === undefined
+      ? {}
+      : {
+          command: {
             executable: TEST_EXECUTABLE,
             args: ["-r", "<configured-target>", "--run-go-tests-only"],
           },
-    before,
-    after,
-    child,
-    error: failure?.message,
+        }),
+    ...(before === undefined ? {} : { before }),
+    ...(after === undefined ? {} : { after }),
+    ...(child === undefined ? {} : { child }),
+    ...(failure === undefined ? {} : { error: failure.message }),
   };
 
   const persistedArtifact = redactEvidence(artifact, sensitiveValues);

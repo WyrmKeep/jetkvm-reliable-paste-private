@@ -84,6 +84,16 @@ function preserveLeaseAfterSupervisorLoss(lease: DeviceLease): void {
   };
 }
 
+function preserveLeaseForManualRecovery(lease: DeviceLease): void {
+  const failure = new DeviceLeaseError(
+    "DEVICE_LEASE_STALE_UNPROVEN",
+    "The device lease is retained because manual recovery is required.",
+  );
+  lease.release = async () => {
+    throw failure;
+  };
+}
+
 function supervisorModuleUrl(): URL {
   return new URL(
     import.meta.url.endsWith(".ts")
@@ -330,16 +340,23 @@ export async function runDeviceLeaseCli(
   }
   args ??= process.argv.slice(2);
   environment ??= process.env;
+  const retainOption = args[2] === "--retain-on-exit-code";
+  const expectedSeparator = retainOption ? 4 : 2;
+  const retainOnExitCode = retainOption ? Number(args[3]) : undefined;
   const separator = args.indexOf("--");
   if (
     args[0] !== "--device-key" ||
     typeof args[1] !== "string" ||
     args[1].length === 0 ||
-    separator !== 2 ||
-    separator === args.length - 1
+    separator !== expectedSeparator ||
+    separator === args.length - 1 ||
+    (retainOption &&
+      (!Number.isSafeInteger(retainOnExitCode) ||
+        (retainOnExitCode ?? 0) < 1 ||
+        (retainOnExitCode ?? 0) > 255))
   ) {
     console.error(
-      "Usage: npm run device-lease:run -- --device-key <key> -- <command...>",
+      "Usage: npm run device-lease:run -- --device-key <key> [--retain-on-exit-code <1-255>] -- <command...>",
     );
     return 2;
   }
@@ -381,14 +398,19 @@ export async function runDeviceLeaseCli(
         supervisor,
         ...(inheritedProof === undefined ? {} : { inheritedProof }),
       },
-      (lease, signal) =>
-        runSupervisedChild(
+      async (lease, signal) => {
+        const code = await runSupervisedChild(
           args.slice(separator + 1),
           environment,
           lease,
           supervisor as SupervisorHandle,
           signal,
-        ),
+        );
+        if (code === retainOnExitCode) {
+          preserveLeaseForManualRecovery(lease);
+        }
+        return code;
+      },
     );
   } catch (error) {
     if (error instanceof DeviceLeaseError) {

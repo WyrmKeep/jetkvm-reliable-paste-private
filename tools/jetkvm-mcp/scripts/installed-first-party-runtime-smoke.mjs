@@ -127,4 +127,6 @@ await withInstalledPackage("first-party-runtime", async ({ consumer }) => {
   }
 });
 
-console.log("Installed first-party runtime verified (leased stdio, ten real tools).\n");
+console.log(
+  "Installed first-party runtime verified (leased stdio, ten real tools).\n",
+);

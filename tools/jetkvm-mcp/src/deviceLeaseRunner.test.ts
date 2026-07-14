@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
@@ -32,6 +32,9 @@ import { runDeviceLeaseSupervisor } from "./deviceLeaseSupervisor.js";
 
 const wrapperPath = fileURLToPath(
   new URL("../scripts/with-device-lease.mjs", import.meta.url),
+);
+const recoveryPath = fileURLToPath(
+  new URL("./deviceLeaseRecovery.ts", import.meta.url),
 );
 
 type ProcessResult = { code: number | null; stdout: string; stderr: string };
@@ -690,6 +693,63 @@ describe("device lease runner", () => {
       "JETKVM_DEVICE_LEASE_PROOF_PATH",
     ]);
     expect(result.stderr).not.toMatch(/[a-f0-9]{64}/i);
+  });
+
+  it("retains the lease when the configured manual-recovery exit code occurs", async () => {
+    const isolatedTmp = await mkdtemp(
+      join(tmpdir(), "jetkvm-runner-retained-"),
+    );
+    const deviceKey = `retained-${randomUUID()}`;
+    try {
+      const retained = await runWrapper(
+        [
+          "--device-key",
+          deviceKey,
+          "--retain-on-exit-code",
+          "75",
+          "--",
+          process.execPath,
+          "-e",
+          "process.exit(75)",
+        ],
+        { TMPDIR: isolatedTmp },
+      );
+      expect(retained.code).toBe(1);
+      expect(retained.stderr).toContain("manual recovery is required");
+      const leaseFiles = await readdir(
+        join(isolatedTmp, "jetkvm-device-leases"),
+      );
+      expect(leaseFiles.some((name) => name.endsWith(".lease.json"))).toBe(
+        true,
+      );
+
+      const blocked = await runWrapper(
+        ["--device-key", deviceKey, "--", process.execPath, "--version"],
+        { TMPDIR: isolatedTmp },
+      );
+      expect(blocked.code).not.toBe(0);
+      const recovered = spawnSync(
+        process.execPath,
+        [recoveryPath, "--device-key", deviceKey, "--confirm-recovered"],
+        {
+          encoding: "utf8",
+          env: { ...scrubDeviceLeaseEnvironment(), TMPDIR: isolatedTmp },
+        },
+      );
+      expect(
+        recovered.status,
+        JSON.stringify({ stderr: recovered.stderr, leaseFiles }),
+      ).toBe(0);
+      expect(recovered.stdout).toContain("Retained device lease cleared");
+
+      const unblocked = await runWrapper(
+        ["--device-key", deviceKey, "--", process.execPath, "--version"],
+        { TMPDIR: isolatedTmp },
+      );
+      expect(unblocked.code).toBe(0);
+    } finally {
+      await rm(isolatedTmp, { recursive: true, force: true });
+    }
   });
 
   it("preserves interactive stdin through the detached lease supervisor", async () => {
