@@ -8,6 +8,10 @@ const requiredPaths = [
   "SECURITY.md",
   "package.json",
   "dist/deviceLeaseRunner.js",
+  "examples/claude-desktop.json",
+  "examples/operator-config.json",
+  "examples/create-credential-file.sh",
+  "examples/run-stdio.sh",
 ];
 
 function reportWith(...additionalPaths) {
@@ -18,7 +22,7 @@ function reportWith(...additionalPaths) {
   ];
 }
 
-test("accepts only production dist, schema, and metadata files", () => {
+test("accepts only production dist, schema, example, and metadata files", () => {
   assert.doesNotThrow(() =>
     validatePackReport(
       reportWith("dist/deviceLease.js", "schemas/session-connect.schema.json"),

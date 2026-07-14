@@ -14,7 +14,7 @@ The current `0.1.0` source tree contains the reviewed Phase 1 safety foundation,
 - implemented display capture/status, mouse, physical keyboard, Reliable Paste, emergency input release, session, and power handlers; and
 - a first-party CLI that creates the managed browser/native planes, validates the operator configuration before device contact, registers all ten handlers atomically, and serves MCP over stdio while a device-keyed lease is held.
 
-The all-ten production registry is active. The package is a standalone release candidate; Phase 5 system E2E, documentation/release evidence, and publication are still pending.
+The all-ten production registry and Phase 5 release gates are active. The package is a standalone `0.1.0` release candidate; only the separately leased live-hardware validation and publication/release steps remain.
 
 The v0.1 catalogue is exactly:
 
@@ -32,6 +32,37 @@ The v0.1 catalogue is exactly:
 ## Runtime
 
 Node.js `>=22.23.1 <23` is supported. Repository development and release evidence use Node.js 22.23.1 exactly.
+
+## Install from a clean checkout
+
+From `tools/jetkvm-mcp`, install the exact lockfile, run the release checks, and install the executable:
+
+```sh
+npm ci
+npm run test:phase2
+npm run test:phase3
+npm run test:phase4
+npm run branch-matrix:check
+npm run stories:e2e
+npm run smoke:installed-stdio-protocol
+npm install --global .
+command -v jetkvm-mcp
+```
+
+Node.js 22.23.1 is required. Do not use `sudo npm install`: use a user-owned npm prefix or a Node version manager. After publication, `npm install --global @wyrmkeep/jetkvm-mcp@0.1.0` installs the same package artifact.
+
+Create the credential file without putting the credential in shell history or process arguments:
+
+```sh
+./examples/create-credential-file.sh \
+  "$HOME/.config/jetkvm-mcp/credential"
+```
+
+The helper reads without terminal echo, writes atomically, and leaves a current-user-only `0600` regular file. Then copy `examples/operator-config.json`, replace both example paths, and launch:
+
+```sh
+jetkvm-mcp --config "$HOME/.config/jetkvm-mcp/operator-config.json"
+```
 
 ## Operator configuration
 
@@ -67,6 +98,35 @@ The installed `jetkvm-mcp` executable invokes the same entry point. Startup acqu
 
 By default, managed Chromium is headless and uses an ephemeral profile. `JETKVM_HEADLESS=false` makes the browser visible. `JETKVM_CHROMIUM_EXECUTABLE_PATH` selects an explicit Chromium-family executable. `JETKVM_CONNECT_TIMEOUT_MS` bounds browser admission. Plain LAN HTTP requires both `JETKVM_ALLOW_INSECURE_HTTP=true` and `JETKVM_ALLOW_DANGEROUS_TARGET_HTTP=true`.
 
+## MCP client configuration
+
+`examples/claude-desktop.json` is a complete stdio server entry. Copy its `jetkvm` object into the client's `mcpServers` object, replace the URL and absolute credential path, and replace `jetkvm-mcp` with the absolute output of `command -v jetkvm-mcp` when a GUI client does not inherit the login-shell `PATH`:
+
+```json
+{
+  "mcpServers": {
+    "jetkvm": {
+      "command": "jetkvm-mcp",
+      "args": [],
+      "env": {
+        "JETKVM_TARGET_URL": "https://jetkvm.example",
+        "JETKVM_CREDENTIAL_FILE": "/Users/you/.config/jetkvm-mcp/credential"
+      }
+    }
+  }
+}
+```
+
+The client must launch one server process per JetKVM target. Keep the credential in the protected file; do not add `JETKVM_CREDENTIAL`, bearer values, cookies, lease proofs, or the credential itself to a checked-in client configuration. `examples/run-stdio.sh` is an executable environment-driven alternative:
+
+```sh
+export JETKVM_TARGET_URL='https://jetkvm.example'
+export JETKVM_CREDENTIAL_FILE="$HOME/.config/jetkvm-mcp/credential"
+exec ./examples/run-stdio.sh
+```
+
+The wrapper requires HTTPS and an absolute regular credential file, removes ambient credential-value variables, and passes no secret or target argument on the command line. `npm run examples:check` parses the JSON examples, syntax-checks both shell examples, creates and inspects a real `0600` credential file, and executes `run-stdio.sh` against a probe executable.
+
 ## Phase 3 input and display semantics
 
 `jetkvm_display_capture` returns a fresh frame, an opaque observation ID, immutable source and rendered geometry, and exactly one authorized image content block. Coordinates are interpreted against the source image geometry recorded by the fresh single-use observation; absolute mouse input must present that observation, and reconnect, age, consumption, or a display-generation change invalidates it. Coordinates are never guessed from a browser viewport or a later frame.
@@ -96,18 +156,39 @@ npm ci
 npm run test:phase2
 npm run test:phase3
 npm run test:phase4
+npm test
+npm run stories:validate
+npm run branch-matrix:check
+npm run stories:e2e
 npm run typecheck
 npm run build
 npm run schemas:check
 npm run docs:check
+npm run examples:check
 npm run smoke:installed-contracts
 npm run smoke:installed-stdio-protocol
 npm run smoke:installed-sse-protocol
 npm run smoke:installed-first-party
-
+npm run package:check
 ```
 
-The installed smokes pack and install the tarball in a clean temporary directory. The contract and protocol smokes use external deterministic handlers. The first-party smoke launches the installed executable with a deterministic managed-browser/native fixture, verifies that all ten production tools are listed, calls session connect and display capture over real stdio, validates the returned image, and confirms bounded shutdown. Production output excludes `src/test-support`.
+The generated `reports/branch-matrix.json` resolves all 320 reviewed requirement/tool cells (193 applicable and 127 explicitly reviewed non-applicable) to exact passing focused-test identities. `reports/story-e2e.json` records 24 success scenarios plus 229 declared fault scenarios, all 253 passing, with 5,946 source-step and 1,450 mandatory restore-step executions. Both check commands regenerate evidence from fresh Vitest JSON and byte-compare it with the committed reports; source-name-only matching, skipped/todo tests, failures, duplicate assertion IDs, missing cells, and stale report files fail closed.
+
+The installed smokes pack and install the tarball in a clean temporary directory. The stdio protocol E2E verifies the exact ten names and generated input/output schemas, invokes every valid handler, proves strict unknown-property rejection before handler execution, probes exception redaction, cancels an in-flight request, recovers after a malformed frame, accepts a near-limit legal frame, and confirms bounded EOF/no-reader closure. The first-party smoke launches the installed executable with a deterministic managed-browser/native fixture, verifies all ten production tools, calls session connect and display capture over real stdio, validates the returned image, and confirms bounded shutdown. Production output excludes `src/test-support`.
+
+## Troubleshooting
+
+| Symptom or code                                                                                                          | Meaning                                                                                                                                        | Action                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Startup emits `startup_failed` on stderr                                                                                 | Configuration, credential-file ownership/mode, browser selection, or target URL failed before MCP startup. Details are intentionally redacted. | Run `npm run examples:check`; verify Node 22.23.1, an HTTPS URL without query/fragment/embedded credentials, an absolute current-user-owned `0600` regular credential file, and a Chromium-family executable. |
+| `DEVICE_LEASE_BUSY`                                                                                                      | Another process or cleanup transaction owns the same normalized target.                                                                        | Stop the existing server and wait for bounded cleanup. Never delete lease files manually. Use the administrative cleanup API only when owner death is independently proven.                                   |
+| `AUTH_FAILED`, `AUTH_EXPIRED`, or `AUTH_RATE_LIMITED`                                                                    | JetKVM authentication failed or is throttled.                                                                                                  | Correct/rotate the credential or wait for the rate limit, then call `jetkvm_session_connect`. Do not log or paste the credential into a tool call.                                                            |
+| `PERMISSION_DENIED` or `CAPABILITY_MISSING`                                                                              | The exact permission/capability in `error.details` is absent. No downstream device write occurred.                                             | Grant the reported permission or enable/update the reported capability; then retry only if `safe_to_retry` is true.                                                                                           |
+| `SESSION_NOT_FOUND`, `STALE_SESSION_GENERATION`, `SESSION_DRAINED`, or `SESSION_TAKEN_OVER`                              | The application session/generation is no longer current. Transport reconnection alone does not repair it.                                      | Follow `required_next_step`; normally reconnect the application session and take a fresh capture before further input.                                                                                        |
+| `STALE_OBSERVATION`, `OBSERVATION_CONSUMED`, or `DISPLAY_CHANGED`                                                        | The coordinate observation is old, already used, or belongs to prior display geometry.                                                         | Capture a fresh frame and use its new observation once. Never reuse or scale the old coordinates.                                                                                                             |
+| `CONNECTION_LOST`, `MUTATION_OUTCOME_UNKNOWN`, `PASTE_FAILED`, `PASTE_CANCELLED`, or `EVENT_GAP` with `outcome: unknown` | A write may have reached the device; replay could duplicate input or power action.                                                             | Do not retry automatically. Inspect device state, release input, reconnect, and capture before deciding whether a new request is safe. Use a new request ID only for a genuinely new intended action.         |
+| GUI client reports “command not found”                                                                                   | GUI clients often lack the interactive shell `PATH`.                                                                                           | Put the absolute `command -v jetkvm-mcp` result in the client configuration and restart the client.                                                                                                           |
+| Stdio client hangs during shutdown                                                                                       | The client still owns stdin or is not reading stdout.                                                                                          | Close the client pipe and keep reading until EOF. The server bounds normal backpressure at 10 seconds; the installed no-reader smoke covers the forced-failure path.                                          |
 
 ## Device lease wrapper
 

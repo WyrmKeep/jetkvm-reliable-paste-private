@@ -13,7 +13,15 @@ import { connect as connectTls, type TLSSocket } from "node:tls";
 import { Server as McpSdkServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import {
   activateIndependentLegacySseBearerCredential,
@@ -36,6 +44,11 @@ import {
   type JetKvmHandlerContext,
   type JetKvmToolHandler,
 } from "./server.js";
+import {
+  TOOL_BEHAVIOR_MATRIX,
+  validateFocusedAssertionExecutions,
+  type FocusedAssertionExecutionResult,
+} from "../stories/manifest.js";
 import {
   installBoundedSseWriter,
   LegacySseAdapter,
@@ -4438,4 +4451,287 @@ describe("legacy SSE adapter", () => {
     expect(wrongMethod.status).toBe(405);
     expect(await wrongMethod.text()).toBe("Method Not Allowed");
   });
+});
+
+const PHASE_5_SSE_SUITE = "Phase 5 shared SSE focused assertion matrix";
+const PHASE_5_SSE_RESULTS: FocusedAssertionExecutionResult[] = [];
+const PHASE_5_SSE_CELLS = TOOL_BEHAVIOR_MATRIX.flatMap((row) =>
+  JETKVM_TOOL_NAMES.flatMap((tool) => {
+    const cell = row.cells[tool];
+    return cell.applicability === "applicable" &&
+      cell.focused_assertion_owner_phase === "phase_5"
+      ? [
+          {
+            tool,
+            requirement: row.requirement,
+            focusedAssertionId: cell.focused_assertion_id,
+          },
+        ]
+      : [];
+  }),
+);
+
+function phase5ValidInput(tool: JetKvmToolName): Record<string, unknown> {
+  const session = {
+    session_id: "session-1",
+    session_generation: 1,
+    timeout_ms: 1_000,
+  };
+  switch (tool) {
+    case "jetkvm_session_connect":
+      return { request_id: "request-1", timeout_ms: 1_000 };
+    case "jetkvm_session_reconnect":
+      return { ...session, request_id: "request-1" };
+    case "jetkvm_session_status":
+    case "jetkvm_display_capture":
+    case "jetkvm_display_status":
+      return session;
+    case "jetkvm_input_mouse":
+      return {
+        ...session,
+        observation_id: "observation-1",
+        request_id: "request-1",
+        actions: [{ type: "scroll", x: 0, y: 0, delta_y: -1 }],
+      };
+    case "jetkvm_input_keyboard":
+      return {
+        ...session,
+        observation_id: "observation-1",
+        request_id: "request-1",
+        actions: [{ type: "chord", keys: ["ControlLeft", "KeyC"] }],
+      };
+    case "jetkvm_input_paste":
+      return {
+        ...session,
+        observation_id: "observation-1",
+        request_id: "request-1",
+        text: "phase-five",
+      };
+    case "jetkvm_input_release":
+      return { ...session, request_id: "request-1" };
+    case "jetkvm_power_control":
+      return { ...session, request_id: "request-1", action: "press_power" };
+  }
+}
+
+async function phase5Rpc(
+  baseUrl: string,
+  stream: OpenSse,
+  id: number,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<string> {
+  const response = await post(
+    baseUrl,
+    stream.endpoint,
+    JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+  );
+  expect(response.status).toBe(202);
+  expect(await response.text()).toBe("Accepted");
+  return stream.nextFrame();
+}
+
+async function initializePhase5Stream(
+  baseUrl: string,
+  stream: OpenSse,
+  id: number,
+): Promise<void> {
+  const frame = await phase5Rpc(baseUrl, stream, id, "initialize", {
+    protocolVersion: "2025-11-25",
+    capabilities: {},
+    clientInfo: { name: "phase-5-sse-matrix", version: "1.0.0" },
+  });
+  expect(frame).toContain(`"id":${String(id)}`);
+}
+
+async function assertPhase5RouteSecurity(tool: JetKvmToolName): Promise<void> {
+  const handler = vi.fn(async () => businessError(tool));
+  const transportFactory = vi.fn(
+    (
+      endpoint: string,
+      response: ConstructorParameters<typeof SSEServerTransport>[1],
+    ) => new SSEServerTransport(endpoint, response),
+  );
+  const value = await startAdapter({
+    handlerRegistry: completeRegistry({
+      [tool]: handler,
+    } as Partial<Record<JetKvmToolName, JetKvmToolHandler>>),
+    transportFactory,
+  });
+  const missingHeaders = authorizedHeaders();
+  delete missingHeaders.Authorization;
+  const missingGet = await testFetch(`${value.baseUrl}/sse`, {
+    headers: missingHeaders,
+  });
+  const missingPost = await post(
+    value.baseUrl,
+    "/messages?sessionId=00000000-0000-4000-8000-000000000000",
+    "{}",
+    missingHeaders,
+  );
+  const forbiddenGet = await testFetch(`${value.baseUrl}/sse`, {
+    headers: { ...authorizedHeaders(), Host: "attacker.example.test" },
+  });
+  const forbiddenPost = await post(
+    value.baseUrl,
+    "/messages?sessionId=00000000-0000-4000-8000-000000000000",
+    "{}",
+    { ...authorizedHeaders(), Origin: "https://attacker.example.test" },
+  );
+
+  expect([missingGet.status, missingPost.status]).toEqual([401, 401]);
+  expect([await missingGet.text(), await missingPost.text()]).toEqual([
+    "Unauthorized",
+    "Unauthorized",
+  ]);
+  expect([forbiddenGet.status, forbiddenPost.status]).toEqual([403, 403]);
+  expect([await forbiddenGet.text(), await forbiddenPost.text()]).toEqual([
+    "Forbidden",
+    "Forbidden",
+  ]);
+  expect(transportFactory).not.toHaveBeenCalled();
+  expect(handler).not.toHaveBeenCalled();
+}
+
+async function assertPhase5RoutingClose(tool: JetKvmToolName): Promise<void> {
+  let callCount = 0;
+  const handler = vi.fn(async () => {
+    callCount += 1;
+    return businessError(tool, `phase-5-${tool}-${String(callCount)}`);
+  });
+  const firstClosed = Promise.withResolvers<void>();
+  const value = await startAdapter({
+    handlerRegistry: completeRegistry({
+      [tool]: handler,
+    } as Partial<Record<JetKvmToolName, JetKvmToolHandler>>),
+    onDiagnostic: (event) => {
+      if (event.code === "transport_closed") firstClosed.resolve();
+    },
+  });
+  const first = await openSse(value.baseUrl);
+  const second = await openSse(value.baseUrl);
+  await initializePhase5Stream(value.baseUrl, first, 1);
+  await initializePhase5Stream(value.baseUrl, second, 2);
+
+  const call = (stream: OpenSse, id: number): Promise<string> =>
+    phase5Rpc(value.baseUrl, stream, id, "tools/call", {
+      name: tool,
+      arguments: phase5ValidInput(tool),
+    });
+  expect(await call(first, 3)).toContain(`phase-5-${tool}-1`);
+  expect(await call(second, 4)).toContain(`phase-5-${tool}-2`);
+
+  first.response.destroy();
+  await firstClosed.promise;
+  const retired = await post(value.baseUrl, first.endpoint, "{}");
+  expect(retired.status).toBe(404);
+  expect(await retired.text()).toBe("Not Found");
+  expect(await call(second, 5)).toContain(`phase-5-${tool}-3`);
+  expect(handler).toHaveBeenCalledTimes(3);
+  second.response.destroy();
+}
+
+describe(PHASE_5_SSE_SUITE, () => {
+  for (const cell of PHASE_5_SSE_CELLS) {
+    const testName = `${cell.tool} ${cell.requirement}`;
+    const identity = `${PHASE_5_SSE_SUITE} > ${testName}`;
+    it(
+      testName,
+      {
+        meta: {
+          focused_assertion_ids: [cell.focusedAssertionId],
+          focused_test_identity: identity,
+        },
+      },
+      async () => {
+        try {
+          if (cell.requirement === "branch:sse-route-security") {
+            await assertPhase5RouteSecurity(cell.tool);
+          } else if (cell.requirement === "branch:sse-routing-close") {
+            await assertPhase5RoutingClose(cell.tool);
+          } else {
+            throw new Error(
+              `Unexpected Phase 5 requirement ${cell.requirement}`,
+            );
+          }
+          PHASE_5_SSE_RESULTS.push({
+            focused_assertion_id: cell.focusedAssertionId,
+            test_identity: identity,
+            result: "pass",
+          });
+        } catch (error) {
+          PHASE_5_SSE_RESULTS.push({
+            focused_assertion_id: cell.focusedAssertionId,
+            test_identity: identity,
+            result: "fail",
+          });
+          throw error;
+        }
+      },
+    );
+  }
+
+  afterAll(() => {
+    expect(PHASE_5_SSE_CELLS).toHaveLength(20);
+    validateFocusedAssertionExecutions("phase_5", PHASE_5_SSE_RESULTS);
+  });
+});
+
+const PHASE_5_STORY_CONTRACT_SUITE = "Phase 5 supplemental story contracts";
+
+describe(PHASE_5_STORY_CONTRACT_SUITE, () => {
+  const testName = "transport reconnect preserves application session";
+  const identity = `${PHASE_5_STORY_CONTRACT_SUITE} > ${testName}`;
+  it(
+    testName,
+    {
+      meta: {
+        story_contract_ids: ["contract:transport-session-independence"],
+        story_test_identity: identity,
+      },
+    },
+    async () => {
+      let logicalSession: string | null = null;
+      const connectHandler = vi.fn(async () => {
+        logicalSession = "application-session-1";
+        return businessError("jetkvm_session_connect", "transport-connect");
+      });
+      const statusHandler = vi.fn(async () => {
+        expect(logicalSession).toBe("application-session-1");
+        return businessError("jetkvm_session_status", "transport-status");
+      });
+      const firstClosed = Promise.withResolvers<void>();
+      const value = await startAdapter({
+        handlerRegistry: completeRegistry({
+          jetkvm_session_connect: connectHandler,
+          jetkvm_session_status: statusHandler,
+        }),
+        onDiagnostic: (event) => {
+          if (event.code === "transport_closed") firstClosed.resolve();
+        },
+      });
+      const first = await openSse(value.baseUrl);
+      await initializePhase5Stream(value.baseUrl, first, 1);
+      expect(
+        await phase5Rpc(value.baseUrl, first, 2, "tools/call", {
+          name: "jetkvm_session_connect",
+          arguments: phase5ValidInput("jetkvm_session_connect"),
+        }),
+      ).toContain("transport-connect");
+      first.response.destroy();
+      await firstClosed.promise;
+
+      const replacement = await openSse(value.baseUrl);
+      await initializePhase5Stream(value.baseUrl, replacement, 3);
+      expect(
+        await phase5Rpc(value.baseUrl, replacement, 4, "tools/call", {
+          name: "jetkvm_session_status",
+          arguments: phase5ValidInput("jetkvm_session_status"),
+        }),
+      ).toContain("transport-status");
+      expect(connectHandler).toHaveBeenCalledOnce();
+      expect(statusHandler).toHaveBeenCalledOnce();
+      replacement.response.destroy();
+    },
+  );
 });

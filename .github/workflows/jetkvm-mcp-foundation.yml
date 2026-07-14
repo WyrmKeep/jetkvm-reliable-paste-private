@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   mcp:
-    name: MCP Phase 2 through Phase 4 gates
+    name: MCP Phase 2 through Phase 5 clean-checkout gates
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,14 +55,30 @@ jobs:
         run: npm run test:phase3
       - name: Run Phase 4 power and session gate
         run: npm run test:phase4
+      - name: Run complete MCP package suite
+        run: npm test
       - name: Validate canonical stories
         run: npm run stories:validate
+      - name: Ground every reviewed branch matrix cell
+        run: npm run branch-matrix:check
+      - name: Run all story-derived system scenarios
+        run: npm run stories:e2e
+      - name: Check generated schemas
+        run: npm run schemas:check
+      - name: Execute setup and client examples
+        run: npm run examples:check
       - name: Check documentation consistency
         run: npm run docs:check
       - name: Typecheck
         run: npm run typecheck
       - name: Build package
         run: npm run build
+      - name: Run installed schema contract E2E
+        run: npm run smoke:installed-contracts
+      - name: Run installed legacy SSE protocol E2E
+        run: npm run smoke:installed-sse-protocol
+      - name: Run installed all-tool stdio protocol E2E
+        run: npm run smoke:installed-stdio-protocol
       - name: Test installed lease runner
         run: npm run test:installed-lease
       - name: Verify package dry run and allowlist

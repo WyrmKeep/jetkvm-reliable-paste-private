@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jetkvm": {
+      "command": "jetkvm-mcp",
+      "args": [],
+      "env": {
+        "JETKVM_TARGET_URL": "https://jetkvm.example",
+        "JETKVM_CREDENTIAL_FILE": "/Users/you/.config/jetkvm-mcp/credential"
+      }
+    }
+  }
+}
