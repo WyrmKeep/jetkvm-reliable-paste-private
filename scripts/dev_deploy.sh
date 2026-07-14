@@ -283,46 +283,78 @@ if [ "$RUN_GO_TESTS" = true ]; then
         fi
     fi
 
+    REMOTE_DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
+    REMOTE_DEVICE_TESTS_ARCHIVE="${REMOTE_DEVICE_TESTS_ROOT}/device-tests.tar.gz"
+    DEVICE_TESTS_ARCHIVE_BYTES=$(wc -c < "$DEVICE_TESTS_ARCHIVE")
+    DEVICE_TESTS_REQUIRED_KIB=$(((
+        DEVICE_TESTS_ARCHIVE_BYTES * 6 + 64 * 1024 * 1024 + 1023
+    ) / 1024))
+
+    msg_info "▶ Preparing remote device-test workspace"
+    if ! sshdev "DEVICE_TESTS_REQUIRED_KIB=${DEVICE_TESTS_REQUIRED_KIB} ash -s" << 'EOF'
+set -e
+DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
+AVAILABLE_KIB=$(df -Pk /userdata | awk 'END { print $4 }')
+case "${AVAILABLE_KIB}" in
+    ''|*[!0-9]*)
+        echo "Could not determine available /userdata space" >&2
+        exit 1
+        ;;
+esac
+if [ "${AVAILABLE_KIB}" -lt "${DEVICE_TESTS_REQUIRED_KIB}" ]; then
+    echo "Insufficient /userdata space for reviewed device tests" >&2
+    exit 1
+fi
+rm -rf "${DEVICE_TESTS_ROOT}"
+mkdir -p "${DEVICE_TESTS_ROOT}"
+chmod 700 "${DEVICE_TESTS_ROOT}"
+EOF
+    then
+        msg_err "Error: Could not prepare remote device-test workspace"
+        exit 1
+    fi
 
     msg_info "▶ Copying device-tests.tar.gz to remote host"
-    sshdev "cat > /tmp/device-tests.tar.gz" < "$DEVICE_TESTS_ARCHIVE"
+    if ! sshdev "cat > ${REMOTE_DEVICE_TESTS_ARCHIVE}" < "$DEVICE_TESTS_ARCHIVE"; then
+        sshdev "rm -rf ${REMOTE_DEVICE_TESTS_ROOT}" >/dev/null 2>&1 || true
+        msg_err "Error: Could not upload reviewed device tests"
+        exit 1
+    fi
 
     msg_info "▶ Running go tests"
     sshdev "DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256} ash -s" << 'EOF'
 set -e
-TMP_DIR=""
+DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
+DEVICE_TESTS_ARCHIVE="${DEVICE_TESTS_ROOT}/device-tests.tar.gz"
+TMP_DIR="${DEVICE_TESTS_ROOT}/extracted"
 cleanup() {
-    if [ -n "$TMP_DIR" ]; then
-        rm -rf "$TMP_DIR"
-    fi
-    rm -f /tmp/device-tests.tar.gz
+    rm -rf "${DEVICE_TESTS_ROOT}"
+    rm -f /tmp/device-tests.json /tmp/device-tests.failed
 }
 trap cleanup EXIT
-echo "${DEVICE_TESTS_SHA256}  /tmp/device-tests.tar.gz" | sha256sum -c -
-TMP_DIR=$(mktemp -d)
+echo "${DEVICE_TESTS_SHA256}  ${DEVICE_TESTS_ARCHIVE}" | sha256sum -c -
+mkdir -m 700 "${TMP_DIR}"
+tar zxf "${DEVICE_TESTS_ARCHIVE}" -C "${TMP_DIR}"
 cd "${TMP_DIR}"
-tar zxf /tmp/device-tests.tar.gz
+set +e
 ./gotestsum --format=testdox \
     --jsonfile=/tmp/device-tests.json \
     --post-run-command 'sh -c "echo $TESTS_FAILED > /tmp/device-tests.failed"' \
     --raw-command -- ./run_all_tests -json
-
 GOTESTSUM_EXIT_CODE=$?
+set -e
 if [ $GOTESTSUM_EXIT_CODE -ne 0 ]; then
     echo "❌ Tests failed (exit code: $GOTESTSUM_EXIT_CODE)"
-    rm -rf ${TMP_DIR} /tmp/device-tests.tar.gz
     exit 1
 fi
 
 TESTS_FAILED=$(cat /tmp/device-tests.failed)
 if [ "$TESTS_FAILED" -ne 0 ]; then
     echo "❌ Tests failed $TESTS_FAILED tests failed"
-    rm -rf ${TMP_DIR} /tmp/device-tests.tar.gz
     exit 1
 fi
 
 echo "✅ Tests passed"
-rm -rf ${TMP_DIR} /tmp/device-tests.tar.gz
 EOF
 
     if [ "$RUN_GO_TESTS_ONLY" = true ]; then
