@@ -14,6 +14,7 @@ node_modules
 tools/paste-harness/hidtype/hidtype
 tools/paste-harness/artifacts/
 tools/paste-harness/ledger.jsonl
+tools/paste-harness/dist/
 
 tools/jetkvm-mcp/dist/
 
