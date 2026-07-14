@@ -20,12 +20,19 @@ import {
 const COMMIT = "a".repeat(40);
 const TREE = "b".repeat(40);
 
-test("accepts only an exact-commit device release artifact", async () => {
+test("binds a device artifact to its unique embedded source revision", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jetkvm-device-binary-"));
   const binaryPath = join(directory, "jetkvm_app");
   const provenancePath = join(directory, "device-binary-provenance.json");
-  try {
-    await writeFile(binaryPath, "device-binary");
+  const command = async () => ({
+    stdout:
+      `jetkvm_app: go1.25.1\n` +
+      `\tpath\tcommand-line-arguments\n` +
+      `\tbuild\tGOARCH=arm\n` +
+      `\tbuild\tGOOS=linux\n`,
+  });
+  const writeArtifact = async (contents) => {
+    await writeFile(binaryPath, contents);
     const expectedSha256 = await sha256File(binaryPath);
     const provenance = await createDeviceReleaseProvenance({
       binaryPath,
@@ -37,46 +44,56 @@ test("accepts only an exact-commit device release artifact", async () => {
       runAttempt: 1,
     });
     await writeFile(provenancePath, `${JSON.stringify(provenance)}\n`);
-    const expectedProvenanceSha256 = await sha256File(provenancePath);
-    const command = async () => ({
-      stdout:
-        `jetkvm_app: go1.25.1\n` +
-        `\tbuild\t-ldflags="-s -w -X github.com/prometheus/common/version.Revision=${COMMIT}"\n`,
-    });
+    return {
+      expectedSha256,
+      expectedProvenanceSha256: await sha256File(provenancePath),
+    };
+  };
+  try {
+    const exact = await writeArtifact(`device-binary\0${COMMIT}\0`);
     const evidence = await validateReleaseDeviceBinary({
       candidate: { source: { commit_sha: COMMIT } },
       binaryPath,
-      expectedSha256,
+      ...exact,
       command,
       provenancePath,
-      expectedProvenanceSha256,
     });
-    assert.equal(evidence.sha256, expectedSha256);
+    assert.equal(evidence.sha256, exact.expectedSha256);
     assert.equal(evidence.source_commit, COMMIT);
 
     await assert.rejects(
       validateReleaseDeviceBinary({
         candidate: { source: { commit_sha: "b".repeat(40) } },
         binaryPath,
-        expectedSha256,
+        ...exact,
         provenancePath,
-        expectedProvenanceSha256,
         command,
       }),
       /did not match the candidate/u,
+    );
+
+    const wrong = await writeArtifact(`device-binary\0${"d".repeat(40)}\0`);
+    await assert.rejects(
+      validateReleaseDeviceBinary({
+        candidate: { source: { commit_sha: COMMIT } },
+        binaryPath,
+        ...wrong,
+        provenancePath,
+        command,
+      }),
+      /was not built from the frozen source commit/u,
+    );
+
+    const duplicate = await writeArtifact(
+      `device-binary\0${COMMIT}\0${COMMIT}\0`,
     );
     await assert.rejects(
       validateReleaseDeviceBinary({
         candidate: { source: { commit_sha: COMMIT } },
         binaryPath,
-        expectedSha256,
+        ...duplicate,
         provenancePath,
-        expectedProvenanceSha256,
-        command: async () => ({
-          stdout:
-            `jetkvm_app: go1.25.1\n` +
-            `\tbuild\t-ldflags="-X github.com/prometheus/common/version.Revision=${"d".repeat(40)}"\n`,
-        }),
+        command,
       }),
       /was not built from the frozen source commit/u,
     );

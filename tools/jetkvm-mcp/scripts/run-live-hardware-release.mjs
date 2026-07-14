@@ -556,6 +556,63 @@ async function validateCandidateRuntime(
   }
 }
 
+async function inspectStampedDeviceBinary(path, revision) {
+  const revisionBytes = Buffer.from(revision, "ascii");
+  const overlapLength = revisionBytes.length - 1;
+  const chunk = Buffer.allocUnsafe(1024 * 1024);
+  const digest = createHash("sha256");
+  const handle = await open(path, "r");
+  let carry = Buffer.alloc(0);
+  let revisionOccurrences = 0;
+  try {
+    for (;;) {
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      const bytes = chunk.subarray(0, bytesRead);
+      digest.update(bytes);
+
+      for (
+        let index = bytes.indexOf(revisionBytes);
+        index !== -1;
+        index = bytes.indexOf(revisionBytes, index + 1)
+      ) {
+        revisionOccurrences += 1;
+      }
+
+      if (carry.length > 0) {
+        const boundary = Buffer.concat([
+          carry,
+          bytes.subarray(0, Math.min(bytes.length, overlapLength)),
+        ]);
+        for (
+          let index = boundary.indexOf(revisionBytes);
+          index !== -1;
+          index = boundary.indexOf(revisionBytes, index + 1)
+        ) {
+          if (
+            index < carry.length &&
+            index + revisionBytes.length > carry.length
+          ) {
+            revisionOccurrences += 1;
+          }
+        }
+      }
+
+      const tailSource =
+        bytes.length >= overlapLength ? bytes : Buffer.concat([carry, bytes]);
+      carry = Buffer.from(
+        tailSource.subarray(Math.max(0, tailSource.length - overlapLength)),
+      );
+    }
+  } finally {
+    await handle.close();
+  }
+  return Object.freeze({
+    sha256: digest.digest("hex"),
+    revisionOccurrences,
+  });
+}
+
 export async function validateReleaseDeviceBinary({
   candidate,
   binaryPath,
@@ -586,10 +643,12 @@ export async function validateReleaseDeviceBinary({
   ) {
     throw new Error("Device release artifact is not a protected regular file.");
   }
-  const [actualSha256, provenanceSha256] = await Promise.all([
-    sha256File(binaryPath),
+  const revision = candidate.source.commit_sha;
+  const [binaryInspection, provenanceSha256] = await Promise.all([
+    inspectStampedDeviceBinary(binaryPath, revision),
     sha256File(provenancePath),
   ]);
+  const actualSha256 = binaryInspection.sha256;
   if (
     actualSha256 !== expectedSha256 ||
     provenanceSha256 !== expectedProvenanceSha256
@@ -612,14 +671,7 @@ export async function validateReleaseDeviceBinary({
   const inspection = await command("go", ["version", "-m", binaryPath], {
     cwd: REPOSITORY_ROOT,
   });
-  const revision = candidate.source.commit_sha;
-  const escapedRevision = revision.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  if (
-    !new RegExp(
-      `(?:^|\\s)-X\\s+github\\.com/prometheus/common/version\\.Revision=${escapedRevision}(?:\\s|")`,
-      "u",
-    ).test(inspection.stdout)
-  ) {
+  if (binaryInspection.revisionOccurrences !== 1) {
     throw new Error(
       "Device release artifact was not built from the frozen source commit.",
     );
