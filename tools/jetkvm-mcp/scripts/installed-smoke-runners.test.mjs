@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
 
@@ -143,6 +144,23 @@ const INSTALLED_TOOL_NAMES = [
   "jetkvm_session_reconnect",
   "jetkvm_session_status",
 ];
+const INSTALLED_TOOLS = await Promise.all(
+  INSTALLED_TOOL_NAMES.map(async (name) => ({
+    name,
+    inputSchema: JSON.parse(
+      await readFile(
+        new URL(`../schemas/${name}.input.schema.json`, import.meta.url),
+        "utf8",
+      ),
+    ),
+    outputSchema: JSON.parse(
+      await readFile(
+        new URL(`../schemas/${name}.result.schema.json`, import.meta.url),
+        "utf8",
+      ),
+    ),
+  })),
+);
 
 function successfulStdioChild(stderrChunks) {
   const child = new FakeChild();
@@ -174,15 +192,34 @@ function successfulStdioChild(stderrChunks) {
           jsonrpc: "2.0",
           id: message.id,
           result: {
-            tools: INSTALLED_TOOL_NAMES.map((name) => ({ name })),
+            tools: INSTALLED_TOOLS,
           },
         });
-      } else if (message.method === "tools/call" && message.id !== 4) {
-        respond({
-          jsonrpc: "2.0",
-          id: message.id,
-          result: { structuredContent: { ok: true } },
-        });
+      } else if (message.method === "tools/call" && message.id !== 30) {
+        if (String(message.id).startsWith("invalid:")) {
+          respond({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32602, message: "Invalid params" },
+          });
+        } else if (message.id === "redaction-probe") {
+          respond({
+            jsonrpc: "2.0",
+            id: message.id,
+            error: { code: -32603, message: "Tool handler failed" },
+          });
+        } else {
+          respond({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              structuredContent: {
+                ok: true,
+                tool: message.params.name,
+              },
+            },
+          });
+        }
       }
     }
   };

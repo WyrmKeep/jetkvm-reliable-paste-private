@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -24,6 +24,80 @@ const DEFAULT_COLLECTOR_LIMITS = Object.freeze({
 });
 const INSTALLED_STDIO_STDERR_BYTES = 64 * 1024;
 const INSTALLED_STDIO_LARGE_ID_SUFFIX_BYTES = 1_900_000;
+const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const INSTALLED_TOOL_NAMES = Object.freeze([
+  "jetkvm_display_capture",
+  "jetkvm_display_status",
+  "jetkvm_input_keyboard",
+  "jetkvm_input_mouse",
+  "jetkvm_input_paste",
+  "jetkvm_input_release",
+  "jetkvm_power_control",
+  "jetkvm_session_connect",
+  "jetkvm_session_reconnect",
+  "jetkvm_session_status",
+]);
+const INSTALLED_VALID_INPUTS = Object.freeze({
+  jetkvm_session_connect: { request_id: "success", timeout_ms: 100 },
+  jetkvm_session_status: {
+    session_id: "session-1",
+    session_generation: 1,
+    timeout_ms: 100,
+  },
+  jetkvm_session_reconnect: {
+    session_id: "session-1",
+    session_generation: 1,
+    request_id: "request-reconnect",
+    timeout_ms: 100,
+  },
+  jetkvm_display_capture: {
+    session_id: "session-1",
+    session_generation: 1,
+    timeout_ms: 100,
+  },
+  jetkvm_display_status: {
+    session_id: "session-1",
+    session_generation: 1,
+    timeout_ms: 100,
+  },
+  jetkvm_input_keyboard: {
+    session_id: "session-1",
+    session_generation: 1,
+    observation_id: "observation-1",
+    request_id: "request-keyboard",
+    actions: [{ type: "key_press", key: "Enter" }],
+    timeout_ms: 100,
+  },
+  jetkvm_input_mouse: {
+    session_id: "session-1",
+    session_generation: 1,
+    observation_id: "observation-1",
+    request_id: "request-mouse",
+    actions: [{ type: "move", x: 0, y: 0 }],
+    timeout_ms: 100,
+  },
+  jetkvm_input_paste: {
+    session_id: "session-1",
+    session_generation: 1,
+    observation_id: "observation-1",
+    request_id: "request-paste",
+    text: "installed smoke",
+    timeout_ms: 100,
+  },
+  jetkvm_input_release: {
+    session_id: "session-1",
+    session_generation: 1,
+    request_id: "request-release",
+    timeout_ms: 100,
+  },
+  jetkvm_power_control: {
+    session_id: "session-1",
+    session_generation: 1,
+    request_id: "request-power",
+    action: "press_power",
+    timeout_ms: 100,
+  },
+});
 
 export class JsonLineCollector {
   messages = [];
@@ -347,6 +421,26 @@ async function waitForNoReaderShutdown(
   }
 }
 
+async function expectedInstalledToolSchemas() {
+  return Promise.all(
+    INSTALLED_TOOL_NAMES.map(async (name) => ({
+      name,
+      inputSchema: JSON.parse(
+        await readFile(
+          resolve(PACKAGE_ROOT, "schemas", `${name}.input.schema.json`),
+          "utf8",
+        ),
+      ),
+      outputSchema: JSON.parse(
+        await readFile(
+          resolve(PACKAGE_ROOT, "schemas", `${name}.result.schema.json`),
+          "utf8",
+        ),
+      ),
+    })),
+  );
+}
+
 export async function runInstalledStdioProtocolSmoke({
   prepareInstalledPackageImpl = prepareInstalledPackage,
   spawnImpl = spawn,
@@ -357,6 +451,7 @@ export async function runInstalledStdioProtocolSmoke({
   childCleanupDeadlineMs = 5_000,
   largeIdSuffixBytes = INSTALLED_STDIO_LARGE_ID_SUFFIX_BYTES,
 } = {}) {
+  const expectedTools = await expectedInstalledToolSchemas();
   return withInstalledPackage(
     "stdio",
     async (installed) => {
@@ -377,6 +472,7 @@ import { handlers as baseHandlers } from "./deterministic-handlers.mjs";
 const handlers = {
   ...baseHandlers,
   jetkvm_session_connect: async (input, extra) => {
+    if (input.request_id === "redaction-probe") throw new Error("private-installed-secret");
     if (input.request_id !== "cancel") return baseHandlers.jetkvm_session_connect(input, extra);
     if (!extra.signal.aborted) {
       const aborted = Promise.withResolvers();
@@ -504,35 +600,90 @@ await handle.closed;
             `${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`,
         );
         await collector.waitFor(2);
+        const listedTools = collector.messages[1].result.tools;
         assert.deepEqual(
-          collector.messages[1].result.tools.map((tool) => tool.name),
-          [
-            "jetkvm_display_capture",
-            "jetkvm_display_status",
-            "jetkvm_input_keyboard",
-            "jetkvm_input_mouse",
-            "jetkvm_input_paste",
-            "jetkvm_input_release",
-            "jetkvm_power_control",
-            "jetkvm_session_connect",
-            "jetkvm_session_reconnect",
-            "jetkvm_session_status",
-          ],
+          listedTools.map((tool) => tool.name),
+          INSTALLED_TOOL_NAMES,
         );
+        assert.equal(listedTools.length, expectedTools.length);
+        for (const [index, expected] of expectedTools.entries()) {
+          assert.equal(listedTools[index].name, expected.name);
+          assert.deepEqual(
+            listedTools[index].inputSchema,
+            expected.inputSchema,
+          );
+          assert.deepEqual(
+            listedTools[index].outputSchema,
+            expected.outputSchema,
+          );
+        }
 
-        child.stdin.write(
-          `${JSON.stringify({
+        let responseCount = 2;
+        const sendAndReceive = async (request) => {
+          child.stdin.write(`${JSON.stringify(request)}\n`);
+          responseCount += 1;
+          await collector.waitFor(responseCount);
+          return collector.messages[responseCount - 1];
+        };
+        let requestId = 3;
+        for (const tool of INSTALLED_TOOL_NAMES) {
+          const response = await sendAndReceive({
             jsonrpc: "2.0",
-            id: 3,
+            id: requestId,
             method: "tools/call",
             params: {
-              name: "jetkvm_session_connect",
-              arguments: { request_id: "success", timeout_ms: 100 },
+              name: tool,
+              arguments: INSTALLED_VALID_INPUTS[tool],
             },
-          })}\n`,
+          });
+          assert.equal(response.id, requestId);
+          assert.equal(response.result.structuredContent.tool, tool);
+          requestId += 1;
+        }
+
+        for (const tool of INSTALLED_TOOL_NAMES) {
+          const invalidId = `invalid:${tool}`;
+          const response = await sendAndReceive({
+            jsonrpc: "2.0",
+            id: invalidId,
+            method: "tools/call",
+            params: {
+              name: tool,
+              arguments: {
+                ...INSTALLED_VALID_INPUTS[tool],
+                unexpected_property: true,
+              },
+            },
+          });
+          assert.equal(response.id, invalidId);
+          assert.equal(response.error.code, -32602);
+          assert.equal(
+            JSON.stringify(response).includes(
+              "deterministic installed handler",
+            ),
+            false,
+          );
+        }
+
+        const redactionResponse = await sendAndReceive({
+          jsonrpc: "2.0",
+          id: "redaction-probe",
+          method: "tools/call",
+          params: {
+            name: "jetkvm_session_connect",
+            arguments: {
+              request_id: "redaction-probe",
+              timeout_ms: 100,
+            },
+          },
+        });
+        assert.equal(redactionResponse.error.code, -32603);
+        assert.equal(
+          JSON.stringify(redactionResponse).includes(
+            "private-installed-secret",
+          ),
+          false,
         );
-        await collector.waitFor(3);
-        assert.equal(collector.messages[2].result.structuredContent.ok, true);
 
         const largeRequestId = `0:${"i".repeat(largeIdSuffixBytes)}`;
         const largeControlFrame = JSON.stringify({
@@ -551,14 +702,20 @@ await handle.closed;
           Buffer.byteLength(largeControlFrame, "utf8") <= 2 * 1024 * 1024,
         );
         child.stdin.write(`${largeControlFrame}\n`);
-        await collector.waitFor(4);
-        assert.equal(collector.messages[3].id, largeRequestId);
-        assert.equal(collector.messages[3].result.structuredContent.ok, true);
+        responseCount += 1;
+        await collector.waitFor(responseCount);
+        assert.equal(collector.messages[responseCount - 1].id, largeRequestId);
+        assert.equal(
+          collector.messages[responseCount - 1].result.structuredContent.ok,
+          true,
+        );
 
+        const cancellationId = 30;
+        const recoveryId = 31;
         child.stdin.write(
           `${JSON.stringify({
             jsonrpc: "2.0",
-            id: 4,
+            id: cancellationId,
             method: "tools/call",
             params: {
               name: "jetkvm_session_connect",
@@ -568,15 +725,24 @@ await handle.closed;
             `${JSON.stringify({
               jsonrpc: "2.0",
               method: "notifications/cancelled",
-              params: { requestId: 4, reason: "installed cancellation" },
+              params: {
+                requestId: cancellationId,
+                reason: "installed cancellation",
+              },
             })}\n` +
             '{"jsonrpc":"2.0",broken}\n' +
-            `${JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} })}\n`,
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: recoveryId,
+              method: "tools/list",
+              params: {},
+            })}\n`,
         );
-        await collector.waitFor(5);
-        assert.equal(collector.messages[4].id, 5);
+        responseCount += 1;
+        await collector.waitFor(responseCount);
+        assert.equal(collector.messages[responseCount - 1].id, recoveryId);
         assert.equal(
-          collector.messages.some((message) => message.id === 4),
+          collector.messages.some((message) => message.id === cancellationId),
           false,
         );
 

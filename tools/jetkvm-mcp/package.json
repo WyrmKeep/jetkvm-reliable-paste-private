@@ -1,8 +1,28 @@
 {
   "name": "@wyrmkeep/jetkvm-mcp",
   "version": "0.1.0",
-  "description": "Computer-use MCP server for JetKVM",
+  "description": "Production-safe computer-use MCP server for one operator-configured JetKVM",
   "license": "GPL-2.0-only",
+  "author": "WyrmKeep",
+  "keywords": [
+    "computer-use",
+    "jetkvm",
+    "kvm",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WyrmKeep/jetkvm-reliable-paste-private.git",
+    "directory": "tools/jetkvm-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/WyrmKeep/jetkvm-reliable-paste-private/issues"
+  },
+  "homepage": "https://github.com/WyrmKeep/jetkvm-reliable-paste-private/tree/main/tools/jetkvm-mcp#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
     "jetkvm-mcp": "dist/bin.js"
@@ -13,6 +33,7 @@
   "files": [
     "dist",
     "schemas",
+    "examples",
     "README.md",
     "SECURITY.md",
     "LICENSE"
@@ -29,8 +50,13 @@
     "device-lease:run": "node dist/deviceLeaseRunner.js",
     "test:installed-lease": "npm run build && node scripts/installed-device-lease-smoke.mjs",
     "stories:validate": "vitest run src/stories/manifest.test.ts",
+    "branch-matrix:generate": "node scripts/run-branch-matrix.mjs --write",
+    "branch-matrix:check": "node scripts/run-branch-matrix.mjs",
+    "story-e2e:generate": "node scripts/run-story-e2e.mjs --write",
+    "stories:e2e": "node scripts/run-story-e2e.mjs",
     "schemas:check": "node scripts/generate-schemas.mjs --check",
     "docs:check": "node scripts/check-docs-consistency.mjs",
+    "examples:check": "node scripts/check-examples.mjs",
     "smoke:installed-contracts": "npm run build && node scripts/installed-contracts-smoke.mjs",
     "smoke:installed-stdio-protocol": "npm run build && node scripts/installed-stdio-protocol-smoke.mjs",
     "smoke:installed-sse-protocol": "npm run build && node scripts/installed-sse-protocol-smoke.mjs",

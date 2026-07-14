@@ -593,7 +593,7 @@ test("rejects missing or drifted Phase 3 MCP/UI test and typecheck hooks", () =>
   }
 });
 
-test("rejects Phase 3 semantic drift or Phase 4 production activation drift", () => {
+test("rejects Phase 3 semantic drift or production activation drift", () => {
   for (const [replacement, expected] of [
     [
       "Coordinates are interpreted against the source image geometry",
@@ -618,7 +618,7 @@ test("rejects Phase 3 semantic drift or Phase 4 production activation drift", ()
     () =>
       check({
         readmeText: readmeText.replace(
-          "The all-ten production registry is active.",
+          "The all-ten production registry and Phase 5 release gates are active.",
           "The production registry remains inactive.",
         ),
       }),

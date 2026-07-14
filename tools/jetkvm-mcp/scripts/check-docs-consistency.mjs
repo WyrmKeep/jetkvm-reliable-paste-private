@@ -301,7 +301,7 @@ function assertCanonicalStatusProvenance(text, label) {
 
 function assertOperatorDocumentation(readmeText, securityText) {
   const status =
-    "The all-ten production registry is active. The package is a standalone release candidate; Phase 5 system E2E, documentation/release evidence, and publication are still pending.";
+    "The all-ten production registry and Phase 5 release gates are active. The package is a standalone `0.1.0` release candidate; only the separately leased live-hardware validation and publication/release steps remain.";
   if (
     !readmeText.includes(status) ||
     /(?:production registry remains inactive|lists no production tools|no public CLI entry point)/i.test(

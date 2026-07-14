@@ -20,6 +20,10 @@ const REQUIRED_FILES = Object.freeze([
   "SECURITY.md",
   "package.json",
   "dist/deviceLeaseRunner.js",
+  "examples/claude-desktop.json",
+  "examples/operator-config.json",
+  "examples/create-credential-file.sh",
+  "examples/run-stdio.sh",
 ]);
 const FORBIDDEN_SEGMENTS = new Set([
   "__tests__",
@@ -39,7 +43,8 @@ function isAllowedPath(filePath) {
   return (
     ALLOWED_TOP_LEVEL_FILES.has(filePath) ||
     filePath.startsWith("dist/") ||
-    filePath.startsWith("schemas/")
+    filePath.startsWith("schemas/") ||
+    filePath.startsWith("examples/")
   );
 }
 

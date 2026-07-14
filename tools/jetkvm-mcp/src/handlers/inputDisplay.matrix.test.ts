@@ -49,13 +49,6 @@ import type {
 import { createDisplayHandlers } from "./display.js";
 import { createInputHandlers } from "./input.js";
 
-declare module "vitest" {
-  interface TaskMeta {
-    focused_assertion_ids?: readonly string[];
-    focused_test_identity?: string;
-  }
-}
-
 const SUITE_IDENTITY = "Phase 3 handler focused assertion matrix";
 const PHASE_3_TOOLS: readonly JetKvmToolName[] = [
   "jetkvm_display_capture",
