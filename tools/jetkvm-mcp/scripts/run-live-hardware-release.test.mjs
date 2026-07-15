@@ -25,6 +25,94 @@ import {
 const COMMIT = "a".repeat(40);
 const TREE = "b".repeat(40);
 
+test("selects ATX preflight only from the frozen hardware profile", async () => {
+  const stories = [
+    {
+      id: "mixed-story",
+      environments: ["live"],
+      steps: [
+        { id: "safe-step" },
+        { id: "physical-atx-step" },
+      ],
+      restore: [{ id: "restore", always: true }],
+    },
+  ];
+  const plan = {
+    "mixed-story": {
+      steps: {
+        "safe-step": {
+          mode: "hardware",
+          requires_atx_wiring: false,
+        },
+        "physical-atx-step": {
+          mode: "hardware",
+          requires_atx_wiring: true,
+        },
+      },
+    },
+  };
+  let preflightCalls = 0;
+  const driver = {
+    proveAtx: async () => {
+      preflightCalls += 1;
+      return { evidence_sha256: "a".repeat(64) };
+    },
+  };
+  const full = await liveReleaseModule.prepareHardwareValidationRun({
+    stories,
+    plan,
+    driver,
+    hardwareValidation: { profile: "full", exception_code: null },
+  });
+  assert.equal(preflightCalls, 1);
+  assert.equal(full.hardwareException, null);
+  assert.equal(full.atxPreflight.evidence_sha256, "a".repeat(64));
+
+  const unavailable = await liveReleaseModule.prepareHardwareValidationRun({
+    stories,
+    plan,
+    driver,
+    hardwareValidation: {
+      profile: "atx_unavailable",
+      exception_code: "ATX_WIRING_UNAVAILABLE",
+    },
+  });
+  assert.equal(preflightCalls, 1);
+  assert.equal(unavailable.atxPreflight, null);
+  assert.equal(unavailable.hardwareException.excluded_step_count, 1);
+
+  assert.deepEqual(
+    liveReleaseModule.buildHardwareValidationSummary({
+      hardwareValidation: unavailable.hardwareValidation,
+      hardwareException: unavailable.hardwareException,
+      atxPreflight: unavailable.atxPreflight,
+      records: [
+        {
+          result: "pass_with_exception",
+          steps: [
+            { result: "pass" },
+            { result: "excluded" },
+          ],
+        },
+      ],
+    }),
+    {
+      hardware_validation: {
+        profile: "atx_unavailable",
+        exception_code: "ATX_WIRING_UNAVAILABLE",
+      },
+      result: "pass_with_exception",
+      step_count: 2,
+      executed_step_count: 1,
+      excluded_step_count: 1,
+      hardware_exception_sha256: sha256Canonical(
+        unavailable.hardwareException,
+      ),
+      atx_preflight_sha256: null,
+    },
+  );
+});
+
 test("loads every frozen controlled trace family", () => {
   assert.deepEqual(CONTROLLED_TRACE_REPORT_PATHS, [
     "reports/controlled-traces/input-display.json",

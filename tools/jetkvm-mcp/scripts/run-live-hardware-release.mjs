@@ -27,6 +27,10 @@ import {
   finalizeLiveHardwareResources,
   verifyInstalledPackageIdentity,
 } from "./hardware-release-driver.mjs";
+import {
+  deriveHardwareValidationException,
+  validateHardwareValidation,
+} from "./hardware-validation-profile.mjs";
 import { validateDeviceReleaseProvenance } from "./device-release-provenance.mjs";
 import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 import {
@@ -80,6 +84,103 @@ function requiresManualRecovery(error) {
     error instanceof AggregateError &&
     error.errors.some((nested) => requiresManualRecovery(nested))
   );
+}
+
+export async function prepareHardwareValidationRun({
+  stories,
+  plan,
+  driver,
+  hardwareValidation,
+}) {
+  const validated = validateHardwareValidation(hardwareValidation);
+  const hardwareException = deriveHardwareValidationException({
+    stories,
+    plan,
+    hardwareValidation: validated,
+  });
+  const atxPreflight =
+    validated.profile === "full" ? await driver.proveAtx() : null;
+  return Object.freeze({
+    hardwareValidation: validated,
+    hardwareException,
+    atxPreflight,
+  });
+}
+
+export function buildHardwareValidationSummary({
+  hardwareValidation,
+  hardwareException,
+  atxPreflight,
+  records,
+}) {
+  const validated = validateHardwareValidation(hardwareValidation);
+  if (!Array.isArray(records) || records.length === 0) {
+    throw new Error("Hardware validation records are missing.");
+  }
+  const stepCount = records.reduce(
+    (count, record) =>
+      count + (Array.isArray(record?.steps) ? record.steps.length : 0),
+    0,
+  );
+  const executedStepCount = records.reduce(
+    (count, record) =>
+      count +
+      (Array.isArray(record?.steps)
+        ? record.steps.filter((step) => step?.result === "pass").length
+        : 0),
+    0,
+  );
+  const excludedStepCount = records.reduce(
+    (count, record) =>
+      count +
+      (Array.isArray(record?.steps)
+        ? record.steps.filter((step) => step?.result === "excluded").length
+        : 0),
+    0,
+  );
+  const recordsPass = records.every((record) => {
+    if (!Array.isArray(record?.steps)) return false;
+    const hasExcluded = record.steps.some(
+      (step) => step?.result === "excluded",
+    );
+    return (
+      record.steps.every((step) =>
+        ["pass", "excluded"].includes(step?.result),
+      ) &&
+      record.result === (hasExcluded ? "pass_with_exception" : "pass")
+    );
+  });
+  if (!recordsPass || executedStepCount + excludedStepCount !== stepCount) {
+    throw new Error("Hardware validation records did not pass exactly.");
+  }
+  if (validated.profile === "full") {
+    if (
+      hardwareException !== null ||
+      excludedStepCount !== 0 ||
+      typeof atxPreflight?.evidence_sha256 !== "string"
+    ) {
+      throw new Error("Full hardware validation evidence drifted.");
+    }
+  } else if (
+    hardwareException?.exception_code !== validated.exception_code ||
+    hardwareException?.excluded_step_count !== excludedStepCount ||
+    excludedStepCount === 0 ||
+    atxPreflight !== null
+  ) {
+    throw new Error("ATX-unavailable hardware evidence drifted.");
+  }
+  return Object.freeze({
+    hardware_validation: validated,
+    result:
+      validated.profile === "full" ? "pass" : "pass_with_exception",
+    step_count: stepCount,
+    executed_step_count: executedStepCount,
+    excluded_step_count: excludedStepCount,
+    hardware_exception_sha256:
+      hardwareException === null ? null : sha256Canonical(hardwareException),
+    atx_preflight_sha256:
+      atxPreflight === null ? null : atxPreflight.evidence_sha256,
+  });
 }
 
 function requiredEnvironment(name) {
@@ -1421,11 +1522,21 @@ async function run() {
         executionResolver,
         controlledExecution,
       });
-      const atxPreflight = await driver.proveAtx();
+      const {
+        hardwareValidation,
+        hardwareException,
+        atxPreflight,
+      } = await prepareHardwareValidationRun({
+        stories,
+        plan,
+        driver,
+        hardwareValidation: candidate.hardware_validation,
+      });
       const records = await runCanonicalLiveStories({
         stories,
         plan,
         driver,
+        hardwareValidation,
         runId,
         writeRecord: (record) =>
           writeAndFlush(
@@ -1433,6 +1544,12 @@ async function run() {
             record,
           ),
       });
+      if (hardwareException !== null) {
+        await writeAndFlush(
+          resolve(outputDirectory, "hardware-exception.json"),
+          hardwareException,
+        );
+      }
       driverFinalization = await driver.finalizeRun();
       const replacementPackageIdentity = await verifyReplacementPackageIdentity(
         {
@@ -1484,21 +1601,20 @@ async function run() {
         );
       }
       await finalizeResources();
+      const hardwareSummary = buildHardwareValidationSummary({
+        hardwareValidation,
+        hardwareException,
+        atxPreflight,
+        records,
+      });
       summary = Object.freeze({
-        schema_version: 1,
+        schema_version: 2,
         kind: "jetkvm-mcp-hardware-release-evidence",
         run_id: runId,
         candidate_sha256: await sha256File(candidatePath),
         candidate_commit: candidate.source.commit_sha,
         source_identity: finalSourceIdentity,
-        result: records.every((record) => record.result === "pass")
-          ? "pass"
-          : "fail",
-        story_count: records.length,
-        step_count: records.reduce(
-          (count, record) => count + record.steps.length,
-          0,
-        ),
+        ...hardwareSummary,
         restore_count: records.reduce(
           (count, record) => count + record.restores.length,
           0,
@@ -1514,7 +1630,6 @@ async function run() {
         deployment: deployment.evidence,
         tool_listing: listed,
         transport_reconnect: transportReconnect,
-        atx_preflight_sha256: atxPreflight.evidence_sha256,
         finalization_sha256: sha256Canonical(finalization.record),
         mcp_stderr: Object.freeze({
           replacement: replacementMcp.stderrEvidence(),
