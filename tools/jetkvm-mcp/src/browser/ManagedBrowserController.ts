@@ -15,7 +15,11 @@ import type {
   ReleaseBridgeReceipt,
   ReleaseBridgeRequest,
 } from "./bridgeProtocol.js";
-import type { BrowserControllerPort } from "./BrowserController.js";
+import {
+  createBrowserDeadlineBudget,
+  type BrowserControllerPort,
+  type BrowserDeadlineClock,
+} from "./BrowserController.js";
 
 export interface BrowserControllerFactory {
   open(deadline: Deadline): Promise<BrowserControllerPort>;
@@ -29,12 +33,17 @@ export interface BrowserControllerFactory {
 export class ManagedBrowserController implements BrowserControllerPort {
   readonly #factory: BrowserControllerFactory;
   readonly #unavailableIdentity = Object.freeze({});
+  readonly #clock: BrowserDeadlineClock;
   #current: BrowserControllerPort | null = null;
   #lifecycleTail: Promise<void> = Promise.resolve();
   #disposed = false;
 
-  public constructor(factory: BrowserControllerFactory) {
+  public constructor(
+    factory: BrowserControllerFactory,
+    clock: BrowserDeadlineClock = () => performance.now(),
+  ) {
     this.#factory = factory;
+    this.#clock = clock;
   }
 
   public connectionIdentity(): object {
@@ -43,6 +52,11 @@ export class ManagedBrowserController implements BrowserControllerPort {
 
   public async snapshot(deadline: Deadline): Promise<AutomationSnapshot> {
     return (await this.#ensure(deadline)).snapshot(deadline);
+  }
+  public async stableReadySnapshot(
+    deadline: Deadline,
+  ): Promise<AutomationSnapshot> {
+    return (await this.#ensure(deadline)).stableReadySnapshot(deadline);
   }
 
   public async capture(
@@ -102,29 +116,33 @@ export class ManagedBrowserController implements BrowserControllerPort {
   }
 
   public async reconnect(deadline: Deadline): Promise<void> {
+    const budget = createBrowserDeadlineBudget(deadline, this.#clock);
     await this.#serialize(async () => {
       this.#assertActive();
       const previous = this.#current;
-      this.#current = null;
-      if (previous !== null) await previous.close(deadline);
-      this.#current = await this.#factory.open(deadline);
-      await this.#current.snapshot(deadline);
+      if (previous !== null) {
+        await previous.close(budget.remaining());
+        this.#current = null;
+      }
+      this.#current = await this.#factory.open(budget.remaining());
     });
   }
 
   public async close(deadline: Deadline): Promise<void> {
     await this.#serialize(async () => {
       const current = this.#current;
-      this.#current = null;
-      if (current !== null) await current.close(deadline);
+      if (current !== null) {
+        await current.close(deadline);
+        this.#current = null;
+      }
     });
   }
 
   public async dispose(deadline: Deadline): Promise<void> {
     if (this.#disposed) return;
-    this.#disposed = true;
     await this.close(deadline);
     await this.#factory.dispose?.();
+    this.#disposed = true;
   }
 
   async #ensure(deadline: Deadline): Promise<BrowserControllerPort> {
@@ -133,7 +151,8 @@ export class ManagedBrowserController implements BrowserControllerPort {
       this.#current ??= await this.#factory.open(deadline);
     });
     const current = this.#current;
-    if (current === null) throw new Error("Managed browser controller is unavailable.");
+    if (current === null)
+      throw new Error("Managed browser controller is unavailable.");
     return current;
   }
 
@@ -153,6 +172,7 @@ export class ManagedBrowserController implements BrowserControllerPort {
   }
 
   #assertActive(): void {
-    if (this.#disposed) throw new Error("Managed browser controller is disposed.");
+    if (this.#disposed)
+      throw new Error("Managed browser controller is disposed.");
   }
 }

@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DeviceLeaseError,
@@ -43,6 +43,29 @@ class SupervisorLostError extends Error {
     this.name = "SupervisorLostError";
   }
 }
+class RetainedDeviceLeaseError extends DeviceLeaseError {
+  readonly exitCode: number;
+
+  constructor(exitCode: number) {
+    super(
+      "DEVICE_LEASE_STALE_UNPROVEN",
+      "The device lease is retained because manual recovery is required.",
+    );
+    this.name = "RetainedDeviceLeaseError";
+    this.exitCode = exitCode;
+  }
+}
+
+function retainedLeaseExitCode(error: unknown): number | undefined {
+  if (error instanceof RetainedDeviceLeaseError) return error.exitCode;
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const exitCode = retainedLeaseExitCode(nested);
+      if (exitCode !== undefined) return exitCode;
+    }
+  }
+  return undefined;
+}
 
 export function buildLeaseChildEnvironment(
   baseEnvironment: NodeJS.ProcessEnv,
@@ -79,6 +102,16 @@ function preserveLeaseAfterSupervisorLoss(lease: DeviceLease): void {
     "DEVICE_LEASE_STALE_UNPROVEN",
     "The device lease supervisor disappeared before proving command-group death.",
   );
+  lease.release = async () => {
+    throw failure;
+  };
+}
+
+function preserveLeaseForManualRecovery(
+  lease: DeviceLease,
+  exitCode: number,
+): void {
+  const failure = new RetainedDeviceLeaseError(exitCode);
   lease.release = async () => {
     throw failure;
   };
@@ -267,7 +300,7 @@ export async function runSupervisedChild(
   lease: DeviceLease,
   supervisor: SupervisorHandle,
   signal: AbortSignal,
-): Promise<number> {
+): Promise<{ readonly code: number; readonly signal: NodeJS.Signals | null }> {
   // Listener installation is synchronous: a fast supervisor result cannot race
   // command delivery, and healthy command execution has no duration timeout.
   const result = waitForSupervisorMessage(supervisor.child, "result");
@@ -306,10 +339,22 @@ export async function runSupervisedChild(
     }
     const completed = await Promise.race([result, deliveryFailure.promise]);
     supervisor.retired = true;
-    return completed.code ?? signalExitCode(completed.signal ?? null);
+    return Object.freeze({
+      code: completed.code ?? signalExitCode(completed.signal ?? null),
+      signal: completed.signal ?? null,
+    });
   } catch (error) {
     if (error instanceof SupervisorLostError) {
-      preserveLeaseAfterSupervisorLoss(lease);
+      const reason = signal.reason;
+      if (
+        signal.aborted &&
+        reason instanceof DeviceLeaseError &&
+        reason.signal !== undefined
+      ) {
+        preserveLeaseForManualRecovery(lease, signalExitCode(reason.signal));
+      } else {
+        preserveLeaseAfterSupervisorLoss(lease);
+      }
     }
     throw error;
   } finally {
@@ -330,16 +375,23 @@ export async function runDeviceLeaseCli(
   }
   args ??= process.argv.slice(2);
   environment ??= process.env;
+  const retainOption = args[2] === "--retain-on-exit-code";
+  const expectedSeparator = retainOption ? 4 : 2;
+  const retainOnExitCode = retainOption ? Number(args[3]) : undefined;
   const separator = args.indexOf("--");
   if (
     args[0] !== "--device-key" ||
     typeof args[1] !== "string" ||
     args[1].length === 0 ||
-    separator !== 2 ||
-    separator === args.length - 1
+    separator !== expectedSeparator ||
+    separator === args.length - 1 ||
+    (retainOption &&
+      (!Number.isSafeInteger(retainOnExitCode) ||
+        (retainOnExitCode ?? 0) < 1 ||
+        (retainOnExitCode ?? 0) > 255))
   ) {
     console.error(
-      "Usage: npm run device-lease:run -- --device-key <key> -- <command...>",
+      "Usage: npm run device-lease:run -- --device-key <key> [--retain-on-exit-code <1-255>] -- <command...>",
     );
     return 2;
   }
@@ -379,18 +431,47 @@ export async function runDeviceLeaseCli(
         ownerId,
         runId: randomUUID(),
         supervisor,
-        ...(inheritedProof === undefined ? {} : { inheritedProof }),
+        ...(inheritedProof === undefined
+          ? {}
+          : {
+              inheritedProof,
+              directory: dirname(inheritedProof.path),
+            }),
       },
-      (lease, signal) =>
-        runSupervisedChild(
+      async (lease, signal) => {
+        const completed = await runSupervisedChild(
           args.slice(separator + 1),
           environment,
           lease,
           supervisor as SupervisorHandle,
           signal,
-        ),
+        );
+        if (
+          retainOnExitCode !== undefined &&
+          (completed.code === retainOnExitCode ||
+            completed.signal !== null ||
+            signal.aborted)
+        ) {
+          const reason = signal.reason;
+          const exitCode =
+            signal.aborted &&
+            reason instanceof DeviceLeaseError &&
+            reason.signal !== undefined
+              ? signalExitCode(reason.signal)
+              : completed.code;
+          preserveLeaseForManualRecovery(lease, exitCode);
+        }
+        return completed.code;
+      },
     );
   } catch (error) {
+    const retainedExitCode = retainedLeaseExitCode(error);
+    if (retainedExitCode !== undefined) {
+      console.error(
+        "The device lease is retained because manual recovery is required.",
+      );
+      return retainedExitCode;
+    }
     if (error instanceof DeviceLeaseError) {
       console.error(error.message);
       return error.signal === undefined ? 1 : signalExitCode(error.signal);

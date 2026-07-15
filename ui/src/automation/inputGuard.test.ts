@@ -5,12 +5,14 @@ import {
   validateKeyboardRequest,
   validateMouseRequest,
   validatePasteRequest,
+  validateReleaseBridgeRequest,
 } from "./inputGuard";
 import type {
   AutomationSnapshot,
   KeyboardBridgeRequest,
   MouseBridgeRequest,
   PasteBridgeRequest,
+  ReleaseBridgeRequest,
 } from "./protocol";
 
 const readySnapshot = (): AutomationSnapshot => ({
@@ -136,6 +138,22 @@ describe("automation input admission", () => {
     expect(() =>
       validatePasteRequest({ ...inputBase, text: "\uFEFFok\r\n" }, readySnapshot()),
     ).not.toThrow();
+  });
+  it("keeps release admission independent of display generation", () => {
+    const request: ReleaseBridgeRequest = inputBase;
+    expect(() =>
+      validateReleaseBridgeRequest(request, {
+        ...readySnapshot(),
+        display_generation: 8,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateReleaseBridgeRequest(request, {
+        ...readySnapshot(),
+        display_generation: 8,
+        dispatch_generation: 9,
+      }),
+    ).toThrow();
   });
 });
 

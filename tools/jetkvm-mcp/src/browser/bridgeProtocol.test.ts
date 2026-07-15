@@ -276,6 +276,50 @@ describe("BrowserPlaneError", () => {
     expect(JSON.stringify(error)).not.toContain("message");
   });
 
+  it("maps paste lifecycle failure by the first-write boundary", () => {
+    const beforeWrite = BrowserPlaneError.fromBridge(
+      {
+        ...bridgeError,
+        code: "PASTE_LIFECYCLE",
+        stage: "queue",
+        outcome: "not_sent",
+        operation_id: "paste-before-write",
+        write_began: false,
+        dispatched_count: 0,
+        completed_count: 0,
+        message: "Reliable Paste completion could not be verified.",
+      },
+      1,
+    );
+    expect(beforeWrite).toMatchObject({
+      code: "CONNECTION_LOST",
+      outcome: "not_sent",
+      stage: "queue",
+      writeBegan: false,
+      safeToRetry: true,
+      requiredNextStep: "reconnect_then_capture",
+    });
+
+    const afterWrite = BrowserPlaneError.fromBridge(
+      {
+        ...bridgeError,
+        code: "PASTE_LIFECYCLE",
+        operation_id: "paste-after-write",
+        dispatched_count: 1,
+        completed_count: 0,
+        message: "Reliable Paste completion could not be verified.",
+      },
+      1,
+    );
+    expect(afterWrite).toMatchObject({
+      code: "EVENT_GAP",
+      outcome: "unknown",
+      writeBegan: true,
+      safeToRetry: false,
+      requiredNextStep: "release_then_reconnect_then_capture",
+    });
+  });
+
   it("preserves the qualified EDID failure without exposing lower-layer details", () => {
     const error = BrowserPlaneError.fromBridge(
       {
@@ -298,6 +342,71 @@ describe("BrowserPlaneError", () => {
       requiredNextStep: "none",
     });
     expect(JSON.stringify(error)).not.toContain("EDID read failed");
+  });
+
+  it.each([
+    ["CONFIG_INVALID", "The ATX action configuration is invalid.", "none"],
+    [
+      "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+      "The ATX request id was reused with different input.",
+      "none",
+    ],
+    [
+      "STALE_SESSION_GENERATION",
+      "The device session generation is stale.",
+      "reconnect_then_capture",
+    ],
+  ] as const)(
+    "preserves a definitive %s negative acknowledgement as not sent",
+    (code, message, requiredNextStep) => {
+      const envelope = parseBridgeCallEnvelope({
+        ok: false,
+        error: {
+          ...bridgeError,
+          code,
+          outcome: "not_sent",
+          acknowledged: true,
+          dispatched_count: 0,
+          completed_count: 0,
+          message,
+        },
+      });
+      expect(envelope.ok).toBe(false);
+      if (envelope.ok) throw new Error("Expected a bridge error envelope.");
+      const error = BrowserPlaneError.fromBridge(envelope.error, 1);
+
+      expect(error).toMatchObject({
+        code,
+        outcome: "not_sent",
+        safeToRetry: false,
+        requiredNextStep,
+      });
+    },
+  );
+
+  it("preserves an explicit unknown ATX outcome through strict parsing", () => {
+    const envelope = parseBridgeCallEnvelope({
+      ok: false,
+      error: {
+        ...bridgeError,
+        code: "MUTATION_OUTCOME_UNKNOWN",
+        outcome: "unknown",
+        acknowledged: false,
+        dispatched_count: 1,
+        completed_count: 0,
+        message: "The ATX mutation outcome is unknown.",
+      },
+    });
+    expect(envelope.ok).toBe(false);
+    if (envelope.ok) throw new Error("Expected a bridge error envelope.");
+    const error = BrowserPlaneError.fromBridge(envelope.error, 1);
+
+    expect(error).toMatchObject({
+      code: "MUTATION_OUTCOME_UNKNOWN",
+      outcome: "unknown",
+      safeToRetry: false,
+      requiredNextStep: "inspect_device_state_before_retry",
+    });
   });
 
   it("treats a correlated acknowledgement as applied and never fabricates unknown", () => {

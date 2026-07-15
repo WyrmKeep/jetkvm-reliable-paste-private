@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -32,6 +35,7 @@ import {
 import { FakeBrowserPlane } from "../test-support/fakes/FakeBrowserPlane.js";
 import { FakeDeviceRpcAdapter } from "../test-support/fakes/FakeDeviceRpcAdapter.js";
 import { FakeNativeControlPlane } from "../test-support/fakes/FakeNativeControlPlane.js";
+import { normalizeControlledTraceValue } from "../test-support/controlledTrace.js";
 import { createToolHandlerComposition } from "../ToolHandlers.js";
 import { createPowerHandlers, type PowerSessionPort } from "./power.js";
 import {
@@ -59,12 +63,78 @@ const PHASE_4_CELLS: readonly FocusedCell[] = TOOL_BEHAVIOR_MATRIX.flatMap(
       const cell = row.cells[tool];
       return cell.applicability === "applicable" &&
         cell.focused_assertion_owner_phase === "phase_4"
-        ? [{ tool, requirement: row.requirement, id: cell.focused_assertion_id }]
+        ? [
+            {
+              tool,
+              requirement: row.requirement,
+              id: cell.focused_assertion_id,
+            },
+          ]
         : [];
     }),
 );
 
 const RESULTS: FocusedAssertionExecutionResult[] = [];
+const CONTROLLED_TRACE_PATH = resolve(
+  "reports/controlled-traces/power-session.json",
+);
+const controlledTraces: Record<
+  string,
+  {
+    readonly test_identity: string;
+    readonly calls: readonly {
+      readonly tool: string;
+      readonly request: unknown;
+      readonly response: unknown;
+    }[];
+  }
+> = {};
+let activeTraceIdentity: string | undefined;
+let activeTraceTestIdentity: string | undefined;
+let activeTraceCalls: {
+  tool: string;
+  request: unknown;
+  response: unknown;
+}[] = [];
+
+function recordControlledExchange(
+  tool: string,
+  request: unknown,
+  response: unknown,
+): void {
+  if (activeTraceIdentity === undefined) return;
+  activeTraceCalls.push(
+    normalizeControlledTraceValue({ tool, request, response }),
+  );
+}
+
+function recordControlledCall(
+  tool: JetKvmToolName,
+  request: unknown,
+  result: Awaited<ReturnType<JetKvmToolHandler>>,
+): void {
+  recordControlledExchange(tool, request, result.structuredContent);
+}
+
+async function verifyControlledTraceReport(): Promise<void> {
+  const report = {
+    schema_version: 1,
+    evidence_source: "execution-produced-focused-handler-calls",
+    traces: Object.fromEntries(
+      Object.entries(controlledTraces).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+  };
+  const serialized = `${JSON.stringify(report, null, 2)}\n`;
+  if (process.env.JETKVM_WRITE_CONTROLLED_TRACES === "1") {
+    await mkdir(dirname(CONTROLLED_TRACE_PATH), { recursive: true });
+    await writeFile(CONTROLLED_TRACE_PATH, serialized, "utf8");
+  } else {
+    expect(await readFile(CONTROLLED_TRACE_PATH, "utf8")).toBe(serialized);
+  }
+}
+
 const REF = { sessionId: "session-1", sessionGeneration: 1 } as const;
 const BINDING: DeviceRpcBinding = {
   sessionId: REF.sessionId,
@@ -198,7 +268,12 @@ function sessionHandler(
   tool: Phase4Tool,
 ): JetKvmToolHandler {
   if (tool === "jetkvm_power_control") throw new Error("Power is not session.");
-  return handlers[tool];
+  const handler = handlers[tool];
+  return async (input, context) => {
+    const result = await handler(input, context);
+    recordControlledCall(tool, input, result);
+    return result;
+  };
 }
 
 function errorEnvelope(result: Awaited<ReturnType<JetKvmToolHandler>>) {
@@ -209,10 +284,13 @@ function errorEnvelope(result: Awaited<ReturnType<JetKvmToolHandler>>) {
 
 function deviceError(
   code: ConstructorParameters<typeof DeviceSessionClientError>[0],
-  outcome: ConstructorParameters<typeof DeviceSessionClientError>[2] = "not_sent",
+  outcome: ConstructorParameters<
+    typeof DeviceSessionClientError
+  >[2] = "not_sent",
   safeToRetry = outcome === "not_sent",
-  requiredNextStep: ConstructorParameters<typeof DeviceSessionClientError>[4] =
-    outcome === "unknown" ? "inspect_device_state_before_retry" : "none",
+  requiredNextStep: ConstructorParameters<
+    typeof DeviceSessionClientError
+  >[4] = outcome === "unknown" ? "inspect_device_state_before_retry" : "none",
 ) {
   return new DeviceSessionClientError(
     code,
@@ -230,14 +308,17 @@ async function runSessionError(
   const failing = async () => {
     throw error;
   };
-  const harness = sessionHarness({ [tool.slice("jetkvm_session_".length)]: failing });
+  const harness = sessionHarness({
+    [tool.slice("jetkvm_session_".length)]: failing,
+  });
   return errorEnvelope(
     await sessionHandler(harness.handlers, tool)(sessionInput(tool), CONTEXT),
   );
 }
 
 async function runSessionCell(tool: Phase4Tool, requirement: string) {
-  if (tool === "jetkvm_power_control") throw new Error("Expected session tool.");
+  if (tool === "jetkvm_power_control")
+    throw new Error("Expected session tool.");
   if (requirement === "branch:strict-schema-rejection") {
     const harness = sessionHarness();
     const result = await sessionHandler(harness.handlers, tool)(
@@ -250,17 +331,31 @@ async function runSessionCell(tool: Phase4Tool, requirement: string) {
     expect(harness.calls()).toBe(0);
     return;
   }
-  if (requirement === "branch:permission-denied" || requirement === "branch:unauthorized-takeover") {
+  if (
+    requirement === "branch:permission-denied" ||
+    requirement === "branch:unauthorized-takeover"
+  ) {
     const error =
       tool === "jetkvm_session_status"
-        ? new SessionServiceError("PERMISSION_DENIED", false, "grant_permission")
-        : deviceError("PERMISSION_DENIED", "not_sent", false, "grant_permission");
+        ? new SessionServiceError(
+            "PERMISSION_DENIED",
+            false,
+            "grant_permission",
+          )
+        : deviceError(
+            "PERMISSION_DENIED",
+            "not_sent",
+            false,
+            "grant_permission",
+          );
     const body = await runSessionError(tool, error);
     expect(body).toMatchObject({
       error: {
         code: "PERMISSION_DENIED",
         required_next_step: "grant_permission",
-        details: { permission: `session.${tool.slice("jetkvm_session_".length)}` },
+        details: {
+          permission: `session.${tool.slice("jetkvm_session_".length)}`,
+        },
       },
     });
     return;
@@ -294,19 +389,28 @@ async function runSessionCell(tool: Phase4Tool, requirement: string) {
         ? new SessionServiceError("CANCELLED", true, "none")
         : deviceError("CANCELLED", "not_sent", true);
     expect(await runSessionError(tool, error)).toMatchObject({
-      error: { code: "CANCELLED", outcome: tool === "jetkvm_session_status" ? null : "not_sent" },
+      error: {
+        code: "CANCELLED",
+        outcome: tool === "jetkvm_session_status" ? null : "not_sent",
+      },
     });
     return;
   }
   if (requirement === "branch:disconnect-before-write") {
     const error =
       tool === "jetkvm_session_status"
-        ? new SessionServiceError("CONNECTION_LOST", true, "reconnect_then_capture")
+        ? new SessionServiceError(
+            "CONNECTION_LOST",
+            true,
+            "reconnect_then_capture",
+          )
         : deviceError(
             "CONNECTION_LOST",
             "not_sent",
             true,
-            tool === "jetkvm_session_connect" ? "none" : "reconnect_then_capture",
+            tool === "jetkvm_session_connect"
+              ? "none"
+              : "reconnect_then_capture",
           );
     expect(await runSessionError(tool, error)).toMatchObject({
       error: { code: "CONNECTION_LOST" },
@@ -316,7 +420,11 @@ async function runSessionCell(tool: Phase4Tool, requirement: string) {
   if (requirement === "branch:disconnect-after-write") {
     const error =
       tool === "jetkvm_session_status"
-        ? new SessionServiceError("CONNECTION_LOST", true, "reconnect_then_capture")
+        ? new SessionServiceError(
+            "CONNECTION_LOST",
+            true,
+            "reconnect_then_capture",
+          )
         : deviceError("CONNECTION_LOST", "unknown", false);
     expect(await runSessionError(tool, error)).toMatchObject({
       error: { code: "CONNECTION_LOST" },
@@ -369,7 +477,11 @@ async function runSessionCell(tool: Phase4Tool, requirement: string) {
     expect(
       await runSessionError(
         tool,
-        deviceError("REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT", "not_sent", false),
+        deviceError(
+          "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+          "not_sent",
+          false,
+        ),
       ),
     ).toMatchObject({
       error: { code: "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT" },
@@ -470,7 +582,10 @@ function atxReceipt(requestId: string, action: PowerAction): AtxWireReceipt {
   };
 }
 
-function powerInput(action: PowerAction = "press_power", requestId = "power-1") {
+function powerInput(
+  action: PowerAction = "press_power",
+  requestId = "power-1",
+) {
   return {
     session_id: REF.sessionId,
     session_generation: REF.sessionGeneration,
@@ -480,16 +595,18 @@ function powerInput(action: PowerAction = "press_power", requestId = "power-1") 
   };
 }
 
-function powerHarness(options: {
-  readonly permissions?: readonly (typeof PERMISSION_NAMES)[number][];
-  readonly capability?: boolean;
-  readonly resolveError?: Error;
-  readonly clock?: { now(): number };
-  readonly invoke?: (
-    requestId: string,
-    action: PowerAction,
-  ) => Promise<AtxWireReceipt>;
-} = {}) {
+function powerHarness(
+  options: {
+    readonly permissions?: readonly (typeof PERMISSION_NAMES)[number][];
+    readonly capability?: boolean;
+    readonly resolveError?: Error;
+    readonly clock?: { now(): number };
+    readonly invoke?: (
+      requestId: string,
+      action: PowerAction,
+    ) => Promise<AtxWireReceipt>;
+  } = {},
+) {
   const calls: Array<{ requestId: string; action: PowerAction }> = [];
   const snapshot: DeviceSessionSnapshot = {
     ref: REF,
@@ -499,7 +616,10 @@ function powerHarness(options: {
     browserChannelGeneration: 3,
     freshCaptureRequired: true,
     permissions: options.permissions ?? PERMISSION_NAMES,
-    capabilities: { ...CAPABILITIES, power_control: options.capability ?? true },
+    capabilities: {
+      ...CAPABILITIES,
+      power_control: options.capability ?? true,
+    },
   };
   const sessions: PowerSessionPort = {
     resolveSession: () => {
@@ -525,7 +645,12 @@ function powerHarness(options: {
     requestLedger: new RequestLedger({ ttlMs: 60_000, maxEntries: 100 }),
     ...(options.clock === undefined ? {} : { clock: options.clock }),
   });
-  return { handler: handlers.jetkvm_power_control, calls };
+  const handler: JetKvmToolHandler = async (input, context) => {
+    const result = await handlers.jetkvm_power_control(input, context);
+    recordControlledCall("jetkvm_power_control", input, result);
+    return result;
+  };
+  return { handler, calls };
 }
 
 async function runPowerCell(requirement: string) {
@@ -535,22 +660,34 @@ async function runPowerCell(requirement: string) {
       { ...powerInput(), duration_ms: 200 },
       CONTEXT,
     );
-    expect(errorEnvelope(result)).toMatchObject({ error: { code: "CONFIG_INVALID" } });
+    expect(errorEnvelope(result)).toMatchObject({
+      error: { code: "CONFIG_INVALID" },
+    });
     expect(harness.calls).toHaveLength(0);
     return;
   }
   if (requirement === "branch:permission-denied") {
     const harness = powerHarness({ permissions: ["session.status"] });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
-      error: { code: "PERMISSION_DENIED", details: { permission: "power.control" } },
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
+      error: {
+        code: "PERMISSION_DENIED",
+        details: { permission: "power.control" },
+      },
     });
     expect(harness.calls).toHaveLength(0);
     return;
   }
   if (requirement === "branch:capability-missing") {
     const harness = powerHarness({ capability: false });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
-      error: { code: "CAPABILITY_MISSING", details: { capability: "power_control" } },
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
+      error: {
+        code: "CAPABILITY_MISSING",
+        details: { capability: "power_control" },
+      },
     });
     expect(harness.calls).toHaveLength(0);
     return;
@@ -564,7 +701,9 @@ async function runPowerCell(requirement: string) {
         "reconnect_then_capture",
       ),
     });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
       error: { code: "STALE_SESSION_GENERATION" },
     });
     expect(harness.calls).toHaveLength(0);
@@ -576,7 +715,10 @@ async function runPowerCell(requirement: string) {
     const harness = powerHarness();
     expect(
       errorEnvelope(
-        await harness.handler(powerInput(), { ...CONTEXT, signal: controller.signal }),
+        await harness.handler(powerInput(), {
+          ...CONTEXT,
+          signal: controller.signal,
+        }),
       ),
     ).toMatchObject({ error: { code: "CANCELLED", outcome: "not_sent" } });
     expect(harness.calls).toHaveLength(0);
@@ -592,7 +734,11 @@ async function runPowerCell(requirement: string) {
         },
       },
     });
-    expect(errorEnvelope(await harness.handler({ ...powerInput(), timeout_ms: 100 }, CONTEXT))).toMatchObject({
+    expect(
+      errorEnvelope(
+        await harness.handler({ ...powerInput(), timeout_ms: 100 }, CONTEXT),
+      ),
+    ).toMatchObject({
       error: { code: "DEADLINE_EXCEEDED", outcome: "not_sent" },
     });
     expect(harness.calls).toHaveLength(0);
@@ -601,15 +747,30 @@ async function runPowerCell(requirement: string) {
   if (requirement === "branch:disconnect-before-write") {
     const harness = powerHarness({
       invoke: async () => {
-        throw new DeviceRpcError("CONNECTION_LOST", "send", "not_sent", false, false);
+        throw new DeviceRpcError(
+          "CONNECTION_LOST",
+          "ack",
+          "not_sent",
+          false,
+          false,
+        );
       },
     });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
-      error: { code: "CONNECTION_LOST", outcome: "not_sent" },
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
+      error: {
+        code: "CONNECTION_LOST",
+        outcome: "not_sent",
+        details: { downstream_stage: "write" },
+      },
     });
     return;
   }
-  if (requirement === "branch:disconnect-after-write" || requirement === "branch:cleanup-failure") {
+  if (
+    requirement === "branch:disconnect-after-write" ||
+    requirement === "branch:cleanup-failure"
+  ) {
     const harness = powerHarness({
       invoke: async () => {
         throw new DeviceRpcError(
@@ -623,7 +784,9 @@ async function runPowerCell(requirement: string) {
         );
       },
     });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
       error: { outcome: "unknown", safe_to_retry: false },
     });
     return;
@@ -632,7 +795,9 @@ async function runPowerCell(requirement: string) {
     const harness = powerHarness({
       invoke: async (requestId) => atxReceipt(requestId, "hold_power"),
     });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
       error: { code: "DOWNSTREAM_MALFORMED_RESPONSE", outcome: "unknown" },
     });
     return;
@@ -644,7 +809,9 @@ async function runPowerCell(requirement: string) {
       errorEnvelope(
         await harness.handler(powerInput("press_reset", "same-id"), CONTEXT),
       ),
-    ).toMatchObject({ error: { code: "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT" } });
+    ).toMatchObject({
+      error: { code: "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT" },
+    });
     expect(harness.calls).toHaveLength(1);
     return;
   }
@@ -660,7 +827,9 @@ async function runPowerCell(requirement: string) {
         );
       },
     });
-    expect(errorEnvelope(await harness.handler(powerInput(), CONTEXT))).toMatchObject({
+    expect(
+      errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
+    ).toMatchObject({
       error: { code: "ATX_EXTENSION_INACTIVE", outcome: "not_sent" },
     });
     return;
@@ -706,7 +875,7 @@ async function runPowerCell(requirement: string) {
   }
 }
 
-async function runAdapterCell(requirement: string) {
+async function runAdapterCell(tool: Phase4Tool, requirement: string) {
   const adapter = new FakeDeviceRpcAdapter(BINDING);
   const browser = new FakeBrowserPlane(adapter);
   const native = new FakeNativeControlPlane(adapter);
@@ -743,13 +912,38 @@ async function runAdapterCell(requirement: string) {
       connectionEpoch: previous.connectionEpoch + 1,
       browserChannelGeneration: previous.browserChannelGeneration + 1,
     });
-    await expect(
-      adapter.readDisplayState(previous, {
+    let failure: unknown;
+    try {
+      await adapter.readDisplayState(previous, {
         timeoutMs: 1_000,
         signal: new AbortController().signal,
-      }),
-    ).rejects.toBeInstanceOf(DeviceRpcError);
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(DeviceRpcError);
   }
+  if (tool === "jetkvm_power_control") {
+    await runPowerCell(
+      requirement === "branch:device-rpc-adapter-mid-flight-loss"
+        ? "branch:disconnect-after-write"
+        : requirement === "branch:device-rpc-adapter-replacement"
+          ? "branch:disconnect-before-write"
+          : "branch:atx-acknowledgement-semantics",
+    );
+    return;
+  }
+  await runSessionCell(
+    tool,
+    requirement === "branch:device-rpc-adapter-mid-flight-loss"
+      ? "branch:disconnect-after-write"
+      : requirement === "branch:device-rpc-adapter-replacement"
+        ? "branch:disconnect-before-write"
+        : requirement === "branch:shared-device-rpc-adapter-binding" &&
+            tool === "jetkvm_session_status"
+          ? "branch:per-fact-status-provenance"
+          : requirement,
+  );
 }
 
 const ADAPTER_REQUIREMENTS = new Set([
@@ -770,6 +964,9 @@ function focusedTest(cell: FocusedCell, execute: () => Promise<void>) {
       },
     },
     async () => {
+      activeTraceIdentity = `focused:${cell.id}`;
+      activeTraceTestIdentity = identity;
+      activeTraceCalls = [];
       try {
         await execute();
         RESULTS.push({
@@ -784,6 +981,14 @@ function focusedTest(cell: FocusedCell, execute: () => Promise<void>) {
           result: "fail",
         });
         throw error;
+      } finally {
+        controlledTraces[activeTraceIdentity] = {
+          test_identity: activeTraceTestIdentity,
+          calls: activeTraceCalls,
+        };
+        activeTraceIdentity = undefined;
+        activeTraceTestIdentity = undefined;
+        activeTraceCalls = [];
       }
     },
   );
@@ -793,7 +998,7 @@ describe(SUITE_IDENTITY, () => {
   for (const cell of PHASE_4_CELLS) {
     focusedTest(cell, async () => {
       if (ADAPTER_REQUIREMENTS.has(cell.requirement)) {
-        await runAdapterCell(cell.requirement);
+        await runAdapterCell(cell.tool, cell.requirement);
       } else if (cell.tool === "jetkvm_power_control") {
         await runPowerCell(cell.requirement);
       } else {
@@ -802,8 +1007,9 @@ describe(SUITE_IDENTITY, () => {
     });
   }
 
-  afterAll(() => {
+  afterAll(async () => {
     expect(PHASE_4_CELLS).toHaveLength(70);
     validateFocusedAssertionExecutions("phase_4", RESULTS);
+    await verifyControlledTraceReport();
   });
 });

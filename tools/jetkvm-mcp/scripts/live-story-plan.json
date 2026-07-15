@@ -1,0 +1,337 @@
+{
+  "session-connect-without-takeover-busy": {
+    "step_ids_sha256": "32194de0ea4a48c155bc01da41b8cafe81e389307c2423520c16bf5f0986f727",
+    "hardware_step_ids": [
+      "reject-strict-schema",
+      "connect-without-takeover",
+      "reject-strict-schema-jetkvm-display-capture",
+      "reject-strict-schema-jetkvm-display-status",
+      "reject-strict-schema-jetkvm-input-keyboard",
+      "reject-strict-schema-jetkvm-input-mouse",
+      "reject-strict-schema-jetkvm-input-paste",
+      "reject-strict-schema-jetkvm-input-release",
+      "reject-strict-schema-jetkvm-power-control",
+      "reject-strict-schema-jetkvm-session-connect",
+      "reject-strict-schema-jetkvm-session-reconnect",
+      "reject-strict-schema-jetkvm-session-status"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": [
+      "reject-strict-schema-jetkvm-power-control"
+    ]
+  },
+  "session-explicit-authorized-takeover": {
+    "step_ids_sha256": "1a65718e9c868bb839368741a08f01718fca112786eaa6c8b1174ef6ec15db6c",
+    "hardware_step_ids": [
+      "authorized-takeover",
+      "inspect-old-generation",
+      "authorized-reconnect-takeover"
+    ],
+    "controlled_step_ids": [
+      "permission-denied-unauthorized-takeover",
+      "denied-takeover",
+      "denied-reconnect-takeover"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "session-reconnect-invalidates-observations": {
+    "step_ids_sha256": "f68df952eb557c81565dd9ef33563519f489aebeeacb044344250b85b8e7b4ba",
+    "hardware_step_ids": [
+      "reconnect-session",
+      "input-with-stale-generation",
+      "input-with-old-observation",
+      "keyboard-with-old-observation",
+      "paste-with-old-observation"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "display-capture-fresh-frame-and-geometry": {
+    "step_ids_sha256": "8328df80a9624cca11cebfe0f5e900e90d0918a4f36b1c35d3f50f8719825a50",
+    "hardware_step_ids": [
+      "capture-fresh-frame"
+    ],
+    "controlled_step_ids": [
+      "capture-without-display-capability"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "display-status-resolution-and-read-only-edid": {
+    "step_ids_sha256": "0cdda63c1947114062589542212bf9ebb4f027db79d0d48b7c9d4090e92efe0d",
+    "hardware_step_ids": [],
+    "controlled_step_ids": [
+      "status-without-edid-capability",
+      "status-with-empty-edid"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "mouse-observation-fence-and-single-use": {
+    "step_ids_sha256": "814b7ff89eed93effe1c98e60e334c047ff55668503bceb152399f9999d38487",
+    "hardware_step_ids": [
+      "capture-stale-age-observation",
+      "reject-stale-age-observation",
+      "capture-consumed-observation",
+      "consume-observation",
+      "reuse-consumed-observation",
+      "capture-negative-scroll-observation",
+      "scroll-negative-bound",
+      "reuse-consumed-negative-observation",
+      "capture-positive-scroll-observation",
+      "scroll-positive-bound",
+      "reject-zero-scroll",
+      "reject-fractional-scroll",
+      "reject-overflow-scroll",
+      "reject-horizontal-scroll"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "keyboard-physical-keys-only": {
+    "step_ids_sha256": "7b22f45017e48133838e2d5832e1fb4fef4adacaa29820c35bdfda1e12cc3100",
+    "hardware_step_ids": [
+      "capture-keyboard-observation",
+      "reject-text-keyboard-action",
+      "reject-unknown-physical-key",
+      "reject-impossible-key-transition",
+      "send-physical-keys"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "reliable-paste-91cps-correlated-terminal": {
+    "step_ids_sha256": "078ec3cbfb4829a0727ab812a094d472c228359bbae2580dfece8d078baa91b3",
+    "hardware_step_ids": [
+      "capture-correlated-terminal-observation",
+      "submit-correlated-terminal-paste"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "emergency-release-races-every-writer": {
+    "step_ids_sha256": "d07b1f4e38009bc5dae5d780f31553e0f70ed344dbb1f04664907d42c2f56dfd",
+    "hardware_step_ids": [
+      "release-all-input"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "power-three-semantic-actions": {
+    "step_ids_sha256": "7b2e4e99ad316d063e35ee04e782fab0ec8951ace5b8fe476d27b1d5334f9545",
+    "hardware_step_ids": [
+      "establish-definitive-atx-session",
+      "prove-press-power-baseline",
+      "press-power",
+      "restore-and-prove-hold-power-baseline",
+      "hold-power",
+      "restore-and-prove-reset-baseline",
+      "press-reset",
+      "restore-and-prove-post-reset-baseline"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [
+      "establish-definitive-atx-session",
+      "prove-press-power-baseline",
+      "press-power",
+      "restore-and-prove-hold-power-baseline",
+      "hold-power",
+      "restore-and-prove-reset-baseline",
+      "press-reset",
+      "restore-and-prove-post-reset-baseline"
+    ],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "duplicate-request-id-definitive-replay": {
+    "step_ids_sha256": "67775cf9c0171f8bfe189d11a4f83b02702483fc2ac48ad294b22e49e577adc1",
+    "hardware_step_ids": [
+      "initial-release",
+      "same-release-request",
+      "changed-release-request",
+      "prepare-duplicate-session-connect-case",
+      "duplicate-initial-jetkvm-session-connect",
+      "duplicate-same-request-digest-jetkvm-session-connect",
+      "duplicate-changed-digest-jetkvm-session-connect",
+      "prepare-duplicate-session-reconnect-case",
+      "duplicate-initial-jetkvm-session-reconnect",
+      "duplicate-same-request-digest-jetkvm-session-reconnect",
+      "duplicate-changed-digest-jetkvm-session-reconnect",
+      "prepare-duplicate-keyboard-case",
+      "duplicate-initial-jetkvm-input-keyboard",
+      "duplicate-same-request-digest-jetkvm-input-keyboard",
+      "duplicate-changed-digest-jetkvm-input-keyboard",
+      "prepare-duplicate-mouse-case",
+      "duplicate-initial-jetkvm-input-mouse",
+      "duplicate-same-request-digest-jetkvm-input-mouse",
+      "duplicate-changed-digest-jetkvm-input-mouse",
+      "prepare-duplicate-paste-case",
+      "duplicate-initial-jetkvm-input-paste",
+      "duplicate-same-request-digest-jetkvm-input-paste",
+      "duplicate-changed-digest-jetkvm-input-paste",
+      "prepare-duplicate-release-case",
+      "duplicate-initial-jetkvm-input-release",
+      "duplicate-same-request-digest-jetkvm-input-release",
+      "duplicate-changed-digest-jetkvm-input-release",
+      "prepare-duplicate-power-case",
+      "duplicate-initial-jetkvm-power-control",
+      "duplicate-same-request-digest-jetkvm-power-control",
+      "duplicate-changed-digest-jetkvm-power-control",
+      "restore-and-prove-after-duplicate-power"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [
+      "prepare-duplicate-power-case",
+      "duplicate-initial-jetkvm-power-control",
+      "duplicate-same-request-digest-jetkvm-power-control",
+      "duplicate-changed-digest-jetkvm-power-control",
+      "restore-and-prove-after-duplicate-power"
+    ],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "permission-and-capability-errors-actionable": {
+    "step_ids_sha256": "7122428c296aef39971388b6defa9990641b6cbf2aeb5974de645d9fe29e1b65",
+    "hardware_step_ids": [],
+    "controlled_step_ids": [
+      "status-without-permission",
+      "keyboard-without-capability",
+      "status-without-permission-jetkvm-display-capture",
+      "status-without-permission-jetkvm-display-status",
+      "status-without-permission-jetkvm-input-keyboard",
+      "status-without-permission-jetkvm-input-mouse",
+      "status-without-permission-jetkvm-input-paste",
+      "status-without-permission-jetkvm-input-release",
+      "status-without-permission-jetkvm-power-control",
+      "status-without-permission-jetkvm-session-connect",
+      "status-without-permission-jetkvm-session-reconnect",
+      "status-without-permission-jetkvm-session-status",
+      "keyboard-without-capability-jetkvm-display-capture",
+      "keyboard-without-capability-jetkvm-display-status",
+      "keyboard-without-capability-jetkvm-input-keyboard",
+      "keyboard-without-capability-jetkvm-input-mouse",
+      "keyboard-without-capability-jetkvm-input-paste",
+      "keyboard-without-capability-jetkvm-input-release",
+      "keyboard-without-capability-jetkvm-power-control",
+      "keyboard-without-capability-jetkvm-session-status"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "stale-generation-zero-downstream-write": {
+    "step_ids_sha256": "d9df159a7839a80d89e38f9437b8c915723c994cfe8c8815c893c51890b37bcb",
+    "hardware_step_ids": [
+      "stale-keyboard-generation",
+      "stale-power-generation",
+      "stale-keyboard-generation-jetkvm-display-capture",
+      "stale-keyboard-generation-jetkvm-display-status",
+      "stale-keyboard-generation-jetkvm-input-keyboard",
+      "stale-keyboard-generation-jetkvm-input-mouse",
+      "stale-keyboard-generation-jetkvm-input-paste",
+      "stale-keyboard-generation-jetkvm-input-release",
+      "stale-keyboard-generation-jetkvm-power-control",
+      "stale-keyboard-generation-jetkvm-session-reconnect",
+      "stale-keyboard-generation-jetkvm-session-status"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": [
+      "stale-power-generation",
+      "stale-keyboard-generation-jetkvm-power-control"
+    ]
+  },
+  "transport-reconnect-does-not-own-device": {
+    "step_ids_sha256": "f23da3f8597c483db4b86bb89e5195573fbae034bea351321bed55a3f064a706",
+    "hardware_step_ids": [],
+    "controlled_step_ids": [
+      "status-before-transport-loss",
+      "reconnect-mcp-transport",
+      "status-after-transport-loss"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "display-status-cached-freshness-and-streaming-omission": {
+    "step_ids_sha256": "af2f76bced0dcffda42307c156f7bf81005847dfc19cc8f3b111a07d6ed1486e",
+    "hardware_step_ids": [
+      "recover-after-device-rpc-adapter-release-loss"
+    ],
+    "controlled_step_ids": [
+      "status-with-unequal-facts",
+      "session-status-after-binding-loss",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-display-capture",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-display-status",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-input-keyboard",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-input-mouse",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-input-paste",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-input-release",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-power-control",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-session-connect",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-session-reconnect",
+      "device-rpc-adapter-mid-flight-loss-jetkvm-session-status"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "edid-low-level-failure-propagates": {
+    "step_ids_sha256": "584d5369b6f325e8f4adaac89169e7e25409c5ee9d7a6ea5f753f9755d76803f",
+    "hardware_step_ids": [],
+    "controlled_step_ids": [
+      "read-edid-lower-failure"
+    ],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "reconnect-requires-new-channel-observations": {
+    "step_ids_sha256": "6d649f94e8c73ae13ca5e301bfe4800cea3ea344e3b9e9f64364da183b5b62ea",
+    "hardware_step_ids": [
+      "reconnect-with-new-channel",
+      "inspect-replacement-channel",
+      "shared-device-rpc-adapter-binding-jetkvm-display-capture",
+      "shared-device-rpc-adapter-binding-jetkvm-display-status",
+      "capture-shared-keyboard-observation",
+      "shared-device-rpc-adapter-binding-jetkvm-input-keyboard",
+      "capture-shared-mouse-observation",
+      "shared-device-rpc-adapter-binding-jetkvm-input-mouse",
+      "capture-shared-paste-observation",
+      "shared-device-rpc-adapter-binding-jetkvm-input-paste",
+      "shared-device-rpc-adapter-binding-jetkvm-input-release",
+      "shared-device-rpc-adapter-binding-jetkvm-session-status",
+      "device-rpc-adapter-replacement-jetkvm-display-capture",
+      "device-rpc-adapter-replacement-jetkvm-display-status",
+      "capture-replacement-keyboard-observation",
+      "device-rpc-adapter-replacement-jetkvm-input-keyboard",
+      "capture-replacement-mouse-observation",
+      "device-rpc-adapter-replacement-jetkvm-input-mouse",
+      "capture-replacement-paste-observation",
+      "device-rpc-adapter-replacement-jetkvm-input-paste",
+      "device-rpc-adapter-replacement-jetkvm-input-release",
+      "device-rpc-adapter-replacement-jetkvm-session-status"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [],
+    "atx_safe_without_wiring_step_ids": []
+  },
+  "atx-extension-serialization-idempotency-and-nonproof": {
+    "step_ids_sha256": "8fe57949e034aeea25bbed5f98a1b5ebb58d5d4656e2171728a913a6c1d88d6f",
+    "hardware_step_ids": [
+      "prove-serialized-power-baseline",
+      "serialized-power-short",
+      "repeat-power-short",
+      "restore-and-prove-prewrite-baseline"
+    ],
+    "controlled_step_ids": [],
+    "atx_unavailable_step_ids": [
+      "prove-serialized-power-baseline",
+      "serialized-power-short",
+      "repeat-power-short",
+      "restore-and-prove-prewrite-baseline"
+    ],
+    "atx_safe_without_wiring_step_ids": []
+  }
+}

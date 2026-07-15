@@ -18,16 +18,17 @@ import {
   toMcpSuccessResult,
 } from "../mcp/results.js";
 import { powerControlInputSchema } from "../mcp/schemas.js";
+import type { JetKvmHandlerContext, JetKvmToolHandler } from "../mcp/server.js";
 import type {
-  JetKvmHandlerContext,
-  JetKvmToolHandler,
-} from "../mcp/server.js";
-import type { NativeControlPlane, PowerReceipt } from "../planes/NativeControlPlane.js";
+  NativeControlPlane,
+  PowerReceipt,
+} from "../planes/NativeControlPlane.js";
 import {
   DeviceSessionClientError,
   type DeviceSessionSnapshot,
 } from "../session/deviceSessionClient.js";
 import {
+  canonicalMutationDownstreamStage,
   createHandlerDeadline,
   defaultErrorDetails,
   sanitizePlaneFailure,
@@ -169,14 +170,34 @@ function planeFailure(error: unknown): PowerFailure {
       downstreamStage: "acknowledgement",
     };
   }
-  if (sanitized.code === "ATX_EXTENSION_INACTIVE") {
+  if (
+    sanitized.code === "ATX_EXTENSION_INACTIVE" ||
+    sanitized.code === "CONFIG_INVALID" ||
+    sanitized.code === "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT" ||
+    sanitized.code === "STALE_SESSION_GENERATION"
+  ) {
+    if (sanitized.outcome !== "not_sent") {
+      return {
+        code: "MUTATION_OUTCOME_UNKNOWN",
+        phase: "execute",
+        outcome: "unknown",
+        safeToRetry: false,
+        requiredNextStep: "inspect_device_state_before_retry",
+        downstreamStage:
+          sanitized.stage === "acknowledgement" ||
+          sanitized.stage === "verification"
+            ? sanitized.stage
+            : "write",
+      };
+    }
+    const staleGeneration = sanitized.code === "STALE_SESSION_GENERATION";
     return {
       code: sanitized.code,
       phase: "validate",
       outcome: "not_sent",
       safeToRetry: false,
-      requiredNextStep: "none",
-      downstreamStage: "none",
+      requiredNextStep: staleGeneration ? "reconnect_then_capture" : "none",
+      downstreamStage: staleGeneration ? "admission" : "none",
     };
   }
   if (sanitized.code === "ATX_SERIAL_UNAVAILABLE") {
@@ -190,6 +211,19 @@ function planeFailure(error: unknown): PowerFailure {
           ? "inspect_device_state_before_retry"
           : "none",
       downstreamStage: "write",
+    };
+  }
+  if (
+    sanitized.code === "DOWNSTREAM_MALFORMED_RESPONSE" &&
+    sanitized.outcome === "not_sent"
+  ) {
+    return {
+      code: sanitized.code,
+      phase: "execute",
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture",
+      downstreamStage: canonicalMutationDownstreamStage(sanitized, "not_sent"),
     };
   }
   return {
@@ -208,7 +242,10 @@ function planeFailure(error: unknown): PowerFailure {
         : sanitized.code === "CONNECTION_LOST"
           ? "reconnect_then_capture"
           : sanitized.requiredNextStep,
-    downstreamStage: sanitized.stage,
+    downstreamStage: canonicalMutationDownstreamStage(
+      sanitized,
+      sanitized.outcome === "not_sent" ? "not_sent" : "unknown",
+    ),
   };
 }
 
@@ -291,12 +328,10 @@ function replayResult(
   terminal: LedgerTerminal<CachedPowerValue>,
 ): CallToolResult {
   if (terminal.value.kind === "success") {
-    return successResult(
-      context,
-      scope,
-      input,
-      { ...terminal.value.result, outcome: "already_applied" },
-    );
+    return successResult(context, scope, input, {
+      ...terminal.value.result,
+      outcome: "already_applied",
+    });
   }
   return toMcpErrorResult({
     ok: false,
@@ -331,7 +366,10 @@ function persistUnknown(
     {
       outcome: "unknown",
       verification: "none",
-      value: { kind: "error", error: structured.error } satisfies CachedPowerValue,
+      value: {
+        kind: "error",
+        error: structured.error,
+      } satisfies CachedPowerValue,
     },
     () => response,
   );
@@ -464,26 +502,25 @@ async function executePowerControl(
 
   const reservation = decision.reservation;
   const remaining = scope.remaining();
-  const admissionFailure =
-    context.signal.aborted
+  const admissionFailure = context.signal.aborted
+    ? ({
+        code: "CANCELLED",
+        phase: "queue",
+        outcome: "not_sent",
+        safeToRetry: true,
+        requiredNextStep: "none",
+        downstreamStage: "none",
+      } satisfies PowerFailure)
+    : remaining.timeoutMs === 0
       ? ({
-          code: "CANCELLED",
+          code: "DEADLINE_EXCEEDED",
           phase: "queue",
           outcome: "not_sent",
           safeToRetry: true,
           requiredNextStep: "none",
           downstreamStage: "none",
         } satisfies PowerFailure)
-      : remaining.timeoutMs === 0
-        ? ({
-            code: "DEADLINE_EXCEEDED",
-            phase: "queue",
-            outcome: "not_sent",
-            safeToRetry: true,
-            requiredNextStep: "none",
-            downstreamStage: "none",
-          } satisfies PowerFailure)
-        : null;
+      : null;
   if (admissionFailure !== null) {
     dependencies.requestLedger.release(reservation, "not_sent");
     return errorResult(

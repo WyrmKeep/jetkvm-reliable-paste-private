@@ -1,7 +1,7 @@
-BRANCH    := $(shell git rev-parse --abbrev-ref HEAD)
+BRANCH    ?= $(shell git rev-parse --abbrev-ref HEAD)
 BUILDDATE := $(shell date -u +%FT%T%z)
 BUILDTS   := $(shell date -u +%s)
-REVISION  := $(shell git rev-parse HEAD)
+REVISION  ?= $(shell git rev-parse HEAD)
 VERSION := 0.5.5
 VERSION_DEV := $(VERSION)-dev$(shell date -u +%Y%m%d%H%M)
 
@@ -16,13 +16,12 @@ SKIP_UI_BUILD ?= 0
 ENABLE_SYNC_TRACE ?= 0
 
 CMAKE_BUILD_TYPE ?= Release
-
 # GPG signing configuration
 # SIGNING_KEY_FPR: The fingerprint of the signing subkey (on YubiKey)
 # Required for signing releases
 SIGNING_KEY_FPR ?=
 
-GO_BUILD_ARGS := -tags netgo,timetzdata,nomsgpack
+GO_BUILD_ARGS := -buildvcs=false -tags netgo,timetzdata,nomsgpack
 ifeq ($(ENABLE_SYNC_TRACE), 1)
 	GO_BUILD_ARGS := $(GO_BUILD_ARGS),synctrace
 endif
@@ -51,7 +50,7 @@ GO_CMD := $(GO_ARGS) go
 
 BIN_DIR := $(shell pwd)/bin
 
-TEST_DIRS := $(shell find . -name "*_test.go" -type f -exec dirname {} \; | sort -u)
+DEVICE_TEST_LIST_COMMAND = $(GO_CMD) list $(GO_BUILD_ARGS) -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...
 
 test:
 	go test ./...
@@ -164,7 +163,13 @@ build_dev:
 		echo "Toolchain not found, running build_dev in Docker..."; \
 		rm -rf internal/native/cgo/build; \
 		docker run --rm -v "$$(pwd):/build" \
-			$(DOCKER_BUILD_TAG) make _build_dev_inner VERSION_DEV=$(VERSION_DEV); \
+			$(DOCKER_BUILD_TAG) make _build_dev_inner \
+				VERSION_DEV="$(VERSION_DEV)" \
+				BRANCH="$(BRANCH)" \
+				REVISION="$(REVISION)" \
+				SKIP_NATIVE_IF_EXISTS="$(SKIP_NATIVE_IF_EXISTS)" \
+				ENABLE_SYNC_TRACE="$(ENABLE_SYNC_TRACE)" \
+				CMAKE_BUILD_TYPE="$(CMAKE_BUILD_TYPE)"; \
 	else \
 		$(MAKE) _build_dev_inner VERSION_DEV=$(VERSION_DEV); \
 	fi
@@ -174,36 +179,74 @@ _build_dev_inner: build_native
 	$(GO_CMD) build \
 		-ldflags="$(GO_LDFLAGS) -X $(KVM_PKG_NAME).builtAppVersion=$(VERSION_DEV)" \
 		$(GO_RELEASE_BUILD_ARGS) \
-		-o $(BIN_DIR)/jetkvm_app -v cmd/main.go
+		-o "$(BIN_DIR)/jetkvm_app" -v cmd/main.go
 
 build_test2json:
-	$(GO_CMD) build -o $(BIN_DIR)/test2json cmd/test2json
+	$(GO_CMD) build $(GO_BUILD_ARGS) -o "$(BIN_DIR)/test2json" cmd/test2json
 
 build_gotestsum:
 	@echo "Building gotestsum..."
 	$(GO_CMD) install gotest.tools/gotestsum@latest
-	cp $(shell $(GO_CMD) env GOPATH)/bin/linux_arm/gotestsum $(BIN_DIR)/gotestsum
+	cp "$(shell $(GO_CMD) env GOPATH)/bin/linux_arm/gotestsum" "$(BIN_DIR)/gotestsum"
 
-build_dev_test: build_test2json build_gotestsum
+.PHONY: list_device_test_packages
+list_device_test_packages:
+	@set -e; \
+	test_dirs="$$( $(DEVICE_TEST_LIST_COMMAND) )" || { \
+		echo "device test package discovery failed" >&2; \
+		exit 1; \
+	}; \
+	if [ -z "$$test_dirs" ]; then \
+		echo "device test package discovery failed: no test packages" >&2; \
+		exit 1; \
+	fi; \
+	printf '%s\n' "$$test_dirs"
+
+.PHONY: stage_device_test_sources
+stage_device_test_sources:
+	@mkdir -p \
+		"$(BIN_DIR)/tests/source/internal/regression" \
+		"$(BIN_DIR)/tests/source/ui/src/hooks"
+	@cp jsonrpc.go webrtc.go "$(BIN_DIR)/tests/source/"
+	@cp \
+		ui/src/hooks/hidRpc.ts \
+		ui/src/hooks/useKeyboard.ts \
+		"$(BIN_DIR)/tests/source/ui/src/hooks/"
+
+build_dev_test: build_native build_test2json build_gotestsum
 # collect all directories that contain tests
 	@echo "Building tests for devices ..."
-	@rm -rf $(BIN_DIR)/tests && mkdir -p $(BIN_DIR)/tests
+	@rm -rf "$(BIN_DIR)/tests" && mkdir -p "$(BIN_DIR)/tests"
+	@$(MAKE) --no-print-directory stage_device_test_sources
 
-	@cat resource/dev_test.sh > $(BIN_DIR)/tests/run_all_tests
-	@for test in $(TEST_DIRS); do \
-		test_pkg_name=$$(echo $$test | sed 's/^.\///g'); \
-		test_pkg_full_name=$(KVM_PKG_NAME)/$$(echo $$test | sed 's/^.\///g'); \
-		test_filename=$$(echo $$test_pkg_name | sed 's/\//__/g')_test; \
+	@cat resource/dev_test.sh > "$(BIN_DIR)/tests/run_all_tests"
+	@set -e; \
+	test_dirs="$$( $(DEVICE_TEST_LIST_COMMAND) )" || { \
+		echo "device test package discovery failed" >&2; \
+		exit 1; \
+	}; \
+	if [ -z "$$test_dirs" ]; then \
+		echo "device test package discovery failed: no test packages" >&2; \
+		exit 1; \
+	fi; \
+	for test in $$test_dirs; do \
+		test_pkg_full_name=$$test; \
+		test_pkg_name=$$(echo "$$test" | sed 's|^$(KVM_PKG_NAME)/||'); \
+		test_filename=$$(echo "$$test_pkg_name" | sed 's|/|__|g')_test; \
 		$(GO_CMD) test -v \
 			-ldflags="$(GO_LDFLAGS) -X $(KVM_PKG_NAME).builtAppVersion=$(VERSION_DEV)" \
 			$(GO_BUILD_ARGS) \
-			-c -o $(BIN_DIR)/tests/$$test_filename $$test; \
-		echo "runTest ./$$test_filename $$test_pkg_full_name" >> $(BIN_DIR)/tests/run_all_tests; \
+			-c -o "$(BIN_DIR)/tests/$$test_filename" "$$test"; \
+		if [ "$$test_pkg_name" = "internal/regression" ]; then \
+			echo "runTest ./$$test_filename $$test_pkg_full_name ./source/internal/regression" >> "$(BIN_DIR)/tests/run_all_tests"; \
+		else \
+			echo "runTest ./$$test_filename $$test_pkg_full_name" >> "$(BIN_DIR)/tests/run_all_tests"; \
+		fi; \
 	done; \
-	chmod +x $(BIN_DIR)/tests/run_all_tests; \
-	cp $(BIN_DIR)/test2json $(BIN_DIR)/tests/ && chmod +x $(BIN_DIR)/tests/test2json; \
-	cp $(BIN_DIR)/gotestsum $(BIN_DIR)/tests/ && chmod +x $(BIN_DIR)/tests/gotestsum; \
-	tar czfv device-tests.tar.gz -C $(BIN_DIR)/tests .
+	chmod +x "$(BIN_DIR)/tests/run_all_tests"; \
+	cp "$(BIN_DIR)/test2json" "$(BIN_DIR)/tests/" && chmod +x "$(BIN_DIR)/tests/test2json"; \
+	cp "$(BIN_DIR)/gotestsum" "$(BIN_DIR)/tests/" && chmod +x "$(BIN_DIR)/tests/gotestsum"; \
+	tar czfv device-tests.tar.gz -C "$(BIN_DIR)/tests" .
 
 frontend:
 	@if [ "$(SKIP_UI_BUILD)" = "1" ] && [ -f "static/index.html" ]; then \
@@ -288,7 +331,13 @@ build_release:
 		echo "Toolchain not found, running build_release in Docker..."; \
 		rm -rf internal/native/cgo/build; \
 		docker run --rm -v "$$(pwd):/build" \
-			$(DOCKER_BUILD_TAG) make _build_release_inner VERSION=$(VERSION); \
+			$(DOCKER_BUILD_TAG) make _build_release_inner \
+				VERSION="$(VERSION)" \
+				BRANCH="$(BRANCH)" \
+				REVISION="$(REVISION)" \
+				SKIP_NATIVE_IF_EXISTS="$(SKIP_NATIVE_IF_EXISTS)" \
+				ENABLE_SYNC_TRACE="$(ENABLE_SYNC_TRACE)" \
+				CMAKE_BUILD_TYPE="$(CMAKE_BUILD_TYPE)"; \
 	else \
 		$(MAKE) _build_release_inner VERSION=$(VERSION); \
 	fi

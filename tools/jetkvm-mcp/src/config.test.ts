@@ -169,6 +169,70 @@ describe("OperatorConfig", () => {
     expect(config.allowDangerousTargetHttp).toBe(true);
   });
 
+  it("resolves browser launch settings with input-over-environment precedence", () => {
+    expect(
+      parseOperatorConfig(
+        {
+          targetUrl: "https://jetkvm.lan",
+          headless: false,
+          chromiumExecutablePath: "/operator/chromium",
+        },
+        {
+          JETKVM_HEADLESS: "true",
+          JETKVM_CHROMIUM_EXECUTABLE_PATH: "/environment/chromium",
+        },
+      ),
+    ).toMatchObject({
+      headless: false,
+      chromiumExecutablePath: "/operator/chromium",
+    });
+    expect(
+      parseOperatorConfig(
+        { targetUrl: "https://jetkvm.lan" },
+        {
+          JETKVM_HEADLESS: "false",
+          JETKVM_CHROMIUM_EXECUTABLE_PATH: "/environment/chromium",
+        },
+      ),
+    ).toMatchObject({
+      headless: false,
+      chromiumExecutablePath: "/environment/chromium",
+    });
+    expect(
+      parseOperatorConfig({ targetUrl: "https://jetkvm.lan" }),
+    ).toMatchObject({
+      headless: true,
+      chromiumExecutablePath: undefined,
+    });
+  });
+
+  it.each(["", "relative/chromium", "\u0000/chromium"])(
+    "rejects unsafe Chromium executable path %o",
+    (chromiumExecutablePath) => {
+      expect(() =>
+        parseOperatorConfig({
+          targetUrl: "https://jetkvm.lan",
+          chromiumExecutablePath,
+        }),
+      ).toThrowError("chromiumExecutablePath must be an absolute path");
+    },
+  );
+
+  it("rejects malformed browser launch environment values", () => {
+    expect(() =>
+      parseOperatorConfig(
+        { targetUrl: "https://jetkvm.lan" },
+        { JETKVM_HEADLESS: "0" },
+      ),
+    ).toThrowError("JETKVM_HEADLESS must be true or false");
+    expect(() =>
+      parseOperatorConfig(
+        { targetUrl: "https://jetkvm.lan" },
+        { JETKVM_CHROMIUM_EXECUTABLE_PATH: "relative/chromium" },
+      ),
+    ).toThrowError("chromiumExecutablePath must be an absolute path");
+  });
+
   it.each([
     ["allowInsecureHttp", "false"],
     ["allowInsecureHttp", "true"],
@@ -178,6 +242,10 @@ describe("OperatorConfig", () => {
     ["allowDangerousTargetHttp", "true"],
     ["allowDangerousTargetHttp", 1],
     ["allowDangerousTargetHttp", {}],
+    ["headless", "false"],
+    ["headless", "true"],
+    ["headless", 1],
+    ["headless", {}],
   ] as const)("rejects non-boolean operator flag %s=%o", (flag, value) => {
     const input = {
       targetUrl: "http://jetkvm.lan",

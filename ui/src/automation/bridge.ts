@@ -79,8 +79,7 @@ const SAFE_ERROR_MESSAGES: Record<AutomationBridgeErrorCode, string> = {
   EDID_READ_FAILED: "The native EDID read failed.",
   ATX_EXTENSION_INACTIVE: "The ATX extension is inactive.",
   ATX_SERIAL_UNAVAILABLE: "The ATX serial controller is unavailable.",
-  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
-    "The ATX request id was reused with different input.",
+  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT: "The ATX request id was reused with different input.",
   STALE_SESSION_GENERATION: "The device session generation is stale.",
   MUTATION_OUTCOME_UNKNOWN: "The ATX mutation outcome is unknown.",
   CONFIG_INVALID: "The ATX action configuration is invalid.",
@@ -186,9 +185,7 @@ class Registry implements AutomationFacadeRegistry {
         owner.readVideoState(request),
       ),
       readEdid: delegate((owner, request: ReadBridgeRequest) => owner.readEdid(request)),
-      performAtx: delegate((owner, request: AtxBridgeRequest) =>
-        owner.performAtx(request),
-      ),
+      performAtx: delegate((owner, request: AtxBridgeRequest) => owner.performAtx(request)),
     });
   }
 

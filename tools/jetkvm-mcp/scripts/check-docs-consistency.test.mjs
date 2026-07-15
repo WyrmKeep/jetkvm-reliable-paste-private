@@ -651,3 +651,16 @@ test("rejects Phase 3 semantic drift or production activation drift", () => {
     /paste text.*ephemeral/i,
   );
 });
+
+test("rejects a drifted ATX-unavailable acknowledgement command", () => {
+  assert.throws(
+    () =>
+      check({
+        readmeText: readmeText.replace(
+          "JETKVM_RELEASE_ATX_UNAVAILABLE_ACKNOWLEDGEMENT=",
+          "JETKVM_RELEASE_ATX_UNAVAILABLE_ACK=",
+        ),
+      }),
+    /ATX-unavailable acknowledgement documentation drifted/u,
+  );
+});

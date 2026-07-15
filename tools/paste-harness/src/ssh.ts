@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { Buffer } from "node:buffer";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SSH_BASE_ARGS = [
@@ -51,6 +57,7 @@ export interface SshResult {
 
 export interface RunSshOptions {
   input?: string | Buffer;
+  inputFile?: string;
   timeoutMs?: number;
 }
 
@@ -72,7 +79,9 @@ export function windowsTarget(env: Pick<RigEnv, "WIN_TARGET">): string {
   return `root@${env.WIN_TARGET}`;
 }
 
-export async function loadRigEnv(envPath = DEFAULT_RIG_ENV_PATH): Promise<RigEnv> {
+export async function loadRigEnv(
+  envPath = DEFAULT_RIG_ENV_PATH,
+): Promise<RigEnv> {
   return parseRigEnvText(await readFile(envPath, "utf8"));
 }
 
@@ -108,12 +117,19 @@ export function stripPowerShellNoise(output: string): string {
   const cleanLines: string[] = [];
   let inCliXml = false;
 
-  for (const line of output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")) {
+  for (const line of output
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")) {
     const trimmed = line.trim();
     if (trimmed.length === 0) {
       continue;
     }
-    if (/warning: permanently added|post-quantum|store now|upgraded/i.test(trimmed)) {
+    if (
+      /warning: permanently added|post-quantum|store now|upgraded/i.test(
+        trimmed,
+      )
+    ) {
       continue;
     }
     if (trimmed === "#< CLIXML") {
@@ -143,7 +159,12 @@ export function redactRigSecrets(text: string, env: Partial<RigEnv>): string {
     if (typeof value !== "string" || value.length < 4) {
       continue;
     }
-    if (value === env.KVM_PRIMARY || value === env.KVM_SECONDARY || value === env.WIN_TARGET || value === env.WIN_RECV) {
+    if (
+      value === env.KVM_PRIMARY ||
+      value === env.KVM_SECONDARY ||
+      value === env.WIN_TARGET ||
+      value === env.WIN_RECV
+    ) {
       continue;
     }
     redacted = redacted.split(value).join("<redacted>");
@@ -159,7 +180,11 @@ export async function runSshCommand(
   return runChild("ssh", buildSshArgs(target, remoteCommand), options);
 }
 
-export async function runScp(source: string, destination: string, options: RunSshOptions = {}): Promise<SshResult> {
+export async function runScp(
+  source: string,
+  destination: string,
+  options: RunSshOptions = {},
+): Promise<SshResult> {
   return runChild("scp", buildScpArgs(source, destination), options);
 }
 
@@ -187,24 +212,178 @@ export async function uploadWindowsTextFile(
   content: string,
   timeoutMs = 30_000,
 ): Promise<void> {
-  const script = `
+  const deadlineMs = performance.now() + timeoutMs;
+  const remoteTemporaryPath = `${windowsPath}.jetkvm-upload-${randomUUID()}.tmp`;
+  const remoteBackupPath = `${windowsPath}.jetkvm-backup-${randomUUID()}.tmp`;
+  const prepareScript = `
 $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
 $parent = Split-Path -Parent $path
-if ($parent -and -not (Test-Path -LiteralPath $parent)) {
-  New-Item -ItemType Directory -Force -Path $parent | Out-Null
-}
-$base64 = [Console]::In.ReadToEnd()
-$bytes = [Convert]::FromBase64String($base64)
-[IO.File]::WriteAllBytes($path, $bytes)
-`;
-  const result = await runPowerShell(target, script, {
-    input: Buffer.from(content, "utf8").toString("base64"),
-    timeoutMs,
-  });
-  if (result.exitCode !== 0) {
-    throw new Error(`failed to upload ${windowsPath}: ${result.stderr || result.stdout}`);
+if ($parent) {
+  if (-not (Test-Path -LiteralPath $parent)) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
   }
+  $leaf = Split-Path -Leaf $path
+  $uploadPrefix = $leaf + '.jetkvm-upload-'
+  $backupPrefix = $leaf + '.jetkvm-backup-'
+  $backupFiles = @(
+    Get-ChildItem -LiteralPath $parent -File -Force -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.Name.StartsWith($backupPrefix, [System.StringComparison]::Ordinal) -and
+        $_.Name.EndsWith('.tmp', [System.StringComparison]::Ordinal)
+      }
+  )
+  if (-not [System.IO.File]::Exists($path) -and $backupFiles.Count -gt 0) {
+    $restoreCandidate = $backupFiles |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1
+    [System.IO.File]::Move($restoreCandidate.FullName, $path)
+  }
+  $staleBefore = [System.DateTime]::UtcNow.AddMinutes(-10)
+  Get-ChildItem -LiteralPath $parent -File -Force -ErrorAction SilentlyContinue |
+    Where-Object {
+      (
+        $_.Name.StartsWith($uploadPrefix, [System.StringComparison]::Ordinal) -or
+        $_.Name.StartsWith($backupPrefix, [System.StringComparison]::Ordinal)
+      ) -and
+      $_.Name.EndsWith('.tmp', [System.StringComparison]::Ordinal) -and
+      $_.LastWriteTimeUtc -lt $staleBefore
+    } |
+    ForEach-Object {
+      $isBackup = $_.Name.StartsWith(
+        $backupPrefix,
+        [System.StringComparison]::Ordinal
+      )
+      if (-not $isBackup -or [System.IO.File]::Exists($path)) {
+        try { [System.IO.File]::Delete($_.FullName) } catch {}
+      }
+    }
+}
+`;
+  const preparation = await runPowerShell(target, prepareScript, {
+    timeoutMs: remainingUploadTimeout(deadlineMs, "prepare", windowsPath),
+  });
+  if (preparation.exitCode !== 0) {
+    throw new Error(
+      `failed to prepare ${windowsPath}: ${
+        preparation.stderr ||
+        preparation.stdout ||
+        (preparation.timedOut ? "timed out" : "unknown failure")
+      }`,
+    );
+  }
+
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "jetkvm-paste-rig-upload-"),
+  );
+  const localPath = join(temporaryDirectory, "payload");
+  let remoteTemporaryMayExist = false;
+  try {
+    await writeFile(localPath, content, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    const destination = `${target}:${remoteTemporaryPath.replaceAll("\\", "/")}`;
+    remoteTemporaryMayExist = true;
+    const result = await runScp(localPath, destination, {
+      timeoutMs: remainingUploadTimeout(deadlineMs, "upload", windowsPath),
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `failed to upload ${windowsPath}: ${
+          result.stderr ||
+          result.stdout ||
+          (result.timedOut ? "timed out" : "unknown failure")
+        }`,
+      );
+    }
+
+    const installScript = `
+$ErrorActionPreference = 'Stop'
+$path = ${toPowerShellString(windowsPath)}
+$temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
+$backupPath = ${toPowerShellString(remoteBackupPath)}
+$replaceSucceeded = $false
+try {
+  if ([System.IO.File]::Exists($path)) {
+    try {
+      [System.IO.File]::Replace($temporaryPath, $path, $backupPath, $true)
+      $replaceSucceeded = $true
+    } catch {
+      if (-not [System.IO.File]::Exists($path) -and [System.IO.File]::Exists($backupPath)) {
+        [System.IO.File]::Move($backupPath, $path)
+      }
+      throw
+    }
+  } else {
+    [System.IO.File]::Move($temporaryPath, $path)
+  }
+} finally {
+  if ([System.IO.File]::Exists($temporaryPath)) {
+    [System.IO.File]::Delete($temporaryPath)
+  }
+  if ($replaceSucceeded -and [System.IO.File]::Exists($backupPath)) {
+    [System.IO.File]::Delete($backupPath)
+  }
+}
+`;
+    const installation = await runPowerShell(target, installScript, {
+      timeoutMs: remainingUploadTimeout(deadlineMs, "install", windowsPath),
+    });
+    if (installation.exitCode !== 0) {
+      throw new Error(
+        `failed to install ${windowsPath}: ${
+          installation.stderr ||
+          installation.stdout ||
+          (installation.timedOut ? "timed out" : "unknown failure")
+        }`,
+      );
+    }
+    remoteTemporaryMayExist = false;
+  } finally {
+    if (remoteTemporaryMayExist) {
+      const cleanupTimeoutMs = Math.ceil(deadlineMs - performance.now());
+      if (cleanupTimeoutMs > 0) {
+        const cleanupScript = `
+$ErrorActionPreference = 'SilentlyContinue'
+$path = ${toPowerShellString(windowsPath)}
+$temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
+$backupPath = ${toPowerShellString(remoteBackupPath)}
+if ([System.IO.File]::Exists($backupPath)) {
+  if (-not [System.IO.File]::Exists($path)) {
+    [System.IO.File]::Move($backupPath, $path)
+  } else {
+    [System.IO.File]::Delete($backupPath)
+  }
+}
+if ([System.IO.File]::Exists($temporaryPath)) {
+  [System.IO.File]::Delete($temporaryPath)
+}
+`;
+        try {
+          await runPowerShell(target, cleanupScript, {
+            timeoutMs: cleanupTimeoutMs,
+          });
+        } catch {
+          // Preserve the primary upload/install failure.
+        }
+      }
+    }
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function remainingUploadTimeout(
+  deadlineMs: number,
+  action: "prepare" | "upload" | "install",
+  windowsPath: string,
+): number {
+  const remainingMs = Math.ceil(deadlineMs - performance.now());
+  if (remainingMs <= 0) {
+    throw new Error(`failed to ${action} ${windowsPath}: timed out`);
+  }
+  return remainingMs;
 }
 
 export function toPowerShellString(value: string): string {
@@ -248,6 +427,9 @@ function runChild(
   args: string[],
   options: RunSshOptions,
 ): Promise<SshResult> {
+  if (options.input !== undefined && options.inputFile !== undefined) {
+    throw new Error("SSH input and inputFile are mutually exclusive.");
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
@@ -272,24 +454,44 @@ function runChild(
         return;
       }
       settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      if (killTimer) {
-        clearTimeout(killTimer);
-      }
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
       reject(error);
     });
-    child.on("close", (exitCode, signal) => {
+    const inputCompletion =
+      options.inputFile !== undefined
+        ? pipeline(createReadStream(options.inputFile), child.stdin).then(
+            () => null,
+            (error: unknown) => error,
+          )
+        : options.input !== undefined
+          ? pipeline(Readable.from([options.input]), child.stdin).then(
+              () => null,
+              (error: unknown) => error,
+            )
+          : (child.stdin.end(), Promise.resolve(null));
+
+    child.on("close", async (exitCode, signal) => {
+      const inputError = await inputCompletion;
       if (settled) {
         return;
       }
       settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      if (killTimer) {
-        clearTimeout(killTimer);
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      const inputErrorCode =
+        inputError instanceof Error
+          ? (inputError as Error & { code?: unknown }).code
+          : undefined;
+      if (
+        inputError !== null &&
+        !(
+          inputErrorCode === "EPIPE" &&
+          (exitCode !== 0 || signal !== null || timedOut)
+        )
+      ) {
+        reject(inputError);
+        return;
       }
       resolve({
         command,
@@ -301,11 +503,5 @@ function runChild(
         timedOut,
       });
     });
-
-    if (options.input !== undefined) {
-      child.stdin.end(options.input);
-    } else {
-      child.stdin.end();
-    }
   });
 }

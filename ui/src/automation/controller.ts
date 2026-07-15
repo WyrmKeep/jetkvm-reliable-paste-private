@@ -8,7 +8,7 @@ import {
 import {
   OperationFence,
   validateBridgeRequest,
-  validateInputBridgeRequest,
+  validateReleaseBridgeRequest,
   validateKeyboardRequest,
   validateMouseRequest,
   validatePasteRequest,
@@ -198,7 +198,6 @@ function validAtxRequest(request: AtxBridgeRequest): boolean {
   );
 }
 
-
 function isJsonValue(value: unknown): value is JsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
@@ -316,6 +315,7 @@ export class AutomationController implements AutomationOwner {
   private readonly ordinaryControllers = new Set<AbortController>();
   private readonly ordinaryTasks = new Set<Promise<unknown>>();
   private readonly operationControllers = new Map<string, AbortController>();
+  private readonly releaseControllers = new Set<AbortController>();
   private cachedVideoInputEvent: CachedVideoInputEvent | null = null;
   private readonly nowIso: () => string;
   private readonly monotonicNow: () => number;
@@ -441,7 +441,7 @@ export class AutomationController implements AutomationOwner {
       (binding.sourceRevision ?? 0) !== this.sourceRevision;
     if (!changed) return;
 
-    this.abortAllOperations();
+    this.abortDisplaySensitiveOperations();
     this.displayGeneration = advanceGeneration();
     this.videoIdentity = binding.videoIdentity;
     this.video = binding.video;
@@ -661,14 +661,18 @@ export class AutomationController implements AutomationOwner {
     try {
       normalizedSha256 = await this.digestText(normalized);
       if (!/^[0-9a-f]{64}$/.test(normalizedSha256)) {
-        throw makeBridgeError("DOWNSTREAM_ERROR", "verification", {
+        throw makeBridgeError("DOWNSTREAM_ERROR", "admission", {
           snapshot: this.snapshot(),
           operationId: request.operation_id,
         });
       }
     } catch (error) {
       this.finishOperation(request.operation_id, operationController);
-      throw error;
+      if (isBridgeError(error)) throw error;
+      throw makeBridgeError("DOWNSTREAM_ERROR", "admission", {
+        snapshot: this.snapshot(),
+        operationId: request.operation_id,
+      });
     }
 
     return this.enqueueOrdinary(
@@ -697,14 +701,14 @@ export class AutomationController implements AutomationOwner {
             },
             remainingMs,
           );
-          fence.verify("acknowledgement", this.monotonicNow());
+          fence.verify(writeBegan ? "acknowledgement" : "queue", this.monotonicNow());
           if (
             !writeBegan ||
             terminal.acceptedAt !== acceptedAt ||
             !Number.isFinite(terminal.measuredSourceCps) ||
             terminal.measuredSourceCps <= 0
           ) {
-            throw makeBridgeError("PASTE_LIFECYCLE", "acknowledgement", {
+            throw makeBridgeError("PASTE_LIFECYCLE", writeBegan ? "acknowledgement" : "queue", {
               snapshot: this.snapshot(),
               operationId: request.operation_id,
               writeBegan,
@@ -740,8 +744,8 @@ export class AutomationController implements AutomationOwner {
               completedCount: outcome.completedCount,
             });
           }
-          fence.verify("acknowledgement", this.monotonicNow());
-          throw makeBridgeError("PASTE_LIFECYCLE", "acknowledgement", {
+          fence.verify(writeBegan ? "acknowledgement" : "queue", this.monotonicNow());
+          throw makeBridgeError("PASTE_LIFECYCLE", writeBegan ? "acknowledgement" : "queue", {
             snapshot: this.snapshot(),
             operationId: request.operation_id,
             writeBegan,
@@ -756,7 +760,7 @@ export class AutomationController implements AutomationOwner {
 
   async release(request: ReleaseBridgeRequest): Promise<ReleaseBridgeReceipt> {
     const admitted = this.requireReady(request.operation_id);
-    validateInputBridgeRequest(request, admitted, 60_000);
+    validateReleaseBridgeRequest(request, admitted);
     const startedAt = this.monotonicNow();
     const rpcIdentity = this.rpcIdentity;
     const rpcRequest = this.rpcRequest;
@@ -769,6 +773,7 @@ export class AutomationController implements AutomationOwner {
     }
 
     const operationController = this.beginOperation(request.operation_id);
+    this.releaseControllers.add(operationController);
     try {
       this.closed = true;
       this.dispatchGeneration = advanceGeneration();
@@ -793,15 +798,14 @@ export class AutomationController implements AutomationOwner {
         this.rpcIdentity !== rpcIdentity ||
         this.rpcRequest !== rpcRequest ||
         this.lifecycleGeneration !== admitted.lifecycle_generation ||
-        this.channelGeneration !== admitted.channel_generation ||
-        this.displayGeneration !== admitted.display_generation
+        this.channelGeneration !== admitted.channel_generation
       ) {
         throw makeBridgeError("CHANNEL_LOST", "queue", {
           snapshot: this.snapshot(),
           operationId: request.operation_id,
         });
       }
-      const remaining = request.timeout_ms - (this.monotonicNow() - startedAt);
+      const remaining = Math.floor(request.timeout_ms - (this.monotonicNow() - startedAt));
       if (remaining <= 0) {
         throw makeBridgeError("DEADLINE_EXCEEDED", "queue", {
           snapshot: this.snapshot(),
@@ -827,10 +831,9 @@ export class AutomationController implements AutomationOwner {
           this.rpcIdentity !== rpcIdentity ||
           this.rpcRequest !== rpcRequest ||
           this.lifecycleGeneration !== admitted.lifecycle_generation ||
-          this.channelGeneration !== admitted.channel_generation ||
-          this.displayGeneration !== admitted.display_generation
+          this.channelGeneration !== admitted.channel_generation
         ) {
-          throw makeBridgeError("CHANNEL_LOST", "acknowledgement", {
+          throw makeBridgeError("CHANNEL_LOST", writeBegan ? "acknowledgement" : "queue", {
             snapshot: this.snapshot(),
             operationId: request.operation_id,
             writeBegan,
@@ -838,7 +841,7 @@ export class AutomationController implements AutomationOwner {
         }
         const parsed = parseReleaseReceipt(result, request.operation_id);
         if (!writeBegan || !localJoined || !parsed) {
-          throw makeBridgeError("RELEASE_FAILED", "acknowledgement", {
+          throw makeBridgeError("RELEASE_FAILED", writeBegan ? "acknowledgement" : "queue", {
             snapshot: this.snapshot(),
             operationId: request.operation_id,
             writeBegan,
@@ -848,7 +851,7 @@ export class AutomationController implements AutomationOwner {
           operation_id: request.operation_id,
           lifecycle_generation: admitted.lifecycle_generation,
           channel_generation: admitted.channel_generation,
-          display_generation: admitted.display_generation,
+          display_generation: this.displayGeneration,
           dispatch_generation: this.dispatchGeneration,
           device_generation: parsed.generation,
           outcome: "released",
@@ -870,13 +873,27 @@ export class AutomationController implements AutomationOwner {
             writeBegan,
           });
         }
-        throw makeBridgeError("RELEASE_FAILED", "acknowledgement", {
+        if (
+          !this.active ||
+          this.rpcIdentity !== rpcIdentity ||
+          this.rpcRequest !== rpcRequest ||
+          this.lifecycleGeneration !== admitted.lifecycle_generation ||
+          this.channelGeneration !== admitted.channel_generation
+        ) {
+          throw makeBridgeError("CHANNEL_LOST", writeBegan ? "acknowledgement" : "queue", {
+            snapshot: this.snapshot(),
+            operationId: request.operation_id,
+            writeBegan,
+          });
+        }
+        throw makeBridgeError("RELEASE_FAILED", writeBegan ? "acknowledgement" : "queue", {
           snapshot: this.snapshot(),
           operationId: request.operation_id,
           writeBegan,
         });
       }
     } finally {
+      this.releaseControllers.delete(operationController);
       this.finishOperation(request.operation_id, operationController);
     }
   }
@@ -966,6 +983,13 @@ export class AutomationController implements AutomationOwner {
       controller.abort(LIFECYCLE_OPERATION_CANCEL);
     }
   }
+  private abortDisplaySensitiveOperations(): void {
+    for (const controller of this.operationControllers.values()) {
+      if (!this.releaseControllers.has(controller)) {
+        controller.abort(LIFECYCLE_OPERATION_CANCEL);
+      }
+    }
+  }
 
   private abortOrdinary(): void {
     for (const controller of this.ordinaryControllers) {
@@ -1046,17 +1070,21 @@ export class AutomationController implements AutomationOwner {
           fence.markDispatched();
         },
       });
-      fence.verify("acknowledgement", this.monotonicNow());
-      if (this.rpcIdentity !== rpcIdentity || result !== null) {
+      fence.verify(writeBegan ? "acknowledgement" : "queue", this.monotonicNow());
+      if (!writeBegan || this.rpcIdentity !== rpcIdentity || result !== null) {
         const outcome = fence.outcome();
-        throw makeBridgeError("MALFORMED_ACKNOWLEDGEMENT", "acknowledgement", {
-          snapshot: this.snapshot(),
-          operationId: request.operation_id,
-          writeBegan: outcome.writeBegan,
-          acknowledged: outcome.acknowledged,
-          dispatchedCount: outcome.dispatchedCount,
-          completedCount: outcome.completedCount,
-        });
+        throw makeBridgeError(
+          "MALFORMED_ACKNOWLEDGEMENT",
+          writeBegan ? "acknowledgement" : "queue",
+          {
+            snapshot: this.snapshot(),
+            operationId: request.operation_id,
+            writeBegan: outcome.writeBegan,
+            acknowledged: outcome.acknowledged,
+            dispatchedCount: outcome.dispatchedCount,
+            completedCount: outcome.completedCount,
+          },
+        );
       }
       fence.markCompleted();
     } catch (error) {
@@ -1072,9 +1100,9 @@ export class AutomationController implements AutomationOwner {
           completedCount: outcome.completedCount,
         });
       }
-      fence.verify("acknowledgement", this.monotonicNow());
+      fence.verify(writeBegan ? "acknowledgement" : "queue", this.monotonicNow());
       const outcome = fence.outcome();
-      throw makeBridgeError("DOWNSTREAM_ERROR", "acknowledgement", {
+      throw makeBridgeError("DOWNSTREAM_ERROR", writeBegan ? "acknowledgement" : "queue", {
         snapshot: this.snapshot(),
         operationId: request.operation_id,
         writeBegan: outcome.writeBegan,
@@ -1128,27 +1156,27 @@ export class AutomationController implements AutomationOwner {
     );
     let writeBegan = false;
     try {
-      const result = await rpcRequest(
-        method,
-        params,
-        {
-          operationId: request.operation_id,
-          timeoutMs: request.timeout_ms,
-          signal: operationController.signal,
-          onWrite: () => {
-            writeBegan = true;
-            fence.markWriteBegan();
-            fence.markDispatched();
-          },
+      const result = await rpcRequest(method, params, {
+        operationId: request.operation_id,
+        timeoutMs: request.timeout_ms,
+        signal: operationController.signal,
+        onWrite: () => {
+          writeBegan = true;
+          fence.markWriteBegan();
+          fence.markDispatched();
         },
-      );
-      fence.verify("acknowledgement", this.monotonicNow());
+      });
+      fence.verify(writeBegan ? "acknowledgement" : "queue", this.monotonicNow());
       if (!writeBegan || this.rpcIdentity !== rpcIdentity || !isJsonValue(result)) {
-        throw makeBridgeError("MALFORMED_ACKNOWLEDGEMENT", "acknowledgement", {
-          snapshot: this.snapshot(),
-          operationId: request.operation_id,
-          writeBegan,
-        });
+        throw makeBridgeError(
+          "MALFORMED_ACKNOWLEDGEMENT",
+          writeBegan ? "acknowledgement" : "queue",
+          {
+            snapshot: this.snapshot(),
+            operationId: request.operation_id,
+            writeBegan,
+          },
+        );
       }
       fence.markCompleted();
       fence.markAcknowledged();
@@ -1168,14 +1196,13 @@ export class AutomationController implements AutomationOwner {
           writeBegan,
         });
       }
-      fence.verify("acknowledgement", this.monotonicNow());
-      const atxFailure =
-        method === "performATXAction" ? qualifiedAtxFailure(error) : null;
+      fence.verify(writeBegan ? "acknowledgement" : "queue", this.monotonicNow());
+      const atxFailure = method === "performATXAction" ? qualifiedAtxFailure(error) : null;
       throw makeBridgeError(
         method === "getEDID" && isQualifiedEdidReadFailure(error)
           ? "EDID_READ_FAILED"
           : (atxFailure ?? "DOWNSTREAM_ERROR"),
-        "acknowledgement",
+        writeBegan ? "acknowledgement" : "queue",
         {
           snapshot: this.snapshot(),
           operationId: request.operation_id,
@@ -1183,7 +1210,7 @@ export class AutomationController implements AutomationOwner {
           ...(atxFailure === null
             ? {}
             : {
-                acknowledged: true,
+                acknowledged: atxFailure !== "MUTATION_OUTCOME_UNKNOWN",
                 outcome:
                   atxFailure === "MUTATION_OUTCOME_UNKNOWN"
                     ? ("unknown" as const)

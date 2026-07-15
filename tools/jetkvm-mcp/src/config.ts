@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   selectCredentialSource,
   type CredentialSourceSelection,
@@ -119,6 +119,8 @@ export interface OperatorConfigInput {
   readonly allowDangerousTargetHttp?: boolean;
   readonly credentialFile?: string;
   readonly credentialEnvironmentVariable?: string;
+  readonly headless?: boolean;
+  readonly chromiumExecutablePath?: string;
   readonly legacySse?: LegacySseConfigInput;
 }
 
@@ -128,6 +130,8 @@ export interface OperatorConfigEnvironment {
   readonly JETKVM_ALLOW_DANGEROUS_TARGET_HTTP?: string;
   readonly JETKVM_CREDENTIAL_FILE?: string;
   readonly JETKVM_CREDENTIAL_ENV?: string;
+  readonly JETKVM_HEADLESS?: string;
+  readonly JETKVM_CHROMIUM_EXECUTABLE_PATH?: string;
 }
 
 export interface LegacySseSecurityPolicy {
@@ -173,6 +177,8 @@ export interface OperatorConfig {
   readonly allowInsecureHttp: boolean;
   readonly allowDangerousTargetHttp: boolean;
   readonly credential: Readonly<CredentialSourceSelection>;
+  readonly headless: boolean;
+  readonly chromiumExecutablePath: string | undefined;
   readonly legacySse: Readonly<LegacySseSecurityPolicy>;
 }
 
@@ -207,6 +213,7 @@ export function parseOperatorConfig(
     input.allowDangerousTargetHttp,
     "allowDangerousTargetHttp",
   );
+  assertOptionalBoolean(input.headless, "headless");
   const targetUrl = input.targetUrl ?? environment.JETKVM_TARGET_URL;
   if (targetUrl === undefined || targetUrl.length === 0) {
     throw new OperatorConfigError("A JetKVM target URL is required");
@@ -226,6 +233,14 @@ export function parseOperatorConfig(
       "JETKVM_ALLOW_DANGEROUS_TARGET_HTTP",
     ) ??
     false;
+  const headless =
+    input.headless ??
+    parseOptionalBoolean(environment.JETKVM_HEADLESS, "JETKVM_HEADLESS") ??
+    true;
+  const chromiumExecutablePath = optionalAbsolutePath(
+    input.chromiumExecutablePath ?? environment.JETKVM_CHROMIUM_EXECUTABLE_PATH,
+    "chromiumExecutablePath",
+  );
   validateTargetUrl(targetUrl, allowInsecureHttp, allowDangerousTargetHttp);
   const credential = selectCredentialSource({
     ...(input.credentialFile === undefined
@@ -253,6 +268,8 @@ export function parseOperatorConfig(
     targetUrl,
     allowInsecureHttp,
     allowDangerousTargetHttp,
+    headless,
+    chromiumExecutablePath,
     credential,
     legacySse,
   });
@@ -755,6 +772,21 @@ function assertOptionalBoolean(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "boolean") {
     throw new OperatorConfigError(`${name} must be a boolean`);
   }
+}
+function optionalAbsolutePath(
+  value: unknown,
+  name: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.includes("\u0000") ||
+    !isAbsolute(value)
+  ) {
+    throw new OperatorConfigError(`${name} must be an absolute path`);
+  }
+  return value;
 }
 
 function parseOptionalBoolean(

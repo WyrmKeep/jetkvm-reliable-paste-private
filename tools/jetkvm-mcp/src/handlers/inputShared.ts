@@ -202,6 +202,19 @@ export function sanitizePlaneFailure(
   };
 }
 
+export function canonicalMutationDownstreamStage(
+  failure: SanitizedPlaneFailure | null,
+  outcome: SanitizedPlaneFailure["outcome"],
+): ToolErrorDetails["downstream_stage"] {
+  if (
+    outcome === "not_sent" &&
+    (failure?.stage === "acknowledgement" || failure?.stage === "verification")
+  ) {
+    return "write";
+  }
+  return failure?.stage ?? (outcome === "not_sent" ? "admission" : "write");
+}
+
 export function mapDisplayCaptureArtifact(
   artifact: BrowserCaptureArtifact,
 ): DisplayCaptureResult {

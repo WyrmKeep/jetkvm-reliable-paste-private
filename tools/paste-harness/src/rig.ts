@@ -29,6 +29,11 @@ export interface RigFocusResult {
   ok: boolean;
   foregroundTitle: string;
   capsLock: boolean;
+  lockKeys: {
+    capsLock: boolean;
+    numLock: boolean;
+    scrollLock: boolean;
+  };
   reason?: string;
   events: FocusGuardEvent[];
   sink?: SinkState;
@@ -93,7 +98,7 @@ export function buildScheduledTaskRegistrationScript(): string {
   const taskLines = TASKS.map(
     (task) => `
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ${toPowerShellString(
-      `-NoProfile -ExecutionPolicy Bypass -File "${WINDOWS_RIG_DIR}\\${task.script}"`,
+      `-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${WINDOWS_RIG_DIR}\\${task.script}"`,
     )}
 Register-ScheduledTask -TaskName ${toPowerShellString(
       task.name,
@@ -314,6 +319,7 @@ public static class PasteRigUser32 {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern short GetKeyState(int virtualKey);
 }
 '@
 
@@ -364,8 +370,12 @@ function Find-PasteRigRecvNotepadWindow {
   return $matches[0]
 }
 
-function Get-PasteRigCapsLock {
-  try { return [Console]::CapsLock } catch { return $false }
+function Get-PasteRigLockKeys {
+  [PSCustomObject]@{
+    capsLock = $(try { [Console]::CapsLock } catch { $false })
+    numLock = $(try { [Console]::NumberLock } catch { $false })
+    scrollLock = $(([PasteRigUser32]::GetKeyState(0x91) -band 1) -ne 0)
+  }
 }
 
 function Get-PasteRigSinkState {
@@ -417,7 +427,7 @@ function Invoke-PasteRigFocusGuard {
   if ($null -eq $target) {
     $events.Add([PSCustomObject]@{ type='notepad_missing'; at=(Get-PasteRigNow); detail='' }) | Out-Null
     ConvertTo-PasteRigJson -Path $ResultPath -Object ([PSCustomObject]@{
-      ok = $false; reason = 'notepad_not_found'; foregroundTitle = $before.title; capsLock = (Get-PasteRigCapsLock); events = $events; sink = (Get-PasteRigSinkState)
+      ok = $false; reason = 'notepad_not_found'; foregroundTitle = $before.title; capsLock = (Get-PasteRigLockKeys).capsLock; lockKeys = (Get-PasteRigLockKeys); events = $events; sink = (Get-PasteRigSinkState)
     })
     return
   }
@@ -432,7 +442,7 @@ function Invoke-PasteRigFocusGuard {
     $events.Add([PSCustomObject]@{ type='focus_failed'; at=(Get-PasteRigNow); detail=$after.title }) | Out-Null
   }
   ConvertTo-PasteRigJson -Path $ResultPath -Object ([PSCustomObject]@{
-    ok = $after.isRecvNotepad; reason = $(if ($after.isRecvNotepad) { '' } else { 'cannot_confirm_focus' }); foregroundTitle = $after.title; capsLock = (Get-PasteRigCapsLock); events = $events; sink = (Get-PasteRigSinkState)
+    ok = $after.isRecvNotepad; reason = $(if ($after.isRecvNotepad) { '' } else { 'cannot_confirm_focus' }); foregroundTitle = $after.title; capsLock = (Get-PasteRigLockKeys).capsLock; lockKeys = (Get-PasteRigLockKeys); events = $events; sink = (Get-PasteRigSinkState)
   })
 }
 
@@ -440,7 +450,7 @@ function Invoke-PasteRigForegroundProbe {
   param([Parameter(Mandatory=$true)] [string] $ResultPath)
   $fg = Get-PasteRigForegroundInfo
   ConvertTo-PasteRigJson -Path $ResultPath -Object ([PSCustomObject]@{
-    ok = $fg.isRecvNotepad; reason = $(if ($fg.isRecvNotepad) { '' } else { 'wrong_foreground' }); foregroundTitle = $fg.title; capsLock = (Get-PasteRigCapsLock); events = @([PSCustomObject]@{ type='probe'; at=(Get-PasteRigNow); detail=$fg.title }); sink = (Get-PasteRigSinkState)
+    ok = $fg.isRecvNotepad; reason = $(if ($fg.isRecvNotepad) { '' } else { 'wrong_foreground' }); foregroundTitle = $fg.title; capsLock = (Get-PasteRigLockKeys).capsLock; lockKeys = (Get-PasteRigLockKeys); events = @([PSCustomObject]@{ type='probe'; at=(Get-PasteRigNow); detail=$fg.title }); sink = (Get-PasteRigSinkState)
   })
 }
 

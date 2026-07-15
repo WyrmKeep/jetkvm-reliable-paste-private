@@ -8,6 +8,7 @@ import type {
   InputBridgeRequest,
   KeyboardBridgeRequest,
   MouseBridgeRequest,
+  ReleaseBridgeRequest,
   PasteBridgeRequest,
 } from "./protocol";
 
@@ -71,6 +72,24 @@ export function validateInputBridgeRequest(
     request.expected_display_generation !== snapshot.display_generation ||
     request.expected_dispatch_generation !== snapshot.dispatch_generation
   ) {
+    throw makeBridgeError("GENERATION_MISMATCH", "admission", {
+      snapshot,
+      operationId: request.operation_id,
+    });
+  }
+}
+export function validateReleaseBridgeRequest(
+  request: ReleaseBridgeRequest,
+  snapshot: AutomationSnapshot,
+): void {
+  validateBridgeRequest(request, snapshot, 60_000);
+  if (
+    !isPositiveSafeInteger(request.expected_display_generation) ||
+    !isPositiveSafeInteger(request.expected_dispatch_generation)
+  ) {
+    invalid(request, snapshot);
+  }
+  if (request.expected_dispatch_generation !== snapshot.dispatch_generation) {
     throw makeBridgeError("GENERATION_MISMATCH", "admission", {
       snapshot,
       operationId: request.operation_id,

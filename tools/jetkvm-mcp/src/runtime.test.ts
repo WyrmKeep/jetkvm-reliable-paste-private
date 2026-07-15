@@ -35,6 +35,11 @@ const DEADLINE: Deadline = {
   timeoutMs: 1_000,
   signal: new AbortController().signal,
 };
+const LONG_DEADLINE: Deadline = {
+  timeoutMs: 60_000,
+  signal: new AbortController().signal,
+};
+
 const SNAPSHOT: AutomationSnapshot = {
   version: 1,
   state: "ready",
@@ -123,6 +128,59 @@ describe("production runtime", () => {
       edid_read: true,
     });
     expect(readDisplayState).toHaveBeenCalledWith(binding, DEADLINE);
+  });
+
+  it("bounds the device read while preserving a longer session deadline", async () => {
+    const binding = {
+      sessionId: "session-long",
+      sessionGeneration: 1,
+      connectionEpoch: 2,
+      browserChannelGeneration: 3,
+    } as const;
+    const readDisplayState = vi.fn(async () => ({
+      signal: {
+        value: "unknown" as const,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown" as const,
+        source: "none" as const,
+      },
+      resolution: {
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown" as const,
+        source: "none" as const,
+      },
+      fps: {
+        value: null,
+        observedAt: null,
+        ageMs: null,
+        freshness: "unknown" as const,
+        source: "none" as const,
+      },
+      qualification: "current_binding" as const,
+    }));
+    const connection = {
+      state: "ready",
+      ref: { sessionId: binding.sessionId, sessionGeneration: 1 },
+      binding,
+      connectionEpoch: 2,
+      browserChannelGeneration: 3,
+      displayGeneration: 4,
+      deviceRpc: { readDisplayState } as unknown as DeviceRpcAdapter,
+    } satisfies BrowserConnection;
+    const controller = {
+      snapshot: async () => SNAPSHOT,
+    } as unknown as BrowserControllerPort;
+
+    await expect(
+      qualifyConnectionCapabilities(controller, connection, LONG_DEADLINE),
+    ).resolves.toMatchObject({ power_control: true });
+    expect(readDisplayState).toHaveBeenCalledWith(binding, {
+      timeoutMs: 30_000,
+      signal: LONG_DEADLINE.signal,
+    });
   });
 
   it("rejects snapshot-only qualification when the device adapter read fails", async () => {

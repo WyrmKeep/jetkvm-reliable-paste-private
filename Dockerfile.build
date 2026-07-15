@@ -1,21 +1,21 @@
 # syntax=docker/dockerfile:1
+ARG BUILDPLATFORM
 FROM --platform=${BUILDPLATFORM} golang:1.25.1-trixie AS builder
 
 ENV GOTOOLCHAIN=local
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 
+ADD buildkit.tar /opt/jetkvm-native-buildkit/
+RUN test -x /opt/jetkvm-native-buildkit/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc
+
 COPY install-deps.sh /install-deps.sh
-RUN /install-deps.sh
+RUN JETKVM_SKIP_BUILDKIT_INSTALL=1 /install-deps.sh
+RUN /opt/jetkvm-native-buildkit/bin/arm-rockchip830-linux-uclibcgnueabihf-gcc --version
 
-# Create build directory
 RUN mkdir -p /build/
-
-# Copy go.mod and go.sum
 COPY go.mod go.sum /build/
-
 WORKDIR /build
-
 RUN go mod download && go mod verify
 
 COPY entrypoint.sh /entrypoint.sh

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DeviceLeaseError,
   acquireDeviceLease,
+  defaultDeviceLeaseDirectory,
   removeStaleDeviceLease,
   removeStaleDeviceLeaseAdminLock,
   withDeviceLease,
@@ -40,6 +41,12 @@ function cleanupClaimPath(directory: string, deviceKey: string): string {
   return `${adminLockPath(directory, deviceKey)}.cleanup.claim`;
 }
 
+const OWNER_IDENTITY = Object.freeze({
+  hostIdentity: "a".repeat(64),
+  bootIdentity: "b".repeat(64),
+  processStartIdentity: "c".repeat(64),
+});
+
 function adminRecord(ownerId = "admin-owner", token = "admin-token") {
   return {
     version: 1,
@@ -49,6 +56,9 @@ function adminRecord(ownerId = "admin-owner", token = "admin-token") {
     pid: 123,
     acquired_at: "2026-07-12T12:00:00.000Z",
     token,
+    host_identity: OWNER_IDENTITY.hostIdentity,
+    boot_identity: OWNER_IDENTITY.bootIdentity,
+    process_start_identity: OWNER_IDENTITY.processStartIdentity,
   };
 }
 
@@ -61,6 +71,32 @@ afterEach(async () => {
 });
 
 describe("device lease", () => {
+  it("uses stable private-user state roots instead of the temporary directory", () => {
+    expect(defaultDeviceLeaseDirectory({}, "darwin", "/Users/operator")).toBe(
+      "/Users/operator/Library/Application Support/jetkvm-mcp/device-leases",
+    );
+    expect(defaultDeviceLeaseDirectory({}, "linux", "/home/operator")).toBe(
+      "/home/operator/.local/state/jetkvm-mcp/device-leases",
+    );
+    expect(
+      defaultDeviceLeaseDirectory(
+        { XDG_STATE_HOME: "/state" },
+        "linux",
+        "/home/operator",
+      ),
+    ).toBe("/state/jetkvm-mcp/device-leases");
+  });
+
+  it("rejects a relative configured lease directory", () => {
+    expect(() =>
+      defaultDeviceLeaseDirectory(
+        { JETKVM_DEVICE_LEASE_DIRECTORY: "relative" },
+        "linux",
+        "/home/operator",
+      ),
+    ).toThrow("JETKVM_DEVICE_LEASE_DIRECTORY must be an absolute path");
+  });
+
   it("atomically creates a restrictive device-keyed lease with complete ownership proof", async () => {
     const directory = await temporaryDirectory();
     const lease = await acquireDeviceLease({
@@ -70,6 +106,7 @@ describe("device lease", () => {
       runId: "run-a",
       hostname: "host-a",
       pid: 123,
+      ownerIdentity: OWNER_IDENTITY,
       now: () => new Date("2026-07-12T12:00:00.000Z"),
       randomToken: () => "proof-a",
     });
@@ -83,6 +120,9 @@ describe("device lease", () => {
       pid: 123,
       acquired_at: "2026-07-12T12:00:00.000Z",
       token: "proof-a",
+      host_identity: OWNER_IDENTITY.hostIdentity,
+      boot_identity: OWNER_IDENTITY.bootIdentity,
+      process_start_identity: OWNER_IDENTITY.processStartIdentity,
       lease_path: lease.path,
     });
     expect(lease.path).not.toContain("secret-device");
@@ -408,6 +448,7 @@ describe("device lease", () => {
           deviceKey: "device-a",
           ownerId: "owner-a",
           runId: "run-a",
+          ownerIdentity: OWNER_IDENTITY,
           ...override,
         }),
       ).rejects.toMatchObject({ code: "DEVICE_LEASE_PROOF_INVALID" });
@@ -843,6 +884,31 @@ describe("device lease", () => {
     await expect(readFile(lease.path, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("refuses stale cleanup for legacy records without durable owner identity", async () => {
+    const directory = await temporaryDirectory();
+    const lease = await acquireDeviceLease({
+      directory,
+      deviceKey: "device-a",
+      ownerId: "owner-a",
+      runId: "run-a",
+    });
+    const legacyRecord = JSON.parse(await readFile(lease.path, "utf8"));
+    delete legacyRecord.host_identity;
+    delete legacyRecord.boot_identity;
+    delete legacyRecord.process_start_identity;
+    await writeFile(lease.path, JSON.stringify(legacyRecord), {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+
+    await expect(
+      removeStaleDeviceLease({
+        proof: lease.proof,
+        confirmOwnerDead: async () => true,
+      }),
+    ).rejects.toMatchObject({ code: "DEVICE_LEASE_STALE_UNPROVEN" });
   });
 
   it("recovers a proven stale admin lock during lease cleanup and unlinks stable lease first", async () => {

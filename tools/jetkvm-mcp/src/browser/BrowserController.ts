@@ -33,9 +33,30 @@ import {
   type ReleaseBridgeRequest,
   type ReleaseBridgeReceipt,
 } from "./bridgeProtocol.js";
+const RECONNECT_STABILITY_POLL_MS = 250;
+const RECONNECT_STABLE_SNAPSHOT_COUNT = 3;
+export type BrowserDeadlineClock = () => number;
+
+export function createBrowserDeadlineBudget(
+  deadline: Deadline,
+  clock: BrowserDeadlineClock = () => performance.now(),
+): { remaining(): Deadline } {
+  const startedAtMs = clock();
+  if (!Number.isFinite(startedAtMs)) {
+    throw new Error("Browser deadline clock must return a finite value.");
+  }
+  const expiresAtMs = startedAtMs + deadline.timeoutMs;
+  return {
+    remaining: () => ({
+      timeoutMs: Math.max(0, Math.ceil(expiresAtMs - clock())),
+      signal: deadline.signal,
+    }),
+  };
+}
 
 export interface BrowserControllerPort {
   snapshot(deadline: Deadline): Promise<AutomationSnapshot>;
+  stableReadySnapshot(deadline: Deadline): Promise<AutomationSnapshot>;
   capture(
     request: CaptureBridgeRequest,
     deadline: Deadline,
@@ -68,6 +89,7 @@ export interface BrowserControllerPort {
     request: AtxBridgeRequest,
     deadline: Deadline,
   ): Promise<ReadBridgeResult>;
+  /** Stable identity for the live page bridge; changes only after replacement succeeds. */
   connectionIdentity(): object;
   reconnect(deadline: Deadline): Promise<void>;
   close(deadline: Deadline): Promise<void>;
@@ -221,6 +243,32 @@ export class BrowserController implements BrowserControllerPort {
       throw malformedBridgeError(false, 0);
     }
   }
+  public async stableReadySnapshot(
+    deadline: Deadline,
+  ): Promise<AutomationSnapshot> {
+    let previous = await this.snapshot(deadline);
+    let stableSnapshotCount = previous.state === "ready" ? 1 : 0;
+    while (stableSnapshotCount < RECONNECT_STABLE_SNAPSHOT_COUNT) {
+      await this.awaitPageEvaluation(
+        this.page.waitForTimeout(RECONNECT_STABILITY_POLL_MS),
+        deadline,
+        false,
+        0,
+      );
+      const current = await this.snapshot(deadline);
+      const generationsStable =
+        current.lifecycle_generation === previous.lifecycle_generation &&
+        current.channel_generation === previous.channel_generation;
+      stableSnapshotCount =
+        current.state !== "ready"
+          ? 0
+          : generationsStable
+            ? stableSnapshotCount + 1
+            : 1;
+      previous = current;
+    }
+    return previous;
+  }
 
   public async capture(
     rawRequest: CaptureBridgeRequest,
@@ -353,7 +401,7 @@ export class BrowserController implements BrowserControllerPort {
   ): Promise<ReleaseBridgeReceipt> {
     const request = validateRequest(parseReleaseBridgeRequest, rawRequest);
     assertDeadline(deadline, request.timeout_ms);
-    await this.assertPreSnapshot(request, deadline, true);
+    await this.assertPreSnapshot(request, deadline, true, false);
     const envelope = await this.awaitPageEvaluation(
       this.page.evaluate(async (bridgeRequest): Promise<FacadeCallEnvelope> => {
         const facade = (window as AutomationWindow).__JETKVM_AUTOMATION__;
@@ -381,7 +429,6 @@ export class BrowserController implements BrowserControllerPort {
     if (
       result.lifecycle_generation !== request.expected_lifecycle_generation ||
       result.channel_generation !== request.expected_channel_generation ||
-      result.display_generation !== request.expected_display_generation ||
       result.dispatch_generation <= request.expected_dispatch_generation
     ) {
       throw malformedBridgeError(true, 1);
@@ -396,7 +443,6 @@ export class BrowserController implements BrowserControllerPort {
       post.state !== "closed" ||
       post.lifecycle_generation !== result.lifecycle_generation ||
       post.channel_generation !== result.channel_generation ||
-      post.display_generation !== result.display_generation ||
       post.dispatch_generation !== result.dispatch_generation
     ) {
       throw this.appliedVerificationError(1);
@@ -486,23 +532,19 @@ export class BrowserController implements BrowserControllerPort {
       false,
       0,
     );
-    const snapshot = await this.snapshot(deadline);
-    if (snapshot.state !== "ready") {
-      throw malformedBridgeError(false, 0);
-    }
     this.identity = Object.freeze({});
   }
 
   public async close(deadline: Deadline): Promise<void> {
     assertDeadline(deadline);
     if (this.closed) return;
-    this.closed = true;
     await this.awaitPageEvaluation(
       this.page.close({ runBeforeUnload: false }),
       deadline,
       false,
       0,
     );
+    this.closed = true;
   }
 
   private async runMutation(
@@ -612,6 +654,7 @@ export class BrowserController implements BrowserControllerPort {
       | AtxBridgeRequest,
     deadline: Deadline,
     input: boolean,
+    displaySensitive = input,
   ): Promise<void> {
     const snapshot = await this.snapshot(deadline);
     if (snapshot.state !== "ready") {
@@ -663,7 +706,10 @@ export class BrowserController implements BrowserControllerPort {
       });
     }
     if (input && "expected_display_generation" in request) {
-      if (snapshot.display_generation !== request.expected_display_generation) {
+      if (
+        displaySensitive &&
+        snapshot.display_generation !== request.expected_display_generation
+      ) {
         throw new BrowserPlaneError({
           code: "DISPLAY_CHANGED",
           outcome: "not_sent",

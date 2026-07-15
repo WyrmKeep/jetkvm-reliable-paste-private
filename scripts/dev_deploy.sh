@@ -15,6 +15,10 @@ show_help() {
     echo "      --gdb-port <port>      GDB debug port (default: 2345)"
     echo "      --run-go-tests         Run go tests"
     echo "      --run-go-tests-only    Run go tests and exit"
+    echo "      --device-tests-archive <path>"
+    echo "                             Use reviewed prebuilt device tests"
+    echo "      --device-tests-sha256 <sha256>"
+    echo "                             Expected reviewed device-test digest"
     echo "      --skip-ui-build        Skip frontend/UI build"
     echo "      --skip-native-build    Skip native build"
     echo "      --log-trace <scopes>   Comma-separated scopes to trace"
@@ -69,6 +73,8 @@ RESET_USB_HID_DEVICE=false
 LOG_TRACE_SCOPES="${LOG_TRACE_SCOPES:-jetkvm,cloud,websocket,native,jsonrpc}"  # Scopes to enable TRACE logging for
 RUN_GO_TESTS=false
 RUN_GO_TESTS_ONLY=false
+DEVICE_TESTS_ARCHIVE=""
+DEVICE_TESTS_SHA256=""
 INSTALL_APP=false
 BUILD_IN_DOCKER=true
 DOCKER_BUILD_DEBUG=false
@@ -127,6 +133,14 @@ while [[ $# -gt 0 ]]; do
             RUN_GO_TESTS=true
             shift
             ;;
+        --device-tests-archive)
+            DEVICE_TESTS_ARCHIVE="$2"
+            shift 2
+            ;;
+        --device-tests-sha256)
+            DEVICE_TESTS_SHA256="$2"
+            shift 2
+            ;;
         --native-binary)
             BUILD_NATIVE_BINARY=true
             shift
@@ -162,6 +176,25 @@ if [ -z "$REMOTE_HOST" ]; then
     exit 1
 fi
 
+if [ -n "$DEVICE_TESTS_ARCHIVE" ] || [ -n "$DEVICE_TESTS_SHA256" ]; then
+    if [ "$RUN_GO_TESTS" != true ]; then
+        msg_err "Error: reviewed device tests require --run-go-tests"
+        exit 1
+    fi
+    if [ ! -f "$DEVICE_TESTS_ARCHIVE" ] || [ -L "$DEVICE_TESTS_ARCHIVE" ]; then
+        msg_err "Error: Device test archive is not a regular local file"
+        exit 1
+    fi
+    if [[ ! "$DEVICE_TESTS_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+        msg_err "Error: Device test archive checksum is invalid"
+        exit 1
+    fi
+    DEVICE_TESTS_ARCHIVE=$(realpath "$DEVICE_TESTS_ARCHIVE")
+fi
+
+SOURCE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+SOURCE_REVISION=$(git rev-parse HEAD)
+
 # Check device connectivity before proceeding
 check_ping "${REMOTE_HOST}"
 check_ssh "${REMOTE_USER}" "${REMOTE_HOST}"
@@ -177,7 +210,9 @@ if [ "$(uname -m)" != "x86_64" ]; then
 fi
 
 if [ "$BUILD_IN_DOCKER" = true ]; then
-    build_docker_image
+    if [ "$RUN_GO_TESTS_ONLY" != true ] || [ -z "$DEVICE_TESTS_ARCHIVE" ]; then
+        build_docker_image
+    fi
 fi
 
 if [ "$BUILD_NATIVE_BINARY" = true ]; then
@@ -228,39 +263,99 @@ if [[ "$SKIP_UI_BUILD_RELEASE" = 0 && "$BUILD_IN_DOCKER" = true ]]; then
 fi
 
 if [ "$RUN_GO_TESTS" = true ]; then
-    msg_info "▶ Building go tests"
-    make build_dev_test
+    if [ -z "$DEVICE_TESTS_ARCHIVE" ]; then
+        msg_info "▶ Building go tests"
+        do_make build_dev_test BRANCH="${SOURCE_BRANCH}" REVISION="${SOURCE_REVISION}"
+        DEVICE_TESTS_ARCHIVE="${SCRIPT_PATH}/device-tests.tar.gz"
+    else
+        msg_info "▶ Using reviewed prebuilt device tests"
+    fi
+    if [ -z "$DEVICE_TESTS_SHA256" ]; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            DEVICE_TESTS_SHA256=$(sha256sum "$DEVICE_TESTS_ARCHIVE")
+            DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256%% *}
+        elif command -v shasum >/dev/null 2>&1; then
+            DEVICE_TESTS_SHA256=$(shasum -a 256 "$DEVICE_TESTS_ARCHIVE")
+            DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256%% *}
+        else
+            msg_err "Error: No SHA-256 utility is available"
+            exit 1
+        fi
+    fi
+
+    REMOTE_DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
+    REMOTE_DEVICE_TESTS_ARCHIVE="${REMOTE_DEVICE_TESTS_ROOT}/device-tests.tar.gz"
+    DEVICE_TESTS_ARCHIVE_BYTES=$(wc -c < "$DEVICE_TESTS_ARCHIVE")
+    DEVICE_TESTS_REQUIRED_KIB=$(((
+        DEVICE_TESTS_ARCHIVE_BYTES * 6 + 64 * 1024 * 1024 + 1023
+    ) / 1024))
+
+    msg_info "▶ Preparing remote device-test workspace"
+    if ! sshdev "DEVICE_TESTS_REQUIRED_KIB=${DEVICE_TESTS_REQUIRED_KIB} ash -s" << 'EOF'
+set -e
+DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
+AVAILABLE_KIB=$(df -Pk /userdata | awk 'END { print $4 }')
+case "${AVAILABLE_KIB}" in
+    ''|*[!0-9]*)
+        echo "Could not determine available /userdata space" >&2
+        exit 1
+        ;;
+esac
+if [ "${AVAILABLE_KIB}" -lt "${DEVICE_TESTS_REQUIRED_KIB}" ]; then
+    echo "Insufficient /userdata space for reviewed device tests" >&2
+    exit 1
+fi
+rm -rf "${DEVICE_TESTS_ROOT}"
+mkdir -p "${DEVICE_TESTS_ROOT}"
+chmod 700 "${DEVICE_TESTS_ROOT}"
+EOF
+    then
+        msg_err "Error: Could not prepare remote device-test workspace"
+        exit 1
+    fi
 
     msg_info "▶ Copying device-tests.tar.gz to remote host"
-    sshdev "cat > /tmp/device-tests.tar.gz" < device-tests.tar.gz
+    if ! sshdev "cat > ${REMOTE_DEVICE_TESTS_ARCHIVE}" < "$DEVICE_TESTS_ARCHIVE"; then
+        sshdev "rm -rf ${REMOTE_DEVICE_TESTS_ROOT}" >/dev/null 2>&1 || true
+        msg_err "Error: Could not upload reviewed device tests"
+        exit 1
+    fi
 
     msg_info "▶ Running go tests"
-    sshdev ash << 'EOF'
+    sshdev "DEVICE_TESTS_SHA256=${DEVICE_TESTS_SHA256} ash -s" << 'EOF'
 set -e
-TMP_DIR=$(mktemp -d)
-cd ${TMP_DIR}
-tar zxf /tmp/device-tests.tar.gz
+export LD_LIBRARY_PATH="/oem/usr/lib:${LD_LIBRARY_PATH:-}"
+DEVICE_TESTS_ROOT="/userdata/jetkvm-mcp-device-tests"
+DEVICE_TESTS_ARCHIVE="${DEVICE_TESTS_ROOT}/device-tests.tar.gz"
+TMP_DIR="${DEVICE_TESTS_ROOT}/extracted"
+cleanup() {
+    rm -rf "${DEVICE_TESTS_ROOT}"
+    rm -f /tmp/device-tests.json /tmp/device-tests.failed
+}
+trap cleanup EXIT
+echo "${DEVICE_TESTS_SHA256}  ${DEVICE_TESTS_ARCHIVE}" | sha256sum -c -
+mkdir -m 700 "${TMP_DIR}"
+tar zxf "${DEVICE_TESTS_ARCHIVE}" -C "${TMP_DIR}"
+cd "${TMP_DIR}"
+set +e
 ./gotestsum --format=testdox \
     --jsonfile=/tmp/device-tests.json \
     --post-run-command 'sh -c "echo $TESTS_FAILED > /tmp/device-tests.failed"' \
     --raw-command -- ./run_all_tests -json
-
 GOTESTSUM_EXIT_CODE=$?
+set -e
 if [ $GOTESTSUM_EXIT_CODE -ne 0 ]; then
     echo "❌ Tests failed (exit code: $GOTESTSUM_EXIT_CODE)"
-    rm -rf ${TMP_DIR} /tmp/device-tests.tar.gz
     exit 1
 fi
 
 TESTS_FAILED=$(cat /tmp/device-tests.failed)
 if [ "$TESTS_FAILED" -ne 0 ]; then
     echo "❌ Tests failed $TESTS_FAILED tests failed"
-    rm -rf ${TMP_DIR} /tmp/device-tests.tar.gz
     exit 1
 fi
 
 echo "✅ Tests passed"
-rm -rf ${TMP_DIR} /tmp/device-tests.tar.gz
 EOF
 
     if [ "$RUN_GO_TESTS_ONLY" = true ]; then
@@ -273,6 +368,8 @@ if [ "$INSTALL_APP" = true ]
 then
 	msg_info "▶ Building release binary"
 	do_make build_release \
+    BRANCH="${SOURCE_BRANCH}" \
+    REVISION="${SOURCE_REVISION}" \
     SKIP_NATIVE_IF_EXISTS=${SKIP_NATIVE_BUILD} \
     SKIP_UI_BUILD=${SKIP_UI_BUILD_RELEASE} \
     ENABLE_SYNC_TRACE=${ENABLE_SYNC_TRACE}
@@ -285,6 +382,8 @@ then
 else
 	msg_info "▶ Building development binary"
 	do_make build_dev \
+    BRANCH="${SOURCE_BRANCH}" \
+    REVISION="${SOURCE_REVISION}" \
     SKIP_NATIVE_IF_EXISTS=${SKIP_NATIVE_BUILD} \
     SKIP_UI_BUILD=${SKIP_UI_BUILD_RELEASE} \
     ENABLE_SYNC_TRACE=${ENABLE_SYNC_TRACE}

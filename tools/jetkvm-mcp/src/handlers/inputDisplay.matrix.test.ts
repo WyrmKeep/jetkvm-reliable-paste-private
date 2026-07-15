@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, describe, expect, it } from "vitest";
@@ -46,6 +48,7 @@ import type {
   PlaneOperation,
   PlaneScenarioStep,
 } from "../test-support/fakes/PlaneScenario.js";
+import { normalizeControlledTraceValue } from "../test-support/controlledTrace.js";
 import { createDisplayHandlers } from "./display.js";
 import { createInputHandlers } from "./input.js";
 
@@ -84,6 +87,46 @@ const PHASE_3_FOCUSED_CELLS: readonly Phase3FocusedCell[] =
 
 export const PHASE_3_HANDLER_FOCUSED_RESULTS: FocusedAssertionExecutionResult[] =
   [];
+const CONTROLLED_TRACE_PATH = resolve(
+  "reports/controlled-traces/input-display.json",
+);
+const controlledTraces: Record<
+  string,
+  {
+    readonly test_identity: string;
+    readonly calls: readonly {
+      readonly tool: JetKvmToolName;
+      readonly request: unknown;
+      readonly response: unknown;
+    }[];
+  }
+> = {};
+let activeTraceIdentity: string | undefined;
+let activeTraceTestIdentity: string | undefined;
+let activeTraceCalls: {
+  tool: JetKvmToolName;
+  request: unknown;
+  response: unknown;
+}[] = [];
+
+async function verifyControlledTraceReport(): Promise<void> {
+  const report = {
+    schema_version: 1,
+    evidence_source: "execution-produced-focused-handler-calls",
+    traces: Object.fromEntries(
+      Object.entries(controlledTraces).sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+  };
+  const serialized = `${JSON.stringify(report, null, 2)}\n`;
+  if (process.env.JETKVM_WRITE_CONTROLLED_TRACES === "1") {
+    await mkdir(dirname(CONTROLLED_TRACE_PATH), { recursive: true });
+    await writeFile(CONTROLLED_TRACE_PATH, serialized, "utf8");
+  } else {
+    expect(await readFile(CONTROLLED_TRACE_PATH, "utf8")).toBe(serialized);
+  }
+}
 
 export function focusedAssertionTest(
   cell: Phase3FocusedCell,
@@ -100,6 +143,9 @@ export function focusedAssertionTest(
       },
     },
     async () => {
+      activeTraceIdentity = `focused:${cell.id}`;
+      activeTraceTestIdentity = testIdentity;
+      activeTraceCalls = [];
       try {
         await execute();
         PHASE_3_HANDLER_FOCUSED_RESULTS.push({
@@ -114,6 +160,14 @@ export function focusedAssertionTest(
           result: "fail",
         });
         throw error;
+      } finally {
+        controlledTraces[activeTraceIdentity] = {
+          test_identity: activeTraceTestIdentity,
+          calls: activeTraceCalls,
+        };
+        activeTraceIdentity = undefined;
+        activeTraceTestIdentity = undefined;
+        activeTraceCalls = [];
       }
     },
   );
@@ -446,6 +500,15 @@ async function invoke(
   );
   expect(result.structuredContent).toBeTypeOf("object");
   expect(result.structuredContent).not.toBeNull();
+  if (activeTraceIdentity !== undefined) {
+    activeTraceCalls.push(
+      normalizeControlledTraceValue({
+        tool,
+        request: input,
+        response: result.structuredContent,
+      }),
+    );
+  }
   return result.structuredContent as Record<string, unknown>;
 }
 
@@ -1434,11 +1497,12 @@ describe(SUITE_IDENTITY, () => {
     focusedAssertionTest(cell, () => runner(cell.tool));
   }
 
-  afterAll(() => {
+  afterAll(async () => {
     validateFocusedAssertionExecutions(
       "phase_3",
       PHASE_3_HANDLER_FOCUSED_RESULTS,
     );
+    await verifyControlledTraceReport();
   });
 });
 
@@ -1569,6 +1633,92 @@ describe("Phase 3 handler orchestration invariants", () => {
       displayGeneration: 2,
       freshCaptureRequired: false,
     });
+  });
+
+  it("returns a retryable public error when paste fails before acceptance", async () => {
+    const environment = await environmentReadyForTool("jetkvm_input_paste");
+    environment.browser.paste = async (_ref, request) => {
+      throw BrowserPlaneError.fromBridge(
+        {
+          version: 1,
+          name: "JetKvmAutomationError",
+          code: "PASTE_LIFECYCLE",
+          stage: "queue",
+          outcome: "not_sent",
+          operation_id: request.requestId,
+          lifecycle_generation: 1,
+          channel_generation: 1,
+          display_generation: 1,
+          dispatch_generation: 1,
+          write_began: false,
+          acknowledged: false,
+          dispatched_count: 0,
+          completed_count: 0,
+          message: "Reliable Paste completion could not be verified.",
+        },
+        Buffer.byteLength(request.text, "utf8"),
+      );
+    };
+    const input = validInput("jetkvm_input_paste", environment.ref);
+
+    const error = expectError(
+      await invoke(environment, "jetkvm_input_paste", input),
+      "CONNECTION_LOST",
+    );
+    expect(error).toMatchObject({
+      outcome: "not_sent",
+      safe_to_retry: true,
+      required_next_step: "reconnect_then_capture",
+      details: {
+        downstream_stage: "admission",
+        dispatched_action_count: 0,
+        completed_action_count: 0,
+      },
+    });
+    expect(targetLedgerEntries(environment, "jetkvm_input_paste")).toHaveLength(
+      0,
+    );
+  });
+
+  it("clamps a proven pre-write release failure to the public write boundary", async () => {
+    const environment = await environmentReadyForTool("jetkvm_input_release");
+    environment.browser.release = async () => {
+      throw new BrowserPlaneError({
+        code: "CONNECTION_LOST",
+        outcome: "not_sent",
+        stage: "acknowledgement",
+        writeBegan: false,
+        acknowledged: false,
+        dispatchedCount: 0,
+        completedCount: 0,
+        requestedCount: 1,
+        safeToRetry: true,
+        requiredNextStep: "reconnect_then_capture",
+        suffixSuppressed: false,
+      });
+    };
+
+    const error = expectError(
+      await invoke(
+        environment,
+        "jetkvm_input_release",
+        validInput("jetkvm_input_release", environment.ref),
+      ),
+      "CONNECTION_LOST",
+    );
+    expect(error).toMatchObject({
+      outcome: "not_sent",
+      safe_to_retry: true,
+      required_next_step: "reconnect_then_capture",
+      details: {
+        downstream_stage: "write",
+        dispatched_action_count: 0,
+        completed_action_count: 0,
+      },
+    });
+    expect(
+      targetLedgerEntries(environment, "jetkvm_input_release"),
+    ).toHaveLength(0);
   });
 
   it("keeps a successfully released generation closed for later requests", async () => {

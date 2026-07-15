@@ -11,10 +11,7 @@ import { ManagedBrowserController } from "./browser/ManagedBrowserController.js"
 import { PlaywrightBrowserFactory } from "./browser/PlaywrightBrowserFactory.js";
 import type { OperatorConfig } from "./config.js";
 import type { CapabilitySnapshot } from "./domain.js";
-import {
-  DeviceRpcError,
-  type Deadline,
-} from "./device/DeviceRpcAdapter.js";
+import { DeviceRpcError, type Deadline } from "./device/DeviceRpcAdapter.js";
 import type { HandlerRegistry } from "./mcp/server.js";
 import { JetKvmNativeControlPlane } from "./native/JetKvmNativeControlPlane.js";
 import { JetKvmBrowserPlane } from "./planes/JetKvmBrowserPlane.js";
@@ -23,6 +20,8 @@ import {
   createToolHandlerComposition,
   type ToolHandlerComposition,
 } from "./ToolHandlers.js";
+
+const DEVICE_CAPABILITY_READ_TIMEOUT_MS = 30_000;
 
 export interface ProductionRuntime {
   readonly handlers: HandlerRegistry;
@@ -47,7 +46,13 @@ export async function qualifyConnectionCapabilities(
   const snapshot = await controller.snapshot(deadline);
   const display = await connection.deviceRpc.readDisplayState(
     connection.binding,
-    deadline,
+    {
+      timeoutMs: Math.min(
+        deadline.timeoutMs,
+        DEVICE_CAPABILITY_READ_TIMEOUT_MS,
+      ),
+      signal: deadline.signal,
+    },
   );
   if (display.qualification !== "current_binding") {
     throw new DeviceRpcError(
@@ -87,6 +92,10 @@ export function createProductionRuntime(
   const factory = new PlaywrightBrowserFactory({
     targetUrl: config.targetUrl,
     credential,
+    headless: config.headless,
+    ...(config.chromiumExecutablePath === undefined
+      ? {}
+      : { executablePath: config.chromiumExecutablePath }),
   });
   const controller = new ManagedBrowserController(factory);
   const browser = new JetKvmBrowserPlane(controller);

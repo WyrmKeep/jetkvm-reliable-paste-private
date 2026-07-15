@@ -98,6 +98,8 @@ class FakeBrowserPlane implements BrowserPlane {
   rejectRelease: Error | null = null;
   connectFailure: Error | null = null;
   reconnectFailure: Error | null = null;
+  reconnectAfterCloseFailure: Error | null = null;
+  closed = false;
   afterConnect: (() => void) | null = null;
   lastConnectSignal: AbortSignal | null = null;
 
@@ -125,6 +127,9 @@ class FakeBrowserPlane implements BrowserPlane {
     if (this.holdReconnect) {
       return this.#waitForAbort(deadline.signal);
     }
+    if (this.reconnectAfterCloseFailure !== null && this.closed) {
+      throw this.reconnectAfterCloseFailure;
+    }
     if (this.reconnectFailure !== null) {
       throw this.reconnectFailure;
     }
@@ -141,6 +146,7 @@ class FakeBrowserPlane implements BrowserPlane {
     if (this.rejectClose !== null) {
       throw this.rejectClose;
     }
+    this.closed = true;
   }
 
   async capture(): Promise<never> {
@@ -821,19 +827,21 @@ describe("DeviceSessionClient", () => {
     ).toHaveLength(1);
   });
 
-  it("keeps a failed reconnect close authoritative until a takeover proves cleanup", async () => {
+  it("keeps a failed reconnect cleanup authoritative until takeover proves cleanup", async () => {
     const browser = new FakeBrowserPlane();
     const { client } = makeClient({
       browser,
       permissions: [...BASE_PERMISSIONS, "session.takeover"],
     });
     const connected = await client.connect("principal-a", connectInput());
-    browser.rejectClose = new Error("reconnect close failed");
+    browser.reconnectFailure = new Error("reconnect failed");
+    browser.rejectClose = new Error("reconnect cleanup close failed");
 
-    await expectClientError(
+    const reconnectFailure = await expectClientError(
       client.reconnect("principal-a", reconnectInput(connected.ref)),
       "CONNECTION_LOST",
     );
+    expect(reconnectFailure.outcome).toBe("unknown");
     await expectClientError(
       client.connect(
         "principal-b",
@@ -846,9 +854,15 @@ describe("DeviceSessionClient", () => {
     ).toEqual([
       "connect:app-session-1",
       "release:app-session-1",
+      "reconnect:app-session-1",
       "close:app-session-1",
     ]);
+    expect(
+      browser.events.find((event) => event.kind === "close")?.ref
+        .sessionGeneration,
+    ).toBe(connected.ref.sessionGeneration);
 
+    browser.reconnectFailure = null;
     browser.rejectClose = null;
     const recovered = await client.connect(
       "principal-b",
@@ -861,10 +875,130 @@ describe("DeviceSessionClient", () => {
     ).toEqual([
       "connect:app-session-1",
       "release:app-session-1",
+      "reconnect:app-session-1",
       "close:app-session-1",
       "close:app-session-1",
       "connect:app-session-2",
     ]);
+    expect(
+      browser.events
+        .filter((event) => event.kind === "close")
+        .map((event) => event.ref.sessionGeneration),
+    ).toEqual([
+      connected.ref.sessionGeneration,
+      connected.ref.sessionGeneration,
+    ]);
+  });
+  it("preserves the original cleanup ref across repeated reconnect failures", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({ browser });
+    const connected = await client.connect("principal-a", connectInput());
+    browser.reconnectFailure = new Error("reconnect failed");
+    browser.rejectClose = new Error("cleanup close failed");
+
+    await expectClientError(
+      client.reconnect("principal-a", reconnectInput(connected.ref)),
+      "CONNECTION_LOST",
+    );
+    const retryRef = {
+      ...connected.ref,
+      sessionGeneration: connected.ref.sessionGeneration + 1,
+    };
+    await expectClientError(
+      client.reconnect(
+        "principal-a",
+        reconnectInput(retryRef, { request_id: "reconnect-request-2" }),
+      ),
+      "CONNECTION_LOST",
+    );
+
+    expect(
+      browser.events
+        .filter((event) => event.kind === "close")
+        .map((event) => event.ref.sessionGeneration),
+    ).toEqual([
+      connected.ref.sessionGeneration,
+      connected.ref.sessionGeneration,
+    ]);
+  });
+
+  it("preserves the cleanup ref after successful failure cleanup", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({ browser });
+    const connected = await client.connect("principal-a", connectInput());
+    browser.reconnectFailure = new Error("reconnect failed");
+
+    await expectClientError(
+      client.reconnect("principal-a", reconnectInput(connected.ref)),
+      "CONNECTION_LOST",
+    );
+    const retryRef = {
+      ...connected.ref,
+      sessionGeneration: connected.ref.sessionGeneration + 1,
+    };
+    await expectClientError(
+      client.reconnect(
+        "principal-a",
+        reconnectInput(retryRef, { request_id: "reconnect-request-2" }),
+      ),
+      "CONNECTION_LOST",
+    );
+
+    expect(
+      browser.events
+        .filter((event) => event.kind === "close")
+        .map((event) => event.ref.sessionGeneration),
+    ).toEqual([
+      connected.ref.sessionGeneration,
+      connected.ref.sessionGeneration,
+    ]);
+  });
+
+  it("keeps the global browser cleanup owner across inactive session records", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({ browser });
+    const first = await client.connect("principal-a", connectInput());
+    browser.reconnectFailure = new Error("reconnect failed");
+
+    await expectClientError(
+      client.reconnect("principal-a", reconnectInput(first.ref)),
+      "CONNECTION_LOST",
+    );
+    browser.reconnectFailure = null;
+    const second = await client.connect(
+      "principal-b",
+      connectInput({ request_id: "connect-request-2" }),
+    );
+    browser.reconnectFailure = new Error("reconnect failed");
+    await expectClientError(
+      client.reconnect(
+        "principal-b",
+        reconnectInput(second.ref, { request_id: "reconnect-request-2" }),
+      ),
+      "CONNECTION_LOST",
+    );
+    const firstRetryRef = {
+      ...first.ref,
+      sessionGeneration: first.ref.sessionGeneration + 1,
+    };
+    await expectClientError(
+      client.reconnect(
+        "principal-a",
+        reconnectInput(firstRetryRef, { request_id: "reconnect-request-3" }),
+      ),
+      "CONNECTION_LOST",
+    );
+
+    expect(
+      browser.events
+        .filter((event) => event.kind === "close")
+        .map((event) => event.ref),
+    ).toEqual([first.ref, second.ref, second.ref]);
+    expect(
+      browser.events
+        .filter((event) => event.kind === "release")
+        .map((event) => event.ref),
+    ).toEqual([first.ref, second.ref]);
   });
 
   it("maps changed-digest reconnect reuse without another plane call or replay loss", async () => {
@@ -938,7 +1072,27 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
+      "reconnect",
+    ]);
+  });
+
+  it("keeps the active browser transport open until reconnect replaces it", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.reconnectAfterCloseFailure = new Error(
+      "closed browser transport cannot reconnect",
+    );
+    const { client } = makeClient({ browser });
+    const connected = await client.connect("principal-a", connectInput());
+
+    const reconnected = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+
+    expect(reconnected.result.outcome).toBe("applied");
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "release",
       "reconnect",
     ]);
   });
@@ -971,7 +1125,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
     ]);
 
@@ -1102,9 +1255,37 @@ describe("DeviceSessionClient", () => {
       "close:app-session-1",
       "connect:app-session-2",
       "release:app-session-2",
-      "close:app-session-2",
       "reconnect:app-session-1",
     ]);
+  });
+
+  it("cleans the incumbent owner when reconnect takeover replacement fails", async () => {
+    const browser = new FakeBrowserPlane();
+    const { client } = makeClient({
+      browser,
+      permissions: [...BASE_PERMISSIONS, "session.takeover"],
+    });
+    const first = await client.connect("principal-a", connectInput());
+    const incumbent = await client.connect(
+      "principal-b",
+      connectInput({ request_id: "connect-request-2", takeover: true }),
+    );
+    browser.reconnectFailure = new Error("reconnect failed");
+
+    await expectClientError(
+      client.reconnect(
+        "principal-a",
+        reconnectInput(first.ref, {
+          request_id: "reconnect-request-takeover",
+          takeover: true,
+        }),
+      ),
+      "CONNECTION_LOST",
+    );
+
+    expect(
+      browser.events.filter((event) => event.kind === "close").at(-1)?.ref,
+    ).toEqual(incumbent.ref);
   });
 
   it("rejects a same-valued but distinct Browser-owned adapter on connect", async () => {
@@ -1175,7 +1356,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
       "close",
     ]);
@@ -1311,7 +1491,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
       "close",
     ]);
@@ -1491,7 +1670,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
     ]);
   });
@@ -2021,7 +2199,12 @@ describe("DeviceSessionClient", () => {
       try {
         return await originalConnect(ref, deadline);
       } catch {
-        throw new DeviceSessionPlaneError("CANCELLED", "not_sent", false, "none");
+        throw new DeviceSessionPlaneError(
+          "CANCELLED",
+          "not_sent",
+          false,
+          "none",
+        );
       }
     };
     const scheduler = new FakeScheduler();

@@ -1,15 +1,18 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import type { EventEmitter } from "node:events";
 import {
   link,
   lstat,
   mkdir,
   open,
+  readdir,
   readFile,
   rename,
   unlink,
 } from "node:fs/promises";
-import { hostname as systemHostname, tmpdir } from "node:os";
+import { homedir as systemHomedir, hostname as systemHostname } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -18,7 +21,8 @@ export type DeviceLeaseErrorCode =
   | "DEVICE_LEASE_DIRECTORY_UNSAFE"
   | "DEVICE_LEASE_PROOF_INVALID"
   | "DEVICE_LEASE_STALE_UNPROVEN"
-  | "DEVICE_LEASE_INTERRUPTED";
+  | "DEVICE_LEASE_INTERRUPTED"
+  | "DEVICE_LEASE_HOST_IDENTITY_UNAVAILABLE";
 
 export class DeviceLeaseError extends Error {
   readonly code: DeviceLeaseErrorCode;
@@ -28,8 +32,9 @@ export class DeviceLeaseError extends Error {
     code: DeviceLeaseErrorCode,
     message: string,
     signal?: NodeJS.Signals,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "DeviceLeaseError";
     this.code = code;
     if (signal !== undefined) this.signal = signal;
@@ -44,6 +49,9 @@ export interface DeviceLeaseRecord {
   pid: number;
   acquired_at: string;
   token: string;
+  host_identity?: string;
+  boot_identity?: string;
+  process_start_identity?: string;
   lease_path?: string;
   capability_path?: string;
   lease_token?: string;
@@ -70,6 +78,15 @@ export interface DeviceLeaseSupervisor {
   livenessPath: string;
 }
 
+export interface DeviceLeaseHostIdentity {
+  hostIdentity: string;
+  bootIdentity: string;
+}
+
+export interface DeviceLeaseOwnerIdentity extends DeviceLeaseHostIdentity {
+  processStartIdentity: string;
+}
+
 export interface AcquireDeviceLeaseOptions {
   directory?: string;
   deviceKey: string;
@@ -81,6 +98,7 @@ export interface AcquireDeviceLeaseOptions {
   randomToken?: () => string;
   inheritedProof?: DeviceLeaseProof;
   supervisor?: DeviceLeaseSupervisor;
+  ownerIdentity?: DeviceLeaseOwnerIdentity;
   unlinkFile?: (path: string) => Promise<void>;
   afterRecordPrepared?: (finalPath: string) => void | Promise<void>;
   beforeStableLink?: () => void | Promise<void>;
@@ -107,6 +125,13 @@ export interface RemoveStaleDeviceLeaseOptions {
   ) => boolean | Promise<boolean>;
   unlinkFile?: (path: string) => Promise<void>;
 }
+export interface RemoveRetainedDeviceLeaseOptions {
+  directory?: string;
+  deviceKey: string;
+  confirmOwnerDead?: (
+    record: Readonly<DeviceLeaseRecord>,
+  ) => boolean | Promise<boolean>;
+}
 
 export interface RemoveStaleDeviceLeaseAdminLockOptions {
   directory?: string;
@@ -118,10 +143,221 @@ export interface RemoveStaleDeviceLeaseAdminLockOptions {
   afterCleanupClaimAcquired?: (claimPath: string) => void | Promise<void>;
   afterAdminQuarantined?: (quarantinePath: string) => void | Promise<void>;
 }
-const DEFAULT_LEASE_DIRECTORY = join(tmpdir(), "jetkvm-device-leases");
+const LEASE_DIRECTORY_ENV = "JETKVM_DEVICE_LEASE_DIRECTORY";
 const SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 const ADMIN_LOCK_ATTEMPTS = 500;
 const ADMIN_LOCK_RETRY_MS = 10;
+
+export function defaultDeviceLeaseDirectory(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  homeDirectory: string = systemHomedir(),
+): string {
+  const configured = environment[LEASE_DIRECTORY_ENV];
+  if (configured !== undefined) {
+    if (configured.length === 0 || !isAbsolute(configured)) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_DIRECTORY_UNSAFE",
+        `${LEASE_DIRECTORY_ENV} must be an absolute path.`,
+      );
+    }
+    return resolve(configured);
+  }
+  if (!isAbsolute(homeDirectory)) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_DIRECTORY_UNSAFE",
+      "The user state directory could not be resolved safely.",
+    );
+  }
+  if (platform === "darwin") {
+    return join(
+      homeDirectory,
+      "Library",
+      "Application Support",
+      "jetkvm-mcp",
+      "device-leases",
+    );
+  }
+  if (platform === "win32") {
+    const localAppData = environment.LOCALAPPDATA;
+    if (localAppData !== undefined) {
+      if (localAppData.length === 0 || !isAbsolute(localAppData)) {
+        throw new DeviceLeaseError(
+          "DEVICE_LEASE_DIRECTORY_UNSAFE",
+          "LOCALAPPDATA must be an absolute path.",
+        );
+      }
+      return join(resolve(localAppData), "jetkvm-mcp", "device-leases");
+    }
+    return join(
+      homeDirectory,
+      "AppData",
+      "Local",
+      "jetkvm-mcp",
+      "device-leases",
+    );
+  }
+  const stateHome = environment.XDG_STATE_HOME;
+  if (stateHome !== undefined) {
+    if (stateHome.length === 0 || !isAbsolute(stateHome)) {
+      throw new DeviceLeaseError(
+        "DEVICE_LEASE_DIRECTORY_UNSAFE",
+        "XDG_STATE_HOME must be an absolute path.",
+      );
+    }
+    return join(resolve(stateHome), "jetkvm-mcp", "device-leases");
+  }
+  return join(homeDirectory, ".local", "state", "jetkvm-mcp", "device-leases");
+}
+
+function resolvedLeaseDirectory(directory?: string): string {
+  const selected = directory ?? defaultDeviceLeaseDirectory();
+  if (!isAbsolute(selected)) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_DIRECTORY_UNSAFE",
+      "The device lease directory must be an absolute path.",
+    );
+  }
+  return resolve(selected);
+}
+const IDENTITY_PATTERN = /^[a-f0-9]{64}$/u;
+let cachedHostIdentity: DeviceLeaseHostIdentity | undefined;
+let cachedOwnerIdentity: DeviceLeaseOwnerIdentity | undefined;
+
+function identityUnavailable(cause?: unknown): DeviceLeaseError {
+  return new DeviceLeaseError(
+    "DEVICE_LEASE_HOST_IDENTITY_UNAVAILABLE",
+    "The durable host, boot, or process identity could not be established.",
+    undefined,
+    { cause },
+  );
+}
+
+function identityHash(kind: string, material: string): string {
+  const normalized = material.trim();
+  if (normalized.length === 0) throw identityUnavailable();
+  return createHash("sha256")
+    .update(`${kind}\u0000${normalized}`, "utf8")
+    .digest("hex");
+}
+
+function commandIdentity(command: string, args: readonly string[]): string {
+  const output = execFileSync(command, [...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (typeof output !== "string" || output.trim().length === 0) {
+    throw identityUnavailable();
+  }
+  return output.trim();
+}
+
+function darwinPlatformUuid(): string {
+  const output = commandIdentity("/usr/sbin/ioreg", [
+    "-rd1",
+    "-c",
+    "IOPlatformExpertDevice",
+  ]);
+  const match = /"IOPlatformUUID"\s*=\s*"([^"]+)"/u.exec(output);
+  if (match?.[1] === undefined) throw identityUnavailable();
+  return match[1];
+}
+
+export function currentLeaseHostIdentity(
+  platform: NodeJS.Platform = process.platform,
+): DeviceLeaseHostIdentity {
+  if (platform === process.platform && cachedHostIdentity !== undefined) {
+    return cachedHostIdentity;
+  }
+  try {
+    let hostMaterial;
+    let bootMaterial;
+    if (platform === "linux") {
+      hostMaterial = readFileSync("/etc/machine-id", "utf8");
+      bootMaterial = readFileSync("/proc/sys/kernel/random/boot_id", "utf8");
+    } else if (platform === "darwin") {
+      hostMaterial = darwinPlatformUuid();
+      bootMaterial = commandIdentity("/usr/sbin/sysctl", [
+        "-n",
+        "kern.boottime",
+      ]);
+    } else if (platform === "win32") {
+      hostMaterial = commandIdentity("reg.exe", [
+        "query",
+        "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
+        "/v",
+        "MachineGuid",
+      ]);
+      bootMaterial = commandIdentity("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().Ticks",
+      ]);
+    } else {
+      throw identityUnavailable();
+    }
+    const identity = Object.freeze({
+      hostIdentity: identityHash("host", hostMaterial),
+      bootIdentity: identityHash("boot", bootMaterial),
+    });
+    if (platform === process.platform) cachedHostIdentity = identity;
+    return identity;
+  } catch (error) {
+    if (error instanceof DeviceLeaseError) throw error;
+    throw identityUnavailable(error);
+  }
+}
+
+export function leaseProcessStartIdentity(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw identityUnavailable();
+  try {
+    let material;
+    if (platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const commandEnd = stat.lastIndexOf(")");
+      const fields = stat
+        .slice(commandEnd + 2)
+        .trim()
+        .split(/\s+/u);
+      material = fields[19];
+    } else if (platform === "darwin") {
+      material = commandIdentity("/bin/ps", [
+        "-o",
+        "lstart=",
+        "-p",
+        String(pid),
+      ]);
+    } else if (platform === "win32") {
+      material = commandIdentity("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks`,
+      ]);
+    } else {
+      throw identityUnavailable();
+    }
+    if (typeof material !== "string") throw identityUnavailable();
+    return identityHash("process-start", material);
+  } catch (error) {
+    if (error instanceof DeviceLeaseError) throw error;
+    throw identityUnavailable(error);
+  }
+}
+
+export function currentLeaseOwnerIdentity(): DeviceLeaseOwnerIdentity {
+  if (cachedOwnerIdentity !== undefined) return cachedOwnerIdentity;
+  const host = currentLeaseHostIdentity();
+  cachedOwnerIdentity = Object.freeze({
+    ...host,
+    processStartIdentity: leaseProcessStartIdentity(process.pid),
+  });
+  return cachedOwnerIdentity;
+}
 
 function tokenMatches(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual);
@@ -207,6 +443,15 @@ function validateRecord(value: unknown): DeviceLeaseRecord {
       record.supervisor_liveness_id.length === 0 ||
       typeof record.supervisor_liveness_path !== "string" ||
       !isAbsolute(record.supervisor_liveness_path));
+  const hasOwnerIdentity =
+    record.host_identity !== undefined ||
+    record.boot_identity !== undefined ||
+    record.process_start_identity !== undefined;
+  const invalidOwnerIdentity =
+    hasOwnerIdentity &&
+    (!IDENTITY_PATTERN.test(record.host_identity ?? "") ||
+      !IDENTITY_PATTERN.test(record.boot_identity ?? "") ||
+      !IDENTITY_PATTERN.test(record.process_start_identity ?? ""));
   if (
     record.version !== 1 ||
     typeof record.owner_id !== "string" ||
@@ -221,6 +466,7 @@ function validateRecord(value: unknown): DeviceLeaseRecord {
     !Number.isFinite(Date.parse(record.acquired_at)) ||
     typeof record.token !== "string" ||
     invalidSupervisor ||
+    invalidOwnerIdentity ||
     record.token.length === 0
   ) {
     throw new DeviceLeaseError(
@@ -229,6 +475,18 @@ function validateRecord(value: unknown): DeviceLeaseRecord {
     );
   }
   return record as DeviceLeaseRecord;
+}
+function assertDurableOwnerIdentity(record: DeviceLeaseRecord): void {
+  if (
+    !IDENTITY_PATTERN.test(record.host_identity ?? "") ||
+    !IDENTITY_PATTERN.test(record.boot_identity ?? "") ||
+    !IDENTITY_PATTERN.test(record.process_start_identity ?? "")
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_STALE_UNPROVEN",
+      "Stale lease ownership lacks durable host, boot, or process identity.",
+    );
+  }
 }
 
 function validateCapabilityRecord(value: unknown): DeviceLeaseCapabilityRecord {
@@ -368,6 +626,7 @@ function createAdminRecord(
 ): DeviceLeaseAdminRecord {
   const acquiredAt = new Date().toISOString();
   const hostname = systemHostname();
+  const ownerIdentity = currentLeaseOwnerIdentity();
   return validateRecord({
     version: 1,
     owner_id: `${hostname}:${process.pid}`,
@@ -376,6 +635,9 @@ function createAdminRecord(
     pid: process.pid,
     acquired_at: acquiredAt,
     token: randomBytes(32).toString("hex"),
+    host_identity: ownerIdentity.hostIdentity,
+    boot_identity: ownerIdentity.bootIdentity,
+    process_start_identity: ownerIdentity.processStartIdentity,
     lease_path: path,
     ...(context.capabilityPath === undefined
       ? {}
@@ -674,10 +936,53 @@ export async function loadDeviceLeaseProofReference(
   }
 }
 
+export async function removeRetainedDeviceLease(
+  options: RemoveRetainedDeviceLeaseOptions,
+): Promise<void> {
+  const directory = resolvedLeaseDirectory(options.directory);
+  await assertSecureDirectory(directory);
+  const path = leasePath(directory, options.deviceKey);
+  await assertSecureProofFile(path);
+  const stableIdentity = await lstat(path);
+  const capabilityPaths: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!/^capability-[a-f0-9]{64}\.json$/u.test(entry.name)) continue;
+    const candidatePath = join(directory, entry.name);
+    try {
+      await assertSecureProofFile(candidatePath);
+      const candidateIdentity = await lstat(candidatePath);
+      if (
+        candidateIdentity.dev === stableIdentity.dev &&
+        candidateIdentity.ino === stableIdentity.ino
+      ) {
+        capabilityPaths.push(candidatePath);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  if (capabilityPaths.length !== 1) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_PROOF_INVALID",
+      "The retained device lease proof reference is invalid.",
+    );
+  }
+  const proof = await loadDeviceLeaseProofReference(
+    capabilityPaths[0] as string,
+    options.deviceKey,
+  );
+  await removeStaleDeviceLease({
+    proof,
+    ...(options.confirmOwnerDead === undefined
+      ? {}
+      : { confirmOwnerDead: options.confirmOwnerDead }),
+  });
+}
+
 export async function removeStaleDeviceLeaseAdminLock(
   options: RemoveStaleDeviceLeaseAdminLockOptions,
 ): Promise<void> {
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await assertSecureDirectory(directory);
   const path = leasePath(directory, options.deviceKey);
   const claim = await acquireCleanupClaim(path);
@@ -719,12 +1024,13 @@ async function removeStaleDeviceLeaseAdminLockUnderClaim(
       "Stale device lease administration could not be proven dead.",
     );
   }
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await assertSecureDirectory(directory);
   const adminPath = `${leasePath(directory, options.deviceKey)}.admin.lock`;
   await assertSecureProofFile(adminPath);
   const beforeIdentity = await lstat(adminPath);
   const beforeRecord = await readRecord(adminPath);
+  assertDurableOwnerIdentity(beforeRecord);
 
   let confirmedDead = false;
   try {
@@ -858,7 +1164,7 @@ export async function acquireDeviceLease(
       "The device lease identity is invalid.",
     );
   }
-  const directory = resolve(options.directory ?? DEFAULT_LEASE_DIRECTORY);
+  const directory = resolvedLeaseDirectory(options.directory);
   await ensureSecureDirectory(directory);
   const path = leasePath(directory, options.deviceKey);
   const unlinkLeaseFile = options.unlinkFile ?? unlink;
@@ -917,14 +1223,29 @@ export async function acquireDeviceLease(
   const acquiredAt = Number.isFinite(acquiredDate.getTime())
     ? acquiredDate.toISOString()
     : "";
+  const requestedPid = options.pid ?? process.pid;
+  const requestedHostname = options.hostname ?? systemHostname();
+  if (
+    options.ownerIdentity === undefined &&
+    (requestedPid !== process.pid || requestedHostname !== systemHostname())
+  ) {
+    throw new DeviceLeaseError(
+      "DEVICE_LEASE_HOST_IDENTITY_UNAVAILABLE",
+      "A custom lease owner requires an explicit durable owner identity.",
+    );
+  }
+  const ownerIdentity = options.ownerIdentity ?? currentLeaseOwnerIdentity();
   const record = validateCapabilityRecord({
     version: 1,
     owner_id: options.ownerId,
     run_id: options.runId,
-    hostname: options.hostname ?? systemHostname(),
-    pid: options.pid ?? process.pid,
+    hostname: requestedHostname,
+    pid: requestedPid,
     acquired_at: acquiredAt,
     token: (options.randomToken ?? (() => randomBytes(32).toString("hex")))(),
+    host_identity: ownerIdentity.hostIdentity,
+    boot_identity: ownerIdentity.bootIdentity,
+    process_start_identity: ownerIdentity.processStartIdentity,
     lease_path: path,
     ...(options.supervisor === undefined
       ? {}
@@ -1152,6 +1473,7 @@ export async function removeStaleDeviceLease(
       boundStable && stableRecord !== undefined
         ? stableRecord
         : capabilityRecord;
+    assertDurableOwnerIdentity(recordToConfirm);
     await assertSupervisorStopped(recordToConfirm);
     let confirmedDead = false;
     try {

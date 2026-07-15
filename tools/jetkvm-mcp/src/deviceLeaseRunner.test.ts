@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
@@ -32,6 +32,9 @@ import { runDeviceLeaseSupervisor } from "./deviceLeaseSupervisor.js";
 
 const wrapperPath = fileURLToPath(
   new URL("../scripts/with-device-lease.mjs", import.meta.url),
+);
+const recoveryPath = fileURLToPath(
+  new URL("./deviceLeaseRecovery.ts", import.meta.url),
 );
 
 type ProcessResult = { code: number | null; stdout: string; stderr: string };
@@ -180,11 +183,18 @@ async function runWrapper(
     extraEnvironment.TMPDIR === undefined
       ? await mkdtemp(join(tmpdir(), "jetkvm-runner-wrapper-"))
       : undefined;
+  const leaseDirectory =
+    extraEnvironment.JETKVM_DEVICE_LEASE_DIRECTORY ??
+    join(
+      extraEnvironment.TMPDIR ?? (ownedTmp as string),
+      "jetkvm-device-leases",
+    );
   try {
     const child = spawn(process.execPath, [wrapperPath, ...args], {
       env: {
         ...scrubDeviceLeaseEnvironment(),
         ...extraEnvironment,
+        JETKVM_DEVICE_LEASE_DIRECTORY: leaseDirectory,
         ...(ownedTmp === undefined ? {} : { TMPDIR: ownedTmp }),
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -512,7 +522,7 @@ describe("device lease runner", () => {
       );
       await Promise.resolve();
       child.emit("message", { type: "result", code: 0, signal: null });
-      await expect(completion).resolves.toBe(0);
+      await expect(completion).resolves.toEqual({ code: 0, signal: null });
       expect(supervisor.retired).toBe(true);
       expect(replacementSignals).toEqual([]);
     } finally {
@@ -550,7 +560,10 @@ describe("device lease runner", () => {
       ]);
       expect(kill).not.toHaveBeenCalled();
       child.emit("message", { type: "result", code: 1, signal: "SIGINT" });
-      await expect(completion).resolves.toBe(1);
+      await expect(completion).resolves.toEqual({
+        code: 1,
+        signal: "SIGINT",
+      });
     } finally {
       kill.mockRestore();
     }
@@ -580,7 +593,7 @@ describe("device lease runner", () => {
       expect(release).not.toHaveBeenCalled();
 
       child.emit("message", { type: "result", code: 0, signal: null });
-      await expect(completion).resolves.toBe(0);
+      await expect(completion).resolves.toEqual({ code: 0, signal: null });
     } finally {
       kill.mockRestore();
       vi.useRealTimers();
@@ -692,6 +705,139 @@ describe("device lease runner", () => {
     expect(result.stderr).not.toMatch(/[a-f0-9]{64}/i);
   });
 
+  it("retains the lease when the configured manual-recovery exit code occurs", async () => {
+    const isolatedTmp = await mkdtemp(
+      join(tmpdir(), "jetkvm-runner-retained-"),
+    );
+    const deviceKey = `retained-${randomUUID()}`;
+    try {
+      const retained = await runWrapper(
+        [
+          "--device-key",
+          deviceKey,
+          "--retain-on-exit-code",
+          "75",
+          "--",
+          process.execPath,
+          "-e",
+          "process.exit(75)",
+        ],
+        { TMPDIR: isolatedTmp },
+      );
+      expect(retained.code).toBe(75);
+      expect(retained.stderr).toContain("manual recovery is required");
+      const leaseFiles = await readdir(
+        join(isolatedTmp, "jetkvm-device-leases"),
+      );
+      expect(leaseFiles.some((name) => name.endsWith(".lease.json"))).toBe(
+        true,
+      );
+
+      const blocked = await runWrapper(
+        ["--device-key", deviceKey, "--", process.execPath, "--version"],
+        { TMPDIR: isolatedTmp },
+      );
+      expect(blocked.code).not.toBe(0);
+      const recovered = spawnSync(
+        process.execPath,
+        [recoveryPath, "--device-key", deviceKey, "--confirm-recovered"],
+        {
+          encoding: "utf8",
+          env: {
+            ...scrubDeviceLeaseEnvironment(),
+            TMPDIR: isolatedTmp,
+            JETKVM_DEVICE_LEASE_DIRECTORY: join(
+              isolatedTmp,
+              "jetkvm-device-leases",
+            ),
+          },
+        },
+      );
+      expect(
+        recovered.status,
+        JSON.stringify({ stderr: recovered.stderr, leaseFiles }),
+      ).toBe(0);
+      expect(recovered.stdout).toContain("Retained device lease cleared");
+
+      const unblocked = await runWrapper(
+        ["--device-key", deviceKey, "--", process.execPath, "--version"],
+        { TMPDIR: isolatedTmp },
+      );
+      expect(unblocked.code).toBe(0);
+    } finally {
+      await rm(isolatedTmp, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the lease when a retention-enabled child is interrupted", async () => {
+    const isolatedTmp = await mkdtemp(
+      join(tmpdir(), "jetkvm-runner-interrupted-retain-"),
+    );
+    const leaseDirectory = join(isolatedTmp, "jetkvm-device-leases");
+    const markerPath = join(isolatedTmp, "started.json");
+    const deviceKey = `interrupted-${randomUUID()}`;
+    const wrapper = spawn(
+      process.execPath,
+      [
+        wrapperPath,
+        "--device-key",
+        deviceKey,
+        "--retain-on-exit-code",
+        "75",
+        "--",
+        process.execPath,
+        "-e",
+        'require("node:fs").writeFileSync(process.argv[1],"{}");setInterval(()=>{},1000)',
+        markerPath,
+      ],
+      {
+        env: {
+          ...scrubDeviceLeaseEnvironment(),
+          TMPDIR: isolatedTmp,
+          JETKVM_DEVICE_LEASE_DIRECTORY: leaseDirectory,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stderr = "";
+    wrapper.stderr?.setEncoding("utf8");
+    wrapper.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const completion = Promise.withResolvers<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>();
+    wrapper.once("close", (code, signal) =>
+      completion.resolve({ code, signal }),
+    );
+    try {
+      await waitForJsonFile(markerPath);
+      wrapper.kill("SIGTERM");
+      const result = await completion.promise;
+      expect(result, stderr).toEqual({ code: 143, signal: null });
+      expect(
+        (await readdir(leaseDirectory)).some((name) =>
+          name.endsWith(".lease.json"),
+        ),
+      ).toBe(true);
+      const blocked = await runWrapper(
+        ["--device-key", deviceKey, "--", process.execPath, "--version"],
+        {
+          TMPDIR: isolatedTmp,
+          JETKVM_DEVICE_LEASE_DIRECTORY: leaseDirectory,
+        },
+      );
+      expect(blocked.code).not.toBe(0);
+    } finally {
+      if (wrapper.exitCode === null && wrapper.signalCode === null) {
+        wrapper.kill("SIGKILL");
+        await completion.promise;
+      }
+      await rm(isolatedTmp, { recursive: true, force: true });
+    }
+  });
+
   it("preserves interactive stdin through the detached lease supervisor", async () => {
     const isolatedTmp = await mkdtemp(join(tmpdir(), "jetkvm-runner-stdin-"));
     const child = spawn(
@@ -706,7 +852,14 @@ describe("device lease runner", () => {
         "process.stdin.pipe(process.stdout)",
       ],
       {
-        env: { ...scrubDeviceLeaseEnvironment(), TMPDIR: isolatedTmp },
+        env: {
+          ...scrubDeviceLeaseEnvironment(),
+          TMPDIR: isolatedTmp,
+          JETKVM_DEVICE_LEASE_DIRECTORY: join(
+            isolatedTmp,
+            "jetkvm-device-leases",
+          ),
+        },
         stdio: ["pipe", "pipe", "pipe"],
       },
     );
@@ -867,7 +1020,14 @@ describe("device lease runner", () => {
         markerPath,
       ],
       {
-        env: { ...scrubDeviceLeaseEnvironment(), TMPDIR: isolatedTmp },
+        env: {
+          ...scrubDeviceLeaseEnvironment(),
+          TMPDIR: isolatedTmp,
+          JETKVM_DEVICE_LEASE_DIRECTORY: join(
+            isolatedTmp,
+            "jetkvm-device-leases",
+          ),
+        },
         stdio: ["ignore", "ignore", "ignore"],
       },
     );
@@ -933,7 +1093,14 @@ describe("device lease runner", () => {
         markerPath,
       ],
       {
-        env: { ...scrubDeviceLeaseEnvironment(), TMPDIR: isolatedTmp },
+        env: {
+          ...scrubDeviceLeaseEnvironment(),
+          TMPDIR: isolatedTmp,
+          JETKVM_DEVICE_LEASE_DIRECTORY: join(
+            isolatedTmp,
+            "jetkvm-device-leases",
+          ),
+        },
         stdio: ["ignore", "ignore", "ignore"],
       },
     );
@@ -1038,6 +1205,10 @@ describe("device lease runner", () => {
         env: {
           ...scrubDeviceLeaseEnvironment(),
           TMPDIR: isolatedTmp,
+          JETKVM_DEVICE_LEASE_DIRECTORY: join(
+            isolatedTmp,
+            "jetkvm-device-leases",
+          ),
           JETKVM_TEST_SUPERVISOR_BOOT_MARKER_PATH: bootMarker,
           JETKVM_TEST_SUPERVISOR_READY_DELAY_MS: "5000",
         },

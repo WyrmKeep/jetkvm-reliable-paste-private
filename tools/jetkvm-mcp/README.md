@@ -96,7 +96,7 @@ node dist/bin.js
 
 The installed `jetkvm-mcp` executable invokes the same entry point. Startup acquires a private device-keyed lease before constructing Chromium or contacting the target. A second process for the same target fails closed. Inherited proof is accepted only in the internal `--leased` child mode, and the proof's cryptographic lease path must match the configured target fingerprint. The detached lease supervisor and CLI remain attached to inherited stdio for the lifetime of the MCP transport; EOF closes the server, browser, and lease in bounded order. Startup errors are redacted and emitted only on stderr.
 
-By default, managed Chromium is headless and uses an ephemeral profile. `JETKVM_HEADLESS=false` makes the browser visible. `JETKVM_CHROMIUM_EXECUTABLE_PATH` selects an explicit Chromium-family executable. `JETKVM_CONNECT_TIMEOUT_MS` bounds browser admission. Plain LAN HTTP requires both `JETKVM_ALLOW_INSECURE_HTTP=true` and `JETKVM_ALLOW_DANGEROUS_TARGET_HTTP=true`.
+By default, managed Chromium is headless and uses an ephemeral profile. `JETKVM_HEADLESS=false` makes the browser visible. `JETKVM_CHROMIUM_EXECUTABLE_PATH` selects an explicit Chromium-family executable by absolute path. Each tool call's bounded `timeout_ms` covers browser admission and execution. Plain LAN HTTP requires both `JETKVM_ALLOW_INSECURE_HTTP=true` and `JETKVM_ALLOW_DANGEROUS_TARGET_HTTP=true`. With that explicit opt-in, Chromium treats only the configured HTTP target origin as a secure context so frame hashing remains available; this enables secure-context browser APIs for that origin but does not secure or encrypt the HTTP transport.
 
 ## MCP client configuration
 
@@ -125,6 +125,8 @@ export JETKVM_CREDENTIAL_FILE="$HOME/.config/jetkvm-mcp/credential"
 exec ./examples/run-stdio.sh
 ```
 
+Device leases use a stable per-user state directory across reboots: `~/Library/Application Support/jetkvm-mcp/device-leases` on macOS, `%LOCALAPPDATA%\jetkvm-mcp\device-leases` on Windows, and `$XDG_STATE_HOME/jetkvm-mcp/device-leases` or `~/.local/state/jetkvm-mcp/device-leases` on other systems. Set `JETKVM_DEVICE_LEASE_DIRECTORY` to an absolute private directory when an operator-managed location is required; use the same value for normal launch and retained-lease recovery.
+
 The wrapper requires HTTPS and an absolute regular credential file, removes ambient credential-value variables, and passes no secret or target argument on the command line. `npm run examples:check` parses the JSON examples, syntax-checks both shell examples, creates and inspects a real `0600` credential file, and executes `run-stdio.sh` against a probe executable.
 
 ## Phase 3 input and display semantics
@@ -146,6 +148,135 @@ EDID is read-only EDID. Without the capability it is `unsupported` with no read 
 `jetkvm_session_status` composes ownership, browser, native, capability, and version facts without inventing a unified health field. Missing `session.status` permission or capability fails before any browser/native probe. Per-fact display provenance remains explicit.
 
 `jetkvm_power_control` exposes only `press_power`, `hold_power`, and `press_reset`. Wire timing is fixed at 200 ms, 5 s, and 200 ms respectively; callers cannot supply a duration. ATX extension state, serial availability, acknowledgement, and post-read evidence remain distinct. A definitive acknowledgement followed by an unavailable post-read returns `applied` with `device_ack_only`; it is never replayed. Cancellation or deadline expiry before the wire call releases the request reservation and reports `not_sent`.
+
+## Frozen candidate and serialized hardware release
+
+The live hardware gate runs only from a clean commit, an exact Node.js 22.23.1 executable, and a visible sandboxed Chromium executable. The focused handler gates produce deterministic request/response trace reports for every controlled live branch; generate controlled evidence from those execution-produced preimages before freezing so the candidate manifest can bind its exact file bytes:
+
+Candidate freeze defaults to the `full` hardware-validation profile. `full` forbids an exception acknowledgement, requires the ATX reset preflight, and must execute every canonical live step with zero skips. If and only if the selected fixture has no usable JetKVM ATX motherboard leads, freeze a source-bound `atx_unavailable` candidate by setting both exact values before running `freeze-release-candidate.mjs`:
+
+```sh
+export JETKVM_RELEASE_HARDWARE_PROFILE='atx_unavailable'
+export JETKVM_RELEASE_ATX_UNAVAILABLE_ACKNOWLEDGEMENT='selected_fixture_has_no_usable_atx_motherboard_leads'
+```
+
+The acknowledgement is not a runtime bypass. It becomes an immutable candidate field with exception code `ATX_WIRING_UNAVAILABLE`; changing or omitting either value invalidates the candidate. Do not set the acknowledgement for `full`.
+
+```sh
+export RELEASE_ROOT='/absolute/private/release-root'
+export JETKVM_RELEASE_BROWSER_EXECUTABLE_PATH='/absolute/path/to/Google Chrome'
+export JETKVM_RELEASE_TARGET_URL='http://jetkvm.example'
+export JETKVM_RELEASE_CONTROLLED_EVIDENCE="$RELEASE_ROOT/controlled-evidence.json"
+
+npm run build
+node scripts/build-controlled-release-evidence.mjs \
+  --output "$JETKVM_RELEASE_CONTROLLED_EVIDENCE"
+node scripts/freeze-release-candidate.mjs \
+  --output "$RELEASE_ROOT/candidate"
+```
+
+The freeze fails on a dirty source tree. It rebuilds and binds the generated paste-harness runtime before packing. Its immutable output contains `candidate.json`, `candidate.sha256`, the package tarball, `controlled-evidence.json`, `consumer-package.json`, `consumer-package-lock.json`, and the generated `paste-harness/` runtime loaded by the live runner. The candidate binds the hardware-validation profile alongside the source commit/tree, source lock, paste-harness runtime, all story and schema files, generated reports, controlled evidence, exact Node/browser/target identity, package tarball and unpacked package tree, normalized production dependency resolution, and every regular file in the installed `node_modules` closure. Generated `node_modules/.bin` symlinks are excluded and never invoked. Freeze itself generates the portable consumer lock, proves its production resolution equals the reviewed source lock, and installs it with `npm ci --ignore-scripts --omit=dev`.
+
+Install only with the shipped consumer lock; an unlocked `npm install` is not release evidence:
+
+```sh
+export CANDIDATE="$RELEASE_ROOT/candidate"
+export INSTALL_ROOT="$RELEASE_ROOT/installed"
+mkdir -m 700 "$INSTALL_ROOT"
+cp "$CANDIDATE/consumer-package.json" "$INSTALL_ROOT/package.json"
+cp "$CANDIDATE/consumer-package-lock.json" "$INSTALL_ROOT/package-lock.json"
+cp "$CANDIDATE/"*.tgz "$INSTALL_ROOT/"
+(cd "$INSTALL_ROOT" && npm ci --ignore-scripts --omit=dev --no-audit --no-fund)
+export JETKVM_RELEASE_INSTALLED_PACKAGE="$INSTALL_ROOT/node_modules/@wyrmkeep/jetkvm-mcp"
+```
+
+Build the device application and target-side Go tests on GitHub's native `linux/amd64` runner from the exact frozen commit. The workflow emits `jetkvm_app`, `device-tests.tar.gz`, and a strict provenance sidecar binding both artifacts' SHA-256 digests to `GITHUB_SHA`, the repository, workflow ref, run ID, and attempt. Select the run by both branch and commit; never use an artifact selected only by recency:
+
+```sh
+export RELEASE_COMMIT="$(git rev-parse HEAD)"
+export RELEASE_BRANCH="$(git branch --show-current)"
+gh workflow run build.yml --ref "$RELEASE_BRANCH"
+export BUILD_RUN_ID="$(
+  gh run list \
+    --workflow build.yml \
+    --branch "$RELEASE_BRANCH" \
+    --commit "$RELEASE_COMMIT" \
+    --event workflow_dispatch \
+    --limit 1 \
+    --json databaseId \
+    --jq '.[0].databaseId'
+)"
+test -n "$BUILD_RUN_ID"
+gh run watch "$BUILD_RUN_ID" --compact --exit-status
+
+export DEVICE_ARTIFACT="$RELEASE_ROOT/device-artifact"
+mkdir -m 0700 "$DEVICE_ARTIFACT"
+gh run download "$BUILD_RUN_ID" \
+  --name jetkvm-app \
+  --dir "$DEVICE_ARTIFACT"
+chmod 0500 "$DEVICE_ARTIFACT/bin/jetkvm_app"
+chmod 0400 "$DEVICE_ARTIFACT/device-tests.tar.gz"
+chmod 0400 "$DEVICE_ARTIFACT/device-binary-provenance.json"
+export JETKVM_RELEASE_DEVICE_BINARY="$DEVICE_ARTIFACT/bin/jetkvm_app"
+export JETKVM_RELEASE_DEVICE_BINARY_SHA256="$(
+  shasum -a 256 "$JETKVM_RELEASE_DEVICE_BINARY" | awk '{print $1}'
+)"
+export JETKVM_RELEASE_DEVICE_TESTS="$DEVICE_ARTIFACT/device-tests.tar.gz"
+export JETKVM_RELEASE_DEVICE_TESTS_SHA256="$(
+  shasum -a 256 "$JETKVM_RELEASE_DEVICE_TESTS" | awk '{print $1}'
+)"
+export JETKVM_RELEASE_DEVICE_PROVENANCE="$DEVICE_ARTIFACT/device-binary-provenance.json"
+export JETKVM_RELEASE_DEVICE_PROVENANCE_SHA256="$(
+  shasum -a 256 "$JETKVM_RELEASE_DEVICE_PROVENANCE" | awk '{print $1}'
+)"
+```
+
+The target-side test archive is provenance-bound to the same CI run and executes directly on the JetKVM; the release path never cross-compiles it under host emulation. The reviewed digest is passed independently to the device, which verifies the uploaded archive immediately before extraction and execution. Upload and extraction use a preflighted owner-only workspace under `/userdata`, not the RAM-backed `/tmp`; every success, test failure, and upload failure removes that workspace before returning. Compiled source-contract regressions run from their original package-relative working directory against the exact referenced source fixtures carried in that same provenance-bound archive.
+
+Before device contact, the live runner requires the same clean commit/tree, validates the inherited proof against the exact configured-device fingerprint, verifies the device artifact and provenance-sidecar checksums, requires the trusted `build.yml` run to name the frozen commit, independently checks the Go binary's embedded revision, re-hashes the reviewed source lock and generated paste-harness runtime, re-hashes both shipped consumer files, the installed package, every installed dependency, the candidate tarball, controlled evidence, and the executing runtime, and loads the MCP SDK only from that verified installed closure. Run the complete gate under one device-keyed lease. The evidence root must already be an owner-only directory, and the new output directory must resolve beneath it without symlink escape; the rig environment file must also be owner-only. `DEVICE_KEY` must exactly equal the production runtime's `jetkvm-`-prefixed SHA-256 fingerprint of the configured target URL; the installed MCP refuses any other inherited lease:
+
+```sh
+export DEVICE_KEY="$(
+  node --input-type=module -e '
+    import { createHash } from "node:crypto";
+    process.stdout.write(
+      `jetkvm-${createHash("sha256").update(process.argv[1]).digest("hex")}`,
+    );
+  ' "$JETKVM_RELEASE_TARGET_URL"
+)"
+export JETKVM_RELEASE_CANDIDATE="$CANDIDATE/candidate.json"
+export JETKVM_RELEASE_CANDIDATE_SHA256="$(
+  awk '{print $1}' "$CANDIDATE/candidate.sha256"
+)"
+export JETKVM_RELEASE_CONTROLLED_EVIDENCE="$CANDIDATE/controlled-evidence.json"
+export JETKVM_RELEASE_EVIDENCE_ROOT="$RELEASE_ROOT"
+export JETKVM_RELEASE_EVIDENCE_DIR="$RELEASE_ROOT/hardware-evidence"
+export JETKVM_RELEASE_RIG_ENV='/absolute/private/rig.env'
+
+node "$JETKVM_RELEASE_INSTALLED_PACKAGE/dist/deviceLeaseRunner.js" \
+  --device-key "$DEVICE_KEY" \
+  --retain-on-exit-code 75 \
+  -- \
+  "$(command -v node)" scripts/run-live-hardware-release.mjs
+```
+
+The run validates the pre-deployment device-test artifact, every controlled branch's execution-produced request/response preimage, every canonical live story and restore, fresh session reconnects and image captures at baseline boundaries, a fresh-transport reconnect/release, the final producer-zero release, the original safe device/fixture baseline, the promoted device binary hash, and bounded MCP shutdown. Under `full`, it also requires the ATX preflight and every live step to pass. Under `atx_unavailable`, it derives the exact 17 ATX-wiring-dependent `(story_id, step_id)` pairs from the canonical validated plan, records those steps only as `excluded`, continues every mixed story and all non-ATX steps, and still requires every restore and baseline comparison to pass. The successful result is `pass_with_exception`, with the exact reason and excluded pairs sealed in `hardware-exception.json`; `atx_preflight_sha256` must be null. Any missing non-ATX step, extra skip, changed classification, failed restore, unknown result, profile mismatch, or exception-hash mismatch blocks release. SSH failure alone is never treated as proof that the host is off; automatic power restoration requires a fresh post-action physical ATX power-LED observation. Each live evidence record persists its scrubbed structured MCP preimages and exact image digests, so the validator recomputes every evidence hash instead of trusting an uncheckable digest. Its summary records the final verified profile, source, installation, runtime, device, deployment, and test identities. `finalization.json` is flushed before the evidence manifest. The validator enforces the profile-specific file inventory, requires an exact one-line checksum sidecar, and scans every raw manifested file for private material before tagging or publishing. Release notes for an `atx_unavailable` candidate must state that physical ATX switching was not validated on the selected fixture and must not translate controlled serial/acknowledgement evidence into a host-state claim.
+
+```sh
+node scripts/validate-hardware-release-evidence.mjs \
+  "$JETKVM_RELEASE_EVIDENCE_DIR" \
+  "$JETKVM_RELEASE_CANDIDATE"
+```
+
+If the final baseline is unproven, the child exits with code 75 and the outer wrapper intentionally retains the device lease; a retention-enabled run interrupted by `SIGHUP`, `SIGINT`, or `SIGTERM` also retains it. The wrapper itself reports failure because cleanup was refused. Inspect `finalization.json` `failure_stages`, manually restore and verify the physical host, display, UK layout, lock keys, held input, ATX state, browser fixture, running revision, and deployed binary, and ensure the failed holder has exited. Only then clear the retained lease through the safety-checked installed command:
+
+```sh
+npm --prefix "$JETKVM_RELEASE_INSTALLED_PACKAGE" \
+  run device-lease:remove-stale -- \
+  --device-key "$DEVICE_KEY" --confirm-recovered
+```
+
+Recovery refuses a different host, a live owner PID, a live supervisor process group, changed lease records, or an unsafe lease directory. Never delete lease files directly.
 
 ## Contract and protocol checks
 

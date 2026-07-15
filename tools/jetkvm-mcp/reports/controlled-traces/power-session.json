@@ -1,0 +1,3335 @@
+{
+  "schema_version": 1,
+  "evidence_source": "execution-produced-focused-handler-calls",
+  "traces": {
+    "focused:adapter:jetkvm-power-control:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 1,
+                "completed_action_count": 0,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-power-control:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-power-control:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-press_power",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-press_power",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-hold_power",
+            "action": "hold_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-hold_power",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "hold_power",
+              "wire_action": "power-long",
+              "fixed_press_ms": 5000,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-press_reset",
+            "action": "press_reset",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-press_reset",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_reset",
+              "wire_action": "reset",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-connect:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-connect:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-connect:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_connect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "connect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "takeover_performed": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-reconnect:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-reconnect:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-reconnect:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": false,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-status:device-rpc-adapter-mid-flight-loss": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:device-rpc-adapter-mid-flight-loss",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-status:device-rpc-adapter-replacement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:device-rpc-adapter-replacement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:adapter:jetkvm-session-status:shared-device-rpc-adapter-binding": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:shared-device-rpc-adapter-binding",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_status",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "dispatch_generation": 5,
+              "browser_channel_generation": 3,
+              "device_reachable": true,
+              "setup_state": "complete",
+              "auth_mode": "password",
+              "rpc_reachability": "reachable",
+              "native_process": "available",
+              "web_rtc": "connected",
+              "hid": "ready",
+              "decoded_video": "ready",
+              "native_capture_facts": {
+                "signal": {
+                  "value": "unknown",
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                },
+                "resolution": {
+                  "value": null,
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                },
+                "fps": {
+                  "value": null,
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                }
+              },
+              "active_mutation": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              },
+              "blocked_reason": null,
+              "versions": {
+                "server": "0.1.0",
+                "protocol": "1",
+                "ui_contract": "1",
+                "firmware": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:atx-acknowledgement-semantics": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:atx-acknowledgement-semantics",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-press_power",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-press_power",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-hold_power",
+            "action": "hold_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-hold_power",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "hold_power",
+              "wire_action": "power-long",
+              "fixed_press_ms": 5000,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-press_reset",
+            "action": "press_reset",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-press_reset",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_reset",
+              "wire_action": "reset",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:atx-gate-and-serialization": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:atx-gate-and-serialization",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The ATX extension is inactive.",
+              "phase": "validate",
+              "code": "ATX_EXTENSION_INACTIVE",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:cancellation-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:cancellation-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The operation was cancelled.",
+              "phase": "queue",
+              "code": "CANCELLED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:capability-missing": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:capability-missing",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The required device capability is unavailable.",
+              "phase": "validate",
+              "code": "CAPABILITY_MISSING",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "enable_capability",
+              "details": {
+                "permission": null,
+                "capability": "power_control",
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:cleanup-failure": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:cleanup-failure",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The ATX serial connection is unavailable.",
+              "phase": "execute",
+              "code": "ATX_SERIAL_UNAVAILABLE",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 1,
+                "completed_action_count": 0,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:deadline-before-admission": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:deadline-before-admission",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 100
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The operation deadline was exceeded.",
+              "phase": "queue",
+              "code": "DEADLINE_EXCEEDED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:definitive-acknowledgement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:definitive-acknowledgement",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-1",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:disconnect-after-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:disconnect-after-write",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 1,
+                "completed_action_count": 0,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:disconnect-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:disconnect-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:duplicate-changed-digest": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:duplicate-changed-digest",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "same-id",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "same-id",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "same-id",
+            "action": "press_reset",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The request ID was already used with different input.",
+              "phase": "validate",
+              "code": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:duplicate-same-request-digest": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:duplicate-same-request-digest",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-1",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-1",
+              "outcome": "already_applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:malformed-downstream-response": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:malformed-downstream-response",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The device returned a malformed response.",
+              "phase": "execute",
+              "code": "DOWNSTREAM_MALFORMED_RESPONSE",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 1,
+                "completed_action_count": 0,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:partial-verification": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:partial-verification",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-1",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        },
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_power_control",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "power-1",
+              "outcome": "already_applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "action": "press_power",
+              "wire_action": "power-short",
+              "fixed_press_ms": 200,
+              "serial_sequence_completed": true,
+              "atx_led_observation": {
+                "power": null,
+                "hdd": null,
+                "observed_at": null,
+                "freshness": "unknown"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:permission-denied": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:permission-denied",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The required permission was not granted.",
+              "phase": "authorize",
+              "code": "PERMISSION_DENIED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "grant_permission",
+              "details": {
+                "permission": "power.control",
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:stale-session-generation": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:stale-session-generation",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The device session generation is stale.",
+              "phase": "validate",
+              "code": "STALE_SESSION_GENERATION",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "admission",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-power-control:strict-schema-rejection": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_power_control branch:strict-schema-rejection",
+      "calls": [
+        {
+          "tool": "jetkvm_power_control",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "power-1",
+            "action": "press_power",
+            "timeout_ms": 1000,
+            "duration_ms": 0
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_power_control",
+            "error": {
+              "message": "The server configuration is invalid.",
+              "phase": "validate",
+              "code": "CONFIG_INVALID",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": 0,
+                "completed_action_count": 0,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:authorized-takeover": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:authorized-takeover",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_connect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "connect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "takeover_performed": true,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:busy-without-takeover": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:busy-without-takeover",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The configured device is controlled by another session.",
+              "phase": "authorize",
+              "code": "CONTROL_BUSY",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "wait_or_request_takeover",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "admission",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:cancellation-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:cancellation-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The operation was cancelled.",
+              "phase": "execute",
+              "code": "CANCELLED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:cleanup-failure": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:cleanup-failure",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The mutation outcome is unknown.",
+              "phase": "execute",
+              "code": "MUTATION_OUTCOME_UNKNOWN",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:deadline-before-admission": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:deadline-before-admission",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The operation deadline was exceeded.",
+              "phase": "execute",
+              "code": "DEADLINE_EXCEEDED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:definitive-acknowledgement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:definitive-acknowledgement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_connect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "connect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "takeover_performed": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:disconnect-after-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:disconnect-after-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:disconnect-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:disconnect-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:duplicate-changed-digest": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:duplicate-changed-digest",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The request ID was already used with different input.",
+              "phase": "validate",
+              "code": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:duplicate-same-request-digest": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:duplicate-same-request-digest",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_connect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "connect-1",
+              "outcome": "already_applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "takeover_performed": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:malformed-downstream-response": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:malformed-downstream-response",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The device returned a malformed response.",
+              "phase": "execute",
+              "code": "DOWNSTREAM_MALFORMED_RESPONSE",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:partial-verification": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:partial-verification",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_connect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "connect-1",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "takeover_performed": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:permission-denied": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:permission-denied",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The required permission was not granted.",
+              "phase": "authorize",
+              "code": "PERMISSION_DENIED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "grant_permission",
+              "details": {
+                "permission": "session.connect",
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:strict-schema-rejection": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:strict-schema-rejection",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000,
+            "forbidden": true
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The server configuration is invalid.",
+              "phase": "validate",
+              "code": "CONFIG_INVALID",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-connect:unauthorized-takeover": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_connect branch:unauthorized-takeover",
+      "calls": [
+        {
+          "tool": "jetkvm_session_connect",
+          "request": {
+            "request_id": "connect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": null,
+            "session_generation": null,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_connect",
+            "error": {
+              "message": "The required permission was not granted.",
+              "phase": "authorize",
+              "code": "PERMISSION_DENIED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "grant_permission",
+              "details": {
+                "permission": "session.connect",
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:authorized-takeover": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:authorized-takeover",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": true,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:busy-without-takeover": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:busy-without-takeover",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The configured device is controlled by another session.",
+              "phase": "authorize",
+              "code": "CONTROL_BUSY",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "wait_or_request_takeover",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "admission",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:cancellation-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:cancellation-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The operation was cancelled.",
+              "phase": "execute",
+              "code": "CANCELLED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:cleanup-failure": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:cleanup-failure",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The mutation outcome is unknown.",
+              "phase": "execute",
+              "code": "MUTATION_OUTCOME_UNKNOWN",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:deadline-before-admission": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:deadline-before-admission",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The operation deadline was exceeded.",
+              "phase": "execute",
+              "code": "DEADLINE_EXCEEDED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:definitive-acknowledgement": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:definitive-acknowledgement",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": false,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:disconnect-after-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:disconnect-after-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:disconnect-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:disconnect-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "connect",
+              "code": "CONNECTION_LOST",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:duplicate-changed-digest": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:duplicate-changed-digest",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The request ID was already used with different input.",
+              "phase": "validate",
+              "code": "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:duplicate-same-request-digest": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:duplicate-same-request-digest",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "already_applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": false,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:malformed-downstream-response": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:malformed-downstream-response",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device returned a malformed response.",
+              "phase": "execute",
+              "code": "DOWNSTREAM_MALFORMED_RESPONSE",
+              "outcome": "unknown",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "inspect_device_state_before_retry",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "write",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:partial-verification": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:partial-verification",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "applied",
+              "verification": "device_ack_only",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": false,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:permission-denied": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:permission-denied",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The required permission was not granted.",
+              "phase": "authorize",
+              "code": "PERMISSION_DENIED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "grant_permission",
+              "details": {
+                "permission": "session.reconnect",
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:reconnect-evidence": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:reconnect-evidence",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_reconnect",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 2,
+            "duration_ms": 0,
+            "result": {
+              "request_id": "reconnect-1",
+              "outcome": "applied",
+              "verification": "device_state_verified",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "previous_session_generation": 1,
+              "new_session_generation": 2,
+              "connection_epoch": 3,
+              "state": "ready",
+              "takeover_performed": false,
+              "fresh_capture_required": true
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:stale-session-generation": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:stale-session-generation",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The device session generation is stale.",
+              "phase": "validate",
+              "code": "STALE_SESSION_GENERATION",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "admission",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:strict-schema-rejection": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:strict-schema-rejection",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000,
+            "forbidden": true
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The server configuration is invalid.",
+              "phase": "validate",
+              "code": "CONFIG_INVALID",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-reconnect:unauthorized-takeover": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_reconnect branch:unauthorized-takeover",
+      "calls": [
+        {
+          "tool": "jetkvm_session_reconnect",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "request_id": "reconnect-1",
+            "takeover": false,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_reconnect",
+            "error": {
+              "message": "The required permission was not granted.",
+              "phase": "authorize",
+              "code": "PERMISSION_DENIED",
+              "outcome": "not_sent",
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "grant_permission",
+              "details": {
+                "permission": "session.reconnect",
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:cancellation-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:cancellation-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The operation was cancelled.",
+              "phase": "execute",
+              "code": "CANCELLED",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:capability-missing": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:capability-missing",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The required device capability is unavailable.",
+              "phase": "validate",
+              "code": "CAPABILITY_MISSING",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "enable_capability",
+              "details": {
+                "permission": null,
+                "capability": "session_status",
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:deadline-before-admission": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:deadline-before-admission",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The operation deadline was exceeded.",
+              "phase": "execute",
+              "code": "DEADLINE_EXCEEDED",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:disconnect-after-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:disconnect-after-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:disconnect-before-write": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:disconnect-before-write",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device connection was lost.",
+              "phase": "execute",
+              "code": "CONNECTION_LOST",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": true,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:malformed-downstream-response": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:malformed-downstream-response",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device returned a malformed response.",
+              "phase": "execute",
+              "code": "DOWNSTREAM_MALFORMED_RESPONSE",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "acknowledgement",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:per-fact-status-provenance": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:per-fact-status-provenance",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": true,
+            "tool": "jetkvm_session_status",
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "result": {
+              "state": "ready",
+              "connection_epoch": 2,
+              "display_generation": 4,
+              "dispatch_generation": 5,
+              "browser_channel_generation": 3,
+              "device_reachable": true,
+              "setup_state": "complete",
+              "auth_mode": "password",
+              "rpc_reachability": "reachable",
+              "native_process": "available",
+              "web_rtc": "connected",
+              "hid": "ready",
+              "decoded_video": "ready",
+              "native_capture_facts": {
+                "signal": {
+                  "value": "unknown",
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                },
+                "resolution": {
+                  "value": null,
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                },
+                "fps": {
+                  "value": null,
+                  "observed_at": null,
+                  "age_ms": null,
+                  "freshness": "unknown",
+                  "source": "none"
+                }
+              },
+              "active_mutation": false,
+              "fresh_capture_required": true,
+              "permissions": [
+                "session.connect",
+                "session.status",
+                "session.reconnect",
+                "session.takeover",
+                "display.capture",
+                "display.status",
+                "input.mouse",
+                "input.keyboard",
+                "input.paste",
+                "input.release",
+                "power.control"
+              ],
+              "capabilities": {
+                "session_status": true,
+                "display_capture": true,
+                "display_status": true,
+                "mouse": true,
+                "absolute_pointer": true,
+                "keyboard": true,
+                "reliable_paste": true,
+                "input_release": true,
+                "power_control": true,
+                "edid_read": true
+              },
+              "blocked_reason": null,
+              "versions": {
+                "server": "0.1.0",
+                "protocol": "1",
+                "ui_contract": "1",
+                "firmware": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:permission-denied": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:permission-denied",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The required permission was not granted.",
+              "phase": "authorize",
+              "code": "PERMISSION_DENIED",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "grant_permission",
+              "details": {
+                "permission": "session.status",
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:stale-session-generation": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:stale-session-generation",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The device session generation is stale.",
+              "phase": "validate",
+              "code": "STALE_SESSION_GENERATION",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "reconnect_then_capture",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "admission",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focused:unit:jetkvm-session-status:strict-schema-rejection": {
+      "test_identity": "Phase 4 power/session focused assertion matrix > jetkvm_session_status branch:strict-schema-rejection",
+      "calls": [
+        {
+          "tool": "jetkvm_session_status",
+          "request": {
+            "session_id": "session-1",
+            "session_generation": 1,
+            "timeout_ms": 1000,
+            "forbidden": true
+          },
+          "response": {
+            "ok": false,
+            "operation_id": "phase-4-operation",
+            "session_id": "session-1",
+            "session_generation": 1,
+            "duration_ms": 0,
+            "tool": "jetkvm_session_status",
+            "error": {
+              "message": "The server configuration is invalid.",
+              "phase": "validate",
+              "code": "CONFIG_INVALID",
+              "outcome": null,
+              "verification": "none",
+              "safe_to_retry": false,
+              "required_next_step": "none",
+              "details": {
+                "permission": null,
+                "capability": null,
+                "failed_action_index": null,
+                "dispatched_action_count": null,
+                "completed_action_count": null,
+                "downstream_stage": "none",
+                "expected_generation": null,
+                "actual_generation": null,
+                "observation_id": null
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

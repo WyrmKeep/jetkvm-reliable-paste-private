@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import {
   createServer,
@@ -37,7 +40,12 @@ import {
   type LegacySseConfigInput,
   type LegacySseSecurityPolicy,
 } from "../config.js";
-import { JETKVM_TOOL_NAMES, type JetKvmToolName } from "../domain.js";
+import {
+  CAPABILITY_NAMES,
+  JETKVM_TOOL_NAMES,
+  PERMISSION_NAMES,
+  type JetKvmToolName,
+} from "../domain.js";
 import {
   MCP_SERVER_BUSY_ERROR_CODE,
   type HandlerRegistry,
@@ -114,6 +122,99 @@ function businessError(
   };
   return {
     isError: true,
+    structuredContent: payload,
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+  };
+}
+function sessionSuccess(
+  tool: "jetkvm_session_connect" | "jetkvm_session_status",
+  operationId: string,
+): CallToolResult {
+  const capabilities = Object.fromEntries(
+    CAPABILITY_NAMES.map((name) => [name, true]),
+  );
+  const common = {
+    ok: true as const,
+    tool,
+    operation_id: operationId,
+    session_id: "session-1",
+    session_generation: 1,
+    duration_ms: 0,
+  };
+  const payload =
+    tool === "jetkvm_session_connect"
+      ? {
+          ...common,
+          tool,
+          result: {
+            request_id: "request-1",
+            outcome: "applied" as const,
+            verification: "device_ack_only" as const,
+            safe_to_retry: false as const,
+            required_next_step: "none" as const,
+            state: "ready" as const,
+            connection_epoch: 1,
+            display_generation: 1,
+            takeover_performed: false,
+            fresh_capture_required: true,
+            permissions: [...PERMISSION_NAMES],
+            capabilities,
+          },
+        }
+      : {
+          ...common,
+          tool,
+          result: {
+            state: "ready" as const,
+            connection_epoch: 1,
+            display_generation: 1,
+            dispatch_generation: 1,
+            browser_channel_generation: 1,
+            device_reachable: true,
+            setup_state: "complete" as const,
+            auth_mode: "password" as const,
+            rpc_reachability: "reachable" as const,
+            native_process: "available" as const,
+            web_rtc: "connected" as const,
+            hid: "ready" as const,
+            decoded_video: "ready" as const,
+            native_capture_facts: {
+              signal: {
+                value: "unknown" as const,
+                observed_at: null,
+                age_ms: null,
+                freshness: "unknown" as const,
+                source: "none" as const,
+              },
+              resolution: {
+                value: null,
+                observed_at: null,
+                age_ms: null,
+                freshness: "unknown" as const,
+                source: "none" as const,
+              },
+              fps: {
+                value: null,
+                observed_at: null,
+                age_ms: null,
+                freshness: "unknown" as const,
+                source: "none" as const,
+              },
+            },
+            active_mutation: false,
+            fresh_capture_required: true,
+            permissions: [...PERMISSION_NAMES],
+            capabilities,
+            blocked_reason: null,
+            versions: {
+              server: "0.1.0",
+              protocol: "1",
+              ui_contract: "1",
+              firmware: null,
+            },
+          },
+        };
+  return {
     structuredContent: payload,
     content: [{ type: "text", text: JSON.stringify(payload) }],
   };
@@ -4677,6 +4778,32 @@ describe(PHASE_5_SSE_SUITE, () => {
   });
 });
 
+const TRANSPORT_TRACE_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../reports/controlled-traces/transport-session.json",
+);
+
+async function verifyTransportTraceReport(calls: readonly unknown[]) {
+  const report = {
+    schema_version: 1,
+    evidence_source: "execution-produced-protocol-calls",
+    traces: {
+      "scenario:transport-reconnect-does-not-own-device:protocol": {
+        test_identity:
+          "Phase 5 supplemental story contracts > transport reconnect preserves application session",
+        calls,
+      },
+    },
+  };
+  const serialized = `${JSON.stringify(report, null, 2)}\n`;
+  if (process.env.JETKVM_WRITE_CONTROLLED_TRACES === "1") {
+    await mkdir(dirname(TRANSPORT_TRACE_PATH), { recursive: true });
+    await writeFile(TRANSPORT_TRACE_PATH, serialized, "utf8");
+  } else {
+    expect(await readFile(TRANSPORT_TRACE_PATH, "utf8")).toBe(serialized);
+  }
+}
+
 const PHASE_5_STORY_CONTRACT_SUITE = "Phase 5 supplemental story contracts";
 
 describe(PHASE_5_STORY_CONTRACT_SUITE, () => {
@@ -4693,13 +4820,18 @@ describe(PHASE_5_STORY_CONTRACT_SUITE, () => {
     async () => {
       let logicalSession: string | null = null;
       const connectHandler = vi.fn(async () => {
-        logicalSession = "application-session-1";
-        return businessError("jetkvm_session_connect", "transport-connect");
+        logicalSession = "session-1";
+        return sessionSuccess("jetkvm_session_connect", "transport-connect");
       });
       const statusHandler = vi.fn(async () => {
-        expect(logicalSession).toBe("application-session-1");
-        return businessError("jetkvm_session_status", "transport-status");
+        expect(logicalSession).toBe("session-1");
+        return sessionSuccess("jetkvm_session_status", "transport-status");
       });
+      const traceCalls: {
+        tool: string;
+        request: Record<string, unknown>;
+        response: Record<string, unknown>;
+      }[] = [];
       const firstClosed = Promise.withResolvers<void>();
       const value = await startAdapter({
         handlerRegistry: completeRegistry({
@@ -4718,19 +4850,63 @@ describe(PHASE_5_STORY_CONTRACT_SUITE, () => {
           arguments: phase5ValidInput("jetkvm_session_connect"),
         }),
       ).toContain("transport-connect");
+      const beforeRequest = phase5ValidInput("jetkvm_session_status");
+      const beforeResponse = await phase5Rpc(
+        value.baseUrl,
+        first,
+        3,
+        "tools/call",
+        {
+          name: "jetkvm_session_status",
+          arguments: beforeRequest,
+        },
+      );
+      expect(beforeResponse).toContain("transport-status");
+      traceCalls.push({
+        tool: "jetkvm_session_status",
+        request: beforeRequest,
+        response: {
+          tool: "jetkvm_session_status",
+          wire_response: beforeResponse,
+        },
+      });
       first.response.destroy();
       await firstClosed.promise;
 
       const replacement = await openSse(value.baseUrl);
-      await initializePhase5Stream(value.baseUrl, replacement, 3);
-      expect(
-        await phase5Rpc(value.baseUrl, replacement, 4, "tools/call", {
+      await initializePhase5Stream(value.baseUrl, replacement, 4);
+      traceCalls.push({
+        tool: "mcp_transport_reconnect",
+        request: { transport_principal: "same-authorized-principal" },
+        response: {
+          tool: "mcp_transport_reconnect",
+          initialized: true,
+          device_operation_count: 0,
+        },
+      });
+      const afterRequest = phase5ValidInput("jetkvm_session_status");
+      const afterResponse = await phase5Rpc(
+        value.baseUrl,
+        replacement,
+        5,
+        "tools/call",
+        {
           name: "jetkvm_session_status",
-          arguments: phase5ValidInput("jetkvm_session_status"),
-        }),
-      ).toContain("transport-status");
+          arguments: afterRequest,
+        },
+      );
+      expect(afterResponse).toContain("transport-status");
+      traceCalls.push({
+        tool: "jetkvm_session_status",
+        request: afterRequest,
+        response: {
+          tool: "jetkvm_session_status",
+          wire_response: afterResponse,
+        },
+      });
       expect(connectHandler).toHaveBeenCalledOnce();
-      expect(statusHandler).toHaveBeenCalledOnce();
+      expect(statusHandler).toHaveBeenCalledTimes(2);
+      await verifyTransportTraceReport(traceCalls);
       replacement.response.destroy();
     },
   );
