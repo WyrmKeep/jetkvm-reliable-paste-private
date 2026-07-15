@@ -86,12 +86,87 @@ describe("ManagedBrowserController", () => {
     expect(managed.connectionIdentity()).not.toBe(firstIdentity);
   });
 
+  it.each(["close", "reconnect", "dispose"] as const)(
+    "retains the active controller when %s cleanup fails",
+    async (operation) => {
+      let openCount = 0;
+      let closeAttempts = 0;
+      const active = {
+        connectionIdentity: () => active,
+        snapshot: async () => snapshot(1),
+        stableReadySnapshot: async () => snapshot(1),
+        close: async () => {
+          closeAttempts += 1;
+          if (closeAttempts === 1) throw new Error("close failed");
+        },
+      } as unknown as BrowserControllerPort;
+      const managed = new ManagedBrowserController({
+        open: async () => {
+          openCount += 1;
+          return active;
+        },
+      });
+      await managed.snapshot(deadline);
+
+      await expect(managed[operation](deadline)).rejects.toThrow(
+        "close failed",
+      );
+      await expect(managed.close(deadline)).resolves.toBeUndefined();
+
+      expect(openCount).toBe(1);
+      expect(closeAttempts).toBe(2);
+    },
+  );
+
+  it("passes only the remaining deadline budget after close", async () => {
+    let now = 0;
+    const observed: Array<{ phase: "close" | "open"; timeoutMs: number }> = [];
+    const first = {
+      connectionIdentity: () => first,
+      snapshot: async () => snapshot(1),
+      stableReadySnapshot: async () => snapshot(1),
+      close: async (received: Deadline) => {
+        observed.push({ phase: "close", timeoutMs: received.timeoutMs });
+        now += 400;
+      },
+    } as unknown as BrowserControllerPort;
+    const second = {
+      connectionIdentity: () => second,
+      snapshot: async () => snapshot(2),
+      stableReadySnapshot: async () => snapshot(2),
+      close: async () => undefined,
+    } as unknown as BrowserControllerPort;
+    let opened = 0;
+    const managed = new ManagedBrowserController(
+      {
+        open: async (received) => {
+          observed.push({ phase: "open", timeoutMs: received.timeoutMs });
+          opened += 1;
+          return opened === 1 ? first : second;
+        },
+      },
+      () => now,
+    );
+    await managed.snapshot(deadline);
+    observed.length = 0;
+
+    await managed.reconnect(deadline);
+
+    expect(observed).toEqual([
+      { phase: "close", timeoutMs: 1_000 },
+      { phase: "open", timeoutMs: 600 },
+    ]);
+  });
+
   it("reconnects through a fresh controller and disposes idempotently", async () => {
     const setup = factory();
     const managed = new ManagedBrowserController(setup.value);
     await managed.snapshot(deadline);
 
-    expect((await managed.reconnect(deadline)).channel_generation).toBe(2);
+    await expect(managed.reconnect(deadline)).resolves.toBeUndefined();
+    expect(
+      (await managed.stableReadySnapshot(deadline)).channel_generation,
+    ).toBe(2);
     expect(setup.opened).toEqual([1, 2]);
     expect(setup.closed).toEqual([1]);
     expect((await managed.snapshot(deadline)).channel_generation).toBe(2);

@@ -94,10 +94,15 @@ class FakeController implements BrowserControllerPort {
   public readEdidError: BrowserPlaneError | null = null;
   public readEdidGate: Promise<void> | null = null;
   public reconnectGate: Promise<void> | null = null;
+  public closeGate: Promise<void> | null = null;
   public atxError: BrowserPlaneError | null = null;
+  public reconnectError: Error | null = null;
+  public closeError: Error | null = null;
   public closed = false;
   public frameSequence = 0;
   public stableReadySnapshotCalls = 0;
+  public rotateIdentityOnReconnect = false;
+  public snapshotAfterReconnect: AutomationSnapshot | null = null;
 
   public async snapshot(_deadline: Deadline): Promise<AutomationSnapshot> {
     return this.snapshotValue;
@@ -300,12 +305,27 @@ class FakeController implements BrowserControllerPort {
     return this.identity;
   }
 
-  public async reconnect(): Promise<AutomationSnapshot> {
+  public async reconnect(): Promise<void> {
     if (this.reconnectGate !== null) await this.reconnectGate;
-    return this.snapshotValue;
+    if (this.reconnectError !== null) {
+      const error = this.reconnectError;
+      this.reconnectError = null;
+      throw error;
+    }
+    if (this.rotateIdentityOnReconnect) this.identity = {};
+    if (this.snapshotAfterReconnect !== null) {
+      this.snapshotValue = this.snapshotAfterReconnect;
+      this.snapshotAfterReconnect = null;
+    }
   }
 
   public async close(): Promise<void> {
+    if (this.closeGate !== null) await this.closeGate;
+    if (this.closeError !== null) {
+      const error = this.closeError;
+      this.closeError = null;
+      throw error;
+    }
     this.closed = true;
   }
 }
@@ -841,7 +861,33 @@ describe("JetKvmBrowserPlane paste and release", () => {
     });
     await expect(capture(plane)).resolves.toBeTruthy();
   });
-  it("invalidates the old binding when reconnect lacks a new channel generation", async () => {
+  it("retains cleanup ownership until controller close succeeds", async () => {
+    const { plane, controller } = setup();
+    await plane.connect(ref, deadline);
+    controller.closeError = new Error("close failed");
+
+    await expect(plane.close(ref, deadline)).rejects.toThrow("close failed");
+    expect(() => plane.deviceRpc.binding).toThrowError(
+      expect.objectContaining({ code: "CONNECTION_LOST" }),
+    );
+    await expect(plane.close(ref, deadline)).resolves.toBeUndefined();
+    expect(() => plane.deviceRpc.binding).toThrowError(
+      expect.objectContaining({ code: "CONNECTION_LOST" }),
+    );
+  });
+
+  it("retains the prior ref when controller reconnect fails", async () => {
+    const { plane, controller } = setup();
+    await plane.connect(ref, deadline);
+    controller.reconnectError = new Error("reconnect failed");
+
+    await expect(plane.reconnect(ref, deadline)).rejects.toThrow(
+      "reconnect failed",
+    );
+    await expect(plane.close(ref, deadline)).resolves.toBeUndefined();
+  });
+
+  it("invalidates the old binding when reconnect supplies neither fresh controller nor channel evidence", async () => {
     const { plane } = setup();
     await plane.connect(ref, deadline);
     await expect(plane.reconnect(ref, deadline)).rejects.toMatchObject({
@@ -853,9 +899,44 @@ describe("JetKvmBrowserPlane paste and release", () => {
     );
   });
 
+  it("rejects a regressed channel from the same controller identity", async () => {
+    const { plane, controller } = setup();
+    await plane.connect(ref, deadline);
+    controller.snapshotValue = {
+      ...readySnapshot,
+      lifecycle_generation: 1,
+      channel_generation: 1,
+    };
+
+    await expect(plane.reconnect(ref, deadline)).rejects.toMatchObject({
+      code: "CONNECTION_LOST",
+      outcome: "not_sent",
+    });
+  });
+
+  it("publishes the post-reconnect stable snapshot", async () => {
+    const { plane, controller } = setup();
+    await plane.connect(ref, deadline);
+    controller.rotateIdentityOnReconnect = true;
+    controller.snapshotAfterReconnect = {
+      ...readySnapshot,
+      lifecycle_generation: 3,
+      channel_generation: 4,
+    };
+
+    await expect(plane.reconnect(ref, deadline)).resolves.toMatchObject({
+      connectionEpoch: 3,
+      browserChannelGeneration: 4,
+    });
+    await expect(plane.observeSession(ref, deadline)).resolves.toMatchObject({
+      dispatchGeneration: readySnapshot.dispatch_generation,
+    });
+  });
+
   it("keeps Node binding lineage monotonic when a replacement facade resets local counters", async () => {
     const { plane, controller } = setup();
     const first = await plane.connect(ref, deadline);
+    controller.rotateIdentityOnReconnect = true;
     controller.snapshotValue = {
       ...readySnapshot,
       lifecycle_generation: 1,
@@ -1075,5 +1156,28 @@ describe("page-backed shared DeviceRpcAdapter", () => {
       connectionEpoch: 3,
       browserChannelGeneration: 4,
     });
+  });
+  it("invalidates the old adapter while close is still in progress", async () => {
+    const { plane, controller } = setup();
+    const connection = await plane.connect(ref, deadline);
+    let resolveRead!: () => void;
+    controller.readEdidGate = new Promise<void>((resolve) => {
+      resolveRead = resolve;
+    });
+    let resolveClose!: () => void;
+    controller.closeGate = new Promise<void>((resolve) => {
+      resolveClose = resolve;
+    });
+    const readPromise = plane.deviceRpc.readEdid(connection.binding, deadline);
+    const closePromise = plane.close(ref, deadline);
+
+    resolveRead();
+    await expect(readPromise).rejects.toMatchObject({
+      code: "BINDING_REPLACED",
+      acknowledged: true,
+    });
+
+    resolveClose();
+    await expect(closePromise).resolves.toBeUndefined();
   });
 });

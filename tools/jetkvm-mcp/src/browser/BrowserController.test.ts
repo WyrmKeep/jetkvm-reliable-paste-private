@@ -324,10 +324,13 @@ describe("BrowserController", () => {
       changedChannel,
       changedChannel,
     ]);
+    const previousIdentity = controller.connectionIdentity();
 
-    await expect(controller.reconnect(deadline)).resolves.toEqual(
+    await expect(controller.reconnect(deadline)).resolves.toBeUndefined();
+    await expect(controller.stableReadySnapshot(deadline)).resolves.toEqual(
       changedChannel,
     );
+    expect(controller.connectionIdentity()).not.toBe(previousIdentity);
 
     expect(page.reloadCalls).toBe(1);
     expect(page.waits).toEqual([250, 250, 250]);
@@ -353,7 +356,12 @@ describe("BrowserController", () => {
       outcome: "not_sent",
     });
     expect(closeSpy).toHaveBeenCalledOnce();
+    const retry = controller.close(deadline);
+    expect(closeSpy).toHaveBeenCalledTimes(2);
     closeGate.resolve();
+    await expect(retry).resolves.toBeUndefined();
+    await expect(controller.close(deadline)).resolves.toBeUndefined();
+    expect(closeSpy).toHaveBeenCalledTimes(2);
   });
 
   it("does not enter the page when cancellation already won", async () => {

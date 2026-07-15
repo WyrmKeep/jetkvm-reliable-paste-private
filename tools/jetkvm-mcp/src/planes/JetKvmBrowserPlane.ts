@@ -24,7 +24,10 @@ import {
   type QualifiedFact,
   type SessionRef,
 } from "../device/DeviceRpcAdapter.js";
-import type { BrowserControllerPort } from "../browser/BrowserController.js";
+import {
+  createBrowserDeadlineBudget,
+  type BrowserControllerPort,
+} from "../browser/BrowserController.js";
 import {
   BrowserPlaneError,
   type AutomationSnapshot,
@@ -926,12 +929,24 @@ export class JetKvmBrowserPlane implements BrowserPlane {
 
   public async close(ref: SessionRef, deadline: Deadline): Promise<void> {
     this.assertDeadline(deadline);
-    this.assertRef(ref);
+    const cleanupOwner = this.current ?? this.previous;
+    if (cleanupOwner === null) {
+      throw admissionFailure("CONNECTION_LOST", "reconnect_then_capture");
+    }
+    if (
+      cleanupOwner.ref.sessionId !== ref.sessionId ||
+      cleanupOwner.ref.sessionGeneration !== ref.sessionGeneration
+    ) {
+      throw admissionFailure(
+        "STALE_SESSION_GENERATION",
+        "reconnect_then_capture",
+      );
+    }
+    this.previous = cleanupOwner;
+    this.current = null;
     this.gateClosed = true;
     this.observations.clear();
     this.clearHeldKeys();
-    this.previous = this.current;
-    this.current = null;
     await this.controller.close(deadline);
   }
 
@@ -941,6 +956,7 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     replacing: boolean,
   ): Promise<BrowserConnection> {
     this.assertDeadline(deadline);
+    const budget = createBrowserDeadlineBudget(deadline);
     let snapshot: AutomationSnapshot;
     const previous = replacing ? (this.current ?? this.previous) : this.current;
     if (replacing) {
@@ -955,18 +971,25 @@ export class JetKvmBrowserPlane implements BrowserPlane {
       this.gateClosed = true;
       this.observations.clear();
       this.clearHeldKeys();
-      snapshot = await this.controller.reconnect(deadline);
+      await this.controller.reconnect(budget.remaining());
+      snapshot = await this.controller.stableReadySnapshot(budget.remaining());
     } else {
-      snapshot = await this.controller.stableReadySnapshot(deadline);
+      snapshot = await this.controller.stableReadySnapshot(budget.remaining());
     }
     this.assertReady(snapshot);
+    const controllerIdentity = this.controller.connectionIdentity();
     const sameSessionLineage =
       previous !== null && previous.binding.sessionId === ref.sessionId;
+    const controllerReplaced =
+      previous !== null && controllerIdentity !== previous.controllerIdentity;
+    const localChannelAdvanced =
+      previous !== null &&
+      snapshot.channel_generation > previous.snapshot.channel_generation;
     if (
       replacing &&
       sameSessionLineage &&
-      this.controller.connectionIdentity() === previous.controllerIdentity &&
-      snapshot.channel_generation === previous.snapshot.channel_generation
+      !controllerReplaced &&
+      !localChannelAdvanced
     ) {
       throw admissionFailure("CONNECTION_LOST", "reconnect_then_capture");
     }
@@ -990,7 +1013,7 @@ export class JetKvmBrowserPlane implements BrowserPlane {
         connectionEpoch,
         browserChannelGeneration,
       }),
-      controllerIdentity: this.controller.connectionIdentity(),
+      controllerIdentity,
       snapshot,
       lastFrameSequence: 0,
     };

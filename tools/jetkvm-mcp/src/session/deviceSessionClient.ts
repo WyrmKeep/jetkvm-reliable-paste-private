@@ -294,6 +294,7 @@ export class DeviceSessionClient {
   readonly #scheduler: DeviceSessionScheduler;
   readonly #sessions = new Map<string, SessionRecord>();
   #activeSessionId: string | null = null;
+  #browserCleanupOwnerRef: SessionRef | null = null;
   #lockTail = Promise.resolve();
 
   public constructor(options: DeviceSessionClientOptions) {
@@ -412,7 +413,7 @@ export class DeviceSessionClient {
           }
           takeoverPerformed = true;
           irreversibleTransition = true;
-          const incumbentRef = this.#ref(incumbent);
+          const incumbentRef = this.#cleanupRef(incumbent);
           planeInvoked = true;
           await this.#quiesce(incumbent, input.request_id, scope.remaining());
           await this.#browser.close(incumbentRef, scope.remaining());
@@ -452,6 +453,7 @@ export class DeviceSessionClient {
             scope.remaining(),
           );
           connectionOpened = true;
+          this.#browserCleanupOwnerRef = { ...ref };
           this.#assertConnection(connection, ref);
           const connectionEvidence =
             this.#captureConnectionEvidence(connection);
@@ -516,7 +518,8 @@ export class DeviceSessionClient {
           let connectionAbsent =
             failure.outcome === "not_sent" && !connectionOpened;
           if (connectionOpened || failure.outcome === "unknown") {
-            const cleanupSucceeded = await this.#closeForCleanup(ref);
+            const cleanupRef = this.#browserCleanupOwnerRef ?? ref;
+            const cleanupSucceeded = await this.#closeForCleanup(cleanupRef);
             connectionAbsent = cleanupSucceeded;
             if (!cleanupSucceeded) {
               this.#activeSessionId = record.sessionId;
@@ -669,6 +672,9 @@ export class DeviceSessionClient {
         const recordWasTakenOver = record.state === "taken_over";
         let takeoverPerformed = recordWasTakenOver;
         const incumbent = this.#activeRecord();
+        const reconnectsActiveRecord =
+          incumbent?.sessionId === record.sessionId;
+        const replacementOwnerRef = this.#browserCleanupOwnerRef;
         if (incumbent !== null && incumbent.sessionId !== record.sessionId) {
           if (!takeover) {
             throw clientError(
@@ -680,7 +686,6 @@ export class DeviceSessionClient {
           }
           takeoverPerformed = true;
           irreversibleTransition = true;
-          const incumbentRef = this.#ref(incumbent);
           planeInvoked = true;
           await this.#quiesce(incumbent, input.request_id, scope.remaining());
           incumbent.state = "taken_over";
@@ -698,10 +703,10 @@ export class DeviceSessionClient {
         }
 
         const previousGeneration = record.sessionGeneration;
-        const previousRef = this.#ref(record);
+        const previousRef = this.#browserCleanupOwnerRef ?? this.#ref(record);
         irreversibleTransition = true;
         record.lifecycle.abort(new DeadlineAbort("caller"));
-        if (!recordWasTakenOver) {
+        if (reconnectsActiveRecord) {
           planeInvoked = true;
           await this.#quiesce(record, input.request_id, scope.remaining());
           if (this.#activeSessionId === record.sessionId) {
@@ -724,6 +729,7 @@ export class DeviceSessionClient {
             scope.remaining(),
           );
           connectionOpened = true;
+          this.#browserCleanupOwnerRef = { ...nextRef };
           this.#assertConnection(connection, nextRef, {
             connectionEpoch: previousConnectionEpoch,
             browserChannelGeneration: previousBrowserChannelGeneration,
@@ -791,7 +797,11 @@ export class DeviceSessionClient {
             irreversibleTransition,
           );
           if (connectionOpened || failure.outcome === "unknown") {
-            const cleanupSucceeded = await this.#closeForCleanup(nextRef);
+            const cleanupRef =
+              this.#browserCleanupOwnerRef ??
+              replacementOwnerRef ??
+              previousRef;
+            const cleanupSucceeded = await this.#closeForCleanup(cleanupRef);
             if (!cleanupSucceeded) {
               this.#activeSessionId = record.sessionId;
               if (failure.outcome === "not_sent") {
@@ -1124,7 +1134,7 @@ export class DeviceSessionClient {
       return;
     }
     const receipt = await this.#browser.release(
-      this.#ref(record),
+      this.#cleanupRef(record),
       { requestId },
       deadline,
     );
@@ -1196,6 +1206,10 @@ export class DeviceSessionClient {
       sessionId: record.sessionId,
       sessionGeneration: record.sessionGeneration,
     };
+  }
+
+  #cleanupRef(record: SessionRecord): SessionRef {
+    return this.#browserCleanupOwnerRef ?? this.#ref(record);
   }
 
   #captureConnectionEvidence(

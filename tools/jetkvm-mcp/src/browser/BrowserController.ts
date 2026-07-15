@@ -35,6 +35,24 @@ import {
 } from "./bridgeProtocol.js";
 const RECONNECT_STABILITY_POLL_MS = 250;
 const RECONNECT_STABLE_SNAPSHOT_COUNT = 3;
+export type BrowserDeadlineClock = () => number;
+
+export function createBrowserDeadlineBudget(
+  deadline: Deadline,
+  clock: BrowserDeadlineClock = () => performance.now(),
+): { remaining(): Deadline } {
+  const startedAtMs = clock();
+  if (!Number.isFinite(startedAtMs)) {
+    throw new Error("Browser deadline clock must return a finite value.");
+  }
+  const expiresAtMs = startedAtMs + deadline.timeoutMs;
+  return {
+    remaining: () => ({
+      timeoutMs: Math.max(0, Math.ceil(expiresAtMs - clock())),
+      signal: deadline.signal,
+    }),
+  };
+}
 
 export interface BrowserControllerPort {
   snapshot(deadline: Deadline): Promise<AutomationSnapshot>;
@@ -71,8 +89,9 @@ export interface BrowserControllerPort {
     request: AtxBridgeRequest,
     deadline: Deadline,
   ): Promise<ReadBridgeResult>;
+  /** Stable identity for the live page bridge; changes only after replacement succeeds. */
   connectionIdentity(): object;
-  reconnect(deadline: Deadline): Promise<AutomationSnapshot>;
+  reconnect(deadline: Deadline): Promise<void>;
   close(deadline: Deadline): Promise<void>;
 }
 
@@ -504,7 +523,7 @@ export class BrowserController implements BrowserControllerPort {
     );
   }
 
-  public async reconnect(deadline: Deadline): Promise<AutomationSnapshot> {
+  public async reconnect(deadline: Deadline): Promise<void> {
     assertDeadline(deadline);
     if (this.closed) {
       throw inputTimeoutError("CANCELLED");
@@ -515,21 +534,19 @@ export class BrowserController implements BrowserControllerPort {
       false,
       0,
     );
-    const snapshot = await this.stableReadySnapshot(deadline);
     this.identity = Object.freeze({});
-    return snapshot;
   }
 
   public async close(deadline: Deadline): Promise<void> {
     assertDeadline(deadline);
     if (this.closed) return;
-    this.closed = true;
     await this.awaitPageEvaluation(
       this.page.close({ runBeforeUnload: false }),
       deadline,
       false,
       0,
     );
+    this.closed = true;
   }
 
   private async runMutation(
