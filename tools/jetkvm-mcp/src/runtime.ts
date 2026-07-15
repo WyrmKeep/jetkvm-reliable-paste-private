@@ -21,6 +21,8 @@ import {
   type ToolHandlerComposition,
 } from "./ToolHandlers.js";
 
+const DEVICE_CAPABILITY_READ_TIMEOUT_MS = 30_000;
+
 export interface ProductionRuntime {
   readonly handlers: HandlerRegistry;
   readonly composition: ToolHandlerComposition;
@@ -44,7 +46,13 @@ export async function qualifyConnectionCapabilities(
   const snapshot = await controller.snapshot(deadline);
   const display = await connection.deviceRpc.readDisplayState(
     connection.binding,
-    deadline,
+    {
+      timeoutMs: Math.min(
+        deadline.timeoutMs,
+        DEVICE_CAPABILITY_READ_TIMEOUT_MS,
+      ),
+      signal: deadline.signal,
+    },
   );
   if (display.qualification !== "current_binding") {
     throw new DeviceRpcError(

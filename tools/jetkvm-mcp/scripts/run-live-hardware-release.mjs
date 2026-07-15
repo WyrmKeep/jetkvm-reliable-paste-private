@@ -990,7 +990,7 @@ async function run() {
     JETKVM_CHROMIUM_EXECUTABLE_PATH: browserPath,
     JETKVM_ALLOW_INSECURE_HTTP: "true",
     JETKVM_ALLOW_DANGEROUS_TARGET_HTTP: "true",
-    JETKVM_CONNECT_TIMEOUT_MS: "30000",
+    JETKVM_CONNECT_TIMEOUT_MS: "60000",
   };
   const mcpOptions = createInstalledMcpOptions({
     installedPackageRoot,

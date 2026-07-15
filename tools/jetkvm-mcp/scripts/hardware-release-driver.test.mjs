@@ -302,6 +302,73 @@ test("refuses an ATX power pulse when host reachability is unknown", async () =>
   );
   assert.deepEqual(calls, []);
 });
+
+test("gives post-reboot session qualification the full public deadline", async () => {
+  const calls = [];
+  const releaseResult = {
+    mutation_gate_closed: true,
+    deferred_producers_joined: true,
+    paste_terminal: "inactive",
+    ordinary_leases_zero: true,
+    keyboard_zero: true,
+    pointer_zero: true,
+    generation_drained: true,
+  };
+  const driver = createLiveHardwareDriver({
+    mcp: {
+      async call(name, input, timeoutMs) {
+        calls.push({ name, input, timeoutMs });
+        if (name === "jetkvm_session_connect") {
+          return {
+            raw: {
+              ok: true,
+              session_id: "preflight-session",
+              session_generation: 1,
+              result: {
+                verification: "device_state_verified",
+                capabilities: { power_control: true },
+              },
+            },
+            evidence: { connect: true },
+          };
+        }
+        if (name === "jetkvm_power_control") {
+          return {
+            raw: {
+              ok: true,
+              result: { serial_sequence_completed: true },
+            },
+            evidence: { power: true },
+          };
+        }
+        assert.equal(name, "jetkvm_input_release");
+        return {
+          raw: { ok: true, result: releaseResult },
+          evidence: { release: true },
+        };
+      },
+    },
+    rig: {
+      hostPowerState: async () => "online",
+      waitForHostRestart: async () => undefined,
+      pinUkLayout: async () => undefined,
+      resetNotepad: async () => undefined,
+    },
+    candidate: {
+      source: { commit_sha: "a".repeat(40) },
+      runtime: { browser: {} },
+    },
+    runId: "post-reboot-qualification",
+    executionResolver: () => [],
+    controlledExecution: {},
+  });
+
+  await driver.proveAtx();
+
+  const connect = calls.find(({ name }) => name === "jetkvm_session_connect");
+  assert.equal(connect.input.timeout_ms, 60_000);
+  assert.equal(connect.timeoutMs, 65_000);
+});
 test("proves zero held input on every restore instead of trusting cached release state", async () => {
   const calls = [];
   const releaseResult = {

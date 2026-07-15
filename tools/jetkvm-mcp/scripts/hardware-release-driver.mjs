@@ -37,6 +37,8 @@ const OBSERVATION_TOOLS = new Set([
   "jetkvm_input_paste",
 ]);
 
+const SESSION_STARTUP_TIMEOUT_MS = 60_000;
+
 export function powerActionRequiresOfflineWait(action) {
   return action === "press_power" || action === "hold_power";
 }
@@ -934,8 +936,12 @@ export function createLiveHardwareDriver({
     );
     const response = await callRaw(
       "jetkvm_session_connect",
-      { request_id: requestId, takeover: false, timeout_ms: 30_000 },
-      30_000,
+      {
+        request_id: requestId,
+        takeover: false,
+        timeout_ms: SESSION_STARTUP_TIMEOUT_MS,
+      },
+      SESSION_STARTUP_TIMEOUT_MS,
     );
     if (
       isRecord(response.raw) &&
@@ -950,9 +956,9 @@ export function createLiveHardwareDriver({
             `${runId}:recover:${randomUUID()}`,
           ),
           takeover: true,
-          timeout_ms: 30_000,
+          timeout_ms: SESSION_STARTUP_TIMEOUT_MS,
         },
-        30_000,
+        SESSION_STARTUP_TIMEOUT_MS,
       );
       if (!isRecord(takeover.raw) || takeover.raw.ok !== true) {
         throw new Error("Could not recover the live release session.");
