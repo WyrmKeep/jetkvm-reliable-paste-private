@@ -165,6 +165,13 @@ describe("shared SSH wrapper", () => {
           "base64",
         ).toString("utf16le");
         expect(installScript).toContain("[System.IO.File]::Replace");
+        expect(installScript).toContain("$backupPath =");
+        expect(installScript).toContain(
+          "[System.IO.File]::Replace($temporaryPath, $path, $backupPath, $true)",
+        );
+        expect(installScript).not.toContain(
+          "[System.IO.File]::Replace($temporaryPath, $path, $null, $true)",
+        );
         expect(installScript).toContain("[System.IO.File]::Move");
       } finally {
         process.env.PATH = previousPath;

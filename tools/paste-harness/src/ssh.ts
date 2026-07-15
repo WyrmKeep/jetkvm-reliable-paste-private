@@ -214,6 +214,7 @@ export async function uploadWindowsTextFile(
 ): Promise<void> {
   const deadlineMs = performance.now() + timeoutMs;
   const remoteTemporaryPath = `${windowsPath}.jetkvm-upload-${randomUUID()}.tmp`;
+  const remoteBackupPath = `${windowsPath}.jetkvm-backup-${randomUUID()}.tmp`;
   const prepareScript = `
 $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
@@ -222,11 +223,21 @@ if ($parent) {
   if (-not (Test-Path -LiteralPath $parent)) {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
   }
-  $temporaryPrefix = (Split-Path -Leaf $path) + '.jetkvm-upload-'
+  $temporaryPrefixes = @(
+    (Split-Path -Leaf $path) + '.jetkvm-upload-',
+    (Split-Path -Leaf $path) + '.jetkvm-backup-'
+  )
   $staleBefore = [System.DateTime]::UtcNow.AddMinutes(-10)
   Get-ChildItem -LiteralPath $parent -File -Force -ErrorAction SilentlyContinue |
     Where-Object {
-      $_.Name.StartsWith($temporaryPrefix, [System.StringComparison]::Ordinal) -and
+      $matchesTemporaryPrefix = $false
+      foreach ($prefix in $temporaryPrefixes) {
+        if ($_.Name.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
+          $matchesTemporaryPrefix = $true
+          break
+        }
+      }
+      $matchesTemporaryPrefix -and
       $_.Name.EndsWith('.tmp', [System.StringComparison]::Ordinal) -and
       $_.LastWriteTimeUtc -lt $staleBefore
     } |
@@ -278,15 +289,19 @@ if ($parent) {
 $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
 $temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
+$backupPath = ${toPowerShellString(remoteBackupPath)}
 try {
   if ([System.IO.File]::Exists($path)) {
-    [System.IO.File]::Replace($temporaryPath, $path, $null, $true)
+    [System.IO.File]::Replace($temporaryPath, $path, $backupPath, $true)
   } else {
     [System.IO.File]::Move($temporaryPath, $path)
   }
 } finally {
   if ([System.IO.File]::Exists($temporaryPath)) {
     [System.IO.File]::Delete($temporaryPath)
+  }
+  if ([System.IO.File]::Exists($backupPath)) {
+    [System.IO.File]::Delete($backupPath)
   }
 }
 `;
@@ -310,8 +325,12 @@ try {
         const cleanupScript = `
 $ErrorActionPreference = 'SilentlyContinue'
 $temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
+$backupPath = ${toPowerShellString(remoteBackupPath)}
 if ([System.IO.File]::Exists($temporaryPath)) {
   [System.IO.File]::Delete($temporaryPath)
+}
+if ([System.IO.File]::Exists($backupPath)) {
+  [System.IO.File]::Delete($backupPath)
 }
 `;
         try {
