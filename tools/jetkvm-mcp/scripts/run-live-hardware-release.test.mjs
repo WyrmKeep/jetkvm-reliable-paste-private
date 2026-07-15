@@ -30,10 +30,7 @@ test("selects ATX preflight only from the frozen hardware profile", async () => 
     {
       id: "mixed-story",
       environments: ["live"],
-      steps: [
-        { id: "safe-step" },
-        { id: "physical-atx-step" },
-      ],
+      steps: [{ id: "safe-step" }, { id: "physical-atx-step" }],
       restore: [{ id: "restore", always: true }],
     },
   ];
@@ -89,10 +86,7 @@ test("selects ATX preflight only from the frozen hardware profile", async () => 
       records: [
         {
           result: "pass_with_exception",
-          steps: [
-            { result: "pass" },
-            { result: "excluded" },
-          ],
+          steps: [{ result: "pass" }, { result: "excluded" }],
         },
       ],
     }),
@@ -106,9 +100,7 @@ test("selects ATX preflight only from the frozen hardware profile", async () => 
       step_count: 2,
       executed_step_count: 1,
       excluded_step_count: 1,
-      hardware_exception_sha256: sha256Canonical(
-        unavailable.hardwareException,
-      ),
+      hardware_exception_sha256: sha256Canonical(unavailable.hardwareException),
       atx_preflight_sha256: null,
     },
   );

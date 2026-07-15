@@ -515,13 +515,7 @@ function validateRecord(record, story, storyPlan, runId, excludedStepKeys) {
     if (excluded) {
       assertExactKeys(
         result,
-        [
-          "step_id",
-          "mode",
-          "requires_atx_wiring",
-          "result",
-          "exception_code",
-        ],
+        ["step_id", "mode", "requires_atx_wiring", "result", "exception_code"],
         `Excluded hardware step ${story.id}/${step.id}`,
       );
       if (
@@ -931,9 +925,7 @@ export async function validateEvidenceDirectory({
       ? ["hardware-exception.json"]
       : []),
   ].sort();
-  const manifestedPayloadFiles = manifest.files
-    .map((file) => file.path)
-    .sort();
+  const manifestedPayloadFiles = manifest.files.map((file) => file.path).sort();
   if (
     manifestedPayloadFiles.length !== expectedPayloadFiles.length ||
     manifestedPayloadFiles.some(

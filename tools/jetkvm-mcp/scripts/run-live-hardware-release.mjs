@@ -146,8 +146,7 @@ export function buildHardwareValidationSummary({
     return (
       record.steps.every((step) =>
         ["pass", "excluded"].includes(step?.result),
-      ) &&
-      record.result === (hasExcluded ? "pass_with_exception" : "pass")
+      ) && record.result === (hasExcluded ? "pass_with_exception" : "pass")
     );
   });
   if (!recordsPass || executedStepCount + excludedStepCount !== stepCount) {
@@ -171,8 +170,7 @@ export function buildHardwareValidationSummary({
   }
   return Object.freeze({
     hardware_validation: validated,
-    result:
-      validated.profile === "full" ? "pass" : "pass_with_exception",
+    result: validated.profile === "full" ? "pass" : "pass_with_exception",
     story_count: records.length,
     step_count: stepCount,
     executed_step_count: executedStepCount,
@@ -1523,16 +1521,13 @@ async function run() {
         executionResolver,
         controlledExecution,
       });
-      const {
-        hardwareValidation,
-        hardwareException,
-        atxPreflight,
-      } = await prepareHardwareValidationRun({
-        stories,
-        plan,
-        driver,
-        hardwareValidation: candidate.hardware_validation,
-      });
+      const { hardwareValidation, hardwareException, atxPreflight } =
+        await prepareHardwareValidationRun({
+          stories,
+          plan,
+          driver,
+          hardwareValidation: candidate.hardware_validation,
+        });
       const records = await runCanonicalLiveStories({
         stories,
         plan,

@@ -658,6 +658,7 @@ test("verifies the shipped consumer lock and complete installed tree", async () 
       browserTargetUrlSha256: "3".repeat(64),
       browserCredentialSource: "environment",
       browserManagedProfile: "ephemeral",
+      hardwareValidation: { profile: "full", exception_code: null },
       artifactFilename: "candidate.tgz",
       artifactSizeBytes: 1,
       artifactSha256: "4".repeat(64),
