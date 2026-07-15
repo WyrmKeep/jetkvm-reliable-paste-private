@@ -53,6 +53,7 @@ describe("NucBox rig control helpers", () => {
 
     expect(script).toContain("NUCBOX_K15\\Robert");
     expect(script).toContain("LogonType Interactive");
+    expect(script).toContain("-WindowStyle Hidden");
     expect(script).toContain("PasteRigFocusGuard");
     expect(script).toContain("PasteRigForegroundProbe");
     expect(script).toContain("PasteRigResetNotepad");

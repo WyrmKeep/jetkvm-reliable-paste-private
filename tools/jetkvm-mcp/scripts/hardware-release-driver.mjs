@@ -267,7 +267,7 @@ export function sanitizeToolEvidence(result, context = {}) {
     : undefined;
   const scrubbedStructured = scrubForHash(structured);
   const images = imageEvidence(result.content);
-  if (structured.tool === "jetkvm_display_capture") {
+  if (structured.tool === "jetkvm_display_capture" && structured.ok === true) {
     const declaredImage = operationResult?.image;
     const image = images[0];
     if (

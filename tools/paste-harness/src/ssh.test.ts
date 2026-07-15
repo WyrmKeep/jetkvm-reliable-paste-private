@@ -12,6 +12,7 @@ import {
   parseRigEnvText,
   redactRigSecrets,
   runSshCommand,
+  uploadWindowsTextFile,
   SSH_BASE_ARGS,
   stripPowerShellNoise,
 } from "./ssh.js";
@@ -81,6 +82,64 @@ describe("shared SSH wrapper", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  test.sequential(
+    "uploads Windows fixture text through SCP instead of remote stdin",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "jetkvm-scp-upload-"));
+      const capture = join(directory, "capture.bin");
+      const destinationCapture = join(directory, "destination.txt");
+      const fakeSsh = join(directory, "ssh");
+      const fakeScp = join(directory, "scp");
+      const previousPath = process.env.PATH;
+      const previousCapture = process.env.SCP_CAPTURE;
+      const previousDestination = process.env.SCP_DESTINATION;
+      try {
+        await writeFile(fakeSsh, "#!/bin/sh\ncat >/dev/null\n", "utf8");
+        await writeFile(
+          fakeScp,
+          '#!/bin/sh\ncat "${13}" > "$SCP_CAPTURE"\nprintf %s "${14}" > "$SCP_DESTINATION"\n',
+          "utf8",
+        );
+        await chmod(fakeSsh, 0o755);
+        await chmod(fakeScp, 0o755);
+        process.env.PATH = `${directory}:${previousPath}`;
+        process.env.SCP_CAPTURE = capture;
+        process.env.SCP_DESTINATION = destinationCapture;
+
+        const content = "Write-Output 'fixture ready'\n";
+        await uploadWindowsTextFile(
+          "root@fixture.invalid",
+          "C:\\Users\\Robert\\paste-rig\\common.ps1",
+          content,
+          5_000,
+        );
+
+        const captureExists = await readFile(capture).then(
+          () => true,
+          () => false,
+        );
+        expect(captureExists).toBe(true);
+        expect(await readFile(capture, "utf8")).toBe(content);
+        expect(await readFile(destinationCapture, "utf8")).toBe(
+          "root@fixture.invalid:C:/Users/Robert/paste-rig/common.ps1",
+        );
+      } finally {
+        process.env.PATH = previousPath;
+        if (previousCapture === undefined) {
+          delete process.env.SCP_CAPTURE;
+        } else {
+          process.env.SCP_CAPTURE = previousCapture;
+        }
+        if (previousDestination === undefined) {
+          delete process.env.SCP_DESTINATION;
+        } else {
+          process.env.SCP_DESTINATION = previousDestination;
+        }
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("parses rig env files without requiring values in argv or logs", () => {
     const env = parseRigEnvText(`

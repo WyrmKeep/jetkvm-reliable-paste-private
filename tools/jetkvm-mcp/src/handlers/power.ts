@@ -28,6 +28,7 @@ import {
   type DeviceSessionSnapshot,
 } from "../session/deviceSessionClient.js";
 import {
+  canonicalMutationDownstreamStage,
   createHandlerDeadline,
   defaultErrorDetails,
   sanitizePlaneFailure,
@@ -208,7 +209,10 @@ function planeFailure(error: unknown): PowerFailure {
         : sanitized.code === "CONNECTION_LOST"
           ? "reconnect_then_capture"
           : sanitized.requiredNextStep,
-    downstreamStage: sanitized.stage,
+    downstreamStage: canonicalMutationDownstreamStage(
+      sanitized,
+      sanitized.outcome === "not_sent" ? "not_sent" : "unknown",
+    ),
   };
 }
 

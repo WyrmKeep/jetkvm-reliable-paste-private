@@ -1635,6 +1635,47 @@ describe("Phase 3 handler orchestration invariants", () => {
     });
   });
 
+  it("clamps a proven pre-write release failure to the public write boundary", async () => {
+    const environment = await environmentReadyForTool("jetkvm_input_release");
+    environment.browser.release = async () => {
+      throw new BrowserPlaneError({
+        code: "CONNECTION_LOST",
+        outcome: "not_sent",
+        stage: "acknowledgement",
+        writeBegan: false,
+        acknowledged: false,
+        dispatchedCount: 0,
+        completedCount: 0,
+        requestedCount: 1,
+        safeToRetry: true,
+        requiredNextStep: "reconnect_then_capture",
+        suffixSuppressed: false,
+      });
+    };
+
+    const error = expectError(
+      await invoke(
+        environment,
+        "jetkvm_input_release",
+        validInput("jetkvm_input_release", environment.ref),
+      ),
+      "CONNECTION_LOST",
+    );
+    expect(error).toMatchObject({
+      outcome: "not_sent",
+      safe_to_retry: true,
+      required_next_step: "reconnect_then_capture",
+      details: {
+        downstream_stage: "write",
+        dispatched_action_count: 0,
+        completed_action_count: 0,
+      },
+    });
+    expect(
+      targetLedgerEntries(environment, "jetkvm_input_release"),
+    ).toHaveLength(0);
+  });
+
   it("keeps a successfully released generation closed for later requests", async () => {
     const environment = await createEnvironment();
     await invokeSuccessfulMutation(environment, "jetkvm_input_release");

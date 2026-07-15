@@ -323,6 +323,27 @@ describe("AutomationController lifecycle", () => {
       write_began: true,
     });
   });
+  it("marks a downstream failure before the first write as queued", async () => {
+    const request: ProductRpcRequest = async () => {
+      throw new Error("disconnected before write");
+    };
+    const { controller } = readyController({ calls: [], request });
+    const snapshot = controller.snapshot();
+
+    await expect(
+      controller.readEdid({
+        operation_id: "display-read-before-write",
+        expected_lifecycle_generation: snapshot.lifecycle_generation,
+        expected_channel_generation: snapshot.channel_generation,
+        timeout_ms: 1000,
+      }),
+    ).rejects.toMatchObject({
+      code: "DOWNSTREAM_ERROR",
+      stage: "queue",
+      outcome: "not_sent",
+      write_began: false,
+    });
+  });
   it("routes a semantic ATX request through the receipt-bearing product RPC", async () => {
     const receipt = {
       requestId: "power-1",
@@ -655,6 +676,26 @@ describe("AutomationController paste and release", () => {
         }),
       ),
     ).rejects.toMatchObject({ code: "CLOSED", outcome: "not_sent" });
+  });
+
+  it("reports a release transport failure before the first write as queued", async () => {
+    const request: ProductRpcRequest = async () => {
+      throw new Error("disconnected before write");
+    };
+    const { controller } = readyController({ calls: [], request });
+
+    await expect(
+      controller.release({
+        ...inputRequest(controller),
+        operation_id: "release-before-write",
+      }),
+    ).rejects.toMatchObject({
+      code: "RELEASE_FAILED",
+      stage: "queue",
+      outcome: "not_sent",
+      write_began: false,
+    });
+    expect(controller.snapshot().state).toBe("closed");
   });
 
   it("cancels an in-flight release RPC while retaining the closed mutation gate", async () => {

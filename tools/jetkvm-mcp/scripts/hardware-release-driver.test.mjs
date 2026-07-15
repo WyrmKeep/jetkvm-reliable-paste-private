@@ -172,6 +172,30 @@ test("requires the exact nonempty image declared by display capture", () => {
   );
 });
 
+test("preserves failed display capture evidence without requiring an image block", () => {
+  const evidence = sanitizeToolEvidence({
+    content: [{ type: "text", text: "public failure" }],
+    structuredContent: {
+      ok: false,
+      tool: "jetkvm_display_capture",
+      duration_ms: 4,
+      error: {
+        code: "VIDEO_UNAVAILABLE",
+        message: "Video is unavailable.",
+        phase: "execute",
+        outcome: null,
+        verification: "none",
+        safe_to_retry: true,
+        required_next_step: "capture_then_retry",
+      },
+    },
+  });
+  assert.equal(evidence.ok, false);
+  assert.equal(evidence.error_code, "VIDEO_UNAVAILABLE");
+  assert.equal(evidence.required_next_step, "capture_then_retry");
+  assert.deepEqual(evidence.images, []);
+});
+
 test("fully decodes JPEG screenshot evidence", () => {
   const bytes = JPEG_IMAGE;
   const sha256 = createHash("sha256").update(bytes).digest("hex");

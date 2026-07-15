@@ -870,11 +870,15 @@ export class AutomationController implements AutomationOwner {
             writeBegan,
           });
         }
-        throw makeBridgeError("RELEASE_FAILED", "acknowledgement", {
-          snapshot: this.snapshot(),
-          operationId: request.operation_id,
-          writeBegan,
-        });
+        throw makeBridgeError(
+          "RELEASE_FAILED",
+          writeBegan ? "acknowledgement" : "queue",
+          {
+            snapshot: this.snapshot(),
+            operationId: request.operation_id,
+            writeBegan,
+          },
+        );
       }
     } finally {
       this.finishOperation(request.operation_id, operationController);
@@ -1175,7 +1179,7 @@ export class AutomationController implements AutomationOwner {
         method === "getEDID" && isQualifiedEdidReadFailure(error)
           ? "EDID_READ_FAILED"
           : (atxFailure ?? "DOWNSTREAM_ERROR"),
-        "acknowledgement",
+        writeBegan ? "acknowledgement" : "queue",
         {
           snapshot: this.snapshot(),
           operationId: request.operation_id,

@@ -749,7 +749,7 @@ async function runPowerCell(requirement: string) {
       invoke: async () => {
         throw new DeviceRpcError(
           "CONNECTION_LOST",
-          "send",
+          "ack",
           "not_sent",
           false,
           false,
@@ -759,7 +759,11 @@ async function runPowerCell(requirement: string) {
     expect(
       errorEnvelope(await harness.handler(powerInput(), CONTEXT)),
     ).toMatchObject({
-      error: { code: "CONNECTION_LOST", outcome: "not_sent" },
+      error: {
+        code: "CONNECTION_LOST",
+        outcome: "not_sent",
+        details: { downstream_stage: "write" },
+      },
     });
     return;
   }

@@ -29,6 +29,7 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
   readonly #credential: DisposableSecret;
   readonly #headless: boolean;
   readonly #executablePath: string | undefined;
+  readonly #insecureTargetOrigin: string | undefined;
   readonly #launch: typeof chromium.launch;
   #browser: Browser | null = null;
   #context: BrowserContext | null = null;
@@ -36,6 +37,9 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
 
   public constructor(options: PlaywrightBrowserFactoryOptions) {
     this.#targetUrl = options.targetUrl;
+    const target = new URL(options.targetUrl);
+    this.#insecureTargetOrigin =
+      target.protocol === "http:" ? target.origin : undefined;
     this.#credential = options.credential;
     this.#headless = options.headless ?? true;
     this.#executablePath = options.executablePath;
@@ -85,6 +89,13 @@ export class PlaywrightBrowserFactory implements BrowserControllerFactory {
       ...(this.#executablePath === undefined
         ? {}
         : { executablePath: this.#executablePath }),
+      ...(this.#insecureTargetOrigin === undefined
+        ? {}
+        : {
+            args: [
+              `--unsafely-treat-insecure-origin-as-secure=${this.#insecureTargetOrigin}`,
+            ],
+          }),
     });
     if (this.#disposed || deadline.signal.aborted) {
       await browser.close();

@@ -98,7 +98,7 @@ export function buildScheduledTaskRegistrationScript(): string {
   const taskLines = TASKS.map(
     (task) => `
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ${toPowerShellString(
-      `-NoProfile -ExecutionPolicy Bypass -File "${WINDOWS_RIG_DIR}\\${task.script}"`,
+      `-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${WINDOWS_RIG_DIR}\\${task.script}"`,
     )}
 Register-ScheduledTask -TaskName ${toPowerShellString(
       task.name,

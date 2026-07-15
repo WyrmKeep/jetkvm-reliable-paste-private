@@ -3,8 +3,9 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { Buffer } from "node:buffer";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const SSH_BASE_ARGS = [
@@ -209,25 +210,48 @@ export async function uploadWindowsTextFile(
   content: string,
   timeoutMs = 30_000,
 ): Promise<void> {
-  const script = `
+  const prepareScript = `
 $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
 $parent = Split-Path -Parent $path
 if ($parent -and -not (Test-Path -LiteralPath $parent)) {
   New-Item -ItemType Directory -Force -Path $parent | Out-Null
 }
-$base64 = [Console]::In.ReadToEnd()
-$bytes = [Convert]::FromBase64String($base64)
-[IO.File]::WriteAllBytes($path, $bytes)
 `;
-  const result = await runPowerShell(target, script, {
-    input: Buffer.from(content, "utf8").toString("base64"),
-    timeoutMs,
-  });
-  if (result.exitCode !== 0) {
+  const preparation = await runPowerShell(target, prepareScript, { timeoutMs });
+  if (preparation.exitCode !== 0) {
     throw new Error(
-      `failed to upload ${windowsPath}: ${result.stderr || result.stdout}`,
+      `failed to prepare ${windowsPath}: ${
+        preparation.stderr ||
+        preparation.stdout ||
+        (preparation.timedOut ? "timed out" : "unknown failure")
+      }`,
     );
+  }
+
+  const temporaryDirectory = await mkdtemp(
+    join(tmpdir(), "jetkvm-paste-rig-upload-"),
+  );
+  const localPath = join(temporaryDirectory, "payload");
+  try {
+    await writeFile(localPath, content, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    const destination = `${target}:${windowsPath.replaceAll("\\", "/")}`;
+    const result = await runScp(localPath, destination, { timeoutMs });
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `failed to upload ${windowsPath}: ${
+          result.stderr ||
+          result.stdout ||
+          (result.timedOut ? "timed out" : "unknown failure")
+        }`,
+      );
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
   }
 }
 

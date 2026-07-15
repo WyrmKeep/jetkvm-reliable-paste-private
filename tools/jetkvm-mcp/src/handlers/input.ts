@@ -55,6 +55,7 @@ import {
   type DeviceSessionSnapshot,
 } from "../session/deviceSessionClient.js";
 import {
+  canonicalMutationDownstreamStage,
   createHandlerDeadline,
   defaultErrorDetails,
   mapDisplayCaptureArtifact,
@@ -803,8 +804,7 @@ function planeMutationFailure(
     permission: code === "PERMISSION_DENIED" ? PERMISSION_BY_TOOL[tool] : null,
     capability:
       code === "CAPABILITY_MISSING" ? CAPABILITIES_BY_TOOL[tool][0]! : null,
-    downstreamStage:
-      sanitized?.stage ?? (outcome === "not_sent" ? "admission" : "write"),
+    downstreamStage: canonicalMutationDownstreamStage(sanitized, outcome),
     ...counts,
   };
 }

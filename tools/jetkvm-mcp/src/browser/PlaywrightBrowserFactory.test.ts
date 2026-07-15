@@ -101,4 +101,29 @@ describe("PlaywrightBrowserFactory", () => {
       secret.dispose();
     }
   });
+  it("treats only the configured insecure target origin as a secure context", async () => {
+    const delayed = delayedLoginBrowser();
+    const secret = DisposableSecret.fromBytes(
+      new TextEncoder().encode("delayed-password"),
+    );
+    const factory = new PlaywrightBrowserFactory({
+      targetUrl: "http://192.0.2.42/devices/serial?view=kvm",
+      credential: secret,
+      launch: delayed.launch,
+    });
+    try {
+      await factory.open({
+        timeoutMs: 2_000,
+        signal: new AbortController().signal,
+      });
+      expect(delayed.launch).toHaveBeenCalledWith({
+        headless: true,
+        chromiumSandbox: true,
+        args: ["--unsafely-treat-insecure-origin-as-secure=http://192.0.2.42"],
+      });
+    } finally {
+      await factory.dispose();
+      secret.dispose();
+    }
+  });
 });
