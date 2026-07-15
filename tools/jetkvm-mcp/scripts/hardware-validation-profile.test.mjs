@@ -74,7 +74,10 @@ test("requires the exact ATX-unavailable acknowledgement", () => {
 
 test("accepts only the two exact frozen hardware declarations", () => {
   assert.deepEqual(validateHardwareValidation(FULL), FULL);
-  assert.deepEqual(validateHardwareValidation(ATX_UNAVAILABLE), ATX_UNAVAILABLE);
+  assert.deepEqual(
+    validateHardwareValidation(ATX_UNAVAILABLE),
+    ATX_UNAVAILABLE,
+  );
   for (const mutated of [
     null,
     {},
@@ -121,6 +124,36 @@ test("derives the immutable canonical ATX exception from the live plan", async (
   assert.equal(Object.isFrozen(exception), true);
   assert.equal(Object.isFrozen(exception.excluded_steps), true);
 
+  const missing = structuredClone(plan);
+  const missingAssignment = Object.values(missing)
+    .flatMap((storyPlan) => Object.values(storyPlan.steps))
+    .find((assignment) => assignment.requires_atx_wiring);
+  missingAssignment.requires_atx_wiring = false;
+  assert.throws(
+    () =>
+      deriveHardwareValidationException({
+        stories,
+        plan: missing,
+        hardwareValidation: ATX_UNAVAILABLE,
+      }),
+    /Canonical ATX-wiring exclusion set drifted/u,
+  );
+
+  const extra = structuredClone(plan);
+  const extraAssignment = Object.values(extra)
+    .flatMap((storyPlan) => Object.values(storyPlan.steps))
+    .find((assignment) => !assignment.requires_atx_wiring);
+  extraAssignment.requires_atx_wiring = true;
+  assert.throws(
+    () =>
+      deriveHardwareValidationException({
+        stories,
+        plan: extra,
+        hardwareValidation: ATX_UNAVAILABLE,
+      }),
+    /Canonical ATX-wiring exclusion set drifted/u,
+  );
+
   const unclassified = structuredClone(plan);
   for (const storyPlan of Object.values(unclassified)) {
     for (const assignment of Object.values(storyPlan.steps)) {
@@ -134,6 +167,6 @@ test("derives the immutable canonical ATX exception from the live plan", async (
         plan: unclassified,
         hardwareValidation: ATX_UNAVAILABLE,
       }),
-    /no canonical ATX-wiring exclusions/u,
+    /Canonical ATX-wiring exclusion set drifted/u,
   );
 });

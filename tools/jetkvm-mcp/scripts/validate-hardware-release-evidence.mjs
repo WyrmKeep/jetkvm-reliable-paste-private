@@ -819,8 +819,8 @@ export function validateHardwareReleaseEvidence({
     throw new Error("Hardware summary evidence hashes drifted.");
   }
   return Object.freeze({
-    schema_version: 2,
-    result: "pass",
+    schema_version: 1,
+    result: expectedSummaryResult,
     hardware_validation: candidateHardwareValidation,
     candidate_commit: candidate.source.commit_sha,
     run_id: summary.run_id,
@@ -829,7 +829,6 @@ export function validateHardwareReleaseEvidence({
     executed_step_count: executedStepCount,
     excluded_step_count: excludedStepCount,
     restore_count: restoreCount,
-    hardware_exception_sha256: summary.hardware_exception_sha256,
     records_sha256: sha256Canonical(records),
   });
 }

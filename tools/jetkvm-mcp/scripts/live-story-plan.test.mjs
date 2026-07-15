@@ -11,7 +11,10 @@ import {
   validateControlledReleaseEvidence,
 } from "./build-controlled-release-evidence.mjs";
 import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
-import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
+import {
+  assertCanonicalAtxUnavailableClassification,
+  materializeLiveExecutionPlan,
+} from "./live-story-plan.mjs";
 import { createExecutionEvidenceResolver } from "./release-evidence.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -19,24 +22,12 @@ const ATX_UNAVAILABLE_STEPS = [
   ["power-three-semantic-actions", "establish-definitive-atx-session"],
   ["power-three-semantic-actions", "prove-press-power-baseline"],
   ["power-three-semantic-actions", "press-power"],
-  [
-    "power-three-semantic-actions",
-    "restore-and-prove-hold-power-baseline",
-  ],
+  ["power-three-semantic-actions", "restore-and-prove-hold-power-baseline"],
   ["power-three-semantic-actions", "hold-power"],
-  [
-    "power-three-semantic-actions",
-    "restore-and-prove-reset-baseline",
-  ],
+  ["power-three-semantic-actions", "restore-and-prove-reset-baseline"],
   ["power-three-semantic-actions", "press-reset"],
-  [
-    "power-three-semantic-actions",
-    "restore-and-prove-post-reset-baseline",
-  ],
-  [
-    "duplicate-request-id-definitive-replay",
-    "prepare-duplicate-power-case",
-  ],
+  ["power-three-semantic-actions", "restore-and-prove-post-reset-baseline"],
+  ["duplicate-request-id-definitive-replay", "prepare-duplicate-power-case"],
   [
     "duplicate-request-id-definitive-replay",
     "duplicate-initial-jetkvm-power-control",
@@ -83,7 +74,6 @@ const ATX_SAFE_HARDWARE_STEPS = [
   ],
 ];
 
-
 async function loadStories() {
   const directory = join(packageRoot, "src", "stories");
   const files = (await readdir(directory))
@@ -95,6 +85,26 @@ async function loadStories() {
     ),
   );
 }
+
+test("rejects any missing, extra, or reordered ATX-unavailable step", () => {
+  const storyId = "power-three-semantic-actions";
+  const stepIds = ATX_UNAVAILABLE_STEPS.filter(
+    ([candidateStoryId]) => candidateStoryId === storyId,
+  ).map(([, stepId]) => stepId);
+  assert.doesNotThrow(() =>
+    assertCanonicalAtxUnavailableClassification(storyId, stepIds),
+  );
+  for (const changed of [
+    stepIds.slice(1),
+    [...stepIds, "arbitrary-non-power-step"],
+    [stepIds[1], stepIds[0], ...stepIds.slice(2)],
+  ]) {
+    assert.throws(
+      () => assertCanonicalAtxUnavailableClassification(storyId, changed),
+      /ATX-unavailable classification drifted/u,
+    );
+  }
+});
 
 test("materializes explicit coverage for all 18 canonical live stories", async () => {
   const stories = await loadStories();
@@ -141,8 +151,7 @@ test("materializes explicit coverage for all 18 canonical live stories", async (
     );
   assert.equal(
     classifiedAssignments.every(
-      ({ assignment }) =>
-        typeof assignment.requires_atx_wiring === "boolean",
+      ({ assignment }) => typeof assignment.requires_atx_wiring === "boolean",
     ),
     true,
   );
@@ -312,6 +321,23 @@ test("fails closed when canonical story steps drift from the reviewed live plan"
   assert.throws(
     () => materializeLiveExecutionPlan(stories, () => ["assertion"]),
     /step inventory changed/u,
+  );
+});
+
+test("fails closed when canonical live story order drifts", async () => {
+  const stories = await loadStories();
+  const liveIndexes = stories
+    .map((story, index) => ({ story, index }))
+    .filter(({ story }) => story.environments.includes("live"))
+    .map(({ index }) => index);
+  [stories[liveIndexes[0]], stories[liveIndexes[1]]] = [
+    stories[liveIndexes[1]],
+    stories[liveIndexes[0]],
+  ];
+
+  assert.throws(
+    () => materializeLiveExecutionPlan(stories, () => ["assertion"]),
+    /story inventory order changed/u,
   );
 });
 

@@ -357,6 +357,16 @@ function assertOperatorDocumentation(readmeText, securityText) {
   if (!readmeText.includes("read-only EDID")) {
     throw new Error("Phase 3 read-only EDID documentation drifted");
   }
+  const atxAcknowledgementDeclaration =
+    "export JETKVM_RELEASE_ATX_UNAVAILABLE_ACKNOWLEDGEMENT='selected_fixture_has_no_usable_atx_motherboard_leads'";
+  if (
+    countOccurrences(readmeText, atxAcknowledgementDeclaration) !== 1 ||
+    /JETKVM_RELEASE_ATX_UNAVAILABLE_ACK=/u.test(readmeText)
+  ) {
+    throw new Error(
+      "Hardware release ATX-unavailable acknowledgement documentation drifted",
+    );
+  }
   if (
     !/preserve the browser sandbox/i.test(securityText) ||
     !securityText.includes("authorized MCP image content block")

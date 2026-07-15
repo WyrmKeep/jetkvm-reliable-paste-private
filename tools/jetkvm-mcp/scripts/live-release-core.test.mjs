@@ -5,6 +5,7 @@ import {
   runWithFinalization,
   runCanonicalLiveStories,
 } from "./live-release-core.mjs";
+import { CANONICAL_ATX_UNAVAILABLE_STEPS } from "./hardware-validation-profile.mjs";
 import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
 
 const FULL_HARDWARE_VALIDATION = Object.freeze({
@@ -208,29 +209,38 @@ test("runs stories in manifest order and blocks each next story on restore compa
 });
 
 test("excludes only ATX-wiring steps and completes the mixed story", async () => {
-  const mixedStory = story("mixed-story", [
-    "safe-before",
-    "physical-atx",
-    "safe-after",
-  ]);
-  const mixedPlan = {
-    "mixed-story": {
-      steps: {
-        "safe-before": {
-          mode: "hardware",
-          requires_atx_wiring: false,
-        },
-        "physical-atx": {
-          mode: "hardware",
-          requires_atx_wiring: true,
-        },
-        "safe-after": {
-          mode: "hardware",
-          requires_atx_wiring: false,
-        },
+  const grouped = new Map();
+  for (const pair of CANONICAL_ATX_UNAVAILABLE_STEPS) {
+    const stepIds = grouped.get(pair.story_id) ?? [];
+    stepIds.push(pair.step_id);
+    grouped.set(pair.story_id, stepIds);
+  }
+  const stories = [...grouped].map(([storyId, stepIds], index) =>
+    story(storyId, [
+      ...(index === 0 ? ["safe-before"] : []),
+      ...stepIds,
+      ...(index === 0 ? ["safe-after"] : []),
+    ]),
+  );
+  const excludedStepIds = new Set(
+    CANONICAL_ATX_UNAVAILABLE_STEPS.map((pair) => pair.step_id),
+  );
+  const plan = Object.fromEntries(
+    stories.map((storyValue) => [
+      storyValue.id,
+      {
+        steps: Object.fromEntries(
+          storyValue.steps.map((step) => [
+            step.id,
+            {
+              mode: "hardware",
+              requires_atx_wiring: excludedStepIds.has(step.id),
+            },
+          ]),
+        ),
       },
-    },
-  };
+    ]),
+  );
   const calls = [];
   const records = [];
   const driver = {
@@ -266,31 +276,38 @@ test("excludes only ATX-wiring steps and completes the mixed story", async () =>
   };
 
   const result = await runCanonicalLiveStories({
-    stories: [mixedStory],
-    plan: mixedPlan,
+    stories,
+    plan,
     driver,
     hardwareValidation: ATX_UNAVAILABLE_VALIDATION,
     writeRecord: async (record) => records.push(record),
     runId: "release-run-atx-unavailable",
   });
 
-  assert.deepEqual(calls, [
-    "baseline:before",
-    "step:safe-before",
-    "step:safe-after",
-    "restore:release-input",
-    "restore:reset-fixture",
-    "baseline:after",
-    "compare",
-  ]);
-  assert.equal(result[0].result, "pass_with_exception");
-  assert.deepEqual(result[0].steps[1], {
-    step_id: "physical-atx",
-    mode: "hardware",
-    requires_atx_wiring: true,
-    result: "excluded",
-    exception_code: "ATX_WIRING_UNAVAILABLE",
-  });
+  assert.deepEqual(
+    calls.filter((call) => call.startsWith("step:")),
+    ["step:safe-before", "step:safe-after"],
+  );
+  assert.equal(
+    calls.filter((call) => call.startsWith("restore:")).length,
+    stories.length * 2,
+  );
+  assert.equal(result.length, stories.length);
+  assert.equal(
+    result.every((record) => record.result === "pass_with_exception"),
+    true,
+  );
+  assert.deepEqual(
+    result.flatMap((record) =>
+      record.steps
+        .filter((step) => step.result === "excluded")
+        .map((step) => ({
+          story_id: record.story_id,
+          step_id: step.step_id,
+        })),
+    ),
+    CANONICAL_ATX_UNAVAILABLE_STEPS,
+  );
   assert.deepEqual(records, result);
 });
 

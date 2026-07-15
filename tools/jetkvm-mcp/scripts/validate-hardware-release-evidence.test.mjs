@@ -35,26 +35,26 @@ const ATX_UNAVAILABLE_VALIDATION = Object.freeze({
 const ATX_STORY_STEPS = Object.freeze({
   "power-three-semantic-actions": Object.freeze([
     "establish-definitive-atx-session",
-    "definitive-press-power",
-    "verify-power-indicator-on",
-    "wait-for-power-off",
-    "verify-power-indicator-off",
-    "reconnect-after-power-transition",
-    "definitive-press-reset",
-    "verify-reset-indicator",
+    "prove-press-power-baseline",
+    "press-power",
+    "restore-and-prove-hold-power-baseline",
+    "hold-power",
+    "restore-and-prove-reset-baseline",
+    "press-reset",
+    "restore-and-prove-post-reset-baseline",
   ]),
   "duplicate-request-id-definitive-replay": Object.freeze([
-    "establish-power-baseline",
-    "first-power-short-press",
-    "duplicate-power-short-press-replay",
-    "compare-power-receipts",
-    "restore-power-baseline",
+    "prepare-duplicate-power-case",
+    "duplicate-initial-jetkvm-power-control",
+    "duplicate-same-request-digest-jetkvm-power-control",
+    "duplicate-changed-digest-jetkvm-power-control",
+    "restore-and-prove-after-duplicate-power",
   ]),
   "atx-extension-serialization-idempotency-and-nonproof": Object.freeze([
-    "establish-definitive-session-before-connect",
-    "authorized-serial-power-baseline",
-    "connect-without-definitive-session",
-    "release-definitive-session",
+    "prove-serialized-power-baseline",
+    "serialized-power-short",
+    "repeat-power-short",
+    "restore-and-prove-prewrite-baseline",
   ]),
 });
 
@@ -614,6 +614,7 @@ test("accepts complete canonical hardware evidence", () => {
     finalization,
     deviceTests,
   });
+  assert.equal(audit.schema_version, 1);
   assert.equal(audit.result, "pass");
   assert.equal(audit.step_count, 2);
 });
@@ -631,7 +632,8 @@ test("accepts only the canonical ATX-unavailable exception and exact skips", () 
     deviceTests: evidence.deviceTests,
     hardwareException: evidence.hardwareException,
   });
-  assert.equal(audit.result, "pass");
+  assert.equal(audit.schema_version, 1);
+  assert.equal(audit.result, "pass_with_exception");
   assert.equal(audit.hardware_validation.profile, "atx_unavailable");
   assert.equal(audit.executed_step_count, 1);
   assert.equal(audit.excluded_step_count, 17);
@@ -903,7 +905,8 @@ test("loads the exact ATX-unavailable evidence inventory", async () => {
       stories: evidence.stories,
       plan: evidence.plan,
     });
-    assert.equal(audit.result, "pass");
+    assert.equal(audit.schema_version, 1);
+    assert.equal(audit.result, "pass_with_exception");
     assert.equal(audit.excluded_step_count, 17);
   } finally {
     await chmod(output.directory, 0o700);

@@ -157,7 +157,7 @@ Candidate freeze defaults to the `full` hardware-validation profile. `full` forb
 
 ```sh
 export JETKVM_RELEASE_HARDWARE_PROFILE='atx_unavailable'
-export JETKVM_RELEASE_ATX_UNAVAILABLE_ACK='selected_fixture_has_no_usable_atx_motherboard_leads'
+export JETKVM_RELEASE_ATX_UNAVAILABLE_ACKNOWLEDGEMENT='selected_fixture_has_no_usable_atx_motherboard_leads'
 ```
 
 The acknowledgement is not a runtime bypass. It becomes an immutable candidate field with exception code `ATX_WIRING_UNAVAILABLE`; changing or omitting either value invalidates the candidate. Do not set the acknowledgement for `full`.

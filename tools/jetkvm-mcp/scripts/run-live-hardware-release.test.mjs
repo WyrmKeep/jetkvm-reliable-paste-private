@@ -7,6 +7,7 @@ import test from "node:test";
 import { CONTROLLED_TRACE_REPORT_PATHS } from "./build-controlled-release-evidence.mjs";
 import * as liveReleaseModule from "./run-live-hardware-release.mjs";
 import { createDeviceReleaseProvenance } from "./device-release-provenance.mjs";
+import { CANONICAL_ATX_UNAVAILABLE_STEPS } from "./hardware-validation-profile.mjs";
 import {
   buildDirectoryManifest,
   sha256Canonical,
@@ -25,29 +26,43 @@ import {
 const COMMIT = "a".repeat(40);
 const TREE = "b".repeat(40);
 
-test("selects ATX preflight only from the frozen hardware profile", async () => {
-  const stories = [
-    {
-      id: "mixed-story",
-      environments: ["live"],
-      steps: [{ id: "safe-step" }, { id: "physical-atx-step" }],
-      restore: [{ id: "restore", always: true }],
-    },
-  ];
-  const plan = {
-    "mixed-story": {
-      steps: {
-        "safe-step": {
-          mode: "hardware",
-          requires_atx_wiring: false,
-        },
-        "physical-atx-step": {
-          mode: "hardware",
-          requires_atx_wiring: true,
-        },
+function canonicalAtxFixture() {
+  const grouped = new Map();
+  for (const pair of CANONICAL_ATX_UNAVAILABLE_STEPS) {
+    const stepIds = grouped.get(pair.story_id) ?? [];
+    stepIds.push(pair.step_id);
+    grouped.set(pair.story_id, stepIds);
+  }
+  const stories = [...grouped].map(([storyId, stepIds], index) => ({
+    id: storyId,
+    environments: ["live"],
+    steps: [
+      ...stepIds.map((id) => ({ id })),
+      ...(index === 0 ? [{ id: "safe-step" }] : []),
+    ],
+    restore: [{ id: `restore-${storyId}`, always: true }],
+  }));
+  const plan = Object.fromEntries(
+    stories.map((story) => [
+      story.id,
+      {
+        steps: Object.fromEntries(
+          story.steps.map((step) => [
+            step.id,
+            {
+              mode: "hardware",
+              requires_atx_wiring: step.id !== "safe-step",
+            },
+          ]),
+        ),
       },
-    },
-  };
+    ]),
+  );
+  return { stories, plan };
+}
+
+test("selects ATX preflight only from the frozen hardware profile", async () => {
+  const { stories, plan } = canonicalAtxFixture();
   let preflightCalls = 0;
   const driver = {
     proveAtx: async () => {
@@ -76,19 +91,19 @@ test("selects ATX preflight only from the frozen hardware profile", async () => 
   });
   assert.equal(preflightCalls, 1);
   assert.equal(unavailable.atxPreflight, null);
-  assert.equal(unavailable.hardwareException.excluded_step_count, 1);
+  assert.equal(unavailable.hardwareException.excluded_step_count, 17);
 
   assert.deepEqual(
     liveReleaseModule.buildHardwareValidationSummary({
       hardwareValidation: unavailable.hardwareValidation,
       hardwareException: unavailable.hardwareException,
       atxPreflight: unavailable.atxPreflight,
-      records: [
-        {
-          result: "pass_with_exception",
-          steps: [{ result: "pass" }, { result: "excluded" }],
-        },
-      ],
+      records: stories.map((story) => ({
+        result: "pass_with_exception",
+        steps: story.steps.map((step) => ({
+          result: step.id === "safe-step" ? "pass" : "excluded",
+        })),
+      })),
     }),
     {
       hardware_validation: {
@@ -96,10 +111,10 @@ test("selects ATX preflight only from the frozen hardware profile", async () => 
         exception_code: "ATX_WIRING_UNAVAILABLE",
       },
       result: "pass_with_exception",
-      story_count: 1,
-      step_count: 2,
+      story_count: 3,
+      step_count: 18,
       executed_step_count: 1,
-      excluded_step_count: 1,
+      excluded_step_count: 17,
       hardware_exception_sha256: sha256Canonical(unavailable.hardwareException),
       atx_preflight_sha256: null,
     },

@@ -1,9 +1,9 @@
 import definitions from "./live-story-plan.json" with { type: "json" };
 
+import { CANONICAL_ATX_UNAVAILABLE_STEPS } from "./hardware-validation-profile.mjs";
 import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
 
 import { sha256Canonical } from "./release-evidence.mjs";
-
 
 function exactKeys(value, expected) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -17,13 +17,26 @@ function exactKeys(value, expected) {
   );
 }
 
-function sameIds(actual, expected) {
-  const left = [...actual].sort();
-  const right = [...expected].sort();
+function sameIdsInOrder(actual, expected) {
   return (
-    left.length === right.length &&
-    left.every((id, index) => id === right[index])
+    actual.length === expected.length &&
+    actual.every((id, index) => id === expected[index])
   );
+}
+
+export function assertCanonicalAtxUnavailableClassification(storyId, stepIds) {
+  const expected = CANONICAL_ATX_UNAVAILABLE_STEPS.filter(
+    (entry) => entry.story_id === storyId,
+  ).map((entry) => entry.step_id);
+  if (
+    !Object.hasOwn(definitions, storyId) ||
+    !Array.isArray(stepIds) ||
+    !sameIdsInOrder(stepIds, expected)
+  ) {
+    throw new Error(
+      `Live story ${storyId} ATX-unavailable classification drifted.`,
+    );
+  }
 }
 
 function strictIdSet(value, available, label) {
@@ -46,12 +59,12 @@ export function materializeLiveExecutionPlan(stories, resolveAssertionIds) {
       Array.isArray(story.environments) && story.environments.includes("live"),
   );
   if (
-    !sameIds(
+    !sameIdsInOrder(
       Object.keys(definitions),
       liveStories.map((story) => story.id),
     )
   ) {
-    throw new Error("Canonical live story inventory changed.");
+    throw new Error("Canonical live story inventory order changed.");
   }
   const plan = {};
   for (const story of liveStories) {
@@ -87,6 +100,7 @@ export function materializeLiveExecutionPlan(stories, resolveAssertionIds) {
       available,
       `Live ATX-unavailable plan ${story.id}`,
     );
+    assertCanonicalAtxUnavailableClassification(story.id, [...atxUnavailable]);
     const atxSafe = strictIdSet(
       definition.atx_safe_without_wiring_step_ids,
       available,
@@ -96,18 +110,13 @@ export function materializeLiveExecutionPlan(stories, resolveAssertionIds) {
       throw new Error(`Live story ${story.id} assigns one step twice.`);
     }
     if (
-      [...atxUnavailable].some(
-        (id) => !hardware.has(id) || atxSafe.has(id),
-      ) ||
+      [...atxUnavailable].some((id) => !hardware.has(id) || atxSafe.has(id)) ||
       [...atxSafe].some((id) => !hardware.has(id))
     ) {
       throw new Error(`Live story ${story.id} has invalid ATX classification.`);
     }
     for (const step of story.steps) {
-      if (
-        atxSafe.has(step.id) &&
-        step.tool !== "jetkvm_power_control"
-      ) {
+      if (atxSafe.has(step.id) && step.tool !== "jetkvm_power_control") {
         throw new Error(
           `Live story ${story.id} classified a non-power step as ATX-safe.`,
         );

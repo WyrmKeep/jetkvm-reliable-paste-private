@@ -988,6 +988,29 @@ test("waits for both semantic power-off actions", () => {
   assert.equal(powerActionRequiresOfflineWait("hold_power"), true);
   assert.equal(powerActionRequiresOfflineWait("press_reset"), false);
 });
+
+test("initializes an explicit ATX-free baseline for unavailable fixtures", () => {
+  const driver = createLiveHardwareDriver({
+    mcp: {},
+    rig: {},
+    candidate: {
+      source: { commit_sha: "a".repeat(40) },
+      runtime: { browser: {} },
+      hardware_validation: {
+        profile: "atx_unavailable",
+        exception_code: "ATX_WIRING_UNAVAILABLE",
+      },
+    },
+    runId: "atx-unavailable-baseline",
+    executionResolver: () => [],
+    controlledExecution: {},
+  });
+  assert.deepEqual(driver.state.atxProof, {
+    validation: "not_performed",
+    exception_code: "ATX_WIRING_UNAVAILABLE",
+  });
+  assert.doesNotThrow(() => sha256Canonical({ atx: driver.state.atxProof }));
+});
 test("races release against keyboard, pointer, wheel, and paste producers", async () => {
   const calls = [];
   const producers = [];

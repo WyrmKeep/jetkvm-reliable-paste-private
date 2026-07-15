@@ -863,7 +863,13 @@ export function createLiveHardwareDriver({
     emergencyPendingAtRelease: undefined,
     emergencyHeldKeyEvidence: undefined,
     pasteVerification: undefined,
-    atxProof: undefined,
+    atxProof:
+      candidate.hardware_validation?.profile === "atx_unavailable"
+        ? Object.freeze({
+            validation: "not_performed",
+            exception_code: candidate.hardware_validation.exception_code,
+          })
+        : undefined,
     safeBaselineProven: false,
   };
   const bindings = new LiveStepBindings(runId);

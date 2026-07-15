@@ -5,6 +5,76 @@ import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
 export const ATX_UNAVAILABLE_ACKNOWLEDGEMENT =
   "selected_fixture_has_no_usable_atx_motherboard_leads";
 export const ATX_UNAVAILABLE_EXCEPTION_CODE = "ATX_WIRING_UNAVAILABLE";
+export const CANONICAL_ATX_UNAVAILABLE_STEPS = deepFreeze([
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "establish-definitive-atx-session",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "prove-press-power-baseline",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "press-power",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "restore-and-prove-hold-power-baseline",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "hold-power",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "restore-and-prove-reset-baseline",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "press-reset",
+  },
+  {
+    story_id: "power-three-semantic-actions",
+    step_id: "restore-and-prove-post-reset-baseline",
+  },
+  {
+    story_id: "duplicate-request-id-definitive-replay",
+    step_id: "prepare-duplicate-power-case",
+  },
+  {
+    story_id: "duplicate-request-id-definitive-replay",
+    step_id: "duplicate-initial-jetkvm-power-control",
+  },
+  {
+    story_id: "duplicate-request-id-definitive-replay",
+    step_id: "duplicate-same-request-digest-jetkvm-power-control",
+  },
+  {
+    story_id: "duplicate-request-id-definitive-replay",
+    step_id: "duplicate-changed-digest-jetkvm-power-control",
+  },
+  {
+    story_id: "duplicate-request-id-definitive-replay",
+    step_id: "restore-and-prove-after-duplicate-power",
+  },
+  {
+    story_id: "atx-extension-serialization-idempotency-and-nonproof",
+    step_id: "prove-serialized-power-baseline",
+  },
+  {
+    story_id: "atx-extension-serialization-idempotency-and-nonproof",
+    step_id: "serialized-power-short",
+  },
+  {
+    story_id: "atx-extension-serialization-idempotency-and-nonproof",
+    step_id: "repeat-power-short",
+  },
+  {
+    story_id: "atx-extension-serialization-idempotency-and-nonproof",
+    step_id: "restore-and-prove-prewrite-baseline",
+  },
+]);
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,9 +108,7 @@ function excludedStepsSha256(steps) {
     step_id,
     story_id,
   }));
-  return createHash("sha256")
-    .update(JSON.stringify(canonical))
-    .digest("hex");
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
 function freezeDeclaration(value) {
@@ -77,7 +145,10 @@ export function parseHardwareValidationProfile(environment = {}) {
         "Full hardware validation forbids an ATX exception acknowledgement.",
       );
     }
-    return validateHardwareValidation({ profile: "full", exception_code: null });
+    return validateHardwareValidation({
+      profile: "full",
+      exception_code: null,
+    });
   }
   if (
     profile !== "atx_unavailable" ||
@@ -113,10 +184,11 @@ export function deriveHardwareValidationException({
       }
     }
   }
-  if (excludedSteps.length === 0) {
-    throw new Error(
-      "ATX-unavailable profile has no canonical ATX-wiring exclusions.",
-    );
+  if (
+    JSON.stringify(excludedSteps) !==
+    JSON.stringify(CANONICAL_ATX_UNAVAILABLE_STEPS)
+  ) {
+    throw new Error("Canonical ATX-wiring exclusion set drifted.");
   }
   return deepFreeze({
     schema_version: 1,

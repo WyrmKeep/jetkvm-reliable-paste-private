@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { freezeReleaseCandidate } from "./freeze-release-candidate.mjs";
+import { ATX_UNAVAILABLE_ACKNOWLEDGEMENT } from "./hardware-validation-profile.mjs";
 import {
   buildDirectoryManifest,
   sha256File,
@@ -115,10 +116,7 @@ async function createFixture() {
     browserExecutablePath,
     browserTargetUrl: "http://192.0.2.1",
     controlledEvidencePath,
-    hardwareValidation: {
-      profile: "full",
-      exception_code: null,
-    },
+    hardwareValidationEnvironment: {},
   };
 }
 
@@ -250,7 +248,10 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     const parsed = validateReleaseCandidateManifest(
       JSON.parse(await readFile(result.candidatePath, "utf8")),
     );
-    assert.deepEqual(parsed.hardware_validation, fixture.hardwareValidation);
+    assert.deepEqual(parsed.hardware_validation, {
+      profile: "full",
+      exception_code: null,
+    });
     assert.equal(parsed.source.commit_sha, COMMIT);
     assert.equal(parsed.source.tree_sha, TREE);
     assert.equal(parsed.source.story_manifest.count, 24);
@@ -363,6 +364,54 @@ test("reuses the captured tarball bytes despite a concurrent path mutation", asy
     assert.equal(await readFile(result.tarballPath, "utf8"), "frozen-tarball");
     const parsed = JSON.parse(await readFile(result.candidatePath, "utf8"));
     assert.equal(parsed.artifact.sha256, await sha256File(result.tarballPath));
+  } finally {
+    await cleanupFixture(fixture);
+  }
+});
+
+test("requires the exact ATX acknowledgement at the exported freeze boundary", async () => {
+  const fixture = await createFixture();
+  const commands = commandHarness(fixture);
+  try {
+    await assert.rejects(
+      freezeReleaseCandidate({
+        ...fixture,
+        hardwareValidationEnvironment: {
+          JETKVM_RELEASE_HARDWARE_PROFILE: "atx_unavailable",
+        },
+        runCommand: commands.runCommand,
+        nodeVersion: "v22.23.1",
+        platform: "darwin",
+        architecture: "arm64",
+      }),
+      /acknowledgement/u,
+    );
+    assert.deepEqual(commands.calls, []);
+  } finally {
+    await cleanupFixture(fixture);
+  }
+});
+
+test("freezes the acknowledged ATX-unavailable profile", async () => {
+  const fixture = await createFixture();
+  const commands = commandHarness(fixture);
+  try {
+    const result = await freezeReleaseCandidate({
+      ...fixture,
+      hardwareValidationEnvironment: {
+        JETKVM_RELEASE_HARDWARE_PROFILE: "atx_unavailable",
+        JETKVM_RELEASE_ATX_UNAVAILABLE_ACKNOWLEDGEMENT:
+          ATX_UNAVAILABLE_ACKNOWLEDGEMENT,
+      },
+      runCommand: commands.runCommand,
+      nodeVersion: "v22.23.1",
+      platform: "darwin",
+      architecture: "arm64",
+    });
+    assert.deepEqual(result.candidate.hardware_validation, {
+      profile: "atx_unavailable",
+      exception_code: "ATX_WIRING_UNAVAILABLE",
+    });
   } finally {
     await cleanupFixture(fixture);
   }
