@@ -139,25 +139,14 @@ test("stages the exact device artifact before reboot", async () => {
   const sha256 = "c".repeat(64);
   const sshModule = {
     kvmTarget: (host) => `root@${host}`,
-    async runScp(source, destination) {
-      calls.push(["scp", source, destination]);
-      return {
-        command: "scp",
-        stdout: "",
-        stderr: "",
-        exitCode: 0,
-        signal: null,
-        timedOut: false,
-      };
-    },
-    async runSshCommand(target, command) {
-      calls.push(["ssh", target, command]);
+    async runSshCommand(target, command, options) {
+      calls.push(["ssh", target, command, options]);
       return {
         command: "ssh",
         stdout:
-          command === "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &"
-            ? ""
-            : `${sha256}  /userdata/jetkvm/jetkvm_app.update\n`,
+          command === "sha256sum /userdata/jetkvm/jetkvm_app.update"
+            ? `${sha256}  /userdata/jetkvm/jetkvm_app.update\n`
+            : "",
         stderr: "",
         exitCode: 0,
         signal: null,
@@ -172,22 +161,35 @@ test("stages the exact device artifact before reboot", async () => {
     expectedSha256: sha256,
   });
 
-  assert.deepEqual(calls, [
-    [
-      "scp",
-      "/private/jetkvm_app",
-      "root@device.example:/userdata/jetkvm/jetkvm_app.update",
-    ],
-    [
-      "ssh",
-      "root@device.example",
-      "sha256sum /userdata/jetkvm/jetkvm_app.update",
-    ],
-    [
-      "ssh",
-      "root@device.example",
-      "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &",
-    ],
+  assert.equal(calls.length, 3);
+  const [upload, staged, reboot] = calls;
+  assert.equal(upload[0], "ssh");
+  assert.equal(upload[1], "root@device.example");
+  assert.match(
+    upload[2],
+    /cat > \/userdata\/jetkvm\/jetkvm_app\.update\.upload/u,
+  );
+  assert.match(upload[2], /sha256sum -c -/u);
+  assert.match(
+    upload[2],
+    /mv -f \/userdata\/jetkvm\/jetkvm_app\.update\.upload \/userdata\/jetkvm\/jetkvm_app\.update/u,
+  );
+  assert.match(upload[2], new RegExp(sha256, "u"));
+  assert.deepEqual(upload[3], {
+    timeoutMs: 60_000,
+    inputFile: "/private/jetkvm_app",
+  });
+  assert.deepEqual(staged, [
+    "ssh",
+    "root@device.example",
+    "sha256sum /userdata/jetkvm/jetkvm_app.update",
+    { timeoutMs: 30_000 },
+  ]);
+  assert.deepEqual(reboot, [
+    "ssh",
+    "root@device.example",
+    "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &",
+    { timeoutMs: 30_000 },
   ]);
   assert.equal(evidence.staged_binary_sha256, sha256);
 });

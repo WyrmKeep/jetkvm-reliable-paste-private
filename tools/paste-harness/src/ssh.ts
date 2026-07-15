@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { Buffer } from "node:buffer";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -51,6 +54,7 @@ export interface SshResult {
 
 export interface RunSshOptions {
   input?: string | Buffer;
+  inputFile?: string;
   timeoutMs?: number;
 }
 
@@ -72,7 +76,9 @@ export function windowsTarget(env: Pick<RigEnv, "WIN_TARGET">): string {
   return `root@${env.WIN_TARGET}`;
 }
 
-export async function loadRigEnv(envPath = DEFAULT_RIG_ENV_PATH): Promise<RigEnv> {
+export async function loadRigEnv(
+  envPath = DEFAULT_RIG_ENV_PATH,
+): Promise<RigEnv> {
   return parseRigEnvText(await readFile(envPath, "utf8"));
 }
 
@@ -108,12 +114,19 @@ export function stripPowerShellNoise(output: string): string {
   const cleanLines: string[] = [];
   let inCliXml = false;
 
-  for (const line of output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")) {
+  for (const line of output
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")) {
     const trimmed = line.trim();
     if (trimmed.length === 0) {
       continue;
     }
-    if (/warning: permanently added|post-quantum|store now|upgraded/i.test(trimmed)) {
+    if (
+      /warning: permanently added|post-quantum|store now|upgraded/i.test(
+        trimmed,
+      )
+    ) {
       continue;
     }
     if (trimmed === "#< CLIXML") {
@@ -143,7 +156,12 @@ export function redactRigSecrets(text: string, env: Partial<RigEnv>): string {
     if (typeof value !== "string" || value.length < 4) {
       continue;
     }
-    if (value === env.KVM_PRIMARY || value === env.KVM_SECONDARY || value === env.WIN_TARGET || value === env.WIN_RECV) {
+    if (
+      value === env.KVM_PRIMARY ||
+      value === env.KVM_SECONDARY ||
+      value === env.WIN_TARGET ||
+      value === env.WIN_RECV
+    ) {
       continue;
     }
     redacted = redacted.split(value).join("<redacted>");
@@ -159,7 +177,11 @@ export async function runSshCommand(
   return runChild("ssh", buildSshArgs(target, remoteCommand), options);
 }
 
-export async function runScp(source: string, destination: string, options: RunSshOptions = {}): Promise<SshResult> {
+export async function runScp(
+  source: string,
+  destination: string,
+  options: RunSshOptions = {},
+): Promise<SshResult> {
   return runChild("scp", buildScpArgs(source, destination), options);
 }
 
@@ -203,7 +225,9 @@ $bytes = [Convert]::FromBase64String($base64)
     timeoutMs,
   });
   if (result.exitCode !== 0) {
-    throw new Error(`failed to upload ${windowsPath}: ${result.stderr || result.stdout}`);
+    throw new Error(
+      `failed to upload ${windowsPath}: ${result.stderr || result.stdout}`,
+    );
   }
 }
 
@@ -248,6 +272,9 @@ function runChild(
   args: string[],
   options: RunSshOptions,
 ): Promise<SshResult> {
+  if (options.input !== undefined && options.inputFile !== undefined) {
+    throw new Error("SSH input and inputFile are mutually exclusive.");
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
@@ -272,24 +299,44 @@ function runChild(
         return;
       }
       settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      if (killTimer) {
-        clearTimeout(killTimer);
-      }
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
       reject(error);
     });
-    child.on("close", (exitCode, signal) => {
+    const inputCompletion =
+      options.inputFile !== undefined
+        ? pipeline(createReadStream(options.inputFile), child.stdin).then(
+            () => null,
+            (error: unknown) => error,
+          )
+        : options.input !== undefined
+          ? pipeline(Readable.from([options.input]), child.stdin).then(
+              () => null,
+              (error: unknown) => error,
+            )
+          : (child.stdin.end(), Promise.resolve(null));
+
+    child.on("close", async (exitCode, signal) => {
+      const inputError = await inputCompletion;
       if (settled) {
         return;
       }
       settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      if (killTimer) {
-        clearTimeout(killTimer);
+      clearTimeout(timeout);
+      clearTimeout(killTimer);
+      const inputErrorCode =
+        inputError instanceof Error
+          ? (inputError as Error & { code?: unknown }).code
+          : undefined;
+      if (
+        inputError !== null &&
+        !(
+          inputErrorCode === "EPIPE" &&
+          (exitCode !== 0 || signal !== null || timedOut)
+        )
+      ) {
+        reject(inputError);
+        return;
       }
       resolve({
         command,
@@ -301,11 +348,5 @@ function runChild(
         timedOut,
       });
     });
-
-    if (options.input !== undefined) {
-      child.stdin.end(options.input);
-    } else {
-      child.stdin.end();
-    }
   });
 }

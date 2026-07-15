@@ -740,8 +740,21 @@ export async function deployReleaseDeviceBinary({
   }
   const target = sshModule.kvmTarget(host);
   const remotePath = "/userdata/jetkvm/jetkvm_app.update";
-  const upload = await sshModule.runScp(binaryPath, `${target}:${remotePath}`, {
+  const uploadPath = `${remotePath}.upload`;
+  const uploadCommand = [
+    "set -e",
+    "umask 077",
+    `rm -f ${remotePath} ${uploadPath}`,
+    `trap 'rm -f ${remotePath} ${uploadPath}' EXIT HUP INT TERM`,
+    `cat > ${uploadPath}`,
+    `printf '%s  %s\\n' '${expectedSha256}' '${uploadPath}' | sha256sum -c -`,
+    `mv -f ${uploadPath} ${remotePath}`,
+    "sync",
+    "trap - EXIT HUP INT TERM",
+  ].join("; ");
+  const upload = await sshModule.runSshCommand(target, uploadCommand, {
     timeoutMs: 60_000,
+    inputFile: binaryPath,
   });
   assertSshResult(upload, "Device release artifact upload");
   const staged = await sshModule.runSshCommand(

@@ -1,4 +1,7 @@
 import { Buffer } from "node:buffer";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
@@ -8,6 +11,7 @@ import {
   encodePowerShellCommand,
   parseRigEnvText,
   redactRigSecrets,
+  runSshCommand,
   SSH_BASE_ARGS,
   stripPowerShellNoise,
 } from "./ssh.js";
@@ -34,11 +38,48 @@ describe("shared SSH wrapper", () => {
       "root@192.168.1.155",
       "echo ok",
     ]);
-    expect(buildScpArgs("local.txt", "root@192.168.1.110:/tmp/local.txt")).toEqual([
+    expect(
+      buildScpArgs("local.txt", "root@192.168.1.110:/tmp/local.txt"),
+    ).toEqual([
       ...SSH_BASE_ARGS,
       "local.txt",
       "root@192.168.1.110:/tmp/local.txt",
     ]);
+  });
+
+  test.sequential("streams file input through SSH stdin", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jetkvm-ssh-stream-"));
+    const source = join(directory, "source.bin");
+    const capture = join(directory, "capture.bin");
+    const fakeSsh = join(directory, "ssh");
+    const previousPath = process.env.PATH;
+    const previousCapture = process.env.SSH_CAPTURE;
+    try {
+      const payload = Buffer.alloc(2 * 1024 * 1024, 0x5a);
+      await writeFile(source, payload);
+      await writeFile(fakeSsh, '#!/bin/sh\ncat > "$SSH_CAPTURE"\n', "utf8");
+      await chmod(fakeSsh, 0o755);
+      process.env.PATH = `${directory}:${previousPath}`;
+      process.env.SSH_CAPTURE = capture;
+
+      const result = await runSshCommand("root@fixture.invalid", "cat", {
+        inputFile: source,
+        timeoutMs: 5_000,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.timedOut).toBe(false);
+      expect(await readFile(capture)).toEqual(payload);
+    } finally {
+      process.env.PATH = previousPath;
+      if (previousCapture === undefined) {
+        delete process.env.SSH_CAPTURE;
+      } else {
+        process.env.SSH_CAPTURE = previousCapture;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test("parses rig env files without requiring values in argv or logs", () => {
@@ -52,14 +93,16 @@ WIN_RECV="C:\\Users\\Robert\\Documents\\recv.txt"
     expect(env.JETKVM_PASSWORD).toBe("super secret");
     expect(env.KVM_PRIMARY).toBe("192.168.1.110");
     expect(env.WIN_RECV).toBe("C:\\Users\\Robert\\Documents\\recv.txt");
-    expect(redactRigSecrets("password=super secret host=192.168.1.110", env)).toBe(
-      "password=<redacted> host=192.168.1.110",
-    );
+    expect(
+      redactRigSecrets("password=super secret host=192.168.1.110", env),
+    ).toBe("password=<redacted> host=192.168.1.110");
   });
 
   test("encodes PowerShell commands as UTF-16LE EncodedCommand payloads", () => {
     const script = "Write-Output $env:Path";
-    expect(encodePowerShellCommand(script)).toBe(Buffer.from(script, "utf16le").toString("base64"));
+    expect(encodePowerShellCommand(script)).toBe(
+      Buffer.from(script, "utf16le").toString("base64"),
+    );
   });
 
   test("strips OpenSSH warnings and PowerShell CLIXML noise", () => {
@@ -73,6 +116,8 @@ WIN_RECV="C:\\Users\\Robert\\Documents\\recv.txt"
       "",
     ].join("\n");
 
-    expect(stripPowerShellNoise(noisy)).toBe('{"ok":true,"title":"recv.txt - Notepad"}');
+    expect(stripPowerShellNoise(noisy)).toBe(
+      '{"ok":true,"title":"recv.txt - Notepad"}',
+    );
   });
 });
