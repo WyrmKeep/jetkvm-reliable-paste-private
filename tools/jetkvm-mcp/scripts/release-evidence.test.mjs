@@ -58,6 +58,10 @@ function candidateInput() {
     browserTargetUrlSha256: HASH_B,
     browserCredentialSource: "environment",
     browserManagedProfile: "ephemeral",
+    hardwareValidation: {
+      profile: "full",
+      exception_code: null,
+    },
     artifactFilename: "wyrmkeep-jetkvm-mcp-0.1.0.tgz",
     artifactSizeBytes: 1234,
     artifactSha256: HASH_A,
@@ -251,6 +255,11 @@ test("candidate manifests bind every frozen source, runtime, and package identit
   const candidate = buildReleaseCandidateManifest(candidateInput());
 
   assert.deepEqual(validateReleaseCandidateManifest(candidate), candidate);
+  assert.equal(candidate.schema_version, 2);
+  assert.deepEqual(candidate.hardware_validation, {
+    profile: "full",
+    exception_code: null,
+  });
   assert.equal(candidate.source.commit_sha, GIT_A);
   assert.equal(candidate.source.tree_sha, GIT_B);
   assert.equal(candidate.source.story_manifest.count, 24);
@@ -267,6 +276,32 @@ test("candidate manifests bind every frozen source, runtime, and package identit
   );
   assert.equal(candidate.installation.files.length, 1);
   assert.equal(Object.isFrozen(candidate), true);
+});
+
+test("candidate manifests bind the ATX-unavailable exception", () => {
+  const input = candidateInput();
+  input.hardwareValidation = {
+    profile: "atx_unavailable",
+    exception_code: "ATX_WIRING_UNAVAILABLE",
+  };
+  const candidate = buildReleaseCandidateManifest(input);
+
+  assert.deepEqual(candidate.hardware_validation, input.hardwareValidation);
+  assert.equal(Object.isFrozen(candidate.hardware_validation), true);
+  for (const hardwareValidation of [
+    undefined,
+    { profile: "full", exception_code: "ATX_WIRING_UNAVAILABLE" },
+    { profile: "atx_unavailable", exception_code: null },
+    {
+      profile: "atx_unavailable",
+      exception_code: "ATX_WIRING_UNAVAILABLE",
+      reason: "caller-controlled",
+    },
+  ]) {
+    const invalid = candidateInput();
+    invalid.hardwareValidation = hardwareValidation;
+    assert.throws(() => buildReleaseCandidateManifest(invalid));
+  }
 });
 
 test("matches the executing Node, browser, platform, and target to the frozen candidate", async () => {

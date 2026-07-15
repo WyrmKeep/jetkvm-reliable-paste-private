@@ -115,6 +115,10 @@ async function createFixture() {
     browserExecutablePath,
     browserTargetUrl: "http://192.0.2.1",
     controlledEvidencePath,
+    hardwareValidation: {
+      profile: "full",
+      exception_code: null,
+    },
   };
 }
 
@@ -246,6 +250,7 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     const parsed = validateReleaseCandidateManifest(
       JSON.parse(await readFile(result.candidatePath, "utf8")),
     );
+    assert.deepEqual(parsed.hardware_validation, fixture.hardwareValidation);
     assert.equal(parsed.source.commit_sha, COMMIT);
     assert.equal(parsed.source.tree_sha, TREE);
     assert.equal(parsed.source.story_manifest.count, 24);

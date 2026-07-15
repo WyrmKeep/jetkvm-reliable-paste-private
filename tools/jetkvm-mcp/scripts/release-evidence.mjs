@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 
+import { validateHardwareValidation } from "./hardware-validation-profile.mjs";
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const GIT_OBJECT_PATTERN = /^[a-f0-9]{40}$/u;
 const SAFE_NAME_PATTERN = /^[A-Za-z0-9._@/+-]+$/u;
@@ -11,6 +13,7 @@ const CANDIDATE_KEYS = Object.freeze([
   "package",
   "source",
   "runtime",
+  "hardware_validation",
   "artifact",
   "installation",
 ]);
@@ -485,8 +488,8 @@ function validateArtifactFile(value) {
 
 export function validateReleaseCandidateManifest(value) {
   assertExactKeys(value, CANDIDATE_KEYS, "candidate");
-  if (value.schema_version !== 1) {
-    throw new Error("Candidate schema version must be 1.");
+  if (value.schema_version !== 2) {
+    throw new Error("Candidate schema version must be 2.");
   }
   if (value.kind !== "jetkvm-mcp-release-candidate") {
     throw new Error("Candidate kind is invalid.");
@@ -543,6 +546,8 @@ export function validateReleaseCandidateManifest(value) {
     }
     assertHash(identity.sha256, `Candidate ${name} hash`);
   }
+
+  validateHardwareValidation(value.hardware_validation);
 
   assertExactKeys(value.runtime, ["node", "browser"], "candidate runtime");
   assertExactKeys(
@@ -770,7 +775,7 @@ export function buildReleaseCandidateManifest(input) {
   }));
   installationFiles.sort((left, right) => left.path.localeCompare(right.path));
   const candidate = {
-    schema_version: 1,
+    schema_version: 2,
     kind: "jetkvm-mcp-release-candidate",
     package: {
       name: input.packageName,
@@ -820,6 +825,7 @@ export function buildReleaseCandidateManifest(input) {
         managed_profile: input.browserManagedProfile,
       },
     },
+    hardware_validation: validateHardwareValidation(input.hardwareValidation),
     artifact: {
       filename: input.artifactFilename,
       size_bytes: input.artifactSizeBytes,

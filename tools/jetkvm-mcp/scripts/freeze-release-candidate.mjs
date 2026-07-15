@@ -27,6 +27,11 @@ import {
 } from "node:path";
 
 import {
+  parseHardwareValidationProfile,
+  validateHardwareValidation,
+} from "./hardware-validation-profile.mjs";
+
+import {
   buildDirectoryManifest,
   buildLockedConsumerPackageLock,
   buildReleaseCandidateManifest,
@@ -238,10 +243,12 @@ export async function freezeReleaseCandidate({
   browserExecutablePath,
   browserTargetUrl,
   controlledEvidencePath,
+  hardwareValidation,
   architecture = process.arch,
 }) {
   repositoryRoot = resolve(repositoryRoot);
   packageRoot = resolve(packageRoot);
+  hardwareValidation = validateHardwareValidation(hardwareValidation);
   if (packageRoot !== join(repositoryRoot, "tools", "jetkvm-mcp")) {
     throw new Error(
       "Release package root does not match the repository layout.",
@@ -541,6 +548,7 @@ export async function freezeReleaseCandidate({
         .digest("hex"),
       browserCredentialSource: "environment",
       browserManagedProfile: "ephemeral",
+      hardwareValidation,
       artifactFilename,
       artifactSizeBytes: artifactBytes.byteLength,
       artifactSha256,
@@ -637,6 +645,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       browserExecutablePath: process.env.JETKVM_RELEASE_BROWSER_EXECUTABLE_PATH,
       browserTargetUrl: process.env.JETKVM_RELEASE_TARGET_URL,
       controlledEvidencePath: process.env.JETKVM_RELEASE_CONTROLLED_EVIDENCE,
+      hardwareValidation: parseHardwareValidationProfile(process.env),
     });
     process.stdout.write(
       `Release candidate frozen: ${basename(result.tarballPath)} ${result.candidate.source.commit_sha}\n`,
