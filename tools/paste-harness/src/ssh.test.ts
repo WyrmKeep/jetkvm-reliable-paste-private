@@ -89,16 +89,36 @@ describe("shared SSH wrapper", () => {
       const directory = await mkdtemp(join(tmpdir(), "jetkvm-scp-upload-"));
       const capture = join(directory, "capture.bin");
       const destinationCapture = join(directory, "destination.txt");
+      const commandsCapture = join(directory, "commands.txt");
       const fakeSsh = join(directory, "ssh");
       const fakeScp = join(directory, "scp");
       const previousPath = process.env.PATH;
       const previousCapture = process.env.SCP_CAPTURE;
       const previousDestination = process.env.SCP_DESTINATION;
+      const previousCommands = process.env.SSH_COMMANDS;
       try {
-        await writeFile(fakeSsh, "#!/bin/sh\ncat >/dev/null\n", "utf8");
+        await writeFile(
+          fakeSsh,
+          [
+            "#!/bin/sh",
+            'for argument in "$@"; do command="$argument"; done',
+            'printf "%s\\n" "$command" >> "$SSH_COMMANDS"',
+            "",
+          ].join("\n"),
+          "utf8",
+        );
         await writeFile(
           fakeScp,
-          '#!/bin/sh\ncat "${13}" > "$SCP_CAPTURE"\nprintf %s "${14}" > "$SCP_DESTINATION"\n',
+          [
+            "#!/bin/sh",
+            'for argument in "$@"; do',
+            '  source="$destination"',
+            '  destination="$argument"',
+            "done",
+            'cat "$source" > "$SCP_CAPTURE"',
+            'printf %s "$destination" > "$SCP_DESTINATION"',
+            "",
+          ].join("\n"),
           "utf8",
         );
         await chmod(fakeSsh, 0o755);
@@ -106,6 +126,7 @@ describe("shared SSH wrapper", () => {
         process.env.PATH = `${directory}:${previousPath}`;
         process.env.SCP_CAPTURE = capture;
         process.env.SCP_DESTINATION = destinationCapture;
+        process.env.SSH_COMMANDS = commandsCapture;
 
         const content = "Write-Output 'fixture ready'\n";
         await uploadWindowsTextFile(
@@ -121,9 +142,21 @@ describe("shared SSH wrapper", () => {
         );
         expect(captureExists).toBe(true);
         expect(await readFile(capture, "utf8")).toBe(content);
-        expect(await readFile(destinationCapture, "utf8")).toBe(
-          "root@fixture.invalid:C:/Users/Robert/paste-rig/common.ps1",
+        expect(await readFile(destinationCapture, "utf8")).toMatch(
+          /^root@fixture\.invalid:C:\/Users\/Robert\/paste-rig\/common\.ps1\.jetkvm-upload-[0-9a-f-]+\.tmp$/,
         );
+        const commands = (await readFile(commandsCapture, "utf8"))
+          .trim()
+          .split("\n");
+        expect(commands).toHaveLength(2);
+        const encodedInstallScript = commands.at(-1)?.split(/\s+/).at(-1);
+        expect(encodedInstallScript).toBeTruthy();
+        const installScript = Buffer.from(
+          encodedInstallScript ?? "",
+          "base64",
+        ).toString("utf16le");
+        expect(installScript).toContain("[System.IO.File]::Replace");
+        expect(installScript).toContain("[System.IO.File]::Move");
       } finally {
         process.env.PATH = previousPath;
         if (previousCapture === undefined) {
@@ -136,6 +169,112 @@ describe("shared SSH wrapper", () => {
         } else {
           process.env.SCP_DESTINATION = previousDestination;
         }
+        if (previousCommands === undefined) {
+          delete process.env.SSH_COMMANDS;
+        } else {
+          process.env.SSH_COMMANDS = previousCommands;
+        }
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.sequential(
+    "preserves the installed Windows file when SCP fails mid-transfer",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "jetkvm-scp-atomic-"));
+      const remoteFinal = join(directory, "remote-final.ps1");
+      const remoteStaging = join(directory, "remote-staging.ps1");
+      const fakeSsh = join(directory, "ssh");
+      const fakeScp = join(directory, "scp");
+      const previousPath = process.env.PATH;
+      const previousFinal = process.env.SCP_REMOTE_FINAL;
+      const previousStaging = process.env.SCP_REMOTE_STAGING;
+      try {
+        await writeFile(remoteFinal, "installed-safe-version", "utf8");
+        await writeFile(
+          fakeSsh,
+          '#!/bin/sh\nrm -f "$SCP_REMOTE_STAGING"\n',
+          "utf8",
+        );
+        await writeFile(
+          fakeScp,
+          [
+            "#!/bin/sh",
+            'output="$SCP_REMOTE_FINAL"',
+            'for argument in "$@"; do',
+            '  case "$argument" in',
+            '    *.jetkvm-upload-*.tmp) output="$SCP_REMOTE_STAGING" ;;',
+            "  esac",
+            "done",
+            'printf %s "partial-transfer" > "$output"',
+            "exit 7",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        await chmod(fakeSsh, 0o755);
+        await chmod(fakeScp, 0o755);
+        process.env.PATH = `${directory}:${previousPath}`;
+        process.env.SCP_REMOTE_FINAL = remoteFinal;
+        process.env.SCP_REMOTE_STAGING = remoteStaging;
+
+        await expect(
+          uploadWindowsTextFile(
+            "root@fixture.invalid",
+            "C:\\Users\\Robert\\paste-rig\\scheduled-task.ps1",
+            "replacement-version",
+            5_000,
+          ),
+        ).rejects.toThrow(/failed to upload/);
+
+        expect(await readFile(remoteFinal, "utf8")).toBe(
+          "installed-safe-version",
+        );
+        await expect(readFile(remoteStaging)).rejects.toThrow();
+      } finally {
+        process.env.PATH = previousPath;
+        if (previousFinal === undefined) {
+          delete process.env.SCP_REMOTE_FINAL;
+        } else {
+          process.env.SCP_REMOTE_FINAL = previousFinal;
+        }
+        if (previousStaging === undefined) {
+          delete process.env.SCP_REMOTE_STAGING;
+        } else {
+          process.env.SCP_REMOTE_STAGING = previousStaging;
+        }
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.sequential(
+    "shares one timeout budget across preparation and SCP",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "jetkvm-scp-deadline-"));
+      const fakeSsh = join(directory, "ssh");
+      const fakeScp = join(directory, "scp");
+      const previousPath = process.env.PATH;
+      try {
+        await writeFile(fakeSsh, "#!/bin/sh\nsleep 1\n", "utf8");
+        await writeFile(fakeScp, "#!/bin/sh\nsleep 1\n", "utf8");
+        await chmod(fakeSsh, 0o755);
+        await chmod(fakeScp, 0o755);
+        process.env.PATH = `${directory}:${previousPath}`;
+        const startedAt = Date.now();
+
+        await expect(
+          uploadWindowsTextFile(
+            "root@fixture.invalid",
+            "C:\\Users\\Robert\\paste-rig\\deadline.ps1",
+            "replacement-version",
+            1_500,
+          ),
+        ).rejects.toThrow(/failed to upload .*timed out/);
+        expect(Date.now() - startedAt).toBeLessThan(3_000);
+      } finally {
+        process.env.PATH = previousPath;
         await rm(directory, { recursive: true, force: true });
       }
     },

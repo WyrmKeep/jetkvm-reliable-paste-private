@@ -46,11 +46,15 @@ function makePaste(): AutomationPasteTransport & {
   };
 }
 
-function readyController(rpc = makeRpc(), paste = makePaste()) {
+function readyController(
+  rpc = makeRpc(),
+  paste = makePaste(),
+  digestText: (text: string) => Promise<string> = async () => "a".repeat(64),
+) {
   const controller = new AutomationController({
     nowIso: () => "2026-07-13T00:00:03.000Z",
     monotonicNow: () => 0,
-    digestText: async () => "a".repeat(64),
+    digestText,
   });
   const rpcIdentity = {};
   const hidIdentity = {};
@@ -343,6 +347,23 @@ describe("AutomationController lifecycle", () => {
       outcome: "not_sent",
       write_began: false,
     });
+
+    const responseWithoutWrite: ProductRpcRequest = async () => ({ edid: "present" });
+    const second = readyController({ calls: [], request: responseWithoutWrite }).controller;
+    const secondSnapshot = second.snapshot();
+    await expect(
+      second.readEdid({
+        operation_id: "display-read-response-before-write",
+        expected_lifecycle_generation: secondSnapshot.lifecycle_generation,
+        expected_channel_generation: secondSnapshot.channel_generation,
+        timeout_ms: 1000,
+      }),
+    ).rejects.toMatchObject({
+      code: "MALFORMED_ACKNOWLEDGEMENT",
+      stage: "queue",
+      outcome: "not_sent",
+      write_began: false,
+    });
   });
   it("routes a semantic ATX request through the receipt-bearing product RPC", async () => {
     const receipt = {
@@ -381,6 +402,41 @@ describe("AutomationController lifecycle", () => {
         params: { requestId: "power-1", action: "press_power" },
       },
     ]);
+  });
+
+  it("reports ATX channel replacement before the first write as queued", async () => {
+    const holder: { controller?: AutomationController } = {};
+    const request: ProductRpcRequest = async () => {
+      if (holder.controller === undefined) {
+        throw new Error("controller not initialized");
+      }
+      holder.controller.replaceChannels({
+        rpcIdentity: {},
+        rpcRequest: makeRpc().request,
+        hidIdentity: {},
+        hidReady: true,
+      });
+      throw new Error("channel replaced before write");
+    };
+    const controller = readyController({ calls: [], request }).controller;
+    holder.controller = controller;
+    const snapshot = controller.snapshot();
+
+    await expect(
+      controller.performAtx({
+        operation_id: "power-replaced-before-write",
+        expected_lifecycle_generation: snapshot.lifecycle_generation,
+        expected_channel_generation: snapshot.channel_generation,
+        timeout_ms: 1000,
+        request_id: "power-replaced-before-write",
+        action: "press_power",
+      }),
+    ).rejects.toMatchObject({
+      code: "CHANNEL_LOST",
+      stage: "queue",
+      outcome: "not_sent",
+      write_began: false,
+    });
   });
 
   it("preserves acknowledged definitive ATX admission failures", async () => {
@@ -487,6 +543,45 @@ describe("AutomationController acknowledged input", () => {
       { method: "keypressReport", params: { key: 4, press: true } },
       { method: "keypressReport", params: { key: 4, press: false } },
     ]);
+  });
+
+  it("labels keyboard failures before the first write as queued", async () => {
+    const cases: readonly {
+      code: "DOWNSTREAM_ERROR" | "MALFORMED_ACKNOWLEDGEMENT";
+      request: ProductRpcRequest;
+    }[] = [
+      {
+        code: "DOWNSTREAM_ERROR",
+        request: async () => {
+          throw new Error("disconnected before write");
+        },
+      },
+      {
+        code: "MALFORMED_ACKNOWLEDGEMENT",
+        request: async () => null,
+      },
+    ];
+
+    for (const scenario of cases) {
+      const { controller } = readyController({
+        calls: [],
+        request: scenario.request,
+      });
+      await expect(
+        controller.keyboard({
+          ...inputRequest(controller),
+          operation_id: `keyboard-${scenario.code.toLowerCase()}`,
+          operations: [{ key: 4, press: true }],
+        }),
+      ).rejects.toMatchObject({
+        code: scenario.code,
+        stage: "queue",
+        outcome: "not_sent",
+        write_began: false,
+        dispatched_count: 0,
+        completed_count: 0,
+      });
+    }
   });
 
   it("suppresses the suffix after an acknowledged-prefix failure", async () => {
@@ -613,6 +708,62 @@ describe("AutomationController paste and release", () => {
     expect(JSON.stringify(receipt)).not.toContain("Caf");
   });
 
+  it("labels paste failures before acceptance as queued", async () => {
+    const executions: readonly AutomationPasteTransport["execute"][] = [
+      async () => {
+        throw new Error("disconnected before acceptance");
+      },
+      async () => ({
+        acceptedAt: "2026-07-13T00:00:01.000Z",
+        completedAt: "2026-07-13T00:00:02.000Z",
+        measuredSourceCps: 90.9,
+      }),
+    ];
+
+    for (const execute of executions) {
+      const paste = { ...makePaste(), execute };
+      const { controller } = readyController(makeRpc(), paste);
+      await expect(
+        controller.paste({
+          ...inputRequest(controller),
+          operation_id: `paste-before-write-${executions.indexOf(execute)}`,
+          text: "safe text",
+        }),
+      ).rejects.toMatchObject({
+        code: "PASTE_LIFECYCLE",
+        stage: "queue",
+        outcome: "not_sent",
+        write_began: false,
+        dispatched_count: 0,
+      });
+    }
+  });
+
+  it("labels paste digest failures before queue admission", async () => {
+    const digests: readonly ((text: string) => Promise<string>)[] = [
+      async () => "invalid",
+      async () => {
+        throw new Error("digest unavailable");
+      },
+    ];
+
+    for (const digestText of digests) {
+      const { controller } = readyController(makeRpc(), makePaste(), digestText);
+      await expect(
+        controller.paste({
+          ...inputRequest(controller),
+          operation_id: `paste-digest-${digests.indexOf(digestText)}`,
+          text: "safe text",
+        }),
+      ).rejects.toMatchObject({
+        code: "DOWNSTREAM_ERROR",
+        stage: "admission",
+        outcome: "not_sent",
+        write_began: false,
+      });
+    }
+  });
+
   it("preempts active work, cancels paste, invokes first-use zero, and closes the gate", async () => {
     const active = Promise.withResolvers<JsonValue>();
     const activeStarted = Promise.withResolvers<void>();
@@ -688,6 +839,35 @@ describe("AutomationController paste and release", () => {
       controller.release({
         ...inputRequest(controller),
         operation_id: "release-before-write",
+      }),
+    ).rejects.toMatchObject({
+      code: "RELEASE_FAILED",
+      stage: "queue",
+      outcome: "not_sent",
+      write_began: false,
+    });
+    expect(controller.snapshot().state).toBe("closed");
+  });
+
+  it("rejects a release response that arrived without a first-write signal", async () => {
+    const request: ProductRpcRequest = async () => ({
+      operationId: "release-response-before-write",
+      generation: 42,
+      outcome: "released",
+      draining: true,
+      producersJoined: true,
+      macroInactive: true,
+      pasteInactive: true,
+      ordinaryLeasesZero: true,
+      keyboardZero: true,
+      pointerZero: true,
+    });
+    const { controller } = readyController({ calls: [], request });
+
+    await expect(
+      controller.release({
+        ...inputRequest(controller),
+        operation_id: "release-response-before-write",
       }),
     ).rejects.toMatchObject({
       code: "RELEASE_FAILED",

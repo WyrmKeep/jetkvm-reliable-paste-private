@@ -200,8 +200,7 @@ const REQUEST_FAILURE_MESSAGE: Record<JsonRpcRequestFailureCode, string> = {
   DOWNSTREAM_ERROR: "The product RPC request failed.",
   ATX_EXTENSION_INACTIVE: "The ATX extension is inactive.",
   ATX_SERIAL_UNAVAILABLE: "The ATX serial controller is unavailable.",
-  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT:
-    "The ATX request id was reused with different input.",
+  REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT: "The ATX request id was reused with different input.",
   STALE_SESSION_GENERATION: "The device session generation is stale.",
   MUTATION_OUTCOME_UNKNOWN: "The ATX mutation outcome is unknown.",
   CONFIG_INVALID: "The ATX action configuration is invalid.",

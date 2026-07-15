@@ -598,7 +598,8 @@ const automationBridgeErrorSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["outcome"],
-        message: "Bridge error outcome does not match its acknowledgement boundary.",
+        message:
+          "Bridge error outcome does not match its acknowledgement boundary.",
       });
     }
     if (error.completed_count > error.dispatched_count) {
@@ -822,10 +823,15 @@ function mapBridgeCode(error: AutomationBridgeError): {
         requiredNextStep: "enable_capability",
       };
     case "PASTE_LIFECYCLE":
-      return {
-        code: "EVENT_GAP",
-        requiredNextStep: "release_then_reconnect_then_capture",
-      };
+      return error.write_began
+        ? {
+            code: "EVENT_GAP",
+            requiredNextStep: "release_then_reconnect_then_capture",
+          }
+        : {
+            code: "CONNECTION_LOST",
+            requiredNextStep: "reconnect_then_capture",
+          };
     case "INVALID_REQUEST":
     case "MALFORMED_ACKNOWLEDGEMENT":
     case "MIME_MISMATCH":

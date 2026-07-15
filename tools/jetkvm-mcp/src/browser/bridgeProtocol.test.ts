@@ -276,6 +276,50 @@ describe("BrowserPlaneError", () => {
     expect(JSON.stringify(error)).not.toContain("message");
   });
 
+  it("maps paste lifecycle failure by the first-write boundary", () => {
+    const beforeWrite = BrowserPlaneError.fromBridge(
+      {
+        ...bridgeError,
+        code: "PASTE_LIFECYCLE",
+        stage: "queue",
+        outcome: "not_sent",
+        operation_id: "paste-before-write",
+        write_began: false,
+        dispatched_count: 0,
+        completed_count: 0,
+        message: "Reliable Paste completion could not be verified.",
+      },
+      1,
+    );
+    expect(beforeWrite).toMatchObject({
+      code: "CONNECTION_LOST",
+      outcome: "not_sent",
+      stage: "queue",
+      writeBegan: false,
+      safeToRetry: true,
+      requiredNextStep: "reconnect_then_capture",
+    });
+
+    const afterWrite = BrowserPlaneError.fromBridge(
+      {
+        ...bridgeError,
+        code: "PASTE_LIFECYCLE",
+        operation_id: "paste-after-write",
+        dispatched_count: 1,
+        completed_count: 0,
+        message: "Reliable Paste completion could not be verified.",
+      },
+      1,
+    );
+    expect(afterWrite).toMatchObject({
+      code: "EVENT_GAP",
+      outcome: "unknown",
+      writeBegan: true,
+      safeToRetry: false,
+      requiredNextStep: "release_then_reconnect_then_capture",
+    });
+  });
+
   it("preserves the qualified EDID failure without exposing lower-layer details", () => {
     const error = BrowserPlaneError.fromBridge(
       {

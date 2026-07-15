@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { Buffer } from "node:buffer";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -210,6 +212,8 @@ export async function uploadWindowsTextFile(
   content: string,
   timeoutMs = 30_000,
 ): Promise<void> {
+  const deadlineMs = performance.now() + timeoutMs;
+  const remoteTemporaryPath = `${windowsPath}.jetkvm-upload-${randomUUID()}.tmp`;
   const prepareScript = `
 $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
@@ -218,7 +222,9 @@ if ($parent -and -not (Test-Path -LiteralPath $parent)) {
   New-Item -ItemType Directory -Force -Path $parent | Out-Null
 }
 `;
-  const preparation = await runPowerShell(target, prepareScript, { timeoutMs });
+  const preparation = await runPowerShell(target, prepareScript, {
+    timeoutMs: remainingUploadTimeout(deadlineMs, "prepare", windowsPath),
+  });
   if (preparation.exitCode !== 0) {
     throw new Error(
       `failed to prepare ${windowsPath}: ${
@@ -233,14 +239,18 @@ if ($parent -and -not (Test-Path -LiteralPath $parent)) {
     join(tmpdir(), "jetkvm-paste-rig-upload-"),
   );
   const localPath = join(temporaryDirectory, "payload");
+  let remoteTemporaryMayExist = false;
   try {
     await writeFile(localPath, content, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx",
     });
-    const destination = `${target}:${windowsPath.replaceAll("\\", "/")}`;
-    const result = await runScp(localPath, destination, { timeoutMs });
+    const destination = `${target}:${remoteTemporaryPath.replaceAll("\\", "/")}`;
+    remoteTemporaryMayExist = true;
+    const result = await runScp(localPath, destination, {
+      timeoutMs: remainingUploadTimeout(deadlineMs, "upload", windowsPath),
+    });
     if (result.exitCode !== 0) {
       throw new Error(
         `failed to upload ${windowsPath}: ${
@@ -250,9 +260,70 @@ if ($parent -and -not (Test-Path -LiteralPath $parent)) {
         }`,
       );
     }
+
+    const installScript = `
+$ErrorActionPreference = 'Stop'
+$path = ${toPowerShellString(windowsPath)}
+$temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
+try {
+  if ([System.IO.File]::Exists($path)) {
+    [System.IO.File]::Replace($temporaryPath, $path, $null, $true)
+  } else {
+    [System.IO.File]::Move($temporaryPath, $path)
+  }
+} finally {
+  if ([System.IO.File]::Exists($temporaryPath)) {
+    [System.IO.File]::Delete($temporaryPath)
+  }
+}
+`;
+    const installation = await runPowerShell(target, installScript, {
+      timeoutMs: remainingUploadTimeout(deadlineMs, "install", windowsPath),
+    });
+    if (installation.exitCode !== 0) {
+      throw new Error(
+        `failed to install ${windowsPath}: ${
+          installation.stderr ||
+          installation.stdout ||
+          (installation.timedOut ? "timed out" : "unknown failure")
+        }`,
+      );
+    }
+    remoteTemporaryMayExist = false;
   } finally {
+    if (remoteTemporaryMayExist) {
+      const cleanupTimeoutMs = Math.ceil(deadlineMs - performance.now());
+      if (cleanupTimeoutMs > 0) {
+        const cleanupScript = `
+$ErrorActionPreference = 'SilentlyContinue'
+$temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
+if ([System.IO.File]::Exists($temporaryPath)) {
+  [System.IO.File]::Delete($temporaryPath)
+}
+`;
+        try {
+          await runPowerShell(target, cleanupScript, {
+            timeoutMs: cleanupTimeoutMs,
+          });
+        } catch {
+          // Preserve the primary upload/install failure.
+        }
+      }
+    }
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
+}
+
+function remainingUploadTimeout(
+  deadlineMs: number,
+  action: "prepare" | "upload" | "install",
+  windowsPath: string,
+): number {
+  const remainingMs = Math.ceil(deadlineMs - performance.now());
+  if (remainingMs <= 0) {
+    throw new Error(`failed to ${action} ${windowsPath}: timed out`);
+  }
+  return remainingMs;
 }
 
 export function toPowerShellString(value: string): string {

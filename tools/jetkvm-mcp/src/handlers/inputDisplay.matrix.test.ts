@@ -1635,6 +1635,51 @@ describe("Phase 3 handler orchestration invariants", () => {
     });
   });
 
+  it("returns a retryable public error when paste fails before acceptance", async () => {
+    const environment = await environmentReadyForTool("jetkvm_input_paste");
+    environment.browser.paste = async (_ref, request) => {
+      throw BrowserPlaneError.fromBridge(
+        {
+          version: 1,
+          name: "JetKvmAutomationError",
+          code: "PASTE_LIFECYCLE",
+          stage: "queue",
+          outcome: "not_sent",
+          operation_id: request.requestId,
+          lifecycle_generation: 1,
+          channel_generation: 1,
+          display_generation: 1,
+          dispatch_generation: 1,
+          write_began: false,
+          acknowledged: false,
+          dispatched_count: 0,
+          completed_count: 0,
+          message: "Reliable Paste completion could not be verified.",
+        },
+        Buffer.byteLength(request.text, "utf8"),
+      );
+    };
+    const input = validInput("jetkvm_input_paste", environment.ref);
+
+    const error = expectError(
+      await invoke(environment, "jetkvm_input_paste", input),
+      "CONNECTION_LOST",
+    );
+    expect(error).toMatchObject({
+      outcome: "not_sent",
+      safe_to_retry: true,
+      required_next_step: "reconnect_then_capture",
+      details: {
+        downstream_stage: "admission",
+        dispatched_action_count: 0,
+        completed_action_count: 0,
+      },
+    });
+    expect(targetLedgerEntries(environment, "jetkvm_input_paste")).toHaveLength(
+      0,
+    );
+  });
+
   it("clamps a proven pre-write release failure to the public write boundary", async () => {
     const environment = await environmentReadyForTool("jetkvm_input_release");
     environment.browser.release = async () => {
