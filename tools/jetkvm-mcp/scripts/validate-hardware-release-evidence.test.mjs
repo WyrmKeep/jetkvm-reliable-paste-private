@@ -82,7 +82,7 @@ function candidate(hardwareValidation = FULL_HARDWARE_VALIDATION) {
     browserExecutableSha256: HASH,
     browserHeadless: false,
     browserChromiumSandbox: true,
-    browserLaunchArgs: [],
+    browserLaunchArgsSha256: HASH,
     browserTargetUrlSha256: HASH,
     browserCredentialSource: "environment",
     browserManagedProfile: "ephemeral",

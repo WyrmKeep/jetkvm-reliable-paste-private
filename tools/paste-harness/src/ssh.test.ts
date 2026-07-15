@@ -149,6 +149,15 @@ describe("shared SSH wrapper", () => {
           .trim()
           .split("\n");
         expect(commands).toHaveLength(2);
+        const encodedPrepareScript = commands.at(0)?.split(/\s+/).at(-1);
+        expect(encodedPrepareScript).toBeTruthy();
+        const prepareScript = Buffer.from(
+          encodedPrepareScript ?? "",
+          "base64",
+        ).toString("utf16le");
+        expect(prepareScript).toContain(".jetkvm-upload-");
+        expect(prepareScript).toContain("LastWriteTimeUtc");
+        expect(prepareScript).toContain("AddMinutes(-10)");
         const encodedInstallScript = commands.at(-1)?.split(/\s+/).at(-1);
         expect(encodedInstallScript).toBeTruthy();
         const installScript = Buffer.from(

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { PERMISSION_NAMES, type PowerAction } from "../domain.js";
-import { DeviceRpcError, type AtxWireReceipt } from "../device/DeviceRpcAdapter.js";
+import {
+  DeviceRpcError,
+  type AtxWireReceipt,
+} from "../device/DeviceRpcAdapter.js";
 import { RequestLedger } from "../idempotency/RequestLedger.js";
 import type { NativeControlPlane } from "../planes/NativeControlPlane.js";
 import type { DeviceSessionSnapshot } from "../session/deviceSessionClient.js";
@@ -45,11 +48,13 @@ function receipt(requestId: string, action: PowerAction): AtxWireReceipt {
   } as AtxWireReceipt;
 }
 
-function setup(options: {
-  power?: (requestId: string, action: PowerAction) => Promise<AtxWireReceipt>;
-  permissions?: DeviceSessionSnapshot["permissions"];
-  powerCapability?: boolean;
-} = {}) {
+function setup(
+  options: {
+    power?: (requestId: string, action: PowerAction) => Promise<AtxWireReceipt>;
+    permissions?: DeviceSessionSnapshot["permissions"];
+    powerCapability?: boolean;
+  } = {},
+) {
   const calls: Array<{ requestId: string; action: PowerAction }> = [];
   const session: DeviceSessionSnapshot = {
     ref: REF,
@@ -114,7 +119,10 @@ describe("power handler", () => {
     async (action, wireAction, fixedPressMs) => {
       const { handlers, calls, context } = setup();
       const first = await handlers.jetkvm_power_control(input(action), context);
-      const replay = await handlers.jetkvm_power_control(input(action), context);
+      const replay = await handlers.jetkvm_power_control(
+        input(action),
+        context,
+      );
 
       expect(first.structuredContent).toMatchObject({
         ok: true,
@@ -172,8 +180,74 @@ describe("power handler", () => {
         details: { downstream_stage: "none" },
       },
     });
-    expect(second.structuredContent).toMatchObject(first.structuredContent ?? {});
+    expect(second.structuredContent).toMatchObject(
+      first.structuredContent ?? {},
+    );
     expect(calls).toHaveLength(2);
+  });
+
+  it.each([
+    ["CONFIG_INVALID", "none", "none"],
+    ["REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT", "none", "none"],
+    ["STALE_SESSION_GENERATION", "reconnect_then_capture", "admission"],
+  ] as const)(
+    "publishes a schema-valid definitive %s ATX rejection",
+    async (code, requiredNextStep, downstreamStage) => {
+      const { handlers, context } = setup({
+        power: async () => {
+          throw new DeviceRpcError(code, "ack", "not_sent", true, true);
+        },
+      });
+
+      const result = await handlers.jetkvm_power_control(
+        input("press_power", `negative-${code}`),
+        context,
+      );
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: {
+          code,
+          phase: "validate",
+          outcome: "not_sent",
+          safe_to_retry: false,
+          required_next_step: requiredNextStep,
+          details: { downstream_stage: downstreamStage },
+        },
+      });
+    },
+  );
+
+  it("never downgrades an ambiguous ATX rejection to a retryable not-sent result", async () => {
+    const { handlers, calls, context } = setup({
+      power: async () => {
+        throw new DeviceRpcError(
+          "CONFIG_INVALID",
+          "ack",
+          "unknown",
+          true,
+          false,
+        );
+      },
+    });
+    const operationInput = input("press_power", "ambiguous-config");
+
+    const first = await handlers.jetkvm_power_control(operationInput, context);
+    const replay = await handlers.jetkvm_power_control(operationInput, context);
+    expect(first.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: "MUTATION_OUTCOME_UNKNOWN",
+        phase: "execute",
+        outcome: "unknown",
+        safe_to_retry: false,
+        required_next_step: "inspect_device_state_before_retry",
+      },
+    });
+    expect(replay.structuredContent).toMatchObject({
+      ok: false,
+      error: first.structuredContent?.error,
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it("persists an unknown ATX outcome and never replays the physical action", async () => {

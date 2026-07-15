@@ -462,6 +462,31 @@ describe("AutomationController lifecycle", () => {
       acknowledged: true,
     });
   });
+
+  it("does not fabricate an acknowledgement for an unknown ATX outcome", async () => {
+    const rpc = makeRpc(async () => {
+      throw new JsonRpcRequestFailure("MUTATION_OUTCOME_UNKNOWN", true);
+    });
+    const { controller } = readyController(rpc);
+    const snapshot = controller.snapshot();
+
+    await expect(
+      controller.performAtx({
+        operation_id: "power-outcome-unknown",
+        expected_lifecycle_generation: snapshot.lifecycle_generation,
+        expected_channel_generation: snapshot.channel_generation,
+        timeout_ms: 1000,
+        request_id: "power-outcome-unknown",
+        action: "press_power",
+      }),
+    ).rejects.toMatchObject({
+      code: "MUTATION_OUTCOME_UNKNOWN",
+      stage: "acknowledgement",
+      outcome: "unknown",
+      write_began: true,
+      acknowledged: false,
+    });
+  });
   it("cancels an in-flight operation by its exact public operation id", async () => {
     const started = Promise.withResolvers<void>();
     const rpc = makeRpc(async (_method, _params, options) => {

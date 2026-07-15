@@ -678,7 +678,7 @@ test("verifies the shipped consumer lock and complete installed tree", async () 
       browserExecutableSha256: "2".repeat(64),
       browserHeadless: false,
       browserChromiumSandbox: true,
-      browserLaunchArgs: [],
+      browserLaunchArgsSha256: "2".repeat(64),
       browserTargetUrlSha256: "3".repeat(64),
       browserCredentialSource: "environment",
       browserManagedProfile: "ephemeral",

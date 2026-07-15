@@ -54,7 +54,7 @@ function candidateInput() {
     browserExecutableSha256: HASH_A,
     browserHeadless: false,
     browserChromiumSandbox: true,
-    browserLaunchArgs: [],
+    browserLaunchArgsSha256: HASH_1,
     browserTargetUrlSha256: HASH_B,
     browserCredentialSource: "environment",
     browserManagedProfile: "ephemeral",
@@ -266,7 +266,7 @@ test("candidate manifests bind every frozen source, runtime, and package identit
   assert.equal(candidate.runtime.node.version, "v22.23.1");
   assert.equal(candidate.runtime.browser.chromium_sandbox, true);
   assert.equal(candidate.runtime.browser.headless, false);
-  assert.deepEqual(candidate.runtime.browser.launch_args, []);
+  assert.equal(candidate.runtime.browser.launch_args_sha256, HASH_1);
   assert.equal(candidate.runtime.browser.target_url_sha256, HASH_B);
   assert.equal(candidate.source.controlled_evidence_sha256, HASH_2);
   assert.equal(candidate.artifact.files.length, 2);
@@ -316,6 +316,9 @@ test("matches the executing Node, browser, platform, and target to the frozen ca
     input.nodeExecutableSha256 = await sha256File(nodePath);
     input.browserExecutableSha256 = await sha256File(browserPath);
     input.browserTargetUrlSha256 = sha256Text(targetUrl);
+    input.browserLaunchArgsSha256 = sha256Canonical([
+      "--unsafely-treat-insecure-origin-as-secure=http://192.0.2.1",
+    ]);
     const candidate = buildReleaseCandidateManifest(input);
     const runtime = {
       nodeVersion: "v22.23.1",
@@ -328,6 +331,14 @@ test("matches the executing Node, browser, platform, and target to the frozen ca
 
     await assert.doesNotReject(
       assertCurrentRuntimeMatchesCandidate(candidate, runtime),
+    );
+    const driftedLaunchPolicy = structuredClone(candidate);
+    driftedLaunchPolicy.runtime.browser.launch_args_sha256 = sha256Canonical(
+      [],
+    );
+    await assert.rejects(
+      assertCurrentRuntimeMatchesCandidate(driftedLaunchPolicy, runtime),
+      /Browser launch arguments hash/u,
     );
     for (const [field, value] of [
       ["nodeVersion", "v22.23.2"],

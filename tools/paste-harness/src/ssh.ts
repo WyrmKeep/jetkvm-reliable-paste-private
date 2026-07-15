@@ -218,8 +218,21 @@ export async function uploadWindowsTextFile(
 $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
 $parent = Split-Path -Parent $path
-if ($parent -and -not (Test-Path -LiteralPath $parent)) {
-  New-Item -ItemType Directory -Force -Path $parent | Out-Null
+if ($parent) {
+  if (-not (Test-Path -LiteralPath $parent)) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+  }
+  $temporaryPrefix = (Split-Path -Leaf $path) + '.jetkvm-upload-'
+  $staleBefore = [System.DateTime]::UtcNow.AddMinutes(-10)
+  Get-ChildItem -LiteralPath $parent -File -Force -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Name.StartsWith($temporaryPrefix, [System.StringComparison]::Ordinal) -and
+      $_.Name.EndsWith('.tmp', [System.StringComparison]::Ordinal) -and
+      $_.LastWriteTimeUtc -lt $staleBefore
+    } |
+    ForEach-Object {
+      try { [System.IO.File]::Delete($_.FullName) } catch {}
+    }
 }
 `;
   const preparation = await runPowerShell(target, prepareScript, {

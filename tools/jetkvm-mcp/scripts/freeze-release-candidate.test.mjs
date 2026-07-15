@@ -13,10 +13,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { browserLaunchArgsForTarget } from "../src/browser/browserLaunchPolicy.mjs";
+
 import { freezeReleaseCandidate } from "./freeze-release-candidate.mjs";
 import { ATX_UNAVAILABLE_ACKNOWLEDGEMENT } from "./hardware-validation-profile.mjs";
 import {
   buildDirectoryManifest,
+  sha256Canonical,
   sha256File,
   validateReleaseCandidateManifest,
 } from "./release-evidence.mjs";
@@ -283,6 +286,10 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     );
     assert.equal(parsed.runtime.browser.headless, false);
     assert.equal(parsed.runtime.browser.chromium_sandbox, true);
+    assert.equal(
+      parsed.runtime.browser.launch_args_sha256,
+      sha256Canonical(browserLaunchArgsForTarget(fixture.browserTargetUrl)),
+    );
     assert.equal(
       parsed.source.controlled_evidence_sha256,
       await sha256File(fixture.controlledEvidencePath),

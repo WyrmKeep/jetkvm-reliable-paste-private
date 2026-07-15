@@ -26,6 +26,8 @@ import {
   sep,
 } from "node:path";
 
+import { browserLaunchArgsForTarget } from "../src/browser/browserLaunchPolicy.mjs";
+
 import { parseHardwareValidationProfile } from "./hardware-validation-profile.mjs";
 
 import {
@@ -541,7 +543,9 @@ export async function freezeReleaseCandidate({
       browserExecutableSha256: await sha256File(browserExecutablePath),
       browserHeadless: false,
       browserChromiumSandbox: true,
-      browserLaunchArgs: [],
+      browserLaunchArgsSha256: sha256Canonical(
+        browserLaunchArgsForTarget(browserTargetUrl),
+      ),
       browserTargetUrlSha256: createHash("sha256")
         .update(browserTargetUrl)
         .digest("hex"),

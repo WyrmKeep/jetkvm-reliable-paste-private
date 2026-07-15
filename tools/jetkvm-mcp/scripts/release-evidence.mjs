@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 
+import { browserLaunchArgsForTarget } from "../src/browser/browserLaunchPolicy.mjs";
+
 import { validateHardwareValidation } from "./hardware-validation-profile.mjs";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -582,7 +584,7 @@ export function validateReleaseCandidateManifest(value) {
       "executable_sha256",
       "headless",
       "chromium_sandbox",
-      "launch_args",
+      "launch_args_sha256",
       "target_url_sha256",
       "credential_source",
       "managed_profile",
@@ -600,14 +602,10 @@ export function validateReleaseCandidateManifest(value) {
   if (value.runtime.browser.chromium_sandbox !== true) {
     throw new Error("Candidate browser must enable the Chromium sandbox.");
   }
-  if (
-    !Array.isArray(value.runtime.browser.launch_args) ||
-    value.runtime.browser.launch_args.length !== 0
-  ) {
-    throw new Error(
-      "Candidate browser launch args must be the reviewed empty list.",
-    );
-  }
+  assertHash(
+    value.runtime.browser.launch_args_sha256,
+    "Browser launch arguments hash",
+  );
   assertHash(
     value.runtime.browser.target_url_sha256,
     "Browser target URL hash",
@@ -727,6 +725,9 @@ export async function assertCurrentRuntimeMatchesCandidate(candidate, current) {
     sha256File(current.browserExecutablePath),
   ]);
   const targetHash = sha256Text(current.targetUrl);
+  const launchArgsHash = sha256Canonical(
+    browserLaunchArgsForTarget(current.targetUrl),
+  );
   const mismatches = [];
   const compare = (label, actual, expected) => {
     if (actual !== expected) {
@@ -760,6 +761,11 @@ export async function assertCurrentRuntimeMatchesCandidate(candidate, current) {
     browser.executable_sha256,
   );
   compareHash("Browser target hash", targetHash, browser.target_url_sha256);
+  compareHash(
+    "Browser launch arguments hash",
+    launchArgsHash,
+    browser.launch_args_sha256,
+  );
   if (mismatches.length > 0) {
     throw new Error(
       `The executing runtime did not match the frozen candidate: ${mismatches.join("; ")}.`,
@@ -819,7 +825,7 @@ export function buildReleaseCandidateManifest(input) {
         executable_sha256: input.browserExecutableSha256,
         headless: input.browserHeadless,
         chromium_sandbox: input.browserChromiumSandbox,
-        launch_args: [...input.browserLaunchArgs],
+        launch_args_sha256: input.browserLaunchArgsSha256,
         target_url_sha256: input.browserTargetUrlSha256,
         credential_source: input.browserCredentialSource,
         managed_profile: input.browserManagedProfile,

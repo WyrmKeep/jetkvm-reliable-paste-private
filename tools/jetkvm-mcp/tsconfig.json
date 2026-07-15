@@ -10,9 +10,10 @@
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    "allowJs": true,
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.mjs", "vitest.config.ts"],
   "exclude": ["dist", "node_modules"]
 }

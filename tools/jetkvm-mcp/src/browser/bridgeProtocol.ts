@@ -921,9 +921,12 @@ export class BrowserPlaneError extends Error {
       });
     }
     const mapped = mapBridgeCode(error);
-    const outcome: BrowserPlaneErrorOutcome = error.acknowledged
-      ? "applied"
-      : error.outcome;
+    const outcome: BrowserPlaneErrorOutcome =
+      error.outcome === "not_sent" || error.code === "MUTATION_OUTCOME_UNKNOWN"
+        ? error.outcome
+        : error.acknowledged
+          ? "applied"
+          : error.outcome;
     const failedIndex =
       !error.acknowledged &&
       error.write_began &&

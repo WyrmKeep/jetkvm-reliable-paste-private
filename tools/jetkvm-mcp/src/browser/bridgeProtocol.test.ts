@@ -344,6 +344,65 @@ describe("BrowserPlaneError", () => {
     expect(JSON.stringify(error)).not.toContain("EDID read failed");
   });
 
+  it.each([
+    ["CONFIG_INVALID", "The ATX action configuration is invalid.", "none"],
+    [
+      "REQUEST_ID_REUSED_WITH_DIFFERENT_INPUT",
+      "The ATX request id was reused with different input.",
+      "none",
+    ],
+    [
+      "STALE_SESSION_GENERATION",
+      "The device session generation is stale.",
+      "reconnect_then_capture",
+    ],
+  ] as const)(
+    "preserves a definitive %s negative acknowledgement as not sent",
+    (code, message, requiredNextStep) => {
+      const error = BrowserPlaneError.fromBridge(
+        {
+          ...bridgeError,
+          code,
+          outcome: "not_sent",
+          acknowledged: true,
+          dispatched_count: 0,
+          completed_count: 0,
+          message,
+        },
+        1,
+      );
+
+      expect(error).toMatchObject({
+        code,
+        outcome: "not_sent",
+        safeToRetry: false,
+        requiredNextStep,
+      });
+    },
+  );
+
+  it("preserves an acknowledged explicit unknown ATX outcome", () => {
+    const error = BrowserPlaneError.fromBridge(
+      {
+        ...bridgeError,
+        code: "MUTATION_OUTCOME_UNKNOWN",
+        outcome: "unknown",
+        acknowledged: true,
+        dispatched_count: 1,
+        completed_count: 0,
+        message: "The ATX mutation outcome is unknown.",
+      },
+      1,
+    );
+
+    expect(error).toMatchObject({
+      code: "MUTATION_OUTCOME_UNKNOWN",
+      outcome: "unknown",
+      safeToRetry: false,
+      requiredNextStep: "inspect_device_state_before_retry",
+    });
+  });
+
   it("treats a correlated acknowledgement as applied and never fabricates unknown", () => {
     const error = BrowserPlaneError.fromBridge(
       {

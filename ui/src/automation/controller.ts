@@ -1189,7 +1189,7 @@ export class AutomationController implements AutomationOwner {
           ...(atxFailure === null
             ? {}
             : {
-                acknowledged: true,
+                acknowledged: atxFailure !== "MUTATION_OUTCOME_UNKNOWN",
                 outcome:
                   atxFailure === "MUTATION_OUTCOME_UNKNOWN"
                     ? ("unknown" as const)
