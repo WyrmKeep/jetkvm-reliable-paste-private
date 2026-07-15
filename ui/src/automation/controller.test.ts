@@ -854,6 +854,108 @@ describe("AutomationController paste and release", () => {
     ).rejects.toMatchObject({ code: "CLOSED", outcome: "not_sent" });
   });
 
+  it("completes emergency release across an in-flight display replacement", async () => {
+    const releaseStarted = Promise.withResolvers<void>();
+    const allowRelease = Promise.withResolvers<void>();
+    let releaseSignal: AbortSignal | undefined;
+    const rpc = makeRpc(async (method, _params, options) => {
+      if (method !== "quiesceAndZero") return null;
+      releaseSignal = options.signal;
+      releaseStarted.resolve();
+      await allowRelease.promise;
+      return {
+        operationId: "release-display-replacement",
+        generation: 42,
+        outcome: "released",
+        draining: true,
+        producersJoined: true,
+        macroInactive: true,
+        pasteInactive: true,
+        ordinaryLeasesZero: true,
+        keyboardZero: true,
+        pointerZero: true,
+      };
+    });
+    const { controller } = readyController(rpc);
+    const release = controller.release({
+      ...inputRequest(controller),
+      operation_id: "release-display-replacement",
+    });
+    await releaseStarted.promise;
+
+    controller.replaceDisplay({
+      videoIdentity: {},
+      video: null,
+      videoReady: true,
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      sourceRevision: 2,
+    });
+    const releaseWasAborted = releaseSignal?.aborted;
+    allowRelease.resolve();
+
+    await expect(release).resolves.toMatchObject({
+      operation_id: "release-display-replacement",
+      outcome: "released",
+      keyboard_zero: true,
+      pointer_zero: true,
+    });
+    expect(releaseWasAborted).toBe(false);
+    expect(controller.snapshot().state).toBe("closed");
+  });
+
+  it.each([
+    {
+      writeBegan: false,
+      stage: "queue",
+      outcome: "not_sent",
+    },
+    {
+      writeBegan: true,
+      stage: "acknowledgement",
+      outcome: "unknown",
+    },
+  ] as const)(
+    "classifies release channel replacement at the $stage boundary",
+    async ({ writeBegan, stage, outcome }) => {
+      const releaseStarted = Promise.withResolvers<void>();
+      const request: ProductRpcRequest = async (_method, _params, options) => {
+        if (writeBegan) options.onWrite();
+        releaseStarted.resolve();
+        return await new Promise<never>((_resolve, reject) => {
+          const rejectAborted = () => reject(new Error("channel replaced"));
+          if (options.signal.aborted) {
+            rejectAborted();
+          } else {
+            options.signal.addEventListener("abort", rejectAborted, {
+              once: true,
+            });
+          }
+        });
+      };
+      const { controller } = readyController({ calls: [], request });
+      const release = controller.release({
+        ...inputRequest(controller),
+        operation_id: `release-channel-${stage}`,
+      });
+      await releaseStarted.promise;
+
+      controller.replaceChannels({
+        rpcIdentity: {},
+        rpcRequest: makeRpc().request,
+        hidIdentity: {},
+        hidReady: true,
+      });
+
+      await expect(release).rejects.toMatchObject({
+        code: "CHANNEL_LOST",
+        stage,
+        outcome,
+        write_began: writeBegan,
+      });
+    },
+  );
+
   it("reports a release transport failure before the first write as queued", async () => {
     const request: ProductRpcRequest = async () => {
       throw new Error("disconnected before write");

@@ -401,7 +401,7 @@ export class BrowserController implements BrowserControllerPort {
   ): Promise<ReleaseBridgeReceipt> {
     const request = validateRequest(parseReleaseBridgeRequest, rawRequest);
     assertDeadline(deadline, request.timeout_ms);
-    await this.assertPreSnapshot(request, deadline, true);
+    await this.assertPreSnapshot(request, deadline, true, false);
     const envelope = await this.awaitPageEvaluation(
       this.page.evaluate(async (bridgeRequest): Promise<FacadeCallEnvelope> => {
         const facade = (window as AutomationWindow).__JETKVM_AUTOMATION__;
@@ -429,7 +429,6 @@ export class BrowserController implements BrowserControllerPort {
     if (
       result.lifecycle_generation !== request.expected_lifecycle_generation ||
       result.channel_generation !== request.expected_channel_generation ||
-      result.display_generation !== request.expected_display_generation ||
       result.dispatch_generation <= request.expected_dispatch_generation
     ) {
       throw malformedBridgeError(true, 1);
@@ -444,7 +443,6 @@ export class BrowserController implements BrowserControllerPort {
       post.state !== "closed" ||
       post.lifecycle_generation !== result.lifecycle_generation ||
       post.channel_generation !== result.channel_generation ||
-      post.display_generation !== result.display_generation ||
       post.dispatch_generation !== result.dispatch_generation
     ) {
       throw this.appliedVerificationError(1);
@@ -656,6 +654,7 @@ export class BrowserController implements BrowserControllerPort {
       | AtxBridgeRequest,
     deadline: Deadline,
     input: boolean,
+    displaySensitive = input,
   ): Promise<void> {
     const snapshot = await this.snapshot(deadline);
     if (snapshot.state !== "ready") {
@@ -707,7 +706,10 @@ export class BrowserController implements BrowserControllerPort {
       });
     }
     if (input && "expected_display_generation" in request) {
-      if (snapshot.display_generation !== request.expected_display_generation) {
+      if (
+        displaySensitive &&
+        snapshot.display_generation !== request.expected_display_generation
+      ) {
         throw new BrowserPlaneError({
           code: "DISPLAY_CHANGED",
           outcome: "not_sent",

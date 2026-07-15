@@ -8,6 +8,8 @@ import {
   type CaptureBridgeResult,
   type MouseBridgeRequest,
   type MutationBridgeReceipt,
+  type ReleaseBridgeReceipt,
+  type ReleaseBridgeRequest,
 } from "./bridgeProtocol.js";
 import { BrowserController } from "./BrowserController.js";
 
@@ -79,6 +81,31 @@ const mutationReceipt: MutationBridgeReceipt = {
   acknowledged_at: "2026-07-13T00:00:00.001Z",
   dispatched_count: 2,
   completed_count: 2,
+};
+const releaseRequest: ReleaseBridgeRequest = {
+  operation_id: "release-1",
+  expected_lifecycle_generation: 2,
+  expected_channel_generation: 3,
+  expected_display_generation: 4,
+  expected_dispatch_generation: 5,
+  timeout_ms: 1_000,
+};
+const releaseReceipt: ReleaseBridgeReceipt = {
+  operation_id: "release-1",
+  lifecycle_generation: 2,
+  channel_generation: 3,
+  display_generation: 6,
+  dispatch_generation: 6,
+  device_generation: 9,
+  outcome: "released",
+  draining: true,
+  producers_joined: true,
+  macro_inactive: true,
+  paste_inactive: true,
+  ordinary_leases_zero: true,
+  keyboard_zero: true,
+  pointer_zero: true,
+  released_at: "2026-07-13T00:00:00.200Z",
 };
 
 class QueuePage {
@@ -271,6 +298,41 @@ describe("BrowserController", () => {
       completedCount: 2,
       safeToRetry: false,
     });
+  });
+
+  it("accepts definitive release across unrelated display generation changes", async () => {
+    const { controller } = controllerFor([
+      { ...snapshot, display_generation: 6 },
+      { ok: true, value: releaseReceipt },
+      {
+        ...snapshot,
+        state: "closed",
+        display_generation: 7,
+        dispatch_generation: 6,
+      },
+    ]);
+
+    await expect(controller.release(releaseRequest, deadline)).resolves.toEqual(
+      releaseReceipt,
+    );
+  });
+  it("keeps release fenced by dispatch generation during display churn", async () => {
+    const { controller, page } = controllerFor([
+      {
+        ...snapshot,
+        display_generation: 6,
+        dispatch_generation: 6,
+      },
+    ]);
+
+    await expect(
+      controller.release(releaseRequest, deadline),
+    ).rejects.toMatchObject({
+      code: "SESSION_DRAINED",
+      outcome: "not_sent",
+      writeBegan: false,
+    });
+    expect(page.calls).toHaveLength(1);
   });
 
   it("forwards cancellation to the exact in-page operation before returning", async () => {
