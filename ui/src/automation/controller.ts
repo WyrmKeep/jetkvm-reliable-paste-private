@@ -805,7 +805,7 @@ export class AutomationController implements AutomationOwner {
           operationId: request.operation_id,
         });
       }
-      const remaining = request.timeout_ms - (this.monotonicNow() - startedAt);
+      const remaining = Math.floor(request.timeout_ms - (this.monotonicNow() - startedAt));
       if (remaining <= 0) {
         throw makeBridgeError("DEADLINE_EXCEEDED", "queue", {
           snapshot: this.snapshot(),

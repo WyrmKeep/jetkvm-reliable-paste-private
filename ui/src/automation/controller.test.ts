@@ -50,10 +50,11 @@ function readyController(
   rpc = makeRpc(),
   paste = makePaste(),
   digestText: (text: string) => Promise<string> = async () => "a".repeat(64),
+  monotonicNow: () => number = () => 0,
 ) {
   const controller = new AutomationController({
     nowIso: () => "2026-07-13T00:00:03.000Z",
-    monotonicNow: () => 0,
+    monotonicNow,
     digestText,
   });
   const rpcIdentity = {};
@@ -852,6 +853,41 @@ describe("AutomationController paste and release", () => {
         }),
       ),
     ).rejects.toMatchObject({ code: "CLOSED", outcome: "not_sent" });
+  });
+  it("conservatively rounds a fractional release deadline to an integer RPC timeout", async () => {
+    const clock = [100.25, 100.875];
+    let rpcTimeoutMs: number | undefined;
+    const rpc = makeRpc(async (method, _params, options) => {
+      expect(method).toBe("quiesceAndZero");
+      rpcTimeoutMs = options.timeoutMs;
+      return {
+        operationId: "release-fractional-deadline",
+        generation: 42,
+        outcome: "released",
+        draining: true,
+        producersJoined: true,
+        macroInactive: true,
+        pasteInactive: true,
+        ordinaryLeasesZero: true,
+        keyboardZero: true,
+        pointerZero: true,
+      };
+    });
+    const { controller } = readyController(
+      rpc,
+      makePaste(),
+      async () => "a".repeat(64),
+      () => clock.shift() ?? 100.875,
+    );
+
+    await expect(
+      controller.release({
+        ...inputRequest(controller),
+        operation_id: "release-fractional-deadline",
+      }),
+    ).resolves.toMatchObject({ outcome: "released" });
+    expect(rpcTimeoutMs).toBe(999);
+    expect(Number.isSafeInteger(rpcTimeoutMs)).toBe(true);
   });
 
   it("completes emergency release across an in-flight display replacement", async () => {
