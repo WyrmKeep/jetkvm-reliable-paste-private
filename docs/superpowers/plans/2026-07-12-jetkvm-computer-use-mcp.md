@@ -902,15 +902,15 @@ Repeat from a separate clean checkout using a freshly created tarball and empty 
 
 **Hardware target:** The runner receives a protected operator target at runtime and derives the device lease key from its normalized identity without logging it. No fixed IP, hostname, URL, lease key, network path, or topology appears in package defaults, schemas, public examples, manifest, or evidence.
 
-**Outcome:** Freeze one candidate and hardware-validation profile, run every profile-required release story serially under one device lease with evidence and restoration, bind an immutable manifest to exact source/package/runtime/firmware/profile identities, obtain fresh review, merge, tag, publish, and verify the downloadable release from a clean checkout and empty install.
+**Outcome:** Freeze one candidate and hardware-validation profile, run every live story and every profile-required step serially under one device lease with evidence and restoration, bind an immutable manifest to exact source/package/runtime/firmware/profile identities, obtain fresh review, merge, tag, publish, and verify the downloadable release from a clean checkout and empty install.
 
 ## Task 6.1: Advisor gate, release branch preflight, and candidate freeze
 
 - [ ] Re-read both advisors, canonical design, plan, merged PRs, and story/branch matrix before any release decision. Record final advice/divergence/risk disposition in the release PR body.
-- [ ] Require merged `main`, green Phase 5 CI, clean worktree, complete six-phase history, zero known P0/P1, complete behavioral matrix, and no skipped profile-required release story.
+- [ ] Require merged `main`, green Phase 5 CI, clean worktree, complete six-phase history, zero known P0/P1, complete behavioral matrix, and no skipped profile-required release step.
 - [ ] Record candidate commit `C`, tree `G`, hardware-validation profile `P`, package-lock hash, story-manifest hash, generated-schema hash, and exact Node 22.23.1 identity. `P=atx_unavailable` requires the exact freeze-time acknowledgement and reason approved by the user; runtime-only waivers are forbidden.
 - [ ] Clean-build the package tarball `T` once and record filename, size, SHA-256, package-tree hash, and unpacked-file manifest. No code/schema/doc/profile change is allowed after freezing `C/G/T/P`.
-- [ ] Any required fix invalidates the candidate: make the fix on the release branch, rerun affected plus full hardware-free gates, freeze a new `C/G/T/P`, and rerun every profile-required hardware story whose code, schema, package, docs, profile, or evidence interpretation changed.
+- [ ] Any required fix invalidates the candidate: make the fix on the release branch, rerun affected plus full hardware-free gates, freeze a new `C/G/T/P`, and rerun every affected live story plus every profile-required hardware step whose code, schema, package, docs, profile, or evidence interpretation changed.
 
 ## Task 6.2: Acquire one serialized device lease and establish baseline
 
@@ -948,16 +948,16 @@ After every story—including failure—the runner must release input, reconcile
 
 ## Task 6.4: Finalize immutable evidence before releasing the lease
 
-- [ ] Still inside the one lease, flush and validate every profile-required story record, timing series, sanitized replay capture, frame hash/dimensions, restore result, and final device status. `P=full` also requires ATX indicator transition evidence; `P=atx_unavailable` requires the strict exception record and no ATX mutation.
+- [ ] Still inside the one lease, flush and validate every live-story record, every profile-required step result, timing series, sanitized replay capture, frame hash/dimensions, restore result, and final device status. `P=full` also requires ATX indicator transition evidence; `P=atx_unavailable` requires the strict step-level exception record and no ATX mutation.
 - [ ] Manifest binds exact `C`, `G`, `T`, and `P`, SHA-256/package tree/lock/schema/story hashes, Node executable/version, browser executable/version, JetKVM firmware/app/running binary identity, device capability snapshot, evidence hashes, and PR/run IDs.
-- [ ] Require zero skipped profile-required stories, zero failed restores, zero unresolved unknown outcomes, and no target identity, network topology, secret, URL, cookie, token, lease proof, SDP/ICE, screenshot bytes, or paste text in the manifest/artifacts. `full` terminates `pass`; `atx_unavailable` terminates `pass_with_exception` only when the excluded IDs exactly equal the machine-derived ATX set.
+- [ ] Require zero skipped profile-required steps, zero failed story baselines/restores, zero unresolved unknown outcomes, and no target identity, network topology, secret, URL, cookie, token, lease proof, SDP/ICE, screenshot bytes, or paste text in the manifest/artifacts. `full` terminates `pass`; `atx_unavailable` terminates `pass_with_exception` only when the excluded `(story_id, step_id)` pairs exactly equal the machine-derived ATX-dependent set.
 - [ ] In the outer `finally`, stop child processes, run correlated input release, reconcile session/power baseline, flush final evidence, and only then release the lease. No device action occurs outside the lease.
 
 ## Task 6.5: Release PR, fresh review, remediation rule, and merge
 
 - [ ] Open the release PR from `feat/jetkvm-mcp-hardware-release` to updated `main`. Body includes all §0.6 content plus `C/G/T/P`, Node/browser/firmware identities, story table and restore status, exact exception disclosure when applicable, evidence links/hashes, complete matrix, six-deliverable audit, known risks, and rollback.
 - [ ] Fresh reviewers who did not make the candidate perform: architecture/API divergence review; security/privacy/artifact review; full diff and branch-matrix review; and hardware evidence/restore review.
-- [ ] Every reviewer reports P0-P3 findings and confidence with evidence/gaps. Zero P0/P1 is mandatory. A code/schema/doc/package/profile fix invalidates `C/G/T/P` and triggers the new-candidate rule; evidence-only correction requires a new signed manifest and rerun of affected profile-required story validation.
+- [ ] Every reviewer reports P0-P3 findings and confidence with evidence/gaps. Zero P0/P1 is mandatory. A code/schema/doc/package/profile fix invalidates `C/G/T/P` and triggers the new-candidate rule; evidence-only correction requires a new signed manifest and rerun of affected profile-required step validation.
 - [ ] Required CI and the full Phase 5 hardware-free local gate remain green on the exact release head. The immutable hardware manifest validates against the exact tarball.
 - [ ] Merge only when the resulting `main` tree contains exact candidate tree `G` without conflict edits. If the merge changes the candidate tree, stop and create/retest a new candidate.
 
@@ -978,13 +978,13 @@ The release is incomplete unless all six deliverables are present and mutually c
 3. **Exact typed API:** ten generated/packed/listed schemas and common result/error/idempotency contracts, with no aliases or removed capability.
 4. **Complete verification system:** focused tests, Fake/Replay seams, protocol E2E, machine-readable behavioral branch matrix, and green CI/full local clean-checkout gates.
 5. **Stranger-ready operator experience:** README, executable examples, security guidance, troubleshooting, clean-install proof, and recovery/rollback instructions.
-6. **Immutable real-hardware evidence:** one-lease serialized profile-required story run, per-story restore, exact artifact/runtime/firmware/profile binding, privacy-safe manifest, any exact ATX exception, tag, release, and clean-download verification.
+6. **Immutable real-hardware evidence:** one-lease serialized run of every live story and every profile-required step, per-story baseline/restore, exact artifact/runtime/firmware/profile binding, privacy-safe manifest, any exact ATX step exception, tag, release, and clean-download verification.
 
 ## Phase 6 final merge/release gate
 
 - [ ] Advisor gate complete and release PR body complete.
 - [ ] Zero unresolved P0/P1; every fresh reviewer records confidence and evidence.
-- [ ] Required CI green; exact full local hardware-free gate green; immutable hardware story suite green with zero missing profile-required stories, no unbound exclusions, and verified restores.
+- [ ] Required CI green; exact full local hardware-free gate green; immutable hardware story suite green with every live story, zero missing profile-required steps, no unbound exclusions, and verified baselines/restores.
 - [ ] Clean-checkout download/install/full suite green against exact `T`.
 - [ ] Six-deliverable audit passes with no mismatch.
 - [ ] Merge, tag, and release identities match exactly.
@@ -1025,4 +1025,4 @@ The release is incomplete unless all six deliverables are present and mutually c
 - “Power control” means serialized fixed 200 ms/5 s/200 ms serial press/release semantics plus separately qualified cached indicators. Serial acknowledgement and LED/video observations never claim the host OS or host power state changed.
 - “Full local” in Phases 1–5 means all hardware-free repository, package, UI, adapter, fake/replay, protocol, story, docs, and clean-install gates. Phase 6 adds the serialized real-device story suite.
 - The hardware target and lease key are protected runtime inputs. The runner derives the key from normalized target identity, and public evidence omits network topology.
-- The v0.1 release fixture has no usable ATX motherboard leads. `atx_unavailable` is a frozen release profile, not a dynamic bypass: the runner excludes only the canonical live power-action set, the validator enforces that exact set, and release notes disclose the physical-validation gap.
+- The v0.1 release fixture has no usable ATX motherboard leads. `atx_unavailable` is a frozen release profile, not a dynamic bypass: the runner excludes only the canonical ATX-wiring-dependent step set, still runs every mixed story and all remaining steps, the validator enforces the exact `(story_id, step_id)` pairs, and release notes disclose the physical-validation gap.
