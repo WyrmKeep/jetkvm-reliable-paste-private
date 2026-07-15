@@ -11,6 +11,11 @@ import {
   sha256File,
 } from "./release-evidence.mjs";
 import {
+  ATX_UNAVAILABLE_ACKNOWLEDGEMENT,
+  ATX_UNAVAILABLE_EXCEPTION_CODE,
+  deriveHardwareValidationException,
+} from "./hardware-validation-profile.mjs";
+import {
   containsPrivateReleaseMaterial,
   validateEvidenceDirectory,
   validateHardwareReleaseEvidence,
@@ -19,8 +24,41 @@ import {
 const HASH = "a".repeat(64);
 const COMMIT = "b".repeat(40);
 const TREE = "c".repeat(40);
+const FULL_HARDWARE_VALIDATION = Object.freeze({
+  profile: "full",
+  exception_code: null,
+});
+const ATX_UNAVAILABLE_VALIDATION = Object.freeze({
+  profile: "atx_unavailable",
+  exception_code: ATX_UNAVAILABLE_EXCEPTION_CODE,
+});
+const ATX_STORY_STEPS = Object.freeze({
+  "power-three-semantic-actions": Object.freeze([
+    "establish-definitive-atx-session",
+    "definitive-press-power",
+    "verify-power-indicator-on",
+    "wait-for-power-off",
+    "verify-power-indicator-off",
+    "reconnect-after-power-transition",
+    "definitive-press-reset",
+    "verify-reset-indicator",
+  ]),
+  "duplicate-request-id-definitive-replay": Object.freeze([
+    "establish-power-baseline",
+    "first-power-short-press",
+    "duplicate-power-short-press-replay",
+    "compare-power-receipts",
+    "restore-power-baseline",
+  ]),
+  "atx-extension-serialization-idempotency-and-nonproof": Object.freeze([
+    "establish-definitive-session-before-connect",
+    "authorized-serial-power-baseline",
+    "connect-without-definitive-session",
+    "release-definitive-session",
+  ]),
+});
 
-function candidate() {
+function candidate(hardwareValidation = FULL_HARDWARE_VALIDATION) {
   return buildReleaseCandidateManifest({
     packageName: "@wyrmkeep/jetkvm-mcp",
     packageVersion: "0.1.0",
@@ -54,6 +92,7 @@ function candidate() {
     consumerPackageJsonSha256: HASH,
     consumerPackageLockSha256: HASH,
     productionResolutionSha256: HASH,
+    hardwareValidation,
     installationFiles: [
       {
         path: "@wyrmkeep/jetkvm-mcp/package.json",
@@ -75,13 +114,17 @@ function fixture() {
     environments: ["live"],
     preconditions: [{ id: "safe" }],
     steps: [{ id: "hardware-step" }, { id: "linked-step" }],
-    restore: [{ id: "release-input" }],
+    restore: [{ id: "release-input", always: true }],
   };
   const plan = {
     "live-story": {
       steps: {
-        "hardware-step": { mode: "hardware" },
-        "linked-step": { mode: "linked", assertion_ids: ["focused:one"] },
+        "hardware-step": { mode: "hardware", requires_atx_wiring: false },
+        "linked-step": {
+          mode: "linked",
+          requires_atx_wiring: false,
+          assertion_ids: ["focused:one"],
+        },
       },
     },
   };
@@ -104,6 +147,9 @@ function fixture() {
     story_id: story.id,
     title: story.title,
     result: "pass",
+    started_at: "2026-07-14T00:00:00.000Z",
+    completed_at: "2026-07-14T00:00:01.000Z",
+    precondition_ids: ["safe"],
     baseline_before: baselineBefore,
     baseline_after: baselineAfter,
     baseline_before_sha256: sha256Canonical(baselineBefore),
@@ -117,7 +163,9 @@ function fixture() {
       {
         step_id: "hardware-step",
         mode: "hardware",
+        requires_atx_wiring: false,
         result: "pass",
+        started_at: "2026-07-14T00:00:00.100Z",
         duration_ms: 1,
         evidence: hardwareEvidence,
         evidence_sha256: sha256Canonical(hardwareEvidence),
@@ -125,7 +173,9 @@ function fixture() {
       {
         step_id: "linked-step",
         mode: "linked",
+        requires_atx_wiring: false,
         result: "pass",
+        started_at: "2026-07-14T00:00:00.200Z",
         duration_ms: 0,
         evidence: linkedEvidence,
         evidence_sha256: sha256Canonical(linkedEvidence),
@@ -291,7 +341,7 @@ function fixture() {
     stderr_sha256: HASH,
   };
   const summary = {
-    schema_version: 1,
+    schema_version: 2,
     kind: "jetkvm-mcp-hardware-release-evidence",
     run_id: runId,
     candidate_sha256: HASH,
@@ -302,9 +352,12 @@ function fixture() {
       package_lock_sha256: HASH,
       paste_harness_sha256: HASH,
     },
+    hardware_validation: FULL_HARDWARE_VALIDATION,
     result: "pass",
     story_count: 1,
     step_count: 2,
+    executed_step_count: 2,
+    excluded_step_count: 0,
     restore_count: 1,
     installed_package: {
       package_name: "@wyrmkeep/jetkvm-mcp",
@@ -315,6 +368,7 @@ function fixture() {
       node_modules_tree_sha256:
         candidate().installation.node_modules_tree_sha256,
     },
+    installation: { result: "pass" },
     device_identity: {
       revision: COMMIT,
       app_version: "0.4.0",
@@ -354,20 +408,162 @@ function fixture() {
     },
     tool_listing: { tool_count: 10 },
     transport_reconnect: transportReconnect,
+    hardware_exception_sha256: null,
     atx_preflight_sha256: HASH,
     device_tests_sha256: sha256Canonical(deviceTests),
     finalization_sha256: sha256Canonical(finalization),
+    mcp_stderr: {
+      replacement: finalization.clients[0].stderr,
+      initial: finalization.clients[1].stderr,
+    },
   };
-  return { story, plan, record, summary, deviceTests, finalization };
+  return {
+    story,
+    stories: [story],
+    plan,
+    record,
+    records: [record],
+    summary,
+    deviceTests,
+    finalization,
+    hardwareException: null,
+  };
 }
-async function evidenceDirectory(extraFile) {
-  const evidence = fixture();
+
+function atxUnavailableFixture() {
+  const shared = fixture();
+  const stories = Object.entries(ATX_STORY_STEPS).map(
+    ([storyId, atxStepIds], storyIndex) => ({
+      id: storyId,
+      title: storyId,
+      environments: ["live"],
+      preconditions: [{ id: "safe" }],
+      steps: [
+        ...atxStepIds.map((id) => ({ id })),
+        ...(storyIndex === 0 ? [{ id: "safe-observation" }] : []),
+      ],
+      restore: [{ id: `restore-${storyId}`, always: true }],
+    }),
+  );
+  const atxStepIds = new Set(Object.values(ATX_STORY_STEPS).flat());
+  const plan = Object.fromEntries(
+    stories.map((story) => [
+      story.id,
+      {
+        steps: Object.fromEntries(
+          story.steps.map((step) => [
+            step.id,
+            {
+              mode: "hardware",
+              requires_atx_wiring: atxStepIds.has(step.id),
+            },
+          ]),
+        ),
+      },
+    ]),
+  );
+  const hardwareException = deriveHardwareValidationException({
+    stories,
+    plan,
+    hardwareValidation: ATX_UNAVAILABLE_VALIDATION,
+  });
+  const records = stories.map((story, storyIndex) => {
+    const baselineBefore = { state: "safe", story: story.id, phase: "before" };
+    const baselineAfter = { state: "safe", story: story.id, phase: "after" };
+    const baselineEvidence = {
+      before: baselineBefore,
+      after: baselineAfter,
+    };
+    const restoreEvidence = { restored: true, story: story.id };
+    return {
+      schema_version: 1,
+      run_id: shared.summary.run_id,
+      story_id: story.id,
+      title: story.title,
+      result: "pass_with_exception",
+      started_at: `2026-07-14T00:00:0${storyIndex}.000Z`,
+      completed_at: `2026-07-14T00:00:0${storyIndex}.900Z`,
+      precondition_ids: ["safe"],
+      baseline_before: baselineBefore,
+      baseline_after: baselineAfter,
+      baseline_before_sha256: sha256Canonical(baselineBefore),
+      baseline_after_sha256: sha256Canonical(baselineAfter),
+      baseline_comparison: {
+        result: "pass",
+        evidence: baselineEvidence,
+        evidence_sha256: sha256Canonical(baselineEvidence),
+      },
+      steps: story.steps.map((step) => {
+        if (atxStepIds.has(step.id)) {
+          return {
+            step_id: step.id,
+            mode: "hardware",
+            requires_atx_wiring: true,
+            result: "excluded",
+            exception_code: ATX_UNAVAILABLE_EXCEPTION_CODE,
+          };
+        }
+        const evidence = { observed: true, step_id: step.id };
+        return {
+          step_id: step.id,
+          mode: "hardware",
+          requires_atx_wiring: false,
+          result: "pass",
+          started_at: `2026-07-14T00:00:0${storyIndex}.500Z`,
+          duration_ms: 1,
+          evidence,
+          evidence_sha256: sha256Canonical(evidence),
+        };
+      }),
+      restores: [
+        {
+          restore_id: story.restore[0].id,
+          result: "pass",
+          evidence: restoreEvidence,
+          evidence_sha256: sha256Canonical(restoreEvidence),
+        },
+      ],
+      failure_count: 0,
+    };
+  });
+  const summary = structuredClone(shared.summary);
+  summary.hardware_validation = structuredClone(ATX_UNAVAILABLE_VALIDATION);
+  summary.result = "pass_with_exception";
+  summary.story_count = stories.length;
+  summary.step_count = records.reduce(
+    (count, record) => count + record.steps.length,
+    0,
+  );
+  summary.executed_step_count = 1;
+  summary.excluded_step_count = hardwareException.excluded_step_count;
+  summary.restore_count = records.length;
+  summary.hardware_exception_sha256 = sha256Canonical(hardwareException);
+  summary.atx_preflight_sha256 = null;
+  return {
+    ...shared,
+    stories,
+    plan,
+    records,
+    summary,
+    hardwareException,
+  };
+}
+
+async function evidenceDirectory(extraFile, evidence = fixture()) {
   const directory = await mkdtemp(join(tmpdir(), "jetkvm-evidence-test-"));
   const jsonFiles = {
     "summary.json": evidence.summary,
-    [`${evidence.story.id}.json`]: evidence.record,
+    ...Object.fromEntries(
+      evidence.stories.map((story, index) => [
+        `${story.id}.json`,
+        evidence.records[index],
+      ]),
+    ),
     "finalization.json": evidence.finalization,
     "device-go-tests.json": evidence.deviceTests,
+    ...(evidence.hardwareException === null
+      ? {}
+      : { "hardware-exception.json": evidence.hardwareException }),
   };
   for (const [name, value] of Object.entries(jsonFiles)) {
     await writeFile(
@@ -422,6 +618,80 @@ test("accepts complete canonical hardware evidence", () => {
   assert.equal(audit.step_count, 2);
 });
 
+test("accepts only the canonical ATX-unavailable exception and exact skips", () => {
+  const evidence = atxUnavailableFixture();
+  const audit = validateHardwareReleaseEvidence({
+    candidate: candidate(ATX_UNAVAILABLE_VALIDATION),
+    candidateSha256: evidence.summary.candidate_sha256,
+    stories: evidence.stories,
+    plan: evidence.plan,
+    summary: evidence.summary,
+    records: evidence.records,
+    finalization: evidence.finalization,
+    deviceTests: evidence.deviceTests,
+    hardwareException: evidence.hardwareException,
+  });
+  assert.equal(audit.result, "pass");
+  assert.equal(audit.hardware_validation.profile, "atx_unavailable");
+  assert.equal(audit.executed_step_count, 1);
+  assert.equal(audit.excluded_step_count, 17);
+});
+
+test("rejects altered, missing, over-broad, or under-broad ATX exceptions", () => {
+  const validate = (evidence) =>
+    validateHardwareReleaseEvidence({
+      candidate: candidate(ATX_UNAVAILABLE_VALIDATION),
+      candidateSha256: evidence.summary.candidate_sha256,
+      stories: evidence.stories,
+      plan: evidence.plan,
+      summary: evidence.summary,
+      records: evidence.records,
+      finalization: evidence.finalization,
+      deviceTests: evidence.deviceTests,
+      hardwareException: evidence.hardwareException,
+    });
+  const altered = atxUnavailableFixture();
+  altered.hardwareException = structuredClone(altered.hardwareException);
+  altered.hardwareException.excluded_steps.pop();
+  assert.throws(() => validate(altered), /exception evidence/u);
+
+  const missing = atxUnavailableFixture();
+  missing.hardwareException = null;
+  assert.throws(() => validate(missing), /exception evidence/u);
+
+  const overBroad = atxUnavailableFixture();
+  const safeIndex = overBroad.records[0].steps.findIndex(
+    (step) => step.step_id === "safe-observation",
+  );
+  overBroad.records[0].steps[safeIndex] = {
+    step_id: "safe-observation",
+    mode: "hardware",
+    requires_atx_wiring: true,
+    result: "excluded",
+    exception_code: ATX_UNAVAILABLE_EXCEPTION_CODE,
+  };
+  assert.throws(() => validate(overBroad), /Hardware step/u);
+
+  const underBroad = atxUnavailableFixture();
+  const excluded = underBroad.records[0].steps[0];
+  const evidence = { performed: true };
+  underBroad.records[0].steps[0] = {
+    step_id: excluded.step_id,
+    mode: excluded.mode,
+    requires_atx_wiring: true,
+    result: "pass",
+    started_at: "2026-07-14T00:00:00.100Z",
+    duration_ms: 1,
+    evidence,
+    evidence_sha256: sha256Canonical(evidence),
+  };
+  assert.throws(() => validate(underBroad), /Excluded hardware step/u);
+
+  const preflight = atxUnavailableFixture();
+  preflight.summary.atx_preflight_sha256 = HASH;
+  assert.throws(() => validate(preflight), /exception evidence/u);
+});
+
 test("fails closed without fresh-transport producer-zero evidence", () => {
   const evidence = fixture();
   const summary = structuredClone(evidence.summary);
@@ -438,7 +708,7 @@ test("fails closed without fresh-transport producer-zero evidence", () => {
         finalization: evidence.finalization,
         deviceTests: evidence.deviceTests,
       }),
-    /fresh transport evidence/u,
+    /summary fields drifted/u,
   );
 });
 
@@ -622,6 +892,25 @@ test("detects complete private IPv4 address families without partial matching", 
   assert.equal(containsPrivateReleaseMaterial("target=8.8.8.8"), false);
 });
 
+test("loads the exact ATX-unavailable evidence inventory", async () => {
+  const evidence = atxUnavailableFixture();
+  const output = await evidenceDirectory(undefined, evidence);
+  try {
+    const audit = await validateEvidenceDirectory({
+      directory: output.directory,
+      candidate: candidate(ATX_UNAVAILABLE_VALIDATION),
+      candidateSha256: evidence.summary.candidate_sha256,
+      stories: evidence.stories,
+      plan: evidence.plan,
+    });
+    assert.equal(audit.result, "pass");
+    assert.equal(audit.excluded_step_count, 17);
+  } finally {
+    await chmod(output.directory, 0o700);
+    await rm(output.directory, { recursive: true, force: true });
+  }
+});
+
 test("validates exact checksum sidecars and scans every raw manifested file", async () => {
   const valid = await evidenceDirectory();
   try {
@@ -669,20 +958,42 @@ test("validates exact checksum sidecars and scans every raw manifested file", as
     await rm(valid.directory, { recursive: true, force: true });
   }
 
-  const privateEvidence = await evidenceDirectory({
+  const extraEvidence = await evidenceDirectory({
     name: "raw.log",
-    content: "unparsed target=10.2.3.4\n",
+    content: "public diagnostic\n",
   });
+  try {
+    await assert.rejects(
+      validateEvidenceDirectory({
+        directory: extraEvidence.directory,
+        candidate: candidate(),
+        candidateSha256: extraEvidence.evidence.summary.candidate_sha256,
+        stories: extraEvidence.evidence.stories,
+        plan: extraEvidence.evidence.plan,
+      }),
+      /does not match the profile inventory/u,
+    );
+  } finally {
+    await chmod(extraEvidence.directory, 0o700);
+    await rm(extraEvidence.directory, { recursive: true, force: true });
+  }
+
+  const privatePayload = fixture();
+  privatePayload.summary.installation = {
+    result: "pass",
+    diagnostic: "unparsed target=10.2.3.4",
+  };
+  const privateEvidence = await evidenceDirectory(undefined, privatePayload);
   try {
     await assert.rejects(
       validateEvidenceDirectory({
         directory: privateEvidence.directory,
         candidate: candidate(),
         candidateSha256: privateEvidence.evidence.summary.candidate_sha256,
-        stories: [privateEvidence.evidence.story],
+        stories: privateEvidence.evidence.stories,
         plan: privateEvidence.evidence.plan,
       }),
-      /raw\.log contains private path, topology, or credential material/u,
+      /summary\.json contains private path, topology, or credential material/u,
     );
   } finally {
     await chmod(privateEvidence.directory, 0o700);

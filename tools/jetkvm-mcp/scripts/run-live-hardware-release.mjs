@@ -173,6 +173,7 @@ export function buildHardwareValidationSummary({
     hardware_validation: validated,
     result:
       validated.profile === "full" ? "pass" : "pass_with_exception",
+    story_count: records.length,
     step_count: stepCount,
     executed_step_count: executedStepCount,
     excluded_step_count: excludedStepCount,

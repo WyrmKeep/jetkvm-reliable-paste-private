@@ -10,6 +10,11 @@ import {
   sha256File,
   validateReleaseCandidateManifest,
 } from "./release-evidence.mjs";
+import {
+  ATX_UNAVAILABLE_EXCEPTION_CODE,
+  deriveHardwareValidationException,
+  validateHardwareValidation,
+} from "./hardware-validation-profile.mjs";
 import { validateDeviceGoTestEvidence } from "./run-device-go-tests.mjs";
 import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 
@@ -429,19 +434,47 @@ function validateDeploymentEvidence(deployment, summarySource, candidate) {
   return artifact.device_tests_sha256;
 }
 
-function validateRecord(record, story, storyPlan, runId) {
+function validateRecord(record, story, storyPlan, runId, excludedStepKeys) {
+  assertExactKeys(
+    record,
+    [
+      "schema_version",
+      "run_id",
+      "story_id",
+      "title",
+      "result",
+      "started_at",
+      "completed_at",
+      "precondition_ids",
+      "baseline_before",
+      "baseline_after",
+      "baseline_before_sha256",
+      "baseline_after_sha256",
+      "baseline_comparison",
+      "steps",
+      "restores",
+      "failure_count",
+    ],
+    `Hardware record ${story.id}`,
+  );
   if (
-    !isRecord(record) ||
     record.schema_version !== 1 ||
-    record.run_id !== runId
+    record.run_id !== runId ||
+    record.story_id !== story.id ||
+    record.title !== story.title ||
+    !Number.isFinite(Date.parse(record.started_at)) ||
+    !Number.isFinite(Date.parse(record.completed_at)) ||
+    sha256Canonical(record.precondition_ids) !==
+      sha256Canonical(story.preconditions.map((condition) => condition.id))
   ) {
     throw new Error(`Hardware record ${story.id} has invalid identity.`);
   }
-  if (
-    record.story_id !== story.id ||
-    record.title !== story.title ||
-    record.result !== "pass"
-  ) {
+  const expectedExcludedCount = story.steps.filter((step) =>
+    excludedStepKeys.has(`${story.id}\0${step.id}`),
+  ).length;
+  const expectedResult =
+    expectedExcludedCount === 0 ? "pass" : "pass_with_exception";
+  if (record.result !== expectedResult) {
     throw new Error(`Hardware record ${story.id} did not pass exactly.`);
   }
   assertEvidencePreimage(
@@ -453,6 +486,11 @@ function validateRecord(record, story, storyPlan, runId) {
     record.baseline_after,
     record.baseline_after_sha256,
     `${story.id} baseline after`,
+  );
+  assertExactKeys(
+    record.baseline_comparison,
+    ["result", "evidence", "evidence_sha256"],
+    `${story.id} baseline comparison`,
   );
   assertPass(record.baseline_comparison, `${story.id} baseline comparison`);
   assertEvidencePreimage(
@@ -468,14 +506,59 @@ function validateRecord(record, story, storyPlan, runId) {
       `Hardware record ${story.id} has incomplete step coverage.`,
     );
   }
+  let executedStepCount = 0;
+  let excludedStepCount = 0;
   record.steps.forEach((result, index) => {
     const step = story.steps[index];
     const assignment = storyPlan.steps[step.id];
+    const excluded = excludedStepKeys.has(`${story.id}\0${step.id}`);
+    if (excluded) {
+      assertExactKeys(
+        result,
+        [
+          "step_id",
+          "mode",
+          "requires_atx_wiring",
+          "result",
+          "exception_code",
+        ],
+        `Excluded hardware step ${story.id}/${step.id}`,
+      );
+      if (
+        result.step_id !== step.id ||
+        result.mode !== assignment.mode ||
+        result.requires_atx_wiring !== true ||
+        result.result !== "excluded" ||
+        result.exception_code !== ATX_UNAVAILABLE_EXCEPTION_CODE
+      ) {
+        throw new Error(
+          `Hardware step ${story.id}/${step.id} has invalid exception evidence.`,
+        );
+      }
+      excludedStepCount += 1;
+      return;
+    }
+    assertExactKeys(
+      result,
+      [
+        "step_id",
+        "mode",
+        "requires_atx_wiring",
+        "result",
+        "started_at",
+        "duration_ms",
+        "evidence",
+        "evidence_sha256",
+        ...(assignment.assertion_ids === undefined ? [] : ["assertion_ids"]),
+      ],
+      `Hardware step ${story.id}/${step.id}`,
+    );
     if (
-      !isRecord(result) ||
       result.step_id !== step.id ||
       result.mode !== assignment.mode ||
+      result.requires_atx_wiring !== assignment.requires_atx_wiring ||
       result.result !== "pass" ||
+      !Number.isFinite(Date.parse(result.started_at)) ||
       !Number.isSafeInteger(result.duration_ms) ||
       result.duration_ms < 0
     ) {
@@ -488,17 +571,16 @@ function validateRecord(record, story, storyPlan, runId) {
       result.evidence_sha256,
       `${story.id}/${step.id} evidence`,
     );
-    if (assignment.assertion_ids !== undefined) {
-      if (
-        !Array.isArray(result.assertion_ids) ||
-        sha256Canonical(result.assertion_ids) !==
-          sha256Canonical(assignment.assertion_ids)
-      ) {
-        throw new Error(
-          `Hardware step ${story.id}/${step.id} assertion IDs drifted.`,
-        );
-      }
+    if (
+      assignment.assertion_ids !== undefined &&
+      sha256Canonical(result.assertion_ids) !==
+        sha256Canonical(assignment.assertion_ids)
+    ) {
+      throw new Error(
+        `Hardware step ${story.id}/${step.id} assertion IDs drifted.`,
+      );
     }
+    executedStepCount += 1;
   });
   if (
     !Array.isArray(record.restores) ||
@@ -510,11 +592,12 @@ function validateRecord(record, story, storyPlan, runId) {
   }
   record.restores.forEach((result, index) => {
     const restore = story.restore[index];
-    if (
-      !isRecord(result) ||
-      result.restore_id !== restore.id ||
-      result.result !== "pass"
-    ) {
+    assertExactKeys(
+      result,
+      ["restore_id", "result", "evidence", "evidence_sha256"],
+      `Hardware restore ${story.id}/${restore.id}`,
+    );
+    if (result.restore_id !== restore.id || result.result !== "pass") {
       throw new Error(
         `Hardware restore ${story.id}/${restore.id} did not pass.`,
       );
@@ -528,6 +611,7 @@ function validateRecord(record, story, storyPlan, runId) {
   if (record.failure_count !== 0) {
     throw new Error(`Hardware record ${story.id} contains failures.`);
   }
+  return Object.freeze({ executedStepCount, excludedStepCount });
 }
 
 export function validateHardwareReleaseEvidence({
@@ -539,20 +623,95 @@ export function validateHardwareReleaseEvidence({
   records,
   finalization,
   deviceTests,
+  hardwareException = null,
 }) {
   validateReleaseCandidateManifest(candidate);
+  const candidateHardwareValidation = validateHardwareValidation(
+    candidate.hardware_validation,
+  );
   validateFinalization(finalization);
   validateDeviceGoTestEvidence(deviceTests);
+  assertExactKeys(
+    summary,
+    [
+      "schema_version",
+      "kind",
+      "run_id",
+      "candidate_sha256",
+      "candidate_commit",
+      "source_identity",
+      "hardware_validation",
+      "result",
+      "story_count",
+      "step_count",
+      "executed_step_count",
+      "excluded_step_count",
+      "restore_count",
+      "installed_package",
+      "installation",
+      "device_identity",
+      "device_tests_sha256",
+      "deployment",
+      "tool_listing",
+      "transport_reconnect",
+      "hardware_exception_sha256",
+      "atx_preflight_sha256",
+      "finalization_sha256",
+      "mcp_stderr",
+    ],
+    "Hardware release summary",
+  );
+  const summaryHardwareValidation = validateHardwareValidation(
+    summary.hardware_validation,
+  );
+  const expectedHardwareException = deriveHardwareValidationException({
+    stories,
+    plan,
+    hardwareValidation: candidateHardwareValidation,
+  });
+  const expectedSummaryResult =
+    expectedHardwareException === null ? "pass" : "pass_with_exception";
   if (
-    !isRecord(summary) ||
-    summary.schema_version !== 1 ||
+    summary.schema_version !== 2 ||
     summary.kind !== "jetkvm-mcp-hardware-release-evidence" ||
-    summary.result !== "pass" ||
+    summary.result !== expectedSummaryResult ||
     typeof summary.run_id !== "string" ||
-    summary.candidate_commit !== candidate.source.commit_sha
+    summary.run_id.length === 0 ||
+    summary.candidate_commit !== candidate.source.commit_sha ||
+    sha256Canonical(summaryHardwareValidation) !==
+      sha256Canonical(candidateHardwareValidation)
   ) {
     throw new Error("Hardware release summary did not pass exactly.");
   }
+  if (expectedHardwareException === null) {
+    if (
+      hardwareException !== null ||
+      summary.hardware_exception_sha256 !== null
+    ) {
+      throw new Error(
+        "Full hardware validation must not contain an ATX exception.",
+      );
+    }
+    assertHash(summary.atx_preflight_sha256, "ATX preflight evidence");
+  } else {
+    if (
+      !isRecord(hardwareException) ||
+      sha256Canonical(hardwareException) !==
+        sha256Canonical(expectedHardwareException) ||
+      summary.hardware_exception_sha256 !==
+        sha256Canonical(expectedHardwareException) ||
+      summary.atx_preflight_sha256 !== null
+    ) {
+      throw new Error(
+        "ATX-unavailable exception evidence did not match the canonical plan.",
+      );
+    }
+  }
+  const excludedStepKeys = new Set(
+    (expectedHardwareException?.excluded_steps ?? []).map(
+      (step) => `${step.story_id}\0${step.step_id}`,
+    ),
+  );
   validateFreshTransportEvidence(summary.transport_reconnect);
   const reviewedDeviceTestsSha256 = validateDeploymentEvidence(
     summary.deployment,
@@ -579,17 +738,24 @@ export function validateHardwareReleaseEvidence({
       "Hardware release evidence omitted canonical live stories.",
     );
   }
+  let executedStepCount = 0;
+  let excludedStepCount = 0;
   liveStories.forEach((story, index) => {
     const record = records[index];
     if (record.story_id !== story.id) {
       throw new Error("Hardware live stories are not in canonical order.");
     }
-    validateRecord(record, story, plan[story.id], summary.run_id);
+    const counts = validateRecord(
+      record,
+      story,
+      plan[story.id],
+      summary.run_id,
+      excludedStepKeys,
+    );
+    executedStepCount += counts.executedStepCount;
+    excludedStepCount += counts.excludedStepCount;
   });
-  const stepCount = records.reduce(
-    (count, record) => count + record.steps.length,
-    0,
-  );
+  const stepCount = executedStepCount + excludedStepCount;
   const restoreCount = records.reduce(
     (count, record) => count + record.restores.length,
     0,
@@ -608,9 +774,26 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Hardware device identity is incomplete.");
   }
+  assertExactKeys(
+    summary.mcp_stderr,
+    ["replacement", "initial"],
+    "Hardware summary MCP stderr",
+  );
+  for (const client of finalization.clients) {
+    if (
+      sha256Canonical(summary.mcp_stderr[client.label]) !==
+      sha256Canonical(client.stderr)
+    ) {
+      throw new Error("Hardware summary MCP stderr evidence drifted.");
+    }
+  }
   if (
+    !isRecord(summary.installation) ||
     summary.story_count !== liveStories.length ||
     summary.step_count !== stepCount ||
+    summary.executed_step_count !== executedStepCount ||
+    summary.excluded_step_count !== excludedStepCount ||
+    excludedStepCount !== excludedStepKeys.size ||
     summary.restore_count !== restoreCount ||
     summary.device_identity?.revision !== candidate.source.commit_sha ||
     summary.source_identity?.commit_sha !== candidate.source.commit_sha ||
@@ -633,7 +816,6 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Hardware release summary counts or identities drifted.");
   }
-  assertHash(summary.atx_preflight_sha256, "ATX preflight evidence");
   assertHash(summary.device_tests_sha256, "Device test evidence");
   assertHash(summary.finalization_sha256, "Finalization evidence");
   if (
@@ -643,13 +825,17 @@ export function validateHardwareReleaseEvidence({
     throw new Error("Hardware summary evidence hashes drifted.");
   }
   return Object.freeze({
-    schema_version: 1,
+    schema_version: 2,
     result: "pass",
+    hardware_validation: candidateHardwareValidation,
     candidate_commit: candidate.source.commit_sha,
     run_id: summary.run_id,
     story_count: liveStories.length,
     step_count: stepCount,
+    executed_step_count: executedStepCount,
+    excluded_step_count: excludedStepCount,
     restore_count: restoreCount,
+    hardware_exception_sha256: summary.hardware_exception_sha256,
     records_sha256: sha256Canonical(records),
   });
 }
@@ -669,6 +855,15 @@ export async function validateEvidenceDirectory({
   const summary = JSON.parse(
     await readFile(join(directory, "summary.json"), "utf8"),
   );
+  const hardwareValidation = validateHardwareValidation(
+    candidate.hardware_validation,
+  );
+  const hardwareException =
+    hardwareValidation.profile === "atx_unavailable"
+      ? JSON.parse(
+          await readFile(join(directory, "hardware-exception.json"), "utf8"),
+        )
+      : null;
   const liveStories = stories.filter((story) =>
     story.environments.includes("live"),
   );
@@ -690,6 +885,7 @@ export async function validateEvidenceDirectory({
     records,
     finalization,
     deviceTests,
+    hardwareException,
   });
 
   const manifestPath = join(directory, "manifest.json");
@@ -715,11 +911,38 @@ export async function validateEvidenceDirectory({
     );
   }
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
-  if (!isRecord(manifest) || !Array.isArray(manifest.files)) {
+  assertExactKeys(
+    manifest,
+    ["schema_version", "files", "sha256"],
+    "Hardware evidence manifest",
+  );
+  if (manifest.schema_version !== 1 || !Array.isArray(manifest.files)) {
     throw new Error("Hardware evidence manifest was malformed.");
   }
   if (sha256Canonical(manifest.files) !== manifest.sha256) {
     throw new Error("Hardware evidence manifest content hash did not match.");
+  }
+  const expectedPayloadFiles = [
+    "summary.json",
+    ...liveStories.map((story) => `${story.id}.json`),
+    "finalization.json",
+    "device-go-tests.json",
+    ...(hardwareValidation.profile === "atx_unavailable"
+      ? ["hardware-exception.json"]
+      : []),
+  ].sort();
+  const manifestedPayloadFiles = manifest.files
+    .map((file) => file.path)
+    .sort();
+  if (
+    manifestedPayloadFiles.length !== expectedPayloadFiles.length ||
+    manifestedPayloadFiles.some(
+      (file, index) => file !== expectedPayloadFiles[index],
+    )
+  ) {
+    throw new Error(
+      "Hardware evidence manifest does not match the profile inventory.",
+    );
   }
   for (const file of manifest.files) {
     if (

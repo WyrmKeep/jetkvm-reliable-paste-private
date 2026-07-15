@@ -102,6 +102,7 @@ test("selects ATX preflight only from the frozen hardware profile", async () => 
         exception_code: "ATX_WIRING_UNAVAILABLE",
       },
       result: "pass_with_exception",
+      story_count: 1,
       step_count: 2,
       executed_step_count: 1,
       excluded_step_count: 1,
