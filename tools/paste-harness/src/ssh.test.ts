@@ -158,6 +158,12 @@ describe("shared SSH wrapper", () => {
         expect(prepareScript).toContain(".jetkvm-upload-");
         expect(prepareScript).toContain("LastWriteTimeUtc");
         expect(prepareScript).toContain("AddMinutes(-10)");
+        expect(prepareScript).toContain(
+          "if (-not [System.IO.File]::Exists($path) -and $backupFiles.Count -gt 0)",
+        );
+        expect(prepareScript).toContain(
+          "[System.IO.File]::Move($restoreCandidate.FullName, $path)",
+        );
         const encodedInstallScript = commands.at(-1)?.split(/\s+/).at(-1);
         expect(encodedInstallScript).toBeTruthy();
         const installScript = Buffer.from(
@@ -171,6 +177,16 @@ describe("shared SSH wrapper", () => {
         );
         expect(installScript).not.toContain(
           "[System.IO.File]::Replace($temporaryPath, $path, $null, $true)",
+        );
+        expect(installScript).toContain("$replaceSucceeded = $false");
+        expect(installScript).toContain(
+          "if (-not [System.IO.File]::Exists($path) -and [System.IO.File]::Exists($backupPath))",
+        );
+        expect(installScript).toContain(
+          "[System.IO.File]::Move($backupPath, $path)",
+        );
+        expect(installScript).toContain(
+          "$replaceSucceeded -and [System.IO.File]::Exists($backupPath)",
         );
         expect(installScript).toContain("[System.IO.File]::Move");
       } finally {
@@ -201,16 +217,24 @@ describe("shared SSH wrapper", () => {
       const directory = await mkdtemp(join(tmpdir(), "jetkvm-scp-atomic-"));
       const remoteFinal = join(directory, "remote-final.ps1");
       const remoteStaging = join(directory, "remote-staging.ps1");
+      const commandsCapture = join(directory, "commands.txt");
       const fakeSsh = join(directory, "ssh");
       const fakeScp = join(directory, "scp");
       const previousPath = process.env.PATH;
       const previousFinal = process.env.SCP_REMOTE_FINAL;
       const previousStaging = process.env.SCP_REMOTE_STAGING;
+      const previousCommands = process.env.SSH_COMMANDS;
       try {
         await writeFile(remoteFinal, "installed-safe-version", "utf8");
         await writeFile(
           fakeSsh,
-          '#!/bin/sh\nrm -f "$SCP_REMOTE_STAGING"\n',
+          [
+            "#!/bin/sh",
+            'for argument in "$@"; do command="$argument"; done',
+            'printf "%s\\n" "$command" >> "$SSH_COMMANDS"',
+            'rm -f "$SCP_REMOTE_STAGING"',
+            "",
+          ].join("\n"),
           "utf8",
         );
         await writeFile(
@@ -234,6 +258,7 @@ describe("shared SSH wrapper", () => {
         process.env.PATH = `${directory}:${previousPath}`;
         process.env.SCP_REMOTE_FINAL = remoteFinal;
         process.env.SCP_REMOTE_STAGING = remoteStaging;
+        process.env.SSH_COMMANDS = commandsCapture;
 
         await expect(
           uploadWindowsTextFile(
@@ -248,6 +273,25 @@ describe("shared SSH wrapper", () => {
           "installed-safe-version",
         );
         await expect(readFile(remoteStaging)).rejects.toThrow();
+        const cleanupCommands = (await readFile(commandsCapture, "utf8"))
+          .trim()
+          .split("\n");
+        expect(cleanupCommands).toHaveLength(2);
+        const encodedCleanupScript = cleanupCommands
+          .at(-1)
+          ?.split(/\s+/)
+          .at(-1);
+        expect(encodedCleanupScript).toBeTruthy();
+        const cleanupScript = Buffer.from(
+          encodedCleanupScript ?? "",
+          "base64",
+        ).toString("utf16le");
+        expect(cleanupScript).toContain(
+          "if (-not [System.IO.File]::Exists($path))",
+        );
+        expect(cleanupScript).toContain(
+          "[System.IO.File]::Move($backupPath, $path)",
+        );
       } finally {
         process.env.PATH = previousPath;
         if (previousFinal === undefined) {
@@ -259,6 +303,11 @@ describe("shared SSH wrapper", () => {
           delete process.env.SCP_REMOTE_STAGING;
         } else {
           process.env.SCP_REMOTE_STAGING = previousStaging;
+        }
+        if (previousCommands === undefined) {
+          delete process.env.SSH_COMMANDS;
+        } else {
+          process.env.SSH_COMMANDS = previousCommands;
         }
         await rm(directory, { recursive: true, force: true });
       }

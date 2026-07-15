@@ -223,26 +223,40 @@ if ($parent) {
   if (-not (Test-Path -LiteralPath $parent)) {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
   }
-  $temporaryPrefixes = @(
-    (Split-Path -Leaf $path) + '.jetkvm-upload-',
-    (Split-Path -Leaf $path) + '.jetkvm-backup-'
+  $leaf = Split-Path -Leaf $path
+  $uploadPrefix = $leaf + '.jetkvm-upload-'
+  $backupPrefix = $leaf + '.jetkvm-backup-'
+  $backupFiles = @(
+    Get-ChildItem -LiteralPath $parent -File -Force -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.Name.StartsWith($backupPrefix, [System.StringComparison]::Ordinal) -and
+        $_.Name.EndsWith('.tmp', [System.StringComparison]::Ordinal)
+      }
   )
+  if (-not [System.IO.File]::Exists($path) -and $backupFiles.Count -gt 0) {
+    $restoreCandidate = $backupFiles |
+      Sort-Object LastWriteTimeUtc -Descending |
+      Select-Object -First 1
+    [System.IO.File]::Move($restoreCandidate.FullName, $path)
+  }
   $staleBefore = [System.DateTime]::UtcNow.AddMinutes(-10)
   Get-ChildItem -LiteralPath $parent -File -Force -ErrorAction SilentlyContinue |
     Where-Object {
-      $matchesTemporaryPrefix = $false
-      foreach ($prefix in $temporaryPrefixes) {
-        if ($_.Name.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
-          $matchesTemporaryPrefix = $true
-          break
-        }
-      }
-      $matchesTemporaryPrefix -and
+      (
+        $_.Name.StartsWith($uploadPrefix, [System.StringComparison]::Ordinal) -or
+        $_.Name.StartsWith($backupPrefix, [System.StringComparison]::Ordinal)
+      ) -and
       $_.Name.EndsWith('.tmp', [System.StringComparison]::Ordinal) -and
       $_.LastWriteTimeUtc -lt $staleBefore
     } |
     ForEach-Object {
-      try { [System.IO.File]::Delete($_.FullName) } catch {}
+      $isBackup = $_.Name.StartsWith(
+        $backupPrefix,
+        [System.StringComparison]::Ordinal
+      )
+      if (-not $isBackup -or [System.IO.File]::Exists($path)) {
+        try { [System.IO.File]::Delete($_.FullName) } catch {}
+      }
     }
 }
 `;
@@ -290,9 +304,18 @@ $ErrorActionPreference = 'Stop'
 $path = ${toPowerShellString(windowsPath)}
 $temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
 $backupPath = ${toPowerShellString(remoteBackupPath)}
+$replaceSucceeded = $false
 try {
   if ([System.IO.File]::Exists($path)) {
-    [System.IO.File]::Replace($temporaryPath, $path, $backupPath, $true)
+    try {
+      [System.IO.File]::Replace($temporaryPath, $path, $backupPath, $true)
+      $replaceSucceeded = $true
+    } catch {
+      if (-not [System.IO.File]::Exists($path) -and [System.IO.File]::Exists($backupPath)) {
+        [System.IO.File]::Move($backupPath, $path)
+      }
+      throw
+    }
   } else {
     [System.IO.File]::Move($temporaryPath, $path)
   }
@@ -300,7 +323,7 @@ try {
   if ([System.IO.File]::Exists($temporaryPath)) {
     [System.IO.File]::Delete($temporaryPath)
   }
-  if ([System.IO.File]::Exists($backupPath)) {
+  if ($replaceSucceeded -and [System.IO.File]::Exists($backupPath)) {
     [System.IO.File]::Delete($backupPath)
   }
 }
@@ -324,13 +347,18 @@ try {
       if (cleanupTimeoutMs > 0) {
         const cleanupScript = `
 $ErrorActionPreference = 'SilentlyContinue'
+$path = ${toPowerShellString(windowsPath)}
 $temporaryPath = ${toPowerShellString(remoteTemporaryPath)}
 $backupPath = ${toPowerShellString(remoteBackupPath)}
+if ([System.IO.File]::Exists($backupPath)) {
+  if (-not [System.IO.File]::Exists($path)) {
+    [System.IO.File]::Move($backupPath, $path)
+  } else {
+    [System.IO.File]::Delete($backupPath)
+  }
+}
 if ([System.IO.File]::Exists($temporaryPath)) {
   [System.IO.File]::Delete($temporaryPath)
-}
-if ([System.IO.File]::Exists($backupPath)) {
-  [System.IO.File]::Delete($backupPath)
 }
 `;
         try {
