@@ -7,6 +7,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -55,6 +56,55 @@ async function pathExists(path) {
     if (error?.code === "ENOENT") return false;
     throw error;
   }
+}
+
+async function hardenDirectoryTree(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const facts = await lstat(path);
+    if (facts.isSymbolicLink()) {
+      throw new Error("Frozen release output forbids symbolic links.");
+    }
+    if (facts.isDirectory()) {
+      await hardenDirectoryTree(path);
+    } else if (facts.isFile()) {
+      await chmod(path, 0o400);
+    } else {
+      throw new Error("Frozen release output contains an unsupported entry.");
+    }
+  }
+  await chmod(directory, 0o500);
+}
+
+async function makeDirectoryTreeRemovable(directory) {
+  let facts;
+  try {
+    facts = await lstat(directory);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (!facts.isDirectory() || facts.isSymbolicLink()) return;
+  await chmod(directory, 0o700);
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const child = await lstat(path);
+    if (child.isDirectory() && !child.isSymbolicLink()) {
+      await makeDirectoryTreeRemovable(path);
+    } else if (child.isFile()) {
+      await chmod(path, 0o600);
+    }
+  }
+}
+
+function contentOnlyManifest(manifest) {
+  return manifest.files.map(({ path, size_bytes, sha256 }) => ({
+    path,
+    size_bytes,
+    sha256,
+  }));
 }
 
 async function defaultRunCommand(command, args, { cwd }) {
@@ -448,12 +498,20 @@ export async function freezeReleaseCandidate({
       0,
     );
     const source = await sourceIdentity(buildPackageRoot, sourceRepositoryRoot);
-    const frozenPasteHarness = await buildDirectoryManifest(
-      join(stagingDirectory, "paste-harness"),
+    const frozenPasteHarnessRoot = join(stagingDirectory, "paste-harness");
+    const copiedPasteHarness = await buildDirectoryManifest(
+      frozenPasteHarnessRoot,
     );
-    if (frozenPasteHarness.sha256 !== source.pasteHarness.sha256) {
+    if (
+      canonicalJson(contentOnlyManifest(copiedPasteHarness)) !==
+      canonicalJson(contentOnlyManifest(source.pasteHarness))
+    ) {
       throw new Error("Frozen paste-harness runtime drifted from its source.");
     }
+    await hardenDirectoryTree(frozenPasteHarnessRoot);
+    const frozenPasteHarness = await buildDirectoryManifest(
+      frozenPasteHarnessRoot,
+    );
     const candidate = buildReleaseCandidateManifest({
       packageName: packageMetadata.name,
       packageVersion: packageMetadata.version,
@@ -464,7 +522,7 @@ export async function freezeReleaseCandidate({
       storyCount: source.storyManifest.files.length,
       schemasSha256: source.schemas.sha256,
       schemaCount: source.schemas.files.length,
-      pasteHarnessSha256: source.pasteHarness.sha256,
+      pasteHarnessSha256: frozenPasteHarness.sha256,
       branchMatrixSha256: source.branchMatrixSha256,
       storyE2eSha256: source.storyE2eSha256,
       controlledEvidenceSha256,
@@ -523,11 +581,7 @@ export async function freezeReleaseCandidate({
       `${candidateSha256}  candidate.json\n`,
       { flag: "wx", mode: 0o600 },
     );
-    const frozenOutput = await buildDirectoryManifest(stagingDirectory);
-    for (const file of frozenOutput.files) {
-      await chmod(join(stagingDirectory, file.path), 0o400);
-    }
-    await chmod(stagingDirectory, 0o500);
+    await hardenDirectoryTree(stagingDirectory);
     await rename(stagingDirectory, outputDirectory);
     return Object.freeze({
       candidate,
@@ -543,7 +597,7 @@ export async function freezeReleaseCandidate({
       pasteHarnessPath: join(outputDirectory, "paste-harness"),
     });
   } catch (error) {
-    await chmod(stagingDirectory, 0o700).catch(() => undefined);
+    await makeDirectoryTreeRemovable(stagingDirectory).catch(() => undefined);
     await rm(stagingDirectory, { recursive: true, force: true });
     throw error;
   } finally {

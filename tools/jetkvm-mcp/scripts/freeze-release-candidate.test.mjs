@@ -15,6 +15,7 @@ import test from "node:test";
 
 import { freezeReleaseCandidate } from "./freeze-release-candidate.mjs";
 import {
+  buildDirectoryManifest,
   sha256File,
   validateReleaseCandidateManifest,
 } from "./release-evidence.mjs";
@@ -28,6 +29,9 @@ async function writeJson(path, value) {
 }
 async function cleanupFixture(fixture) {
   await chmod(fixture.outputDirectory, 0o700).catch(() => undefined);
+  await chmod(join(fixture.outputDirectory, "paste-harness"), 0o700).catch(
+    () => undefined,
+  );
   await rm(fixture.root, { recursive: true, force: true });
 }
 
@@ -247,6 +251,14 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     assert.equal(parsed.source.story_manifest.count, 24);
     assert.equal(parsed.source.schemas.count, 21);
     assert.match(parsed.source.paste_harness.sha256, /^[a-f0-9]{64}$/u);
+    assert.equal(
+      parsed.source.paste_harness.sha256,
+      (
+        await buildDirectoryManifest(
+          join(fixture.outputDirectory, "paste-harness"),
+        )
+      ).sha256,
+    );
     assert.deepEqual(
       parsed.artifact.files.map((file) => file.path),
       ["dist/bin.js", "package.json"],

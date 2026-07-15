@@ -593,16 +593,22 @@ test("loads paste-harness modules only from the frozen candidate", async () => {
     }
     const manifest = await buildDirectoryManifest(harnessRoot);
     const imported = [];
+    const operations = [];
     const modules = await liveReleaseModule.loadFrozenPasteHarness({
       candidate: {
         source: { paste_harness: { sha256: manifest.sha256 } },
       },
       candidatePath: join(root, "candidate.json"),
+      validateFiles: async () => {
+        operations.push("validate");
+      },
       importModule: async (path) => {
         imported.push(path);
+        operations.push("import");
         return { path };
       },
     });
+    assert.deepEqual(operations, ["validate", "import", "import", "import"]);
     assert.deepEqual(imported, [
       join(modules.root, "rig.js"),
       join(modules.root, "ssh.js"),
@@ -620,6 +626,7 @@ test("loads paste-harness modules only from the frozen candidate", async () => {
         },
         candidatePath: join(root, "candidate.json"),
         importModule: async () => ({}),
+        validateFiles: async () => undefined,
       }),
       /Frozen paste-harness runtime drifted/u,
     );

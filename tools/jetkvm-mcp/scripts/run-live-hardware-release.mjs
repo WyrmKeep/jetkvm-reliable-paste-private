@@ -285,8 +285,10 @@ export async function validateCurrentReleaseSource(
 export async function loadFrozenPasteHarness({
   candidate,
   candidatePath,
+  validateFiles = validateCandidateFiles,
   importModule = (path) => import(pathToFileURL(path).href),
 }) {
+  await validateFiles(candidate, candidatePath);
   const candidateDirectory = await realpath(dirname(resolve(candidatePath)));
   const configuredRoot = resolve(candidateDirectory, "paste-harness");
   const facts = await lstat(configuredRoot);
@@ -574,23 +576,13 @@ export function createRigAdapter(
   });
 }
 
-async function validateCandidateRuntime(
+export async function validateCandidateFiles(
   candidate,
   candidatePath,
-  browserPath,
-  targetUrl,
+  {
+    expectedChecksum = requiredEnvironment("JETKVM_RELEASE_CANDIDATE_SHA256"),
+  } = {},
 ) {
-  await assertCurrentRuntimeMatchesCandidate(candidate, {
-    nodeVersion: process.version,
-    nodeExecutablePath: process.execPath,
-    platform: process.platform,
-    architecture: process.arch,
-    browserExecutablePath: browserPath,
-    targetUrl,
-  });
-  const expectedChecksum = requiredEnvironment(
-    "JETKVM_RELEASE_CANDIDATE_SHA256",
-  );
   if ((await sha256File(candidatePath)) !== expectedChecksum) {
     throw new Error("Candidate manifest checksum changed after freeze.");
   }
@@ -601,6 +593,23 @@ async function validateCandidateRuntime(
   ) {
     throw new Error("Candidate package artifact changed after freeze.");
   }
+}
+
+async function validateCandidateRuntime(
+  candidate,
+  candidatePath,
+  browserPath,
+  targetUrl,
+) {
+  await validateCandidateFiles(candidate, candidatePath);
+  await assertCurrentRuntimeMatchesCandidate(candidate, {
+    nodeVersion: process.version,
+    nodeExecutablePath: process.execPath,
+    platform: process.platform,
+    architecture: process.arch,
+    browserExecutablePath: browserPath,
+    targetUrl,
+  });
 }
 
 async function inspectStampedDeviceBinary(path, revision) {
@@ -1165,6 +1174,17 @@ async function run() {
     throw new Error("Protected rig environment omitted the JetKVM credential.");
   }
   const targetUrl = `http://${rigEnv.KVM_PRIMARY}`;
+  await validateCandidateRuntime(
+    candidate,
+    candidatePath,
+    browserPath,
+    targetUrl,
+  );
+  const packageIdentity = await verifyInstalledPackageIdentity(
+    candidate,
+    installedPackageRoot,
+    { candidateDirectory: dirname(candidatePath) },
+  );
   const inheritedLeaseModule = await import(
     pathToFileURL(resolve(installedPackageRoot, "dist/deviceLease.js")).href
   );
@@ -1176,17 +1196,6 @@ async function run() {
   await inheritedLeaseModule.loadDeviceLeaseProofReference(
     requiredEnvironment("JETKVM_DEVICE_LEASE_PROOF_PATH"),
     `jetkvm-${sha256Text(targetUrl)}`,
-  );
-  await validateCandidateRuntime(
-    candidate,
-    candidatePath,
-    browserPath,
-    targetUrl,
-  );
-  const packageIdentity = await verifyInstalledPackageIdentity(
-    candidate,
-    installedPackageRoot,
-    { candidateDirectory: dirname(candidatePath) },
   );
   const [manifestModule, mcpSdkFactories] = await Promise.all([
     import(resolve(installedPackageRoot, "dist/stories/manifest.js")),
