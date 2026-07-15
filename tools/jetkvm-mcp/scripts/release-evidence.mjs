@@ -186,7 +186,10 @@ function portableRelativePath(root, path) {
   return value;
 }
 export function isGeneratedInstalledBinLink(path) {
-  return /(?:^|\/)\.bin\/[^/]+$/u.test(path);
+  return (
+    /^\.bin\/[^/]+$/u.test(path) ||
+    /(?:^|\/)node_modules\/\.bin\/[^/]+$/u.test(path)
+  );
 }
 
 async function collectFiles(root, directory, files, include, excludeSymlink) {

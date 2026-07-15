@@ -7,7 +7,11 @@ import test from "node:test";
 import { CONTROLLED_TRACE_REPORT_PATHS } from "./build-controlled-release-evidence.mjs";
 import * as liveReleaseModule from "./run-live-hardware-release.mjs";
 import { createDeviceReleaseProvenance } from "./device-release-provenance.mjs";
-import { buildDirectoryManifest, sha256File } from "./release-evidence.mjs";
+import {
+  buildDirectoryManifest,
+  sha256Canonical,
+  sha256File,
+} from "./release-evidence.mjs";
 import {
   createInstalledMcpOptions,
   createFinalizationError,
@@ -34,13 +38,13 @@ test("binds a device artifact to its unique embedded source revision", async () 
   const binaryPath = join(directory, "jetkvm_app");
   const deviceTestsPath = join(directory, "device-tests.tar.gz");
   const provenancePath = join(directory, "device-binary-provenance.json");
-  const command = async () => ({
-    stdout:
-      `jetkvm_app: go1.25.1\n` +
-      `\tpath\tcommand-line-arguments\n` +
-      `\tbuild\tGOARCH=arm\n` +
-      `\tbuild\tGOOS=linux\n`,
-  });
+  const goReport = ({ goos = "linux", goarch = "arm", goarm = "7" } = {}) =>
+    `jetkvm_app: go1.25.1\n` +
+    `\tpath\tcommand-line-arguments\n` +
+    `\tbuild\tGOARCH=${goarch}\n` +
+    `\tbuild\tGOOS=${goos}\n` +
+    `\tbuild\tGOARM=${goarm}\n`;
+  const command = async () => ({ stdout: goReport() });
   const writeArtifact = async (contents) => {
     await writeFile(binaryPath, contents);
     await writeFile(deviceTestsPath, "device-tests");
@@ -75,6 +79,24 @@ test("binds a device artifact to its unique embedded source revision", async () 
     assert.equal(evidence.sha256, exact.expectedSha256);
     assert.equal(evidence.device_tests_sha256, exact.expectedDeviceTestsSha256);
     assert.equal(evidence.source_commit, COMMIT);
+
+    for (const settings of [
+      { goos: "darwin" },
+      { goarch: "amd64" },
+      { goarm: "6" },
+    ]) {
+      await assert.rejects(
+        validateReleaseDeviceBinary({
+          candidate: { source: { commit_sha: COMMIT } },
+          binaryPath,
+          deviceTestsPath,
+          ...exact,
+          command: async () => ({ stdout: goReport(settings) }),
+          provenancePath,
+        }),
+        /target linux\/arm\/7/u,
+      );
+    }
 
     await assert.rejects(
       validateReleaseDeviceBinary({
@@ -192,6 +214,49 @@ test("stages the exact device artifact before reboot", async () => {
     { timeoutMs: 30_000 },
   ]);
   assert.equal(evidence.staged_binary_sha256, sha256);
+});
+
+test("removes staged device updates after verification or reboot failure", async () => {
+  const sha256 = "c".repeat(64);
+  for (const failureIndex of [1, 2]) {
+    const calls = [];
+    const sshModule = {
+      kvmTarget: (host) => `root@${host}`,
+      async runSshCommand(target, command, options) {
+        const index = calls.length;
+        calls.push([target, command, options]);
+        return {
+          command: "ssh",
+          stdout:
+            command === "sha256sum /userdata/jetkvm/jetkvm_app.update"
+              ? `${sha256}  /userdata/jetkvm/jetkvm_app.update\n`
+              : "",
+          stderr: index === failureIndex ? "failed" : "",
+          exitCode: index === failureIndex ? 1 : 0,
+          signal: null,
+          timedOut: false,
+        };
+      },
+    };
+    await assert.rejects(
+      deployReleaseDeviceBinary({
+        sshModule,
+        host: "device.example",
+        binaryPath: "/private/jetkvm_app",
+        expectedSha256: sha256,
+      }),
+    );
+    const cleanup = calls.at(-1);
+    assert.match(
+      cleanup[1],
+      /rm -f \/userdata\/jetkvm\/jetkvm_app\.update \/userdata\/jetkvm\/jetkvm_app\.update\.upload/u,
+    );
+    assert.match(
+      cleanup[1],
+      /test ! -e \/userdata\/jetkvm\/jetkvm_app\.update/u,
+    );
+    assert.deepEqual(cleanup[2], { timeoutMs: 30_000 });
+  }
 });
 
 async function fixture() {
@@ -440,4 +505,229 @@ test("rechecks the installed package against the frozen candidate directory", as
       { candidateDirectory: "/candidate" },
     ],
   ]);
+});
+
+test("reconnects on a fresh MCP transport and proves producer-zero release", async () => {
+  const events = [];
+  const requests = [];
+  const requestIds = ["fresh-connect-request", "fresh-release-request"];
+  const connectRaw = {
+    ok: true,
+    tool: "jetkvm_session_connect",
+    session_id: "fresh-session",
+    session_generation: 9,
+    result: {
+      request_id: requestIds[0],
+      outcome: "applied",
+      verification: "device_state_verified",
+      safe_to_retry: false,
+      required_next_step: "none",
+      state: "ready",
+    },
+  };
+  const releaseRaw = {
+    ok: true,
+    tool: "jetkvm_input_release",
+    session_id: "fresh-session",
+    session_generation: 9,
+    result: {
+      request_id: requestIds[1],
+      outcome: "applied",
+      verification: "device_state_verified",
+      safe_to_retry: false,
+      required_next_step: "none",
+      mutation_gate_closed: true,
+      deferred_producers_joined: true,
+      paste_terminal: "inactive",
+      ordinary_leases_zero: true,
+      keyboard_zero: true,
+      pointer_zero: true,
+      generation_drained: true,
+    },
+  };
+  const response = (raw) => {
+    const structured = structuredClone(raw);
+    delete structured.session_id;
+    delete structured.result.request_id;
+    return {
+      raw,
+      evidence: {
+        structured,
+        structured_sha256: sha256Canonical(structured),
+      },
+    };
+  };
+  let invalidated = false;
+  const proof = await liveReleaseModule.proveFreshTransportRelease({
+    initialClient: {
+      async close() {
+        events.push("initial:close");
+        return true;
+      },
+    },
+    replacementClient: {
+      async start() {
+        events.push("replacement:start");
+        return {
+          tool_names_sha256: "d".repeat(64),
+          tool_count: 10,
+        };
+      },
+      async call(name, input, timeoutMs) {
+        events.push(name);
+        requests.push({ name, input, timeoutMs });
+        return response(
+          name === "jetkvm_session_connect" ? connectRaw : releaseRaw,
+        );
+      },
+    },
+    invalidateSafeBaseline() {
+      invalidated = true;
+    },
+    nextRequestId: () => requestIds.shift(),
+  });
+
+  assert.deepEqual(events, [
+    "initial:close",
+    "replacement:start",
+    "jetkvm_session_connect",
+    "jetkvm_input_release",
+  ]);
+  assert.deepEqual(requests, [
+    {
+      name: "jetkvm_session_connect",
+      input: {
+        request_id: "fresh-connect-request",
+        takeover: false,
+        timeout_ms: 60_000,
+      },
+      timeoutMs: 65_000,
+    },
+    {
+      name: "jetkvm_input_release",
+      input: {
+        session_id: "fresh-session",
+        session_generation: 9,
+        request_id: "fresh-release-request",
+        timeout_ms: 30_000,
+      },
+      timeoutMs: 35_000,
+    },
+  ]);
+  assert.equal(invalidated, false);
+  assert.equal(proof.tool_listing.tool_count, 10);
+  assert.equal(Object.hasOwn(proof.connect.request, "request_id"), false);
+  assert.equal(
+    proof.connect.request.request_id_sha256,
+    sha256Canonical("fresh-connect-request"),
+  );
+  assert.equal(Object.hasOwn(proof.release.request, "session_id"), false);
+  assert.equal(
+    proof.release.request.session_id_sha256,
+    sha256Canonical("fresh-session"),
+  );
+  assert.equal(
+    proof.connect.correlation_sha256,
+    sha256Canonical(proof.connect.correlation),
+  );
+  assert.equal(
+    proof.release.correlation_sha256,
+    sha256Canonical(proof.release.correlation),
+  );
+  assert.equal(
+    Object.hasOwn(proof.connect.response.structured, "session_id"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(proof.release.response.structured.result, "request_id"),
+    false,
+  );
+  assert.equal(
+    proof.connect.request_sha256,
+    sha256Canonical(proof.connect.request),
+  );
+  assert.equal(
+    proof.connect.response_sha256,
+    sha256Canonical(proof.connect.response),
+  );
+  assert.equal(
+    proof.release.request_sha256,
+    sha256Canonical(proof.release.request),
+  );
+  assert.equal(
+    proof.release.response_sha256,
+    sha256Canonical(proof.release.response),
+  );
+});
+
+test("invalidates the safe baseline when fresh release is unproven", async () => {
+  const requestIds = ["fresh-connect-request", "fresh-release-request"];
+  const response = (raw) => {
+    const structured = structuredClone(raw);
+    delete structured.session_id;
+    delete structured.result.request_id;
+    return {
+      raw,
+      evidence: {
+        structured,
+        structured_sha256: sha256Canonical(structured),
+      },
+    };
+  };
+  let invalidated = false;
+  await assert.rejects(
+    liveReleaseModule.proveFreshTransportRelease({
+      initialClient: { close: async () => true },
+      replacementClient: {
+        start: async () => ({
+          tool_names_sha256: "d".repeat(64),
+          tool_count: 10,
+        }),
+        async call(name) {
+          if (name === "jetkvm_session_connect") {
+            return response({
+              ok: true,
+              tool: name,
+              session_id: "fresh-session",
+              session_generation: 9,
+              result: {
+                request_id: "fresh-connect-request",
+                outcome: "applied",
+                verification: "device_state_verified",
+                safe_to_retry: false,
+                required_next_step: "none",
+                state: "ready",
+              },
+            });
+          }
+          return response({
+            ok: true,
+            tool: name,
+            session_id: "fresh-session",
+            session_generation: 9,
+            result: {
+              request_id: "fresh-release-request",
+              outcome: "applied",
+              verification: "device_state_verified",
+              safe_to_retry: false,
+              required_next_step: "none",
+              mutation_gate_closed: true,
+              deferred_producers_joined: true,
+              paste_terminal: "inactive",
+              ordinary_leases_zero: true,
+              keyboard_zero: true,
+              pointer_zero: false,
+              generation_drained: true,
+            },
+          });
+        },
+      },
+      invalidateSafeBaseline: () => {
+        invalidated = true;
+      },
+      nextRequestId: () => requestIds.shift(),
+    }),
+    /Authoritative input release/u,
+  );
+  assert.equal(invalidated, true);
 });

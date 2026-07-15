@@ -193,6 +193,103 @@ function fixture() {
     failure_count: 0,
     failure_stages: [],
   };
+  const connectRequest = {
+    request_id: "fresh-connect-request",
+    takeover: false,
+    timeout_ms: 60_000,
+  };
+  const connectStructured = {
+    ok: true,
+    tool: "jetkvm_session_connect",
+    session_id: "fresh-session",
+    session_generation: 9,
+    result: {
+      request_id: connectRequest.request_id,
+      outcome: "applied",
+      verification: "device_state_verified",
+      safe_to_retry: false,
+      required_next_step: "none",
+      state: "ready",
+    },
+  };
+  const releaseRequest = {
+    session_id: "fresh-session",
+    session_generation: 9,
+    request_id: "fresh-release-request",
+    timeout_ms: 30_000,
+  };
+  const releaseStructured = {
+    ok: true,
+    tool: "jetkvm_input_release",
+    session_id: "fresh-session",
+    session_generation: 9,
+    result: {
+      request_id: releaseRequest.request_id,
+      outcome: "applied",
+      verification: "device_state_verified",
+      safe_to_retry: false,
+      required_next_step: "none",
+      mutation_gate_closed: true,
+      deferred_producers_joined: true,
+      paste_terminal: "inactive",
+      ordinary_leases_zero: true,
+      keyboard_zero: true,
+      pointer_zero: true,
+      generation_drained: true,
+    },
+  };
+  const boundCall = (request, structured) => {
+    const sanitizedStructured = structuredClone(structured);
+    delete sanitizedStructured.session_id;
+    delete sanitizedStructured.result.request_id;
+    const requestPreimage = Object.hasOwn(request, "session_id")
+      ? {
+          session_id_sha256: sha256Canonical(request.session_id),
+          session_generation: request.session_generation,
+          request_id_sha256: sha256Canonical(request.request_id),
+          timeout_ms: request.timeout_ms,
+        }
+      : {
+          request_id_sha256: sha256Canonical(request.request_id),
+          takeover: request.takeover,
+          timeout_ms: request.timeout_ms,
+        };
+    const response = {
+      structured: sanitizedStructured,
+      structured_sha256: sha256Canonical(sanitizedStructured),
+    };
+    const correlation = {
+      request_id_sha256: sha256Canonical(structured.result.request_id),
+      session_id_sha256: sha256Canonical(structured.session_id),
+      session_generation: structured.session_generation,
+    };
+    return {
+      request: requestPreimage,
+      request_sha256: sha256Canonical(requestPreimage),
+      response,
+      response_sha256: sha256Canonical(response),
+      correlation,
+      correlation_sha256: sha256Canonical(correlation),
+    };
+  };
+  const transportReconnect = {
+    tool_listing: {
+      tool_count: 10,
+      tool_names_sha256: HASH,
+    },
+    connect: boundCall(connectRequest, connectStructured),
+    release: boundCall(releaseRequest, releaseStructured),
+  };
+  const sshEvidence = {
+    command: "ssh",
+    exit_code: 0,
+    signal: null,
+    timed_out: false,
+    stdout_bytes: 0,
+    stdout_sha256: HASH,
+    stderr_bytes: 0,
+    stderr_sha256: HASH,
+  };
   const summary = {
     schema_version: 1,
     kind: "jetkvm-mcp-hardware-release-evidence",
@@ -224,11 +321,39 @@ function fixture() {
       process_start_time: "1.717e+09",
     },
     deployment: {
-      release_artifact: {
-        device_tests_sha256: HASH,
+      deployment: {
+        upload: { ...sshEvidence },
+        staged_verification: { ...sshEvidence },
+        reboot: { ...sshEvidence },
+        staged_binary_sha256: HASH,
       },
+      source_identity: {
+        commit_sha: COMMIT,
+        tree_sha: TREE,
+        package_lock_sha256: HASH,
+        paste_harness_sha256: HASH,
+      },
+      release_artifact: {
+        size_bytes: 1,
+        sha256: HASH,
+        device_tests_sha256: HASH,
+        provenance_sha256: HASH,
+        source_commit: COMMIT,
+        builder: {
+          repository: "WyrmKeep/jetkvm-reliable-paste-private",
+          workflow_ref:
+            "WyrmKeep/jetkvm-reliable-paste-private/.github/workflows/build.yml@refs/heads/main",
+          run_id: "123456",
+          run_attempt: 1,
+        },
+        go_version_report_sha256: HASH,
+      },
+      local_binary_sha256: HASH,
+      installed_binary_sha256: HASH,
+      staged_update_absent: true,
     },
     tool_listing: { tool_count: 10 },
+    transport_reconnect: transportReconnect,
     atx_preflight_sha256: HASH,
     device_tests_sha256: sha256Canonical(deviceTests),
     finalization_sha256: sha256Canonical(finalization),
@@ -295,6 +420,105 @@ test("accepts complete canonical hardware evidence", () => {
   });
   assert.equal(audit.result, "pass");
   assert.equal(audit.step_count, 2);
+});
+
+test("fails closed without fresh-transport producer-zero evidence", () => {
+  const evidence = fixture();
+  const summary = structuredClone(evidence.summary);
+  delete summary.transport_reconnect;
+  assert.throws(
+    () =>
+      validateHardwareReleaseEvidence({
+        candidate: candidate(),
+        candidateSha256: summary.candidate_sha256,
+        stories: [evidence.story],
+        plan: evidence.plan,
+        summary,
+        records: [evidence.record],
+        finalization: evidence.finalization,
+        deviceTests: evidence.deviceTests,
+      }),
+    /fresh transport evidence/u,
+  );
+});
+
+test("rejects drifted fresh-transport correlation, zero state, or privacy", () => {
+  const evidence = fixture();
+  const cases = [
+    (proof) => {
+      proof.release.correlation.session_id_sha256 = "e".repeat(64);
+      proof.release.correlation_sha256 = sha256Canonical(
+        proof.release.correlation,
+      );
+    },
+    (proof) => {
+      proof.release.response.structured.result.pointer_zero = false;
+      proof.release.response.structured_sha256 = sha256Canonical(
+        proof.release.response.structured,
+      );
+      proof.release.response_sha256 = sha256Canonical(proof.release.response);
+    },
+    (proof) => {
+      proof.connect.response.structured.session_id = "raw-session-leak";
+      proof.connect.response.structured_sha256 = sha256Canonical(
+        proof.connect.response.structured,
+      );
+      proof.connect.response_sha256 = sha256Canonical(proof.connect.response);
+    },
+  ];
+  for (const mutate of cases) {
+    const summary = structuredClone(evidence.summary);
+    mutate(summary.transport_reconnect);
+    assert.throws(() =>
+      validateHardwareReleaseEvidence({
+        candidate: candidate(),
+        candidateSha256: summary.candidate_sha256,
+        stories: [evidence.story],
+        plan: evidence.plan,
+        summary,
+        records: [evidence.record],
+        finalization: evidence.finalization,
+        deviceTests: evidence.deviceTests,
+      }),
+    );
+  }
+});
+
+test("rejects incomplete or drifted promoted device deployment evidence", () => {
+  const evidence = fixture();
+  const cases = [
+    (deployment) => {
+      delete deployment.installed_binary_sha256;
+    },
+    (deployment) => {
+      deployment.local_binary_sha256 = "e".repeat(64);
+    },
+    (deployment) => {
+      deployment.source_identity.tree_sha = "e".repeat(40);
+    },
+    (deployment) => {
+      deployment.staged_update_absent = false;
+    },
+    (deployment) => {
+      deployment.release_artifact.provenance_sha256 = "invalid";
+    },
+  ];
+  for (const mutate of cases) {
+    const summary = structuredClone(evidence.summary);
+    mutate(summary.deployment);
+    assert.throws(() =>
+      validateHardwareReleaseEvidence({
+        candidate: candidate(),
+        candidateSha256: summary.candidate_sha256,
+        stories: [evidence.story],
+        plan: evidence.plan,
+        summary,
+        records: [evidence.record],
+        finalization: evidence.finalization,
+        deviceTests: evidence.deviceTests,
+      }),
+    );
+  }
 });
 
 test("binds the summary to the exact validated candidate bytes", () => {

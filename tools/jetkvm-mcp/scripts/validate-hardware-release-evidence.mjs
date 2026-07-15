@@ -135,6 +135,300 @@ function validateFinalization(record) {
   });
 }
 
+function assertNoRawTransportIdentifiers(value, label) {
+  if (Array.isArray(value)) {
+    value.forEach((child, index) =>
+      assertNoRawTransportIdentifiers(child, `${label}[${index}]`),
+    );
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "request_id" || key === "session_id") {
+      throw new Error(`${label} exposed a raw transport identifier.`);
+    }
+    assertNoRawTransportIdentifiers(child, `${label}.${key}`);
+  }
+}
+
+function validateFreshTransportEvidence(proof) {
+  if (!isRecord(proof)) {
+    throw new Error("fresh transport evidence is missing or malformed.");
+  }
+  assertExactKeys(
+    proof,
+    ["tool_listing", "connect", "release"],
+    "fresh transport evidence",
+  );
+  assertExactKeys(
+    proof.tool_listing,
+    ["tool_count", "tool_names_sha256"],
+    "fresh transport tool listing",
+  );
+  if (proof.tool_listing.tool_count !== 10) {
+    throw new Error("fresh transport did not expose exactly ten tools.");
+  }
+  assertHash(
+    proof.tool_listing.tool_names_sha256,
+    "fresh transport tool listing",
+  );
+
+  const validateCall = (call, kind) => {
+    assertExactKeys(
+      call,
+      [
+        "request",
+        "request_sha256",
+        "response",
+        "response_sha256",
+        "correlation",
+        "correlation_sha256",
+      ],
+      `fresh transport ${kind}`,
+    );
+    assertEvidencePreimage(
+      call.request,
+      call.request_sha256,
+      `fresh transport ${kind} request`,
+    );
+    assertEvidencePreimage(
+      call.response,
+      call.response_sha256,
+      `fresh transport ${kind} response`,
+    );
+    assertEvidencePreimage(
+      call.correlation,
+      call.correlation_sha256,
+      `fresh transport ${kind} correlation`,
+    );
+    assertExactKeys(
+      call.correlation,
+      ["request_id_sha256", "session_id_sha256", "session_generation"],
+      `fresh transport ${kind} correlation`,
+    );
+    assertHash(
+      call.correlation.request_id_sha256,
+      `fresh transport ${kind} request correlation`,
+    );
+    assertHash(
+      call.correlation.session_id_sha256,
+      `fresh transport ${kind} session correlation`,
+    );
+    if (!Number.isSafeInteger(call.correlation.session_generation)) {
+      throw new Error(`fresh transport ${kind} generation is malformed.`);
+    }
+    const structured = call.response.structured;
+    assertNoRawTransportIdentifiers(
+      structured,
+      `fresh transport ${kind} response`,
+    );
+    const result = isRecord(structured?.result) ? structured.result : undefined;
+    if (
+      !isRecord(structured) ||
+      structured.ok !== true ||
+      structured.tool !==
+        (kind === "connect"
+          ? "jetkvm_session_connect"
+          : "jetkvm_input_release") ||
+      structured.session_generation !== call.correlation.session_generation ||
+      !isRecord(result) ||
+      !["applied", "already_applied"].includes(result.outcome) ||
+      result.verification !== "device_state_verified" ||
+      result.safe_to_retry !== false ||
+      result.required_next_step !== "none"
+    ) {
+      throw new Error(
+        `fresh transport ${kind} did not persist a definitive response.`,
+      );
+    }
+    return result;
+  };
+
+  const connectResult = validateCall(proof.connect, "connect");
+  const releaseResult = validateCall(proof.release, "release");
+  assertExactKeys(
+    proof.connect.request,
+    ["request_id_sha256", "takeover", "timeout_ms"],
+    "fresh transport connect request",
+  );
+  assertExactKeys(
+    proof.release.request,
+    [
+      "session_id_sha256",
+      "session_generation",
+      "request_id_sha256",
+      "timeout_ms",
+    ],
+    "fresh transport release request",
+  );
+  if (
+    proof.connect.request.request_id_sha256 !==
+      proof.connect.correlation.request_id_sha256 ||
+    proof.connect.request.takeover !== false ||
+    proof.connect.request.timeout_ms !== 60_000 ||
+    connectResult.state !== "ready" ||
+    proof.release.request.request_id_sha256 !==
+      proof.release.correlation.request_id_sha256 ||
+    proof.release.request.session_id_sha256 !==
+      proof.release.correlation.session_id_sha256 ||
+    proof.release.request.session_id_sha256 !==
+      proof.connect.correlation.session_id_sha256 ||
+    proof.release.request.session_generation !==
+      proof.release.correlation.session_generation ||
+    proof.release.request.session_generation !==
+      proof.connect.correlation.session_generation ||
+    proof.release.request.timeout_ms !== 30_000
+  ) {
+    throw new Error("fresh transport request/response correlation drifted.");
+  }
+  if (
+    releaseResult.mutation_gate_closed !== true ||
+    releaseResult.deferred_producers_joined !== true ||
+    !["cancelled", "inactive"].includes(releaseResult.paste_terminal) ||
+    releaseResult.ordinary_leases_zero !== true ||
+    releaseResult.keyboard_zero !== true ||
+    releaseResult.pointer_zero !== true ||
+    releaseResult.generation_drained !== true
+  ) {
+    throw new Error(
+      "fresh transport release did not prove producer-zero state.",
+    );
+  }
+}
+
+function validateSuccessfulSshEvidence(value, label) {
+  assertExactKeys(
+    value,
+    [
+      "command",
+      "exit_code",
+      "signal",
+      "timed_out",
+      "stdout_bytes",
+      "stdout_sha256",
+      "stderr_bytes",
+      "stderr_sha256",
+    ],
+    label,
+  );
+  if (
+    typeof value.command !== "string" ||
+    value.command.length === 0 ||
+    value.exit_code !== 0 ||
+    value.signal !== null ||
+    value.timed_out !== false ||
+    !Number.isSafeInteger(value.stdout_bytes) ||
+    value.stdout_bytes < 0 ||
+    !Number.isSafeInteger(value.stderr_bytes) ||
+    value.stderr_bytes < 0
+  ) {
+    throw new Error(`${label} did not complete successfully.`);
+  }
+  assertHash(value.stdout_sha256, `${label} stdout`);
+  assertHash(value.stderr_sha256, `${label} stderr`);
+}
+
+function validateDeploymentEvidence(deployment, summarySource, candidate) {
+  assertExactKeys(
+    deployment,
+    [
+      "deployment",
+      "source_identity",
+      "release_artifact",
+      "local_binary_sha256",
+      "installed_binary_sha256",
+      "staged_update_absent",
+    ],
+    "Hardware deployment evidence",
+  );
+  assertExactKeys(
+    deployment.deployment,
+    ["upload", "staged_verification", "reboot", "staged_binary_sha256"],
+    "Hardware deployment operation",
+  );
+  for (const field of ["upload", "staged_verification", "reboot"]) {
+    validateSuccessfulSshEvidence(
+      deployment.deployment[field],
+      `Hardware deployment ${field}`,
+    );
+  }
+  assertExactKeys(
+    summarySource,
+    ["commit_sha", "tree_sha", "package_lock_sha256", "paste_harness_sha256"],
+    "Hardware source identity",
+  );
+  assertExactKeys(
+    deployment.source_identity,
+    ["commit_sha", "tree_sha", "package_lock_sha256", "paste_harness_sha256"],
+    "Hardware deployment source identity",
+  );
+  if (
+    sha256Canonical(deployment.source_identity) !==
+      sha256Canonical(summarySource) ||
+    summarySource.commit_sha !== candidate.source.commit_sha ||
+    summarySource.tree_sha !== candidate.source.tree_sha ||
+    summarySource.package_lock_sha256 !==
+      candidate.source.package_lock.sha256 ||
+    summarySource.paste_harness_sha256 !== candidate.source.paste_harness.sha256
+  ) {
+    throw new Error("Hardware deployment source identity drifted.");
+  }
+  const artifact = deployment.release_artifact;
+  assertExactKeys(
+    artifact,
+    [
+      "size_bytes",
+      "sha256",
+      "device_tests_sha256",
+      "provenance_sha256",
+      "source_commit",
+      "builder",
+      "go_version_report_sha256",
+    ],
+    "Hardware release artifact",
+  );
+  assertExactKeys(
+    artifact.builder,
+    ["repository", "workflow_ref", "run_id", "run_attempt"],
+    "Hardware release artifact builder",
+  );
+  for (const [value, label] of [
+    [artifact.sha256, "Hardware release artifact"],
+    [artifact.device_tests_sha256, "Reviewed device test archive"],
+    [artifact.provenance_sha256, "Device release provenance"],
+    [artifact.go_version_report_sha256, "Go version report"],
+    [deployment.local_binary_sha256, "Local promoted device binary"],
+    [deployment.installed_binary_sha256, "Installed device binary"],
+    [deployment.deployment.staged_binary_sha256, "Staged device binary"],
+  ]) {
+    assertHash(value, label);
+  }
+  const trustedRepository = "WyrmKeep/jetkvm-reliable-paste-private";
+  if (
+    !Number.isSafeInteger(artifact.size_bytes) ||
+    artifact.size_bytes < 1 ||
+    artifact.source_commit !== candidate.source.commit_sha ||
+    artifact.builder.repository !== trustedRepository ||
+    typeof artifact.builder.workflow_ref !== "string" ||
+    !artifact.builder.workflow_ref.startsWith(
+      `${trustedRepository}/.github/workflows/build.yml@`,
+    ) ||
+    typeof artifact.builder.run_id !== "string" ||
+    !/^[1-9][0-9]*$/u.test(artifact.builder.run_id) ||
+    !Number.isSafeInteger(artifact.builder.run_attempt) ||
+    artifact.builder.run_attempt < 1 ||
+    artifact.sha256 !== deployment.local_binary_sha256 ||
+    artifact.sha256 !== deployment.installed_binary_sha256 ||
+    artifact.sha256 !== deployment.deployment.staged_binary_sha256 ||
+    deployment.staged_update_absent !== true
+  ) {
+    throw new Error(
+      "Hardware deployment did not bind the reviewed promoted binary.",
+    );
+  }
+  return artifact.device_tests_sha256;
+}
+
 function validateRecord(record, story, storyPlan, runId) {
   if (
     !isRecord(record) ||
@@ -259,8 +553,12 @@ export function validateHardwareReleaseEvidence({
   ) {
     throw new Error("Hardware release summary did not pass exactly.");
   }
-  const reviewedDeviceTestsSha256 =
-    summary.deployment?.release_artifact?.device_tests_sha256;
+  validateFreshTransportEvidence(summary.transport_reconnect);
+  const reviewedDeviceTestsSha256 = validateDeploymentEvidence(
+    summary.deployment,
+    summary.source_identity,
+    candidate,
+  );
   assertHash(reviewedDeviceTestsSha256, "Reviewed device test archive");
   if (deviceTests.command.args[6] !== reviewedDeviceTestsSha256) {
     throw new Error(

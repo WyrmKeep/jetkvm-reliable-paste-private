@@ -130,6 +130,15 @@ test("directory manifests are sorted, content-addressed, and reject symlinks", a
       ["nested/a.txt", "z.txt"],
     );
 
+    await mkdir(join(root, "nested", ".bin"));
+    await symlink("../../z.txt", join(root, "nested", ".bin", "owned-command"));
+    await assert.rejects(
+      buildDirectoryManifest(root, {
+        excludeSymlink: isGeneratedInstalledBinLink,
+      }),
+      /Release manifests forbid symbolic links/u,
+    );
+
     await symlink("z.txt", join(root, "linked.txt"));
     await assert.rejects(
       buildDirectoryManifest(root),

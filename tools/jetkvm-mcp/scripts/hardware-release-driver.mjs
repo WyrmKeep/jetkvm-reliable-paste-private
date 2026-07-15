@@ -810,7 +810,7 @@ export function compareSafeBaselines(before, after) {
   });
 }
 
-function assertAuthoritativeRelease(raw) {
+export function assertAuthoritativeRelease(raw) {
   const result = isRecord(raw?.result) ? raw.result : undefined;
   if (
     !isRecord(raw) ||

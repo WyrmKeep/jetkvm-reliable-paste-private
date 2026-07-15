@@ -21,6 +21,7 @@ import {
 } from "./build-controlled-release-evidence.mjs";
 import {
   InstalledMcpClient,
+  assertAuthoritativeRelease,
   assertPrivateEnvironmentFile,
   createLiveHardwareDriver,
   finalizeLiveHardwareResources,
@@ -614,6 +615,16 @@ async function inspectStampedDeviceBinary(path, revision) {
   });
 }
 
+function uniqueGoBuildSetting(report, name) {
+  if (typeof report !== "string") return undefined;
+  const pattern = new RegExp(
+    `^[\\t ]*build[\\t ]+${name}=([^\\t \\r\\n]+)[\\t ]*$`,
+    "gmu",
+  );
+  const matches = [...report.matchAll(pattern)];
+  return matches.length === 1 ? matches[0][1] : undefined;
+}
+
 export async function validateReleaseDeviceBinary({
   candidate,
   binaryPath,
@@ -686,6 +697,15 @@ export async function validateReleaseDeviceBinary({
   const inspection = await command("go", ["version", "-m", binaryPath], {
     cwd: REPOSITORY_ROOT,
   });
+  if (
+    uniqueGoBuildSetting(inspection.stdout, "GOOS") !== "linux" ||
+    uniqueGoBuildSetting(inspection.stdout, "GOARCH") !== "arm" ||
+    uniqueGoBuildSetting(inspection.stdout, "GOARM") !== "7"
+  ) {
+    throw new Error(
+      "Device release artifact did not target linux/arm/7 exactly.",
+    );
+  }
   if (binaryInspection.revisionOccurrences !== 1) {
     throw new Error(
       "Device release artifact was not built from the frozen source commit.",
@@ -752,30 +772,60 @@ export async function deployReleaseDeviceBinary({
     "sync",
     "trap - EXIT HUP INT TERM",
   ].join("; ");
-  const upload = await sshModule.runSshCommand(target, uploadCommand, {
-    timeoutMs: 60_000,
-    inputFile: binaryPath,
-  });
-  assertSshResult(upload, "Device release artifact upload");
-  const staged = await sshModule.runSshCommand(
-    target,
-    `sha256sum ${remotePath}`,
-    { timeoutMs: 30_000 },
-  );
-  assertSshResult(staged, "Device release artifact verification");
-  const stagedSha256 =
-    /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/jetkvm_app\.update\s*$/u.exec(
-      staged.stdout,
-    )?.[1];
-  if (stagedSha256 !== expectedSha256) {
-    throw new Error("Staged device release artifact checksum did not match.");
+  let upload;
+  let staged;
+  let stagedSha256;
+  let reboot;
+  try {
+    upload = await sshModule.runSshCommand(target, uploadCommand, {
+      timeoutMs: 60_000,
+      inputFile: binaryPath,
+    });
+    assertSshResult(upload, "Device release artifact upload");
+    staged = await sshModule.runSshCommand(target, `sha256sum ${remotePath}`, {
+      timeoutMs: 30_000,
+    });
+    assertSshResult(staged, "Device release artifact verification");
+    stagedSha256 =
+      /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/jetkvm_app\.update\s*$/u.exec(
+        staged.stdout,
+      )?.[1];
+    if (stagedSha256 !== expectedSha256) {
+      throw new Error("Staged device release artifact checksum did not match.");
+    }
+    reboot = await sshModule.runSshCommand(
+      target,
+      "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &",
+      { timeoutMs: 30_000 },
+    );
+    assertSshResult(reboot, "Device release reboot");
+  } catch (error) {
+    let cleanupError;
+    try {
+      const cleanup = await sshModule.runSshCommand(
+        target,
+        [
+          "set -e",
+          `rm -f ${remotePath} ${uploadPath}`,
+          "sync",
+          `test ! -e ${remotePath}`,
+          `test ! -e ${uploadPath}`,
+        ].join("; "),
+        { timeoutMs: 30_000 },
+      );
+      assertSshResult(cleanup, "Staged device release artifact cleanup");
+    } catch (caught) {
+      cleanupError = caught;
+    }
+    if (cleanupError !== undefined) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Device release deployment and staged-artifact cleanup both failed.",
+        { cause: error },
+      );
+    }
+    throw error;
   }
-  const reboot = await sshModule.runSshCommand(
-    target,
-    "nohup sh -c 'sleep 1; reboot' >/dev/null 2>&1 &",
-    { timeoutMs: 30_000 },
-  );
-  assertSshResult(reboot, "Device release reboot");
   return Object.freeze({
     upload: sshResultEvidence(upload),
     staged_verification: sshResultEvidence(staged),
@@ -818,6 +868,137 @@ export function createInstalledMcpOptions({
     environment,
     sensitiveValues: Object.freeze([...sensitiveValues]),
   });
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertDefinitiveFreshTransportResult(raw, tool, requestId, session) {
+  const result = isRecord(raw?.result) ? raw.result : undefined;
+  if (
+    !isRecord(raw) ||
+    raw.ok !== true ||
+    raw.tool !== tool ||
+    typeof raw.session_id !== "string" ||
+    !Number.isSafeInteger(raw.session_generation) ||
+    !isRecord(result) ||
+    result.request_id !== requestId ||
+    !["applied", "already_applied"].includes(result.outcome) ||
+    result.verification !== "device_state_verified" ||
+    result.safe_to_retry !== false ||
+    result.required_next_step !== "none" ||
+    (session !== undefined &&
+      (raw.session_id !== session.id ||
+        raw.session_generation !== session.generation))
+  ) {
+    throw new Error(
+      `Fresh transport ${tool} did not return a correlated definitive result.`,
+    );
+  }
+  return Object.freeze({
+    id: raw.session_id,
+    generation: raw.session_generation,
+  });
+}
+
+function bindFreshTransportCall(request, response) {
+  if (!isRecord(response?.evidence)) {
+    throw new Error("Fresh transport response omitted sanitized evidence.");
+  }
+  const requestPreimage = Object.freeze(
+    Object.hasOwn(request, "session_id")
+      ? {
+          session_id_sha256: sha256Canonical(request.session_id),
+          session_generation: request.session_generation,
+          request_id_sha256: sha256Canonical(request.request_id),
+          timeout_ms: request.timeout_ms,
+        }
+      : {
+          request_id_sha256: sha256Canonical(request.request_id),
+          takeover: request.takeover,
+          timeout_ms: request.timeout_ms,
+        },
+  );
+  const correlation = Object.freeze({
+    request_id_sha256: sha256Canonical(response.raw.result.request_id),
+    session_id_sha256: sha256Canonical(response.raw.session_id),
+    session_generation: response.raw.session_generation,
+  });
+  return Object.freeze({
+    request: requestPreimage,
+    request_sha256: sha256Canonical(requestPreimage),
+    response: response.evidence,
+    response_sha256: sha256Canonical(response.evidence),
+    correlation,
+    correlation_sha256: sha256Canonical(correlation),
+  });
+}
+
+export async function proveFreshTransportRelease({
+  initialClient,
+  replacementClient,
+  invalidateSafeBaseline,
+  nextRequestId = randomUUID,
+}) {
+  if ((await initialClient.close()) !== true) {
+    throw new Error("Initial MCP transport was not open before replacement.");
+  }
+  const toolListing = await replacementClient.start();
+  if (
+    toolListing?.tool_count !== 10 ||
+    typeof toolListing?.tool_names_sha256 !== "string"
+  ) {
+    throw new Error("Replacement MCP transport did not expose ten tools.");
+  }
+  let connectionAttempted = false;
+  try {
+    const connectRequest = Object.freeze({
+      request_id: nextRequestId(),
+      takeover: false,
+      timeout_ms: 60_000,
+    });
+    connectionAttempted = true;
+    const connectResponse = await replacementClient.call(
+      "jetkvm_session_connect",
+      connectRequest,
+      65_000,
+    );
+    const session = assertDefinitiveFreshTransportResult(
+      connectResponse.raw,
+      "jetkvm_session_connect",
+      connectRequest.request_id,
+    );
+    if (connectResponse.raw.result.state !== "ready") {
+      throw new Error("Fresh transport session did not become ready.");
+    }
+    const releaseRequest = Object.freeze({
+      session_id: session.id,
+      session_generation: session.generation,
+      request_id: nextRequestId(),
+      timeout_ms: 30_000,
+    });
+    const releaseResponse = await replacementClient.call(
+      "jetkvm_input_release",
+      releaseRequest,
+      35_000,
+    );
+    assertDefinitiveFreshTransportResult(
+      releaseResponse.raw,
+      "jetkvm_input_release",
+      releaseRequest.request_id,
+      session,
+    );
+    assertAuthoritativeRelease(releaseResponse.raw);
+    return Object.freeze({
+      tool_listing: toolListing,
+      connect: bindFreshTransportCall(connectRequest, connectResponse),
+      release: bindFreshTransportCall(releaseRequest, releaseResponse),
+    });
+  } catch (error) {
+    if (connectionAttempted) invalidateSafeBaseline();
+    throw error;
+  }
 }
 
 async function run() {
@@ -1004,6 +1185,7 @@ async function run() {
     sdkFactories: mcpSdkFactories,
   });
   const mcp = new InstalledMcpClient(mcpOptions);
+  const replacementMcp = new InstalledMcpClient(mcpOptions);
   let driver;
   let driverFinalization;
   let finalization;
@@ -1013,13 +1195,17 @@ async function run() {
   let deployedIdentity;
   let deployment;
   let installation;
+  let transportReconnect;
 
   const finalizeResources = async () => {
     finalization ??= await finalizeLiveHardwareResources({
       driver,
       driverFinalization,
       hardwareTouched: true,
-      clients: [{ label: "initial", client: mcp }],
+      clients: [
+        { label: "replacement", client: replacementMcp },
+        { label: "initial", client: mcp },
+      ],
     });
     let persistenceError;
     if (!finalizationWritten) {
@@ -1134,18 +1320,27 @@ async function run() {
           ),
       });
       driverFinalization = await driver.finalizeRun();
-      await verifyReplacementPackageIdentity({
-        candidate,
-        installedPackageRoot,
-        candidatePath,
-        initialIdentity: packageIdentity,
-      });
+      const replacementPackageIdentity = await verifyReplacementPackageIdentity(
+        {
+          candidate,
+          installedPackageRoot,
+          candidatePath,
+          initialIdentity: packageIdentity,
+        },
+      );
       await validateCandidateRuntime(
         candidate,
         candidatePath,
         browserPath,
         targetUrl,
       );
+      transportReconnect = await proveFreshTransportRelease({
+        initialClient: mcp,
+        replacementClient: replacementMcp,
+        invalidateSafeBaseline: () => {
+          driver.state.safeBaselineProven = false;
+        },
+      });
       await finalizeResources();
       const finalIdentity = await readDeviceIdentity(metricsUrl);
       if (!sameDeviceIdentity(deployedIdentity, finalIdentity)) {
@@ -1214,9 +1409,11 @@ async function run() {
         device_tests_sha256: sha256Canonical(deviceTests),
         deployment: deployment.evidence,
         tool_listing: listed,
+        transport_reconnect: transportReconnect,
         atx_preflight_sha256: atxPreflight.evidence_sha256,
         finalization_sha256: sha256Canonical(finalization.record),
         mcp_stderr: Object.freeze({
+          replacement: replacementMcp.stderrEvidence(),
           initial: mcp.stderrEvidence(),
         }),
       });
