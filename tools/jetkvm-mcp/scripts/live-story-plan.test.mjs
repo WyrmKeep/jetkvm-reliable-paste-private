@@ -10,10 +10,8 @@ import {
   mergeControlledTraceReports,
   validateControlledReleaseEvidence,
 } from "./build-controlled-release-evidence.mjs";
-import {
-  materializeLiveExecutionPlan,
-  validateLiveExecutionPlan,
-} from "./live-story-plan.mjs";
+import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
+import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
 import { createExecutionEvidenceResolver } from "./release-evidence.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

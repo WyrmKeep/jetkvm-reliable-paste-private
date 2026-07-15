@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+
+import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
+
 export const ATX_UNAVAILABLE_ACKNOWLEDGEMENT =
   "selected_fixture_has_no_usable_atx_motherboard_leads";
 export const ATX_UNAVAILABLE_EXCEPTION_CODE = "ATX_WIRING_UNAVAILABLE";
@@ -18,6 +22,25 @@ function assertExactKeys(value, expected) {
   ) {
     throw new Error("Hardware validation profile fields drifted.");
   }
+}
+
+function deepFreeze(value) {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  for (const child of Object.values(value)) deepFreeze(child);
+  return value;
+}
+
+function excludedStepsSha256(steps) {
+  const canonical = steps.map(({ story_id, step_id }) => ({
+    step_id,
+    story_id,
+  }));
+  return createHash("sha256")
+    .update(JSON.stringify(canonical))
+    .digest("hex");
 }
 
 function freezeDeclaration(value) {
@@ -67,5 +90,42 @@ export function parseHardwareValidationProfile(environment = {}) {
   return validateHardwareValidation({
     profile,
     exception_code: ATX_UNAVAILABLE_EXCEPTION_CODE,
+  });
+}
+
+export function deriveHardwareValidationException({
+  stories,
+  plan,
+  hardwareValidation,
+}) {
+  const validated = validateHardwareValidation(hardwareValidation);
+  validateLiveExecutionPlan(stories, plan);
+  if (validated.profile === "full") return null;
+
+  const excludedSteps = [];
+  for (const story of stories.filter(
+    (value) =>
+      Array.isArray(value.environments) && value.environments.includes("live"),
+  )) {
+    for (const step of story.steps) {
+      if (plan[story.id].steps[step.id].requires_atx_wiring) {
+        excludedSteps.push({ story_id: story.id, step_id: step.id });
+      }
+    }
+  }
+  if (excludedSteps.length === 0) {
+    throw new Error(
+      "ATX-unavailable profile has no canonical ATX-wiring exclusions.",
+    );
+  }
+  return deepFreeze({
+    schema_version: 1,
+    kind: "jetkvm-mcp-hardware-exception",
+    profile: validated.profile,
+    exception_code: validated.exception_code,
+    reason_code: ATX_UNAVAILABLE_ACKNOWLEDGEMENT,
+    excluded_step_count: excludedSteps.length,
+    excluded_steps: excludedSteps,
+    excluded_steps_sha256: excludedStepsSha256(excludedSteps),
   });
 }

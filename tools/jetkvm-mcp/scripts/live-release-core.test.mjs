@@ -5,7 +5,16 @@ import {
   runWithFinalization,
   runCanonicalLiveStories,
 } from "./live-release-core.mjs";
-import { validateLiveExecutionPlan } from "./live-story-plan.mjs";
+import { validateLiveExecutionPlan } from "./live-plan-validation.mjs";
+
+const FULL_HARDWARE_VALIDATION = Object.freeze({
+  profile: "full",
+  exception_code: null,
+});
+const ATX_UNAVAILABLE_VALIDATION = Object.freeze({
+  profile: "atx_unavailable",
+  exception_code: "ATX_WIRING_UNAVAILABLE",
+});
 
 function story(id, steps = ["one", "two"]) {
   return {
@@ -173,6 +182,7 @@ test("runs stories in manifest order and blocks each next story on restore compa
     driver,
     writeRecord: async (record) => records.push(record),
     runId: "release-run-1",
+    hardwareValidation: FULL_HARDWARE_VALIDATION,
   });
 
   assert.equal(result.length, 2);
@@ -195,6 +205,93 @@ test("runs stories in manifest order and blocks each next story on restore compa
     "compare:story-a",
     "baseline:story-b:before",
   ]);
+});
+
+test("excludes only ATX-wiring steps and completes the mixed story", async () => {
+  const mixedStory = story("mixed-story", [
+    "safe-before",
+    "physical-atx",
+    "safe-after",
+  ]);
+  const mixedPlan = {
+    "mixed-story": {
+      steps: {
+        "safe-before": {
+          mode: "hardware",
+          requires_atx_wiring: false,
+        },
+        "physical-atx": {
+          mode: "hardware",
+          requires_atx_wiring: true,
+        },
+        "safe-after": {
+          mode: "hardware",
+          requires_atx_wiring: false,
+        },
+      },
+    },
+  };
+  const calls = [];
+  const records = [];
+  const driver = {
+    captureBaseline: async (_story, phase) => {
+      calls.push(`baseline:${phase}`);
+      return { safe: true };
+    },
+    executeHardwareStep: async (_story, step) => {
+      calls.push(`step:${step.id}`);
+      return {
+        result: "pass",
+        duration_ms: 1,
+        evidence: { step: step.id },
+        evidence_sha256: "a".repeat(64),
+      };
+    },
+    restore: async (_story, restore) => {
+      calls.push(`restore:${restore.id}`);
+      return {
+        result: "pass",
+        evidence: { restore: restore.id },
+        evidence_sha256: "b".repeat(64),
+      };
+    },
+    compareBaseline: async () => {
+      calls.push("compare");
+      return {
+        result: "pass",
+        evidence: { equal: true },
+        evidence_sha256: "c".repeat(64),
+      };
+    },
+  };
+
+  const result = await runCanonicalLiveStories({
+    stories: [mixedStory],
+    plan: mixedPlan,
+    driver,
+    hardwareValidation: ATX_UNAVAILABLE_VALIDATION,
+    writeRecord: async (record) => records.push(record),
+    runId: "release-run-atx-unavailable",
+  });
+
+  assert.deepEqual(calls, [
+    "baseline:before",
+    "step:safe-before",
+    "step:safe-after",
+    "restore:release-input",
+    "restore:reset-fixture",
+    "baseline:after",
+    "compare",
+  ]);
+  assert.equal(result[0].result, "pass_with_exception");
+  assert.deepEqual(result[0].steps[1], {
+    step_id: "physical-atx",
+    mode: "hardware",
+    requires_atx_wiring: true,
+    result: "excluded",
+    exception_code: "ATX_WIRING_UNAVAILABLE",
+  });
+  assert.deepEqual(records, result);
 });
 
 test("always runs every restore, writes the failed record, and stops before the next story", async () => {
@@ -225,6 +322,7 @@ test("always runs every restore, writes the failed record, and stops before the 
       driver,
       writeRecord: async (record) => records.push(record),
       runId: "release-run-2",
+      hardwareValidation: FULL_HARDWARE_VALIDATION,
     }),
     (error) => {
       assert.equal(error instanceof AggregateError, true);

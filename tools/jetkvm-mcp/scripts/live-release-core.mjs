@@ -1,6 +1,9 @@
-import { sha256Canonical } from "./release-evidence.mjs";
-import { validateLiveExecutionPlan } from "./live-story-plan.mjs";
+import {
+  ATX_UNAVAILABLE_EXCEPTION_CODE,
+  deriveHardwareValidationException,
+} from "./hardware-validation-profile.mjs";
 
+import { sha256Canonical } from "./release-evidence.mjs";
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 function isRecord(value) {
@@ -68,11 +71,16 @@ export async function runCanonicalLiveStories({
   stories,
   plan,
   driver,
+  hardwareValidation,
   writeRecord,
   runId,
   now = () => new Date(),
 }) {
-  validateLiveExecutionPlan(stories, plan);
+  const hardwareException = deriveHardwareValidationException({
+    stories,
+    plan,
+    hardwareValidation,
+  });
   if (
     typeof runId !== "string" ||
     runId.length === 0 ||
@@ -96,6 +104,19 @@ export async function runCanonicalLiveStories({
       baselineBefore = await driver.captureBaseline(story, "before");
       for (const step of story.steps) {
         const assignment = plan[story.id].steps[step.id];
+        if (
+          hardwareException !== null &&
+          assignment.requires_atx_wiring
+        ) {
+          steps.push({
+            step_id: step.id,
+            mode: assignment.mode,
+            requires_atx_wiring: true,
+            result: "excluded",
+            exception_code: ATX_UNAVAILABLE_EXCEPTION_CODE,
+          });
+          continue;
+        }
         const stepStartedAt = now().toISOString();
         try {
           const result = assertDriverResult(
@@ -105,6 +126,7 @@ export async function runCanonicalLiveStories({
           steps.push({
             step_id: step.id,
             mode: assignment.mode,
+            requires_atx_wiring: assignment.requires_atx_wiring,
             result: "pass",
             started_at: stepStartedAt,
             duration_ms: result.duration_ms,
@@ -119,6 +141,7 @@ export async function runCanonicalLiveStories({
           steps.push({
             step_id: step.id,
             mode: assignment.mode,
+            requires_atx_wiring: assignment.requires_atx_wiring,
             ...publicFailure("STEP_FAILED"),
             started_at: stepStartedAt,
           });
@@ -169,7 +192,12 @@ export async function runCanonicalLiveStories({
       run_id: runId,
       story_id: story.id,
       title: story.title,
-      result: failures.length === 0 ? "pass" : "fail",
+      result:
+        failures.length > 0
+          ? "fail"
+          : steps.some((step) => step.result === "excluded")
+            ? "pass_with_exception"
+            : "pass",
       started_at: startedAt,
       completed_at: now().toISOString(),
       precondition_ids: story.preconditions.map((condition) => condition.id),
