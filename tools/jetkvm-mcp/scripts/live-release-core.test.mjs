@@ -4,8 +4,8 @@ import test from "node:test";
 import {
   runWithFinalization,
   runCanonicalLiveStories,
-  validateLiveExecutionPlan,
 } from "./live-release-core.mjs";
+import { validateLiveExecutionPlan } from "./live-story-plan.mjs";
 
 function story(id, steps = ["one", "two"]) {
   return {
@@ -58,13 +58,21 @@ const STORIES = [story("story-a"), story("story-b", ["three"])];
 const PLAN = {
   "story-a": {
     steps: {
-      one: { mode: "hardware" },
-      two: { mode: "linked", assertion_ids: ["focused:two"] },
+      one: { mode: "hardware", requires_atx_wiring: false },
+      two: {
+        mode: "linked",
+        requires_atx_wiring: false,
+        assertion_ids: ["focused:two"],
+      },
     },
   },
   "story-b": {
     steps: {
-      three: { mode: "controlled_live", assertion_ids: ["focused:three"] },
+      three: {
+        mode: "controlled_live",
+        requires_atx_wiring: false,
+        assertion_ids: ["focused:three"],
+      },
     },
   },
 };
@@ -103,7 +111,11 @@ test("validates explicit one-to-one step coverage and rejects silent linking", (
     /exactly the canonical step IDs/u,
   );
   const extra = structuredClone(PLAN);
-  extra["story-a"].steps.unknown = { mode: "linked", assertion_ids: ["x"] };
+  extra["story-a"].steps.unknown = {
+    mode: "linked",
+    requires_atx_wiring: false,
+    assertion_ids: ["x"],
+  };
   assert.throws(
     () => validateLiveExecutionPlan(STORIES, extra),
     /exactly the canonical step IDs/u,

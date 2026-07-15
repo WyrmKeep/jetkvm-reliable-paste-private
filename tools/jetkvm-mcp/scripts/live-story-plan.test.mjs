@@ -10,11 +10,81 @@ import {
   mergeControlledTraceReports,
   validateControlledReleaseEvidence,
 } from "./build-controlled-release-evidence.mjs";
-import { validateLiveExecutionPlan } from "./live-release-core.mjs";
-import { materializeLiveExecutionPlan } from "./live-story-plan.mjs";
+import {
+  materializeLiveExecutionPlan,
+  validateLiveExecutionPlan,
+} from "./live-story-plan.mjs";
 import { createExecutionEvidenceResolver } from "./release-evidence.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ATX_UNAVAILABLE_STEPS = [
+  ["power-three-semantic-actions", "establish-definitive-atx-session"],
+  ["power-three-semantic-actions", "prove-press-power-baseline"],
+  ["power-three-semantic-actions", "press-power"],
+  [
+    "power-three-semantic-actions",
+    "restore-and-prove-hold-power-baseline",
+  ],
+  ["power-three-semantic-actions", "hold-power"],
+  [
+    "power-three-semantic-actions",
+    "restore-and-prove-reset-baseline",
+  ],
+  ["power-three-semantic-actions", "press-reset"],
+  [
+    "power-three-semantic-actions",
+    "restore-and-prove-post-reset-baseline",
+  ],
+  [
+    "duplicate-request-id-definitive-replay",
+    "prepare-duplicate-power-case",
+  ],
+  [
+    "duplicate-request-id-definitive-replay",
+    "duplicate-initial-jetkvm-power-control",
+  ],
+  [
+    "duplicate-request-id-definitive-replay",
+    "duplicate-same-request-digest-jetkvm-power-control",
+  ],
+  [
+    "duplicate-request-id-definitive-replay",
+    "duplicate-changed-digest-jetkvm-power-control",
+  ],
+  [
+    "duplicate-request-id-definitive-replay",
+    "restore-and-prove-after-duplicate-power",
+  ],
+  [
+    "atx-extension-serialization-idempotency-and-nonproof",
+    "prove-serialized-power-baseline",
+  ],
+  [
+    "atx-extension-serialization-idempotency-and-nonproof",
+    "serialized-power-short",
+  ],
+  [
+    "atx-extension-serialization-idempotency-and-nonproof",
+    "repeat-power-short",
+  ],
+  [
+    "atx-extension-serialization-idempotency-and-nonproof",
+    "restore-and-prove-prewrite-baseline",
+  ],
+];
+
+const ATX_SAFE_HARDWARE_STEPS = [
+  [
+    "session-connect-without-takeover-busy",
+    "reject-strict-schema-jetkvm-power-control",
+  ],
+  ["stale-generation-zero-downstream-write", "stale-power-generation"],
+  [
+    "stale-generation-zero-downstream-write",
+    "stale-keyboard-generation-jetkvm-power-control",
+  ],
+];
+
 
 async function loadStories() {
   const directory = join(packageRoot, "src", "stories");
@@ -61,6 +131,39 @@ test("materializes explicit coverage for all 18 canonical live stories", async (
       "recover-after-device-rpc-adapter-release-loss"
     ].mode,
     "hardware",
+  );
+  const classifiedAssignments = stories
+    .filter((story) => story.environments.includes("live"))
+    .flatMap((story) =>
+      story.steps.map((step) => ({
+        story,
+        step,
+        assignment: plan[story.id].steps[step.id],
+      })),
+    );
+  assert.equal(
+    classifiedAssignments.every(
+      ({ assignment }) =>
+        typeof assignment.requires_atx_wiring === "boolean",
+    ),
+    true,
+  );
+  assert.deepEqual(
+    classifiedAssignments
+      .filter(({ assignment }) => assignment.requires_atx_wiring)
+      .map(({ story, step }) => [story.id, step.id]),
+    ATX_UNAVAILABLE_STEPS,
+  );
+  assert.deepEqual(
+    classifiedAssignments
+      .filter(
+        ({ step, assignment }) =>
+          step.tool === "jetkvm_power_control" &&
+          assignment.mode === "hardware" &&
+          assignment.requires_atx_wiring === false,
+      )
+      .map(({ story, step }) => [story.id, step.id]),
+    ATX_SAFE_HARDWARE_STEPS,
   );
 });
 
@@ -211,5 +314,28 @@ test("fails closed when canonical story steps drift from the reviewed live plan"
   assert.throws(
     () => materializeLiveExecutionPlan(stories, () => ["assertion"]),
     /step inventory changed/u,
+  );
+});
+
+test("fails closed when hardware power wiring classifications drift", async () => {
+  const safeDrift = await loadStories();
+  safeDrift
+    .find((story) => story.id === "session-connect-without-takeover-busy")
+    .steps.find(
+      (step) => step.id === "reject-strict-schema-jetkvm-power-control",
+    ).tool = "jetkvm_session_status";
+  assert.throws(
+    () => materializeLiveExecutionPlan(safeDrift, () => ["assertion"]),
+    /classified a non-power step as ATX-safe/u,
+  );
+
+  const unclassified = await loadStories();
+  unclassified
+    .find((story) => story.id === "session-connect-without-takeover-busy")
+    .steps.find((step) => step.id === "connect-without-takeover").tool =
+    "jetkvm_power_control";
+  assert.throws(
+    () => materializeLiveExecutionPlan(unclassified, () => ["assertion"]),
+    /unclassified hardware power step/u,
   );
 });
