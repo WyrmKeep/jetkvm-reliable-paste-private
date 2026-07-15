@@ -98,6 +98,8 @@ class FakeBrowserPlane implements BrowserPlane {
   rejectRelease: Error | null = null;
   connectFailure: Error | null = null;
   reconnectFailure: Error | null = null;
+  reconnectAfterCloseFailure: Error | null = null;
+  closed = false;
   afterConnect: (() => void) | null = null;
   lastConnectSignal: AbortSignal | null = null;
 
@@ -125,6 +127,9 @@ class FakeBrowserPlane implements BrowserPlane {
     if (this.holdReconnect) {
       return this.#waitForAbort(deadline.signal);
     }
+    if (this.reconnectAfterCloseFailure !== null && this.closed) {
+      throw this.reconnectAfterCloseFailure;
+    }
     if (this.reconnectFailure !== null) {
       throw this.reconnectFailure;
     }
@@ -141,6 +146,7 @@ class FakeBrowserPlane implements BrowserPlane {
     if (this.rejectClose !== null) {
       throw this.rejectClose;
     }
+    this.closed = true;
   }
 
   async capture(): Promise<never> {
@@ -821,19 +827,21 @@ describe("DeviceSessionClient", () => {
     ).toHaveLength(1);
   });
 
-  it("keeps a failed reconnect close authoritative until a takeover proves cleanup", async () => {
+  it("keeps a failed reconnect cleanup authoritative until takeover proves cleanup", async () => {
     const browser = new FakeBrowserPlane();
     const { client } = makeClient({
       browser,
       permissions: [...BASE_PERMISSIONS, "session.takeover"],
     });
     const connected = await client.connect("principal-a", connectInput());
-    browser.rejectClose = new Error("reconnect close failed");
+    browser.reconnectFailure = new Error("reconnect failed");
+    browser.rejectClose = new Error("reconnect cleanup close failed");
 
-    await expectClientError(
+    const reconnectFailure = await expectClientError(
       client.reconnect("principal-a", reconnectInput(connected.ref)),
       "CONNECTION_LOST",
     );
+    expect(reconnectFailure.outcome).toBe("unknown");
     await expectClientError(
       client.connect(
         "principal-b",
@@ -846,9 +854,11 @@ describe("DeviceSessionClient", () => {
     ).toEqual([
       "connect:app-session-1",
       "release:app-session-1",
+      "reconnect:app-session-1",
       "close:app-session-1",
     ]);
 
+    browser.reconnectFailure = null;
     browser.rejectClose = null;
     const recovered = await client.connect(
       "principal-b",
@@ -861,6 +871,7 @@ describe("DeviceSessionClient", () => {
     ).toEqual([
       "connect:app-session-1",
       "release:app-session-1",
+      "reconnect:app-session-1",
       "close:app-session-1",
       "close:app-session-1",
       "connect:app-session-2",
@@ -938,7 +949,27 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
+      "reconnect",
+    ]);
+  });
+
+  it("keeps the active browser transport open until reconnect replaces it", async () => {
+    const browser = new FakeBrowserPlane();
+    browser.reconnectAfterCloseFailure = new Error(
+      "closed browser transport cannot reconnect",
+    );
+    const { client } = makeClient({ browser });
+    const connected = await client.connect("principal-a", connectInput());
+
+    const reconnected = await client.reconnect(
+      "principal-a",
+      reconnectInput(connected.ref),
+    );
+
+    expect(reconnected.result.outcome).toBe("applied");
+    expect(browser.events.map((event) => event.kind)).toEqual([
+      "connect",
+      "release",
       "reconnect",
     ]);
   });
@@ -971,7 +1002,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
     ]);
 
@@ -1102,7 +1132,6 @@ describe("DeviceSessionClient", () => {
       "close:app-session-1",
       "connect:app-session-2",
       "release:app-session-2",
-      "close:app-session-2",
       "reconnect:app-session-1",
     ]);
   });
@@ -1175,7 +1204,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
       "close",
     ]);
@@ -1311,7 +1339,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
       "close",
     ]);
@@ -1491,7 +1518,6 @@ describe("DeviceSessionClient", () => {
     expect(browser.events.map((event) => event.kind)).toEqual([
       "connect",
       "release",
-      "close",
       "reconnect",
     ]);
   });
@@ -2021,7 +2047,12 @@ describe("DeviceSessionClient", () => {
       try {
         return await originalConnect(ref, deadline);
       } catch {
-        throw new DeviceSessionPlaneError("CANCELLED", "not_sent", false, "none");
+        throw new DeviceSessionPlaneError(
+          "CANCELLED",
+          "not_sent",
+          false,
+          "none",
+        );
       }
     };
     const scheduler = new FakeScheduler();

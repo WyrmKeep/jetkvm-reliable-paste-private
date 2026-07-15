@@ -33,11 +33,15 @@ function snapshot(generation: number): AutomationSnapshot {
   };
 }
 
-function controller(generation: number, closed: number[]): BrowserControllerPort {
+function controller(
+  generation: number,
+  closed: number[],
+): BrowserControllerPort {
   const identity = Object.freeze({ generation });
   return {
     connectionIdentity: () => identity,
     snapshot: async () => snapshot(generation),
+    stableReadySnapshot: async () => snapshot(generation),
     close: async () => {
       closed.push(generation);
     },
@@ -87,7 +91,7 @@ describe("ManagedBrowserController", () => {
     const managed = new ManagedBrowserController(setup.value);
     await managed.snapshot(deadline);
 
-    await managed.reconnect(deadline);
+    expect((await managed.reconnect(deadline)).channel_generation).toBe(2);
     expect(setup.opened).toEqual([1, 2]);
     expect(setup.closed).toEqual([1]);
     expect((await managed.snapshot(deadline)).channel_generation).toBe(2);

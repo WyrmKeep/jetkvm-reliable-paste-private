@@ -84,6 +84,8 @@ const mutationReceipt: MutationBridgeReceipt = {
 class QueuePage {
   public readonly calls: Array<{ readonly argument: unknown }> = [];
   public readonly values: unknown[];
+  public reloadCalls = 0;
+  public readonly waits: number[] = [];
 
   public constructor(values: readonly unknown[]) {
     this.values = [...values];
@@ -99,6 +101,15 @@ class QueuePage {
     const next = this.values.shift();
     if (next instanceof Error) throw next;
     return next;
+  }
+
+  public async reload(): Promise<null> {
+    this.reloadCalls += 1;
+    return null;
+  }
+
+  public async waitForTimeout(timeoutMs: number): Promise<void> {
+    this.waits.push(timeoutMs);
   }
 
   public async close(): Promise<void> {}
@@ -303,6 +314,24 @@ describe("BrowserController", () => {
         message: "The automation operation was cancelled.",
       },
     });
+  });
+
+  it("waits for stable ready generations after reloading", async () => {
+    const changedChannel = { ...snapshot, channel_generation: 4 };
+    const { controller, page } = controllerFor([
+      snapshot,
+      changedChannel,
+      changedChannel,
+      changedChannel,
+    ]);
+
+    await expect(controller.reconnect(deadline)).resolves.toEqual(
+      changedChannel,
+    );
+
+    expect(page.reloadCalls).toBe(1);
+    expect(page.waits).toEqual([250, 250, 250]);
+    expect(page.values).toHaveLength(0);
   });
 
   it("bounds page close with the caller cancellation signal", async () => {

@@ -97,8 +97,15 @@ class FakeController implements BrowserControllerPort {
   public atxError: BrowserPlaneError | null = null;
   public closed = false;
   public frameSequence = 0;
+  public stableReadySnapshotCalls = 0;
 
   public async snapshot(_deadline: Deadline): Promise<AutomationSnapshot> {
+    return this.snapshotValue;
+  }
+  public async stableReadySnapshot(
+    _deadline: Deadline,
+  ): Promise<AutomationSnapshot> {
+    this.stableReadySnapshotCalls += 1;
     return this.snapshotValue;
   }
 
@@ -293,8 +300,9 @@ class FakeController implements BrowserControllerPort {
     return this.identity;
   }
 
-  public async reconnect(): Promise<void> {
+  public async reconnect(): Promise<AutomationSnapshot> {
     if (this.reconnectGate !== null) await this.reconnectGate;
+    return this.snapshotValue;
   }
 
   public async close(): Promise<void> {

@@ -90,7 +90,6 @@ export interface DeviceSessionInspection {
   readonly capabilities: CapabilitySnapshot | null;
 }
 
-
 export interface CurrentCaptureEvidence {
   readonly ref: SessionRef;
   readonly connectionEpoch: number;
@@ -415,11 +414,7 @@ export class DeviceSessionClient {
           irreversibleTransition = true;
           const incumbentRef = this.#ref(incumbent);
           planeInvoked = true;
-          await this.#quiesce(
-            incumbent,
-            input.request_id,
-            scope.remaining(),
-          );
+          await this.#quiesce(incumbent, input.request_id, scope.remaining());
           await this.#browser.close(incumbentRef, scope.remaining());
           incumbent.state = "taken_over";
           incumbent.lifecycle.abort(new DeadlineAbort("caller"));
@@ -687,12 +682,7 @@ export class DeviceSessionClient {
           irreversibleTransition = true;
           const incumbentRef = this.#ref(incumbent);
           planeInvoked = true;
-          await this.#quiesce(
-            incumbent,
-            input.request_id,
-            scope.remaining(),
-          );
-          await this.#browser.close(incumbentRef, scope.remaining());
+          await this.#quiesce(incumbent, input.request_id, scope.remaining());
           incumbent.state = "taken_over";
           incumbent.lifecycle.abort(new DeadlineAbort("caller"));
           if (this.#activeSessionId === incumbent.sessionId) {
@@ -713,12 +703,7 @@ export class DeviceSessionClient {
         record.lifecycle.abort(new DeadlineAbort("caller"));
         if (!recordWasTakenOver) {
           planeInvoked = true;
-          await this.#quiesce(
-            record,
-            input.request_id,
-            scope.remaining(),
-          );
-          await this.#browser.close(previousRef, scope.remaining());
+          await this.#quiesce(record, input.request_id, scope.remaining());
           if (this.#activeSessionId === record.sessionId) {
             this.#activeSessionId = null;
           }
@@ -815,7 +800,6 @@ export class DeviceSessionClient {
                   "unknown",
                   false,
                   "inspect_device_state_before_retry",
-
                 );
               }
             }
@@ -858,10 +842,7 @@ export class DeviceSessionClient {
     };
   }
 
-  public markGenerationDrained(
-    principal: string,
-    ref: SessionRef,
-  ): boolean {
+  public markGenerationDrained(principal: string, ref: SessionRef): boolean {
     const record = this.#recordForPrincipal(principal, ref.sessionId);
     this.#assertSessionGeneration(record, ref);
     if (
@@ -974,7 +955,6 @@ export class DeviceSessionClient {
         : "device_state_verified",
     };
   }
-
 
   #deadline(timeoutMs: number, callerSignal?: AbortSignal): DeadlineScope {
     if (
@@ -1155,7 +1135,8 @@ export class DeviceSessionClient {
   #assertReleaseReceipt(receipt: ReleaseReceipt, requestId: string): void {
     if (
       receipt.requestId !== requestId ||
-      (receipt.outcome !== "applied" && receipt.outcome !== "already_applied") ||
+      (receipt.outcome !== "applied" &&
+        receipt.outcome !== "already_applied") ||
       receipt.verification !== "device_state_verified" ||
       !receipt.mutationGateClosed ||
       !receipt.deferredProducersJoined ||

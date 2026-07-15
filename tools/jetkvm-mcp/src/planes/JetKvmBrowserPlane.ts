@@ -537,7 +537,9 @@ export class JetKvmBrowserPlane implements BrowserPlane {
       setupState: "complete" as const,
       authMode: "unknown" as const,
       lifecycleState: "ready" as const,
-      webRtc: snapshot.rpc_ready ? ("connected" as const) : ("unknown" as const),
+      webRtc: snapshot.rpc_ready
+        ? ("connected" as const)
+        : ("unknown" as const),
       hid: snapshot.hid_ready ? ("ready" as const) : ("not_ready" as const),
       decodedVideo:
         snapshot.video_ready &&
@@ -939,9 +941,8 @@ export class JetKvmBrowserPlane implements BrowserPlane {
     replacing: boolean,
   ): Promise<BrowserConnection> {
     this.assertDeadline(deadline);
-    const previous = replacing
-      ? (this.current ?? this.previous)
-      : this.current;
+    let snapshot: AutomationSnapshot;
+    const previous = replacing ? (this.current ?? this.previous) : this.current;
     if (replacing) {
       if (previous === null) {
         throw admissionFailure(
@@ -954,9 +955,10 @@ export class JetKvmBrowserPlane implements BrowserPlane {
       this.gateClosed = true;
       this.observations.clear();
       this.clearHeldKeys();
-      await this.controller.reconnect(deadline);
+      snapshot = await this.controller.reconnect(deadline);
+    } else {
+      snapshot = await this.controller.stableReadySnapshot(deadline);
     }
-    const snapshot = await this.controller.snapshot(deadline);
     this.assertReady(snapshot);
     const sameSessionLineage =
       previous !== null && previous.binding.sessionId === ref.sessionId;
@@ -1156,7 +1158,8 @@ export class JetKvmBrowserPlane implements BrowserPlane {
   private updateHeldKey(
     key: PhysicalKey,
     press: boolean,
-    nonModifierReleaseAtMs = this.clock.now() + FIRMWARE_NON_MODIFIER_AUTO_RELEASE_MS,
+    nonModifierReleaseAtMs = this.clock.now() +
+      FIRMWARE_NON_MODIFIER_AUTO_RELEASE_MS,
   ): void {
     if (!press) {
       this.heldKeys.delete(key);
@@ -1572,13 +1575,14 @@ export class JetKvmBrowserPlane implements BrowserPlane {
             : error.boundary === "send"
               ? "send"
               : "ack";
-      const qualifiedAtxCode =
-        ATX_DEVICE_ERROR_CODES.has(error.code as DeviceRpcErrorCode)
-          ? (error.code as DeviceRpcErrorCode)
-          : null;
+      const qualifiedAtxCode = ATX_DEVICE_ERROR_CODES.has(
+        error.code as DeviceRpcErrorCode,
+      )
+        ? (error.code as DeviceRpcErrorCode)
+        : null;
       const code = replaced
         ? "BINDING_REPLACED"
-        : qualifiedAtxCode ??
+        : (qualifiedAtxCode ??
           (error.code === "EDID_READ_FAILED"
             ? "EDID_READ_FAILED"
             : error.code === "CANCELLED"
@@ -1587,7 +1591,7 @@ export class JetKvmBrowserPlane implements BrowserPlane {
                 ? "DEADLINE_EXCEEDED"
                 : error.code === "DOWNSTREAM_MALFORMED_RESPONSE"
                   ? "MALFORMED_RESPONSE"
-                  : "CONNECTION_LOST");
+                  : "CONNECTION_LOST"));
       return new DeviceRpcError(
         code,
         boundary,

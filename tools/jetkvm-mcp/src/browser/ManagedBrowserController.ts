@@ -44,6 +44,11 @@ export class ManagedBrowserController implements BrowserControllerPort {
   public async snapshot(deadline: Deadline): Promise<AutomationSnapshot> {
     return (await this.#ensure(deadline)).snapshot(deadline);
   }
+  public async stableReadySnapshot(
+    deadline: Deadline,
+  ): Promise<AutomationSnapshot> {
+    return (await this.#ensure(deadline)).stableReadySnapshot(deadline);
+  }
 
   public async capture(
     request: CaptureBridgeRequest,
@@ -101,15 +106,20 @@ export class ManagedBrowserController implements BrowserControllerPort {
     return (await this.#ensure(deadline)).performAtx(request, deadline);
   }
 
-  public async reconnect(deadline: Deadline): Promise<void> {
+  public async reconnect(deadline: Deadline): Promise<AutomationSnapshot> {
+    let snapshot: AutomationSnapshot | undefined;
     await this.#serialize(async () => {
       this.#assertActive();
       const previous = this.#current;
       this.#current = null;
       if (previous !== null) await previous.close(deadline);
       this.#current = await this.#factory.open(deadline);
-      await this.#current.snapshot(deadline);
+      snapshot = await this.#current.stableReadySnapshot(deadline);
     });
+    if (snapshot === undefined) {
+      throw new Error("Managed browser reconnect did not publish a snapshot.");
+    }
+    return snapshot;
   }
 
   public async close(deadline: Deadline): Promise<void> {
@@ -133,7 +143,8 @@ export class ManagedBrowserController implements BrowserControllerPort {
       this.#current ??= await this.#factory.open(deadline);
     });
     const current = this.#current;
-    if (current === null) throw new Error("Managed browser controller is unavailable.");
+    if (current === null)
+      throw new Error("Managed browser controller is unavailable.");
     return current;
   }
 
@@ -153,6 +164,7 @@ export class ManagedBrowserController implements BrowserControllerPort {
   }
 
   #assertActive(): void {
-    if (this.#disposed) throw new Error("Managed browser controller is disposed.");
+    if (this.#disposed)
+      throw new Error("Managed browser controller is disposed.");
   }
 }

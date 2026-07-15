@@ -33,9 +33,12 @@ import {
   type ReleaseBridgeRequest,
   type ReleaseBridgeReceipt,
 } from "./bridgeProtocol.js";
+const RECONNECT_STABILITY_POLL_MS = 250;
+const RECONNECT_STABLE_SNAPSHOT_COUNT = 3;
 
 export interface BrowserControllerPort {
   snapshot(deadline: Deadline): Promise<AutomationSnapshot>;
+  stableReadySnapshot(deadline: Deadline): Promise<AutomationSnapshot>;
   capture(
     request: CaptureBridgeRequest,
     deadline: Deadline,
@@ -69,7 +72,7 @@ export interface BrowserControllerPort {
     deadline: Deadline,
   ): Promise<ReadBridgeResult>;
   connectionIdentity(): object;
-  reconnect(deadline: Deadline): Promise<void>;
+  reconnect(deadline: Deadline): Promise<AutomationSnapshot>;
   close(deadline: Deadline): Promise<void>;
 }
 
@@ -220,6 +223,32 @@ export class BrowserController implements BrowserControllerPort {
     } catch {
       throw malformedBridgeError(false, 0);
     }
+  }
+  public async stableReadySnapshot(
+    deadline: Deadline,
+  ): Promise<AutomationSnapshot> {
+    let previous = await this.snapshot(deadline);
+    let stableSnapshotCount = previous.state === "ready" ? 1 : 0;
+    while (stableSnapshotCount < RECONNECT_STABLE_SNAPSHOT_COUNT) {
+      await this.awaitPageEvaluation(
+        this.page.waitForTimeout(RECONNECT_STABILITY_POLL_MS),
+        deadline,
+        false,
+        0,
+      );
+      const current = await this.snapshot(deadline);
+      const generationsStable =
+        current.lifecycle_generation === previous.lifecycle_generation &&
+        current.channel_generation === previous.channel_generation;
+      stableSnapshotCount =
+        current.state !== "ready"
+          ? 0
+          : generationsStable
+            ? stableSnapshotCount + 1
+            : 1;
+      previous = current;
+    }
+    return previous;
   }
 
   public async capture(
@@ -475,7 +504,7 @@ export class BrowserController implements BrowserControllerPort {
     );
   }
 
-  public async reconnect(deadline: Deadline): Promise<void> {
+  public async reconnect(deadline: Deadline): Promise<AutomationSnapshot> {
     assertDeadline(deadline);
     if (this.closed) {
       throw inputTimeoutError("CANCELLED");
@@ -486,11 +515,9 @@ export class BrowserController implements BrowserControllerPort {
       false,
       0,
     );
-    const snapshot = await this.snapshot(deadline);
-    if (snapshot.state !== "ready") {
-      throw malformedBridgeError(false, 0);
-    }
+    const snapshot = await this.stableReadySnapshot(deadline);
     this.identity = Object.freeze({});
+    return snapshot;
   }
 
   public async close(deadline: Deadline): Promise<void> {
