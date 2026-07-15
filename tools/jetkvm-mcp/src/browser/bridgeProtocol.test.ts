@@ -359,8 +359,9 @@ describe("BrowserPlaneError", () => {
   ] as const)(
     "preserves a definitive %s negative acknowledgement as not sent",
     (code, message, requiredNextStep) => {
-      const error = BrowserPlaneError.fromBridge(
-        {
+      const envelope = parseBridgeCallEnvelope({
+        ok: false,
+        error: {
           ...bridgeError,
           code,
           outcome: "not_sent",
@@ -369,8 +370,10 @@ describe("BrowserPlaneError", () => {
           completed_count: 0,
           message,
         },
-        1,
-      );
+      });
+      expect(envelope.ok).toBe(false);
+      if (envelope.ok) throw new Error("Expected a bridge error envelope.");
+      const error = BrowserPlaneError.fromBridge(envelope.error, 1);
 
       expect(error).toMatchObject({
         code,
@@ -381,19 +384,22 @@ describe("BrowserPlaneError", () => {
     },
   );
 
-  it("preserves an acknowledged explicit unknown ATX outcome", () => {
-    const error = BrowserPlaneError.fromBridge(
-      {
+  it("preserves an explicit unknown ATX outcome through strict parsing", () => {
+    const envelope = parseBridgeCallEnvelope({
+      ok: false,
+      error: {
         ...bridgeError,
         code: "MUTATION_OUTCOME_UNKNOWN",
         outcome: "unknown",
-        acknowledged: true,
+        acknowledged: false,
         dispatched_count: 1,
         completed_count: 0,
         message: "The ATX mutation outcome is unknown.",
       },
-      1,
-    );
+    });
+    expect(envelope.ok).toBe(false);
+    if (envelope.ok) throw new Error("Expected a bridge error envelope.");
+    const error = BrowserPlaneError.fromBridge(envelope.error, 1);
 
     expect(error).toMatchObject({
       code: "MUTATION_OUTCOME_UNKNOWN",

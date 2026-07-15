@@ -193,14 +193,19 @@ describe("power handler", () => {
   ] as const)(
     "publishes a schema-valid definitive %s ATX rejection",
     async (code, requiredNextStep, downstreamStage) => {
-      const { handlers, context } = setup({
+      const { handlers, calls, context } = setup({
         power: async () => {
           throw new DeviceRpcError(code, "ack", "not_sent", true, true);
         },
       });
+      const operationInput = input("press_power", `negative-${code}`);
 
       const result = await handlers.jetkvm_power_control(
-        input("press_power", `negative-${code}`),
+        operationInput,
+        context,
+      );
+      const retry = await handlers.jetkvm_power_control(
+        operationInput,
         context,
       );
       expect(result.structuredContent).toMatchObject({
@@ -214,8 +219,47 @@ describe("power handler", () => {
           details: { downstream_stage: downstreamStage },
         },
       });
+      expect(retry.structuredContent).toMatchObject({
+        ok: false,
+        error: result.structuredContent?.error,
+      });
+      expect(calls).toHaveLength(2);
     },
   );
+
+  it("publishes a definitive malformed ATX response and releases it for retry", async () => {
+    const { handlers, calls, context } = setup({
+      power: async () => {
+        throw new DeviceRpcError(
+          "DOWNSTREAM_MALFORMED_RESPONSE",
+          "ack",
+          "not_sent",
+          true,
+          true,
+        );
+      },
+    });
+    const operationInput = input("press_power", "malformed-negative-ack");
+
+    const first = await handlers.jetkvm_power_control(operationInput, context);
+    const retry = await handlers.jetkvm_power_control(operationInput, context);
+    expect(first.structuredContent).toMatchObject({
+      ok: false,
+      error: {
+        code: "DOWNSTREAM_MALFORMED_RESPONSE",
+        phase: "execute",
+        outcome: "not_sent",
+        safe_to_retry: false,
+        required_next_step: "reconnect_then_capture",
+        details: { downstream_stage: "write" },
+      },
+    });
+    expect(retry.structuredContent).toMatchObject({
+      ok: false,
+      error: first.structuredContent?.error,
+    });
+    expect(calls).toHaveLength(2);
+  });
 
   it("never downgrades an ambiguous ATX rejection to a retryable not-sent result", async () => {
     const { handlers, calls, context } = setup({

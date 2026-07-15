@@ -213,6 +213,19 @@ function planeFailure(error: unknown): PowerFailure {
       downstreamStage: "write",
     };
   }
+  if (
+    sanitized.code === "DOWNSTREAM_MALFORMED_RESPONSE" &&
+    sanitized.outcome === "not_sent"
+  ) {
+    return {
+      code: sanitized.code,
+      phase: "execute",
+      outcome: "not_sent",
+      safeToRetry: false,
+      requiredNextStep: "reconnect_then_capture",
+      downstreamStage: canonicalMutationDownstreamStage(sanitized, "not_sent"),
+    };
+  }
   return {
     code: sanitized.code,
     phase:
