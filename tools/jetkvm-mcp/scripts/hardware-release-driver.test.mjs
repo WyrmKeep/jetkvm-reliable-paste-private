@@ -303,6 +303,58 @@ test("refuses an ATX power pulse when host reachability is unknown", async () =>
   assert.deepEqual(calls, []);
 });
 
+test("consumes physical-off proof before a non-definitive power-on call", async () => {
+  const calls = [];
+  let offlineProof = true;
+  const driver = createLiveHardwareDriver({
+    mcp: {
+      async call(name) {
+        calls.push(name);
+        if (name === "jetkvm_session_connect") {
+          return {
+            raw: {
+              ok: true,
+              session_id: "power-restore-session",
+              session_generation: 1,
+              result: {
+                verification: "device_state_verified",
+                capabilities: { power_control: true },
+              },
+            },
+            evidence: { connect: true },
+          };
+        }
+        throw new Error("power outcome unknown");
+      },
+    },
+    rig: {
+      hostPowerState: async () => (offlineProof ? "offline" : "unknown"),
+      consumeConfirmedOffline() {
+        const available = offlineProof;
+        offlineProof = false;
+        return available;
+      },
+    },
+    candidate: {
+      source: { commit_sha: "a".repeat(40) },
+      runtime: { browser: {} },
+    },
+    runId: "one-shot-offline-proof",
+    executionResolver: () => [],
+    controlledExecution: {},
+  });
+
+  await assert.rejects(
+    driver.captureBaseline({}, "before"),
+    /power outcome unknown/u,
+  );
+  await assert.rejects(
+    driver.captureBaseline({}, "before"),
+    /power state is unknown; refusing to pulse/u,
+  );
+  assert.deepEqual(calls, ["jetkvm_session_connect", "jetkvm_power_control"]);
+});
+
 test("gives post-reboot session qualification the full public deadline", async () => {
   const calls = [];
   const releaseResult = {

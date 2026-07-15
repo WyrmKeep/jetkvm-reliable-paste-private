@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
+  cp,
   copyFile,
   lstat,
   mkdir,
@@ -430,6 +431,11 @@ export async function freezeReleaseCandidate({
         installPackageLockPath,
         join(stagingDirectory, consumerPackageLockFilename),
       ),
+      cp(
+        join(sourceRepositoryRoot, "tools", "paste-harness", "dist"),
+        join(stagingDirectory, "paste-harness"),
+        { recursive: true, force: false, errorOnExist: true },
+      ),
     ]);
     const consumerPackageJsonSha256 = await sha256File(installPackageJsonPath);
     const consumerPackageLockSha256 = await sha256File(installPackageLockPath);
@@ -442,6 +448,12 @@ export async function freezeReleaseCandidate({
       0,
     );
     const source = await sourceIdentity(buildPackageRoot, sourceRepositoryRoot);
+    const frozenPasteHarness = await buildDirectoryManifest(
+      join(stagingDirectory, "paste-harness"),
+    );
+    if (frozenPasteHarness.sha256 !== source.pasteHarness.sha256) {
+      throw new Error("Frozen paste-harness runtime drifted from its source.");
+    }
     const candidate = buildReleaseCandidateManifest({
       packageName: packageMetadata.name,
       packageVersion: packageMetadata.version,
@@ -528,6 +540,7 @@ export async function freezeReleaseCandidate({
         consumerPackageLockFilename,
       ),
       controlledEvidencePath: join(outputDirectory, controlledEvidenceFilename),
+      pasteHarnessPath: join(outputDirectory, "paste-harness"),
     });
   } catch (error) {
     await chmod(stagingDirectory, 0o700).catch(() => undefined);

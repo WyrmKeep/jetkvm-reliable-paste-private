@@ -240,6 +240,7 @@ export async function validateCurrentReleaseSource(
   {
     repositoryRoot = REPOSITORY_ROOT,
     packageRoot = PACKAGE_ROOT,
+    pasteHarnessRoot = resolve(repositoryRoot, "tools/paste-harness/dist"),
     command = runCommand,
   } = {},
 ) {
@@ -257,7 +258,7 @@ export async function validateCurrentReleaseSource(
     git(["rev-parse", "HEAD^{commit}"]),
     git(["rev-parse", "HEAD^{tree}"]),
     sha256File(resolve(packageRoot, "package-lock.json")),
-    buildDirectoryManifest(resolve(repositoryRoot, "tools/paste-harness/dist")),
+    buildDirectoryManifest(pasteHarnessRoot),
   ]);
   const statusAfter = await git([
     "status",
@@ -279,6 +280,45 @@ export async function validateCurrentReleaseSource(
     package_lock_sha256: packageLockSha256,
     paste_harness_sha256: pasteHarness.sha256,
   });
+}
+
+export async function loadFrozenPasteHarness({
+  candidate,
+  candidatePath,
+  importModule = (path) => import(pathToFileURL(path).href),
+}) {
+  const candidateDirectory = await realpath(dirname(resolve(candidatePath)));
+  const configuredRoot = resolve(candidateDirectory, "paste-harness");
+  const facts = await lstat(configuredRoot);
+  if (!facts.isDirectory() || facts.isSymbolicLink()) {
+    throw new Error("Frozen paste-harness runtime is not a real directory.");
+  }
+  const root = await realpath(configuredRoot);
+  if (
+    relative(candidateDirectory, root) !== "paste-harness" ||
+    !root.startsWith(`${candidateDirectory}${sep}`)
+  ) {
+    throw new Error("Frozen paste-harness runtime escaped the candidate.");
+  }
+  const manifest = await buildDirectoryManifest(root);
+  if (manifest.sha256 !== candidate.source?.paste_harness?.sha256) {
+    throw new Error("Frozen paste-harness runtime drifted from the candidate.");
+  }
+  const [rigPath, sshPath, normalizePath] = await Promise.all(
+    ["rig.js", "ssh.js", "normalize.js"].map(async (name) => {
+      const path = await realpath(join(root, name));
+      if (dirname(path) !== root) {
+        throw new Error("Frozen paste-harness module escaped its runtime.");
+      }
+      return path;
+    }),
+  );
+  const [rig, ssh, normalize] = await Promise.all([
+    importModule(rigPath),
+    importModule(sshPath),
+    importModule(normalizePath),
+  ]);
+  return Object.freeze({ root, rig, ssh, normalize });
 }
 export async function loadInstalledMcpSdkFactories(installedPackageRoot) {
   const requireFromCandidate = createRequire(
@@ -426,6 +466,11 @@ export function createRigAdapter(
       });
     },
     hostPowerState: probeHostPowerState,
+    consumeConfirmedOffline() {
+      const available = confirmedOffline;
+      confirmedOffline = false;
+      return available;
+    },
     async waitForHostOnline() {
       await waitUntil(
         async () => (await probeHostPowerState()) === "online",
@@ -834,6 +879,52 @@ export async function deployReleaseDeviceBinary({
   });
 }
 
+export async function verifyFinalDeviceIntegrity({
+  deployedIdentity,
+  deviceBinaryPath,
+  deploymentEvidence,
+  metricsUrl,
+  sshModule,
+  target,
+  invalidateSafeBaseline,
+  readIdentity = readDeviceIdentity,
+  hashFile = sha256File,
+}) {
+  try {
+    const identity = await readIdentity(metricsUrl);
+    if (!sameDeviceIdentity(deployedIdentity, identity)) {
+      throw new Error(
+        "Device identity drifted during hardware release execution.",
+      );
+    }
+    const localBinarySha256 = await hashFile(deviceBinaryPath);
+    const remoteBinary = await sshModule.runSshCommand(
+      sshModule.kvmTarget(target),
+      "test ! -e /userdata/jetkvm/jetkvm_app.update && sha256sum /userdata/jetkvm/bin/jetkvm_app",
+      { timeoutMs: 30_000 },
+    );
+    assertSshResult(remoteBinary, "Final device binary verification");
+    const installedBinarySha256 =
+      /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/bin\/jetkvm_app\s*$/u.exec(
+        remoteBinary.stdout,
+      )?.[1];
+    if (
+      localBinarySha256 !== deploymentEvidence.local_binary_sha256 ||
+      installedBinarySha256 !== deploymentEvidence.installed_binary_sha256
+    ) {
+      throw new Error("Device deployment bytes drifted before evidence seal.");
+    }
+    return Object.freeze({
+      identity,
+      local_binary_sha256: localBinarySha256,
+      installed_binary_sha256: installedBinarySha256,
+    });
+  } catch (error) {
+    invalidateSafeBaseline();
+    throw error;
+  }
+}
+
 export async function verifyReplacementPackageIdentity({
   candidate,
   installedPackageRoot,
@@ -1032,7 +1123,13 @@ async function run() {
   const rigEnvPath = resolve(requiredEnvironment("JETKVM_RELEASE_RIG_ENV"));
   const rigEnvFacts = await stat(rigEnvPath);
   assertPrivateEnvironmentFile(rigEnvFacts, rigEnvPath);
-  const sourceIdentity = await validateCurrentReleaseSource(candidate);
+  const frozenPasteHarness = await loadFrozenPasteHarness({
+    candidate,
+    candidatePath,
+  });
+  const sourceIdentity = await validateCurrentReleaseSource(candidate, {
+    pasteHarnessRoot: frozenPasteHarness.root,
+  });
   const deviceBinaryPath = resolve(
     requiredEnvironment("JETKVM_RELEASE_DEVICE_BINARY"),
   );
@@ -1055,11 +1152,11 @@ async function run() {
     ),
   });
 
-  const [rigModule, sshModule, normalizeModule] = await Promise.all([
-    import(resolve(REPOSITORY_ROOT, "tools/paste-harness/dist/rig.js")),
-    import(resolve(REPOSITORY_ROOT, "tools/paste-harness/dist/ssh.js")),
-    import(resolve(REPOSITORY_ROOT, "tools/paste-harness/dist/normalize.js")),
-  ]);
+  const {
+    rig: rigModule,
+    ssh: sshModule,
+    normalize: normalizeModule,
+  } = frozenPasteHarness;
   const rigEnv = await sshModule.loadRigEnv(rigEnvPath);
   if (
     typeof rigEnv.JETKVM_PASSWORD !== "string" ||
@@ -1245,16 +1342,24 @@ async function run() {
           "Device identity changed during pre-deployment Go tests.",
         );
       }
-      const preDeploymentSourceIdentity =
-        await validateCurrentReleaseSource(candidate);
+      const preDeploymentSourceIdentity = await validateCurrentReleaseSource(
+        candidate,
+        {
+          pasteHarnessRoot: frozenPasteHarness.root,
+        },
+      );
       const deploymentOperation = await deployReleaseDeviceBinary({
         sshModule,
         host: rigEnv.KVM_PRIMARY,
         binaryPath: deviceBinaryPath,
         expectedSha256: deviceBinary.sha256,
       });
-      const postDeploymentSourceIdentity =
-        await validateCurrentReleaseSource(candidate);
+      const postDeploymentSourceIdentity = await validateCurrentReleaseSource(
+        candidate,
+        {
+          pasteHarnessRoot: frozenPasteHarness.root,
+        },
+      );
       if (
         sha256Canonical(preDeploymentSourceIdentity) !==
         sha256Canonical(postDeploymentSourceIdentity)
@@ -1341,14 +1446,24 @@ async function run() {
           driver.state.safeBaselineProven = false;
         },
       });
-      await finalizeResources();
-      const finalIdentity = await readDeviceIdentity(metricsUrl);
-      if (!sameDeviceIdentity(deployedIdentity, finalIdentity)) {
-        throw new Error(
-          "Device identity drifted during hardware release execution.",
-        );
-      }
-      const finalSourceIdentity = await validateCurrentReleaseSource(candidate);
+      const finalIntegrity = await verifyFinalDeviceIntegrity({
+        deployedIdentity,
+        deviceBinaryPath,
+        deploymentEvidence: deployment.evidence,
+        metricsUrl,
+        sshModule,
+        target: rigEnv.KVM_PRIMARY,
+        invalidateSafeBaseline: () => {
+          driver.state.safeBaselineProven = false;
+        },
+      });
+      const finalIdentity = finalIntegrity.identity;
+      const finalSourceIdentity = await validateCurrentReleaseSource(
+        candidate,
+        {
+          pasteHarnessRoot: frozenPasteHarness.root,
+        },
+      );
       if (
         sha256Canonical(finalSourceIdentity) !==
           sha256Canonical(sourceIdentity) ||
@@ -1359,27 +1474,7 @@ async function run() {
           "Release source identity drifted before evidence seal.",
         );
       }
-      const finalLocalDeviceBinarySha256 = await sha256File(deviceBinaryPath);
-      const finalRemoteBinary = await sshModule.runSshCommand(
-        sshModule.kvmTarget(rigEnv.KVM_PRIMARY),
-        "test ! -e /userdata/jetkvm/jetkvm_app.update && sha256sum /userdata/jetkvm/bin/jetkvm_app",
-        { timeoutMs: 30_000 },
-      );
-      assertSshResult(finalRemoteBinary, "Final device binary verification");
-      const finalInstalledDeviceBinarySha256 =
-        /^([a-f0-9]{64})\s+\/userdata\/jetkvm\/bin\/jetkvm_app\s*$/u.exec(
-          finalRemoteBinary.stdout,
-        )?.[1];
-      if (
-        finalLocalDeviceBinarySha256 !==
-          deployment.evidence.local_binary_sha256 ||
-        finalInstalledDeviceBinarySha256 !==
-          deployment.evidence.installed_binary_sha256
-      ) {
-        throw new Error(
-          "Device deployment bytes drifted before evidence seal.",
-        );
-      }
+      await finalizeResources();
       summary = Object.freeze({
         schema_version: 1,
         kind: "jetkvm-mcp-hardware-release-evidence",

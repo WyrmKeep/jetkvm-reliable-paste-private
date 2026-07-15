@@ -1038,6 +1038,14 @@ export function createLiveHardwareDriver({
         "Windows host power state is unknown; refusing to pulse the ATX power input.",
       );
     }
+    if (
+      typeof rig.consumeConfirmedOffline !== "function" ||
+      rig.consumeConfirmedOffline() !== true
+    ) {
+      throw new Error(
+        "Windows host physical-off proof was unavailable; refusing to pulse the ATX power input.",
+      );
+    }
     await ensureSession();
     const response = await callRaw(
       "jetkvm_power_control",

@@ -476,6 +476,9 @@ test("requires a post-action physical power fact before treating SSH failure as 
     },
   });
   assert.equal(await rig.hostPowerState(), "offline");
+  assert.equal(rig.consumeConfirmedOffline(), true);
+  assert.equal(await rig.hostPowerState(), "unknown");
+  assert.equal(rig.consumeConfirmedOffline(), false);
   online = true;
   await rig.waitForHostOnline();
   assert.equal(await rig.hostPowerState(), "online");
@@ -505,6 +508,124 @@ test("rechecks the installed package against the frozen candidate directory", as
       { candidateDirectory: "/candidate" },
     ],
   ]);
+});
+
+test("invalidates the safe baseline when final device identity is unproven", async () => {
+  let invalidated = false;
+  await assert.rejects(
+    liveReleaseModule.verifyFinalDeviceIntegrity({
+      deployedIdentity: {
+        revision: COMMIT,
+        appVersion: "0.5.5",
+        processStartTime: "1000",
+      },
+      deviceBinaryPath: "/reviewed/jetkvm_app",
+      deploymentEvidence: {
+        local_binary_sha256: "d".repeat(64),
+        installed_binary_sha256: "d".repeat(64),
+      },
+      metricsUrl: "http://device.example/metrics",
+      sshModule: {},
+      target: "device.example",
+      invalidateSafeBaseline: () => {
+        invalidated = true;
+      },
+      readIdentity: async () => ({
+        revision: "e".repeat(40),
+        appVersion: "0.5.5",
+        processStartTime: "2000",
+      }),
+    }),
+    /Device identity drifted/u,
+  );
+  assert.equal(invalidated, true);
+});
+
+test("invalidates the safe baseline when the installed binary is unproven", async () => {
+  const identity = {
+    revision: COMMIT,
+    appVersion: "0.5.5",
+    processStartTime: "1000",
+  };
+  let invalidated = false;
+  await assert.rejects(
+    liveReleaseModule.verifyFinalDeviceIntegrity({
+      deployedIdentity: identity,
+      deviceBinaryPath: "/reviewed/jetkvm_app",
+      deploymentEvidence: {
+        local_binary_sha256: "d".repeat(64),
+        installed_binary_sha256: "d".repeat(64),
+      },
+      metricsUrl: "http://device.example/metrics",
+      sshModule: {
+        kvmTarget: (target) => target,
+        runSshCommand: async () => ({
+          command: "ssh",
+          stdout: `${"e".repeat(64)}  /userdata/jetkvm/bin/jetkvm_app\n`,
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+        }),
+      },
+      target: "device.example",
+      invalidateSafeBaseline: () => {
+        invalidated = true;
+      },
+      readIdentity: async () => identity,
+      hashFile: async () => "d".repeat(64),
+    }),
+    /Device deployment bytes drifted/u,
+  );
+  assert.equal(invalidated, true);
+});
+
+test("loads paste-harness modules only from the frozen candidate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "jetkvm-frozen-harness-"));
+  const harnessRoot = join(root, "paste-harness");
+  try {
+    await mkdir(harnessRoot);
+    for (const name of ["rig", "ssh", "normalize"]) {
+      await writeFile(
+        join(harnessRoot, `${name}.js`),
+        `export const ${name} = true;\n`,
+      );
+    }
+    const manifest = await buildDirectoryManifest(harnessRoot);
+    const imported = [];
+    const modules = await liveReleaseModule.loadFrozenPasteHarness({
+      candidate: {
+        source: { paste_harness: { sha256: manifest.sha256 } },
+      },
+      candidatePath: join(root, "candidate.json"),
+      importModule: async (path) => {
+        imported.push(path);
+        return { path };
+      },
+    });
+    assert.deepEqual(imported, [
+      join(modules.root, "rig.js"),
+      join(modules.root, "ssh.js"),
+      join(modules.root, "normalize.js"),
+    ]);
+    assert.equal(modules.rig.path, imported[0]);
+    assert.equal(modules.ssh.path, imported[1]);
+    assert.equal(modules.normalize.path, imported[2]);
+
+    await writeFile(join(harnessRoot, "rig.js"), "drifted\n");
+    await assert.rejects(
+      liveReleaseModule.loadFrozenPasteHarness({
+        candidate: {
+          source: { paste_harness: { sha256: manifest.sha256 } },
+        },
+        candidatePath: join(root, "candidate.json"),
+        importModule: async () => ({}),
+      }),
+      /Frozen paste-harness runtime drifted/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("reconnects on a fresh MCP transport and proves producer-zero release", async () => {

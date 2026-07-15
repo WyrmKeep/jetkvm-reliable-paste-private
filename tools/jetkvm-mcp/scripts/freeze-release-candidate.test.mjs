@@ -229,6 +229,16 @@ test("freezes one clean candidate and binds the exact unpacked package tree", as
     ]) {
       assert.equal((await stat(path)).mode & 0o777, 0o400);
     }
+    const frozenHarnessPath = join(
+      fixture.outputDirectory,
+      "paste-harness",
+      "rig.js",
+    );
+    assert.equal((await stat(frozenHarnessPath)).mode & 0o777, 0o400);
+    assert.equal(
+      await readFile(frozenHarnessPath, "utf8"),
+      "export const rig = true;\n",
+    );
     const parsed = validateReleaseCandidateManifest(
       JSON.parse(await readFile(result.candidatePath, "utf8")),
     );
