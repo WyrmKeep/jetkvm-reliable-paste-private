@@ -3,7 +3,7 @@ module github.com/jetkvm/kvm
 go 1.24.4
 
 require (
-	github.com/Masterminds/semver/v3 v3.4.0
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/ProtonMail/go-crypto v1.1.5
 	github.com/beevik/ntp v1.5.0
 	github.com/caarlos0/env/v11 v11.3.1
