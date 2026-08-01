@@ -45,7 +45,7 @@ jobs:
       - name: Assert Node.js version
         run: test "$(node --version)" = "v22.23.1"
       - name: Set up Golang
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: "1.25.1"
       - name: Assert Go version
