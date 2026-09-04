@@ -3,7 +3,10 @@ name: Paste hardening branch preparation
 on:
   push:
     branches: [fix/reliable-paste-pacing-and-safe-profiles]
-    paths: [.github/paste-hardening-bootstrap.py]
+    paths:
+      - .github/paste-hardening-bootstrap.py
+      - .github/paste-hardening-finalize.py
+      - .github/workflows/paste-hardening-bootstrap.yml
 
 permissions:
   contents: write
@@ -28,13 +31,15 @@ jobs:
         with:
           go-version: '1.25.1'
       - name: Apply asserted, branch-local changes
-        run: python3 .github/paste-hardening-bootstrap.py
+        run: |
+          python3 .github/paste-hardening-bootstrap.py
+          python3 .github/paste-hardening-finalize.py
       - name: Format changed source
         run: |
           gofmt -w paste_pacing.go paste_pacing_test.go internal/pastepacing/*.go hidrpc.go jsonrpc.go
           cd ui
           npm ci
-          npx prettier --write src/utils/pasteBatches.ts src/utils/pasteBatches.test.ts src/utils/pasteMacro.ts src/hooks/useKeyboard.ts src/hooks/useKeyboard.paste.test.ts src/hooks/useHidRpc.ts src/components/popovers/PasteModal.tsx src/automation/paste.ts src/automation/paste.test.ts
+          npx prettier --write src/utils/pasteBatches.ts src/utils/pasteBatches.test.ts src/utils/pasteMacro.ts src/utils/pasteMacro.test.ts src/hooks/useKeyboard.ts src/hooks/useKeyboard.paste.test.ts src/hooks/useHidRpc.ts src/components/popovers/PasteModal.tsx src/automation/paste.ts src/automation/paste.test.ts
       - name: Complete UI unit suite and typecheck
         working-directory: ui
         run: |
