@@ -20,11 +20,27 @@ const MODS_SHIFT = Object.freeze(["ShiftLeft"]);
 const MODS_ALT_RIGHT = Object.freeze(["AltRight"]);
 const MODS_SHIFT_ALT_RIGHT = Object.freeze(["ShiftLeft", "AltRight"]);
 
+// Diagnostic focus window before the first printable paste character. The
+// first macro starts with a non-printing Shift tap, releases it, then waits on
+// the device for this duration. That gives the operator time to dismiss the
+// paste popover and click the intended target without relying on browser timer
+// scheduling. The delay remains cancellable because it runs inside the normal
+// backend macro execution context.
+export const PASTE_START_FOCUS_DELAY_MS = 5000;
+
 function pickModifiers(shift?: boolean, altRight?: boolean): MacroStep["modifiers"] {
   if (shift && altRight) return MODS_SHIFT_ALT_RIGHT as string[];
   if (shift) return MODS_SHIFT as string[];
   if (altRight) return MODS_ALT_RIGHT as string[];
   return null;
+}
+
+function buildPasteStartFocusStep(): MacroStep {
+  return {
+    keys: null,
+    modifiers: MODS_SHIFT as string[],
+    delay: PASTE_START_FOCUS_DELAY_MS,
+  };
 }
 
 export interface PasteMacroBuildResult {
@@ -54,7 +70,7 @@ export function estimateBatchBytes(stepCount: number): number {
 
 const PASTE_DRAIN_PRESS_HOLD_MS = 5;
 const PASTE_DRAIN_PER_BATCH_QUEUE_MS = 400;
-const PASTE_DRAIN_TAIL_SLACK_MS = 5000;
+const PASTE_DRAIN_TAIL_SLACK_MS = 5000 + PASTE_START_FOCUS_DELAY_MS;
 
 export function estimatePasteDrainTimeoutMs(
   batchStats: PasteBatchStat[],
@@ -178,7 +194,12 @@ export function buildPasteMacroBatches(
       continue;
     }
 
-    const projectedStepCount = currentBatch.length + charSteps.length;
+    // Reserve one step in the first batch for the device-side focus window.
+    // Reserving during partitioning keeps the first printable character in
+    // the same FIFO macro as the delay, so later batches cannot overtake it.
+    const firstBatchFocusReservation = batches.length === 0 ? 1 : 0;
+    const projectedStepCount =
+      currentBatch.length + charSteps.length + firstBatchFocusReservation;
     const projectedBytes = estimateBatchBytes(projectedStepCount);
 
     if (
@@ -195,6 +216,32 @@ export function buildPasteMacroBatches(
   }
 
   flushBatch();
+
+  if (batches.length > 0) {
+    const firstBatch = batches[0];
+    const focusedStepCount = firstBatch.length + 1;
+    if (
+      focusedStepCount <= maxStepsPerBatch &&
+      estimateBatchBytes(focusedStepCount) <= maxBytesPerBatch
+    ) {
+      firstBatch.unshift(buildPasteStartFocusStep());
+      batchStats[0] = {
+        ...batchStats[0],
+        stepCount: focusedStepCount,
+        estimatedBytes: estimateBatchBytes(focusedStepCount),
+      };
+    } else {
+      // Defensive fallback for unusually tiny custom batch limits. Product
+      // profiles reserve enough room above, but keep the builder contract
+      // valid for tests and external callers rather than exceeding a cap.
+      batches.unshift([buildPasteStartFocusStep()]);
+      batchStats.unshift({
+        stepCount: 1,
+        estimatedBytes: estimateBatchBytes(1),
+        sourceChars: 0,
+      });
+    }
+  }
 
   return {
     batches,
