@@ -4,6 +4,7 @@ import {
   buildPasteMacroBatches,
   buildPasteMacroSteps,
   estimatePasteDrainTimeoutMs,
+  PASTE_START_FOCUS_DELAY_MS,
   type KeyboardLayoutLike,
 } from "./pasteMacro";
 
@@ -38,6 +39,28 @@ describe("paste macro building", () => {
     expect(nfd.batchStats).toEqual(nfc.batchStats);
   });
 
+  test("prepends one five-second focus window without exceeding batch limits", () => {
+    const result = buildPasteMacroBatches("AAAAAAAAAA", keyboard, 7, 4, 78);
+    const focusSteps = result.batches
+      .flat()
+      .filter(
+        step =>
+          step.keys === null &&
+          step.modifiers?.includes("ShiftLeft") &&
+          step.delay === PASTE_START_FOCUS_DELAY_MS,
+      );
+
+    expect(result.batches[0][0]).toEqual({
+      keys: null,
+      modifiers: ["ShiftLeft"],
+      delay: PASTE_START_FOCUS_DELAY_MS,
+    });
+    expect(focusSteps).toHaveLength(1);
+    expect(result.batchStats.reduce((sum, stat) => sum + stat.sourceChars, 0)).toBe(10);
+    expect(result.batches.every(batch => batch.length <= 4)).toBe(true);
+    expect(result.batchStats.every(stat => stat.estimatedBytes <= 78)).toBe(true);
+  });
+
   test("reuses modifier arrays for repeated modifier combinations", () => {
     const { steps } = buildPasteMacroSteps("AA@@", keyboard, 7);
 
@@ -57,7 +80,7 @@ describe("paste macro building", () => {
       3000,
     );
 
-    expect(timeoutMs).toBe(11080);
+    expect(timeoutMs).toBe(16080);
     expect(timeoutMs).toBeGreaterThan(3000);
   });
 
