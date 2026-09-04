@@ -17,6 +17,7 @@ import { useHidRpc } from "@/hooks/useHidRpc";
 import { JsonRpcResponse, useJsonRpc } from "@/hooks/useJsonRpc";
 import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
+import { getPasteRepairDelayMs } from "@/utils/pasteBatches";
 import { createKeepaliveScheduler, type KeepaliveScheduler } from "@/utils/keepaliveScheduler";
 import {
   buildPasteMacroBatches,
@@ -49,21 +50,10 @@ const KEYPRESS_KEEPALIVE_INTERVAL_MS = 50;
 // state is still used for UI disabled-button rendering, but the
 // correctness-level guard is this flag.
 //
-// `pasteStateSupportObserved` tracks whether the device this session is
-// connected to has EVER emitted a KeyboardMacroStateMessage with IsPaste
-// true (set in the useHidRpc onMessage handler below). Chunk mode
-// relies on observing isPasteInProgress transitions via
-// waitForPasteDrain("required", ...), and that only works on Phase 1+
-// devices that emit paste-state messages. Older v1 firmware without
-// Phase 1 still advertises the same HID RPC protocol version (0x01),
-// so `rpcHidReady` alone is not a reliable indicator of paste-state
-// support. Chunk mode gates on this flag, defaulting to the safe
-// non-chunk path until the device proves it sends paste-state events.
-// Consequence: the first paste of a session always runs non-chunk
-// (byte-for-byte identical to pre-Phase-2 behavior); subsequent
-// pastes — chunkable or not — will observe the flag having flipped
-// true during the first paste's drain messages and use chunk mode if
-// the device supports it.
+// Paste-state events are required for chunk-boundary drains. A negotiated
+// HID protocol version alone does not establish that capability. The
+// capability RPC can enable chunking on the first paste; otherwise the
+// observation latch enables it after an actual paste-state event.
 let executePasteTextInFlight = false;
 let pasteStateSupportObserved = false;
 let pasteStateSupportChannel: RTCDataChannel | null = null;
@@ -146,16 +136,15 @@ export interface ExecutePasteTextOptions {
   onTrace?: (trace: PasteExecutionTrace) => void;
   // Fires after each chunk's required drain resolves, with the CUMULATIVE
   // count of source characters (code points of the NFC-normalized text)
-  // confirmed flushed through the backend (pasteDepth hit 0). A committed
-  // prefix is a safe resume boundary: everything before it has been typed;
-  // anything after it is in an unknown partial state. Only fires in chunk
-  // mode — small pastes have no required drains and report no commits.
+  // flushed through the backend (pasteDepth hit 0), not confirmed received
+  // by the application. Verify the prefix and trim any uncertain tail
+  // before resuming. Only chunk mode reports committed boundaries.
   onChunkCommitted?: (committedSourceChars: number) => void;
   // Verified mode: when provided, the chunk loop awaits this after each
   // committed chunk (except the last) before sending more. The modal uses
   // it to pause with "expected N chars on target" so the user can glance at
   // the target's own counter. Reject (or abort via signal) to stop at the
-  // verified boundary — the resume checkpoint already points there.
+  // checkpoint boundary — target content still requires verification.
   waitForChunkConfirm?: (info: {
     chunkIndex: number;
     chunkTotal: number;
@@ -168,7 +157,7 @@ export interface ExecutePasteTextOptions {
   // need the chunk's batches. `backspace(n)` types n Backspaces and drains;
   // `retype()` re-sends this chunk's batches and drains — together they roll a
   // lossy chunk back to its start checkpoint and re-type it. Return to
-  // continue; throw to stop at the (verified) chunk boundary.
+  // continue; throw to stop at the checkpoint, without implying exact content.
   verifyChunk?: (ctx: {
     chunkIndex: number;
     chunkTotal: number;
@@ -178,11 +167,8 @@ export interface ExecutePasteTextOptions {
     backspace: (n: number) => Promise<void>;
     retype: () => Promise<void>;
   }) => Promise<void>;
-  // Override the chunk size (source chars per chunk). Auto-verify/repair uses
-  // a smaller chunk than the default so a repair re-type is short enough to
-  // usually land in a clean window and converge — a full default-size re-type
-  // re-introduces too much loss to ever reach an exact count. Ignored unless
-  // chunk mode is active.
+  // Optional source-character chunk budget, used only in chunk mode.
+  // The modal uses the shared default for normal and verified pastes.
   chunkCharsOverride?: number;
 }
 
@@ -201,7 +187,7 @@ const PASTE_DRAIN_DEFAULT_SETTLE_MS = 500;
  *   completion event arrives. Callers can disable the no-start arm window
  *   when a supported first paste may emit state after the default arm window.
  * - "required" — rejects on timeout, never takes the arm-window fast path.
- *   Reserved for #38's chunk boundaries in Phase 2. No Phase 1 call sites.
+ *   Used at chunk and repair boundaries.
  *
  * Correctness: the helper subscribes to useHidStore BEFORE sampling the
  * current isPasteInProgress value, and latches a local `seenTrue` flag.
@@ -491,6 +477,15 @@ export default function useKeyboard() {
     }
   }, [rpcHidReady, sendKeyboardEventHidRpc, handleLegacyKeyboardReport, cancelKeepAlive]);
 
+  // Browser focus changes must not inject an all-clear into an active paste
+  // press. The macro owns release; explicit cancel/error safety paths remain
+  // independent. Always stop the interactive keepalive on browser blur.
+  const resetKeyboardStateOnBlur = useCallback(async () => {
+    cancelKeepAlive();
+    if (executePasteTextInFlight || useHidStore.getState().isPasteInProgress) return;
+    await resetKeyboardState();
+  }, [cancelKeepAlive, resetKeyboardState]);
+
   // IMPORTANT: See the keyPressReportApiAvailable comment above for the reason this exists
   function simulateDeviceSideKeyHandlingForLegacyDevices(
     state: KeysDownState,
@@ -642,7 +637,9 @@ export default function useKeyboard() {
         }
       }
 
-      sendKeyboardMacroEventHidRpc(macro, isPaste);
+      if (!sendKeyboardMacroEventHidRpc(macro, isPaste)) {
+        throw new Error("Keyboard macro was not sent: HID RPC is not ready");
+      }
     },
     [sendKeyboardMacroEventHidRpc],
   );
@@ -731,6 +728,11 @@ export default function useKeyboard() {
       if (executePasteTextInFlight) {
         throw new Error("A paste is already in progress");
       }
+      // Profile pacing is implemented on the device. Do not silently replace
+      // it with legacy JSON-RPC typing while HID is disabled or handshaking.
+      if (!rpcHidReady) {
+        throw new Error("Paste requires ready HID RPC; reconnect or wait for the handshake");
+      }
       executePasteTextInFlight = true;
       try {
         const {
@@ -770,6 +772,18 @@ export default function useKeyboard() {
         if (!channel || channel.readyState !== "open") {
           throw new Error("HID data channel not available");
         }
+        const assertPasteChannel = () => {
+          const current = useRTCStore.getState();
+          if (
+            channel.readyState !== "open" ||
+            current.rpcHidChannel !== channel ||
+            current.hidRpcDisabled ||
+            current.rpcHidProtocolVersion === null
+          ) {
+            throw new Error("Paste HID channel changed or became unavailable");
+          }
+        };
+        assertPasteChannel();
         const pasteStateSupportedForChannel =
           syncPasteStateSupportChannel(channel) || pasteStateSupportCapability;
 
@@ -794,6 +808,14 @@ export default function useKeyboard() {
               reject(new Error("Paste execution aborted"));
               return;
             }
+            if (channel.readyState !== "open") {
+              reject(new Error("Paste HID channel closed during backpressure"));
+              return;
+            }
+            if (channel.bufferedAmount < PASTE_HIGH_WATERMARK) {
+              resolve();
+              return;
+            }
             drainResolve = resolve;
             drainReject = reject;
           });
@@ -809,38 +831,21 @@ export default function useKeyboard() {
           drainReject = null;
           rejecter?.(new Error("Paste execution aborted"));
         };
+        const onBufferedDrainChannelLoss = () => {
+          const rejecter = drainReject;
+          drainResolve = null;
+          drainReject = null;
+          rejecter?.(new Error("Paste HID channel closed during backpressure"));
+        };
         channel.addEventListener("bufferedamountlow", onLow);
+        channel.addEventListener("close", onBufferedDrainChannelLoss);
+        channel.addEventListener("error", onBufferedDrainChannelLoss);
         signal?.addEventListener("abort", onBufferedDrainAbort);
 
-        // Phase 2 chunk policy. Chunk mode is automatic above the threshold,
-        // but ONLY when (a) rpcHidReady is true and (b) the current session
-        // has previously observed a real paste-state event from the device
-        // (pasteStateSupportObserved latched at module scope in the
-        // KeyboardMacroStateMessage handler above). Gating on
-        // pasteStateSupportObserved is load-bearing for compatibility:
-        // - On the legacy client-side path (!rpcHidReady), executePasteMacro
-        //   falls through to executeMacroClientSide which never emits
-        //   paste-state messages.
-        // - On older v1 firmware that has not landed Phase 1 paste-state
-        //   semantics, rpcHidReady is true (the HID RPC channel is open
-        //   and protocol version 0x01 is negotiated) but the device never
-        //   emits KeyboardMacroState events with isPaste=true.
-        // - waitForPasteDrain("required", ...) has no arm window (that's
-        //   bestEffort-only) and waits for an isPasteInProgress 0→1→0
-        //   transition. On either of the above paths, that transition
-        //   never arrives, so a chunk-boundary drain would hang until
-        //   the full derived timeout (60s minimum) before rejecting,
-        //   regressing every large paste to a failure.
-        //
-        // Consequence: the FIRST paste of any session always runs the
-        // non-chunk path regardless of size (byte-for-byte identical to
-        // pre-Phase-2 behavior). During that paste, the bestEffort final
-        // drain waits for isPasteInProgress events — if any arrive, the
-        // latch flips true and subsequent pastes in the session use
-        // chunk mode if they exceed the threshold. If no paste-state
-        // events arrive (legacy/old-firmware device), the latch stays
-        // false and all pastes in the session stay on the non-chunk
-        // path for safety.
+        // Chunking requires ready HID-RPC and paste-state capability or a
+        // previously observed state event. The capability RPC can enable
+        // the first paste. Older HID firmware without either indication
+        // stays non-chunked; profile paste does not use legacy JSON-RPC.
         const policy = DEFAULT_LARGE_PASTE_POLICY;
         const chunkMode =
           rpcHidReady && pasteStateSupportedForChannel && text.length >= policy.autoThresholdChars;
@@ -867,6 +872,7 @@ export default function useKeyboard() {
                 throw new Error("Paste execution aborted");
               }
 
+              assertPasteChannel();
               const batch = batches[b];
               await executePasteMacro(batch);
 
@@ -922,43 +928,18 @@ export default function useKeyboard() {
                 chunkTotal: chunks.length,
               });
 
-              // Per-chunk derived drain timeout. A flat constant does not
-              // work here: at reliable-profile pacing (keyDelayMs=5, 5ms
-              // press + 5ms reset per MacroStep, uniform deadline pacing,
-              // no inter-macro drain for paste), a 5000-char chunk takes
-              // ~50s end-to-end. The derivation below gives each chunk
-              // ~2x its measured worst case, with a policy floor for
-              // small chunks.
-              //
-              // The shared derivation reads delayMs from
-              // ExecutePasteTextOptions and applies the SAME `|| 25`
-              // fallback that executeMacroRemote uses for MacroStep.delay.
-              // This matters for debug-mode pastes where the PasteModal
-              // delay input can be 0 (slider at 0) or NaN (empty input).
+              // Derive the budget from the actual chunk and selected delay,
+              // with the encoder's reset-delay fallback and policy floor.
+              // This is a watchdog budget, not guaranteed host completion.
               const chunkDrainTimeoutMs = estimatePasteDrainTimeoutMs(
                 batchStats.slice(chunk.batchStartIndex, chunk.batchEndIndex),
                 delayMs,
                 policy.chunkDrainTimeoutFloorMs,
               );
 
-              // Intermediate chunks (ci < chunks.length - 1) skip the
-              // 500ms settle delay because chunkPauseMs (default 2000ms)
-              // is the explicit inter-chunk catch-up pause, so adding a
-              // 500ms settle on top doubles cancel latency without
-              // buying correctness — on a 100k paste with ~20 chunks
-              // that's ~10s of hidden latency.
-              //
-              // The LAST chunk keeps the default settle (undefined →
-              // PASTE_DRAIN_DEFAULT_SETTLE_MS = 500ms) because without
-              // it, the tail of the final chunk loses the existing
-              // host-settle grace period. The subsequent final
-              // bestEffort drain sees isPasteInProgress already false
-              // and takes the 200ms arm-window fast path, so without a
-              // settle on the last required drain the total post-drain
-              // grace collapses from ~500ms (pre-Phase-2) to ~200ms,
-              // which can cause end-of-paste tail corruption on slower
-              // targets. Preserving the settle on the last chunk
-              // restores the pre-Phase-2 settle behavior for that tail.
+              // Intermediate chunks use the explicit 250ms chunk pause.
+              // Preserve the final chunk's 500ms settle grace. Neither
+              // delay nor backend drain certifies application receipt.
               const drainStart = performance.now();
               const isLastChunk = ci === chunks.length - 1;
               if (isLastChunk) {
@@ -986,9 +967,9 @@ export default function useKeyboard() {
                 drainMs: Math.round(performance.now() - drainStart),
               });
 
-              // The required drain resolved: every batch in this chunk has
-              // been flushed through the backend. Commit the prefix as a
-              // safe resume boundary.
+              // Record a device-drained checkpoint, not verified target
+              // content. A resume still requires checking the prefix
+              // and removing any uncertain partial tail.
               committedSourceChars += chunk.sourceChars;
               onChunkCommitted?.(committedSourceChars);
 
@@ -997,22 +978,24 @@ export default function useKeyboard() {
               // chunk's batches so it can roll back and re-type on a detected
               // deficit.
               if (verifyChunk) {
+                const slowRepairDelayMs = getPasteRepairDelayMs(delayMs);
+                const repairDrainTimeoutMs = estimatePasteDrainTimeoutMs(
+                  batchStats.slice(chunk.batchStartIndex, chunk.batchEndIndex),
+                  slowRepairDelayMs,
+                  policy.chunkDrainTimeoutFloorMs,
+                );
                 const drainAfterRepair = () =>
                   waitForPasteDrain(
                     "required",
-                    chunkDrainTimeoutMs,
+                    repairDrainTimeoutMs,
                     signal,
                     isLastChunk ? undefined : 0,
                     undefined,
                     pasteFailureBaseline,
                   );
-                // Repair typing runs SLOW (≈40 cps: 5ms press + 20ms reset),
-                // not at the paste's profile rate. The whole point of repair
-                // is to recover from loss; re-typing at the same rate that
-                // just lost characters re-loses ~as many and never converges.
-                // A near-lossless slow re-type converges in one pass. Repairs
-                // are rare (only lossy chunks), so the slowdown is bounded.
-                const SLOW_REPAIR_DELAY_MS = 20;
+                // Repair is opt-in and bounded by the caller. It must never
+                // accelerate relative to the selected mode; convergence is
+                // not guaranteed and count checks do not verify content.
                 const backspace = async (n: number) => {
                   let remaining = Math.max(0, Math.floor(n));
                   while (remaining > 0) {
@@ -1023,7 +1006,7 @@ export default function useKeyboard() {
                       steps.push({
                         keys: ["Backspace"],
                         modifiers: null,
-                        delay: SLOW_REPAIR_DELAY_MS,
+                        delay: slowRepairDelayMs,
                       });
                     await executePasteMacro(steps);
                     remaining -= take;
@@ -1041,7 +1024,7 @@ export default function useKeyboard() {
                   const rebuilt = buildPasteMacroBatches(
                     chunkText,
                     keyboard,
-                    SLOW_REPAIR_DELAY_MS,
+                    slowRepairDelayMs,
                     maxStepsPerBatch,
                     maxBytesPerBatch,
                   );
@@ -1140,6 +1123,8 @@ export default function useKeyboard() {
           );
         } finally {
           channel.removeEventListener("bufferedamountlow", onLow);
+          channel.removeEventListener("close", onBufferedDrainChannelLoss);
+          channel.removeEventListener("error", onBufferedDrainChannelLoss);
           signal?.removeEventListener("abort", onBufferedDrainAbort);
           channel.bufferedAmountLowThreshold = prevThreshold;
         }
@@ -1164,6 +1149,7 @@ export default function useKeyboard() {
   return {
     handleKeyPress,
     resetKeyboardState,
+    resetKeyboardStateOnBlur,
     executeMacro,
     executePasteMacro,
     executePasteText,

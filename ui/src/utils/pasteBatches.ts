@@ -46,25 +46,25 @@ function assertProfilesReachable(profiles: Record<string, PasteProfile>): void {
   }
 }
 
-// Profile pacing is uniform per keystroke: the backend deadline-paces each
-// wire step, so a char costs exactly (5ms press + keyDelayMs reset).
-// Rates were measured against a Win11 Notepad target on 2026-06-09 (see
-// docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md):
-//   reliable: 5+6 = 11ms/char ≈ 91 chars/sec — zero loss across all
-//             measured runs (multiple 2448-key sustained runs); 100 cps was
-//             also mostly clean but showed rare ~0.04% drops under host
-//             load, so reliable keeps margin below it. Matches the OLD
-//             pipeline's average throughput while removing its burst shape
-//             (bursts were the actual cause of loss).
-//   fast:     5+2 = 7ms/char ≈ 143 chars/sec — at the loss threshold of slow
-//             sinks (Win11 Notepad was measured losing keys from ~125 cps);
-//             fine for faster consumers. Loss is host-app-layer and invisible
-//             to USB-level feedback, so there is no closed-loop guard here.
+// Configured maximum rates for ordinary characters (5ms press + reset):
+// Reliable ~40 cps, Slow ~20 cps, Fast ~143 cps. Modified keys hold for 10ms;
+// composed characters may need multiple steps. USB writes and scheduling add
+// time. Paste pacing never catches up by shortening a subsequent phase.
+// Robert reported clean use of PR #104 at 40 cps; that is not an exhaustive
+// hardware certification. See docs/paste-reliability.md for evidence limits.
 export const PASTE_PROFILES = {
-  reliable: deriveProfile(128, 6),
+  reliable: deriveProfile(128, 20),
+  slow: deriveProfile(128, 45),
   fast: deriveProfile(256, 2),
 } satisfies Record<string, PasteProfile>;
 
 assertProfilesReachable(PASTE_PROFILES);
 
 export type PasteProfileName = keyof typeof PASTE_PROFILES;
+
+// Repair must not be faster than the failed delivery. Invalid debug delays use
+// the encoder's 25ms fallback; the repair floor remains the Slow profile.
+export function getPasteRepairDelayMs(activeDelayMs: number): number {
+  const active = Number.isFinite(activeDelayMs) && activeDelayMs > 0 ? activeDelayMs : 25;
+  return Math.max(PASTE_PROFILES.slow.keyDelayMs, active);
+}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HID_RPC_MESSAGE_TYPES, KeyboardMacroStateMessage } from "@/hooks/hidRpc";
+import { PASTE_PROFILES } from "@/utils/pasteBatches";
 import type { KeyboardLayoutLike } from "@/utils/pasteMacro";
 
 import { ProductReliablePasteTransport, type ProductPasteChannel } from "./paste";
@@ -58,7 +59,7 @@ afterEach(() => {
 });
 
 describe("ProductReliablePasteTransport", () => {
-  it("uses the reliable modified-key hold profile and requires submitted-active-succeeded", async () => {
+  it("uses the configured reliable pacing and requires submitted-active-succeeded", async () => {
     let monotonicMs = 0;
     const channel = new FakePasteChannel();
     const transport = new ProductReliablePasteTransport(channel, keyboard, {
@@ -88,7 +89,12 @@ describe("ProductReliablePasteTransport", () => {
       (channel.writes[0][31] << 8) | channel.writes[0][32],
       (channel.writes[0][40] << 8) | channel.writes[0][41],
     ];
-    expect(delays).toEqual([5, 6, 10, 6]);
+    expect(delays).toEqual([
+      5,
+      PASTE_PROFILES.reliable.keyDelayMs,
+      10,
+      PASTE_PROFILES.reliable.keyDelayMs,
+    ]);
     expect(accepted).toEqual(["2026-07-13T00:00:00.000Z"]);
 
     channel.emitMacroState(true);
@@ -138,6 +144,7 @@ describe("ProductReliablePasteTransport", () => {
     await expect(execution).rejects.toMatchObject({ code: "PASTE_LIFECYCLE" });
     expect(JSON.stringify(transport)).not.toContain("ab");
   });
+
   it("rejects an inactive terminal before every batch is submitted", async () => {
     const channel = new FakePasteChannel();
     channel.bufferedAmount = 300 * 1024;
@@ -146,7 +153,7 @@ describe("ProductReliablePasteTransport", () => {
       "a".repeat(129),
       new AbortController().signal,
       () => undefined,
-      1000,
+      10000,
     );
 
     expect(channel.writes).toHaveLength(1);
@@ -207,4 +214,21 @@ describe("ProductReliablePasteTransport", () => {
     channel.close();
     await firstFailure;
   });
+});
+
+describe("paste deadline admission", () => {
+  it.each(["a".repeat(12000), "A".repeat(10000)])(
+    "rejects an impossible 300-second paste before sending",
+    async text => {
+      const channel = new FakePasteChannel();
+      const transport = new ProductReliablePasteTransport(channel, keyboard);
+      const accepted = vi.fn();
+      await expect(
+        transport.execute(text, new AbortController().signal, accepted, 300000),
+      ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
+      expect(channel.writes).toHaveLength(0);
+      expect(accepted).not.toHaveBeenCalled();
+      transport.close();
+    },
+  );
 });
