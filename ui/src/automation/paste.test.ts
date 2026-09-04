@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HID_RPC_MESSAGE_TYPES, KeyboardMacroStateMessage } from "@/hooks/hidRpc";
+import { PASTE_PROFILES } from "@/utils/pasteBatches";
 import type { KeyboardLayoutLike } from "@/utils/pasteMacro";
 
 import { ProductReliablePasteTransport, type ProductPasteChannel } from "./paste";
@@ -58,12 +59,13 @@ afterEach(() => {
 });
 
 describe("ProductReliablePasteTransport", () => {
-  it("uses the reliable modified-key hold profile and requires submitted-active-succeeded", async () => {
+  it("uses the configured reliable pacing and requires submitted-active-succeeded", async () => {
     let monotonicMs = 0;
     const channel = new FakePasteChannel();
     const transport = new ProductReliablePasteTransport(channel, keyboard, {
       monotonicNow: () => monotonicMs,
-      nowIso: () => (monotonicMs === 0 ? "2026-07-13T00:00:00.000Z" : "2026-07-13T00:00:00.022Z"),
+      nowIso: () =>
+        monotonicMs === 0 ? "2026-07-13T00:00:00.000Z" : "2026-07-13T00:00:00.022Z",
     });
     const accepted: string[] = [];
     const execution = transport.execute(
@@ -88,7 +90,12 @@ describe("ProductReliablePasteTransport", () => {
       (channel.writes[0][31] << 8) | channel.writes[0][32],
       (channel.writes[0][40] << 8) | channel.writes[0][41],
     ];
-    expect(delays).toEqual([5, 6, 10, 6]);
+    expect(delays).toEqual([
+      5,
+      PASTE_PROFILES.reliable.keyDelayMs,
+      10,
+      PASTE_PROFILES.reliable.keyDelayMs,
+    ]);
     expect(accepted).toEqual(["2026-07-13T00:00:00.000Z"]);
 
     channel.emitMacroState(true);
@@ -138,6 +145,7 @@ describe("ProductReliablePasteTransport", () => {
     await expect(execution).rejects.toMatchObject({ code: "PASTE_LIFECYCLE" });
     expect(JSON.stringify(transport)).not.toContain("ab");
   });
+
   it("rejects an inactive terminal before every batch is submitted", async () => {
     const channel = new FakePasteChannel();
     channel.bufferedAmount = 300 * 1024;
