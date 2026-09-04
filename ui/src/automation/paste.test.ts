@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HID_RPC_MESSAGE_TYPES, KeyboardMacroStateMessage } from "@/hooks/hidRpc";
-import type { KeyboardLayoutLike } from "@/utils/pasteMacro";
+import {
+  PASTE_START_FOCUS_DELAY_MS,
+  type KeyboardLayoutLike,
+} from "@/utils/pasteMacro";
 
 import { ProductReliablePasteTransport, type ProductPasteChannel } from "./paste";
 
@@ -81,14 +84,16 @@ describe("ProductReliablePasteTransport", () => {
     expect(channel.writes[0][2]).toBe(0);
     expect(channel.writes[0][3]).toBe(0);
     expect(channel.writes[0][4]).toBe(0);
-    expect(channel.writes[0][5]).toBe(4);
+    expect(channel.writes[0][5]).toBe(6);
     const delays = [
       (channel.writes[0][13] << 8) | channel.writes[0][14],
       (channel.writes[0][22] << 8) | channel.writes[0][23],
       (channel.writes[0][31] << 8) | channel.writes[0][32],
       (channel.writes[0][40] << 8) | channel.writes[0][41],
+      (channel.writes[0][49] << 8) | channel.writes[0][50],
+      (channel.writes[0][58] << 8) | channel.writes[0][59],
     ];
-    expect(delays).toEqual([5, 6, 10, 6]);
+    expect(delays).toEqual([10, PASTE_START_FOCUS_DELAY_MS, 5, 6, 10, 6]);
     expect(accepted).toEqual(["2026-07-13T00:00:00.000Z"]);
 
     channel.emitMacroState(true);
