@@ -1,70 +1,26 @@
-# PASTE-014 - Receiving-host capacity probe at 40 cps
+# PASTE-014 - 40 cps observation and conservative follow-up
 
-**Date:** 2026-09-04
-**Status:** Diagnostic - live validation required
+Date: 2026-09-04. Superseded diagnostic guidance: see `../paste-reliability.md`.
 
-## Observation
+PR #104 changed Reliable from a 6 ms to a 20 ms release gap, leaving batching,
+chunking and backend execution unchanged. Robert subsequently reported that
+40 cps worked without visible issues. A five-second initial focus delay had not
+helped; an earlier restart/cancel sequence had improved the receiving host state.
 
-The same JetKVM paste became significantly cleaner after a Windows restart was initiated and cancelled near the end. The JetKVM, source browser, target application, paste content, and transport were otherwise unchanged.
+These are user observations, not a repeated byte-exact comparison. They do not
+prove that Windows alone caused the corruption. Correct report contents do not
+establish correct timing or application receipt. The retained F13 trace also
+supports investigating device-side catch-up compression.
 
-That suggests the machine receiving the synthetic keyboard input may have a variable application/input-processing ceiling affected by background activity or user-session state.
+The follow-up keeps Reliable at 40 cps nominal maximum, adds explicit Slow at
+20 cps, bounds modal chunks, prevents paste catch-up, preserves ordered macro
+admission, and adds focused input/transport safeguards and tests. It does not
+claim that these additions have received live hardware certification.
 
-## Hypothesis
+Current values, code-path distinctions, evidence limits and the required live
+validation matrix are maintained in `../paste-reliability.md`. Preserve historical
+campaigns; do not delete inconvenient results or represent old tests as new runs.
 
-The current Reliable profile runs plain characters at approximately 91 characters per second:
-
-```text
-5 ms press + 6 ms reset gap = 11 ms per character ~= 91 cps
-```
-
-Under target-host churn, Notepad or the Windows text/input stack may not consume every HID transition at that rate even though the USB gadget and kernel path remain healthy.
-
-## Diagnostic change
-
-Temporarily retune only Reliable pacing to approximately 40 characters per second:
-
-```text
-5 ms press + 20 ms reset gap = 25 ms per character = 40 cps
-```
-
-The following remain unchanged:
-
-- 128 logical steps per Reliable batch
-- calculated byte cap
-- WebRTC/HID-RPC transport
-- backend macro queue
-- chunk threshold and chunk size
-- cancellation and completion semantics
-- Fast profile at approximately 143 cps
-
-This isolation is important: a clean 40 cps run would implicate target-host consumption capacity, while continued corruption would push the investigation back toward report interference, ordering, layout/modifier state, or the receiving application itself.
-
-## Manual validation matrix
-
-Use the same numbered or checksum-bearing corpus in every run. Disable Notepad spellcheck and autocorrect for the test.
-
-1. Reproduce the problem on the current installed main build using Reliable.
-2. Deploy this branch and run Reliable without changing host state.
-3. Repeat Reliable after closing and reopening Notepad.
-4. Repeat Reliable after the restart/cancel sequence that previously improved delivery.
-5. Run each meaningful condition at least three times.
-
-Record:
-
-- expected and received character counts
-- first mismatch position
-- whether errors are missing characters, wrong case/symbols, repeats, or true reordering
-- target CPU, available memory, and disk active time before the run
-- top CPU and disk processes
-- time since boot
-
-## Interpretation
-
-- **40 cps clean in both host states:** the previous 91 cps rate exceeded this target's dependable input-processing ceiling.
-- **40 cps clean only after host quiescence:** target resource or session churn changes the safe ceiling; a permanent solution needs a larger margin or host-aware calibration.
-- **40 cps still corrupts:** raw receiving speed is not sufficient to explain the bug; investigate HID report interference and end-to-end ordering next.
-- **Fresh Notepad fixes it without broader host changes:** prioritize application/text-service state over whole-system resources.
-
-## Release decision
-
-Do not merge this as a permanent retune solely because one run improves. Keep the PR in draft until the repeated live matrix distinguishes a rate effect from normal run-to-run variance.
+Historical naming note: PASTE-008 used "PASTE-014" for a proposed scale-aware
+verification effort. This file records PR #104's host-capacity probe, not completion
+of that separate proposal.
