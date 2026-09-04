@@ -198,7 +198,7 @@ function formatPasteFileSize(bytes: number): string {
 
 function getPasteProgressLabel(progress: PasteProgressState): string {
   if (progress.phase === "draining") {
-    return `Draining input on target (${progress.completed} / ${progress.total} batches submitted)`;
+    return `Waiting for device typing to finish (${progress.completed} / ${progress.total} batches submitted)`;
   }
   if (progress.phase === "pausing") {
     return `Pausing to let target catch up (${progress.completed} / ${progress.total} batches submitted)`;
@@ -453,8 +453,8 @@ export default function PasteModal() {
           maxBytesPerBatch: profile.maxBytesPerBatch,
           finalSettleMs: 3000,
           signal: abortController.signal,
-          // Auto-verify/repair uses smaller chunks so a repair re-type is
-          // short enough to usually land in a clean window and converge.
+          // Use the same bounded chunk budget for normal and verified paste.
+          // Repair convergence is not guaranteed.
           chunkCharsOverride: autoVerify ? DEFAULT_LARGE_PASTE_POLICY.chunkChars : undefined,
           onProgress: progress => {
             setPasteProgress({
@@ -965,7 +965,7 @@ export default function PasteModal() {
                   const slowEta = formatDuration(
                     estimatePasteSeconds(chars, PASTE_PROFILES.slow.keyDelayMs),
                   );
-                  return `${chars.toLocaleString()} characters — nominal minimum: ${reliableEta} Reliable, ${slowEta} Slow, ${fastEta} Fast; modified keys, USB and verification add time`;
+                  return `${chars.toLocaleString()} characters — nominal estimate: ${reliableEta} Reliable, ${slowEta} Slow, ${fastEta} Fast; modified keys, USB and verification add time`;
                 })()}
               </p>
             )}
@@ -1109,20 +1109,20 @@ export default function PasteModal() {
             {chunkConfirm && (
               <div className="space-y-2 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/30 dark:text-amber-200">
                 <p className="text-xs font-medium">
-                  Chunk {chunkConfirm.chunkIndex} / {chunkConfirm.chunkTotal} delivered — the target
-                  should now show{" "}
+                  Chunk {chunkConfirm.chunkIndex} / {chunkConfirm.chunkTotal} sent. This paste has
+                  reached{" "}
                   <span className="font-bold">
                     {chunkConfirm.committedSourceChars.toLocaleString()}
                   </span>{" "}
-                  characters.
+                  source characters.
                 </p>
                 {chunkConfirm.ocrNote && (
                   <p className="text-[11px] leading-4 font-medium">{chunkConfirm.ocrNote}</p>
                 )}
                 <p className="text-[11px] leading-4 opacity-80">
-                  Glance at the target&apos;s character counter (e.g. Notepad&apos;s status bar). If
-                  it matches, continue. If it doesn&apos;t, stop here — you can trim the tail on the
-                  target and resume from this verified point.
+                  Check the received text and character count, accounting for any pre-existing text.
+                  A matching count does not prove correct content. Stop on a mismatch; verify the
+                  prefix and remove any uncertain tail before resuming.
                 </p>
                 <div className="flex items-center gap-2 pt-1">
                   <Button
@@ -1139,7 +1139,7 @@ export default function PasteModal() {
                     theme="light"
                     text="Stop here"
                     onClick={() => {
-                      chunkConfirm.reject(new Error("Stopped at verified chunk boundary"));
+                      chunkConfirm.reject(new Error("Stopped at chunk checkpoint"));
                       setChunkConfirm(null);
                     }}
                   />
@@ -1149,14 +1149,15 @@ export default function PasteModal() {
             {completionSummary && !pasteActive && (
               <div className="space-y-1 rounded-sm border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-emerald-800 dark:border-emerald-400/40 dark:bg-emerald-950/30 dark:text-emerald-200">
                 <p className="text-xs font-medium">
-                  Paste complete in {formatDuration(completionSummary.elapsedSec)} (
+                  Device typing finished in {formatDuration(completionSummary.elapsedSec)} (
                   {completionSummary.cps.toFixed(0)} chars/sec).
                 </p>
                 {completionSummary.ocrVerified &&
                   (completionSummary.ocrVerified.read === completionSummary.ocrVerified.expected ? (
                     <p className="text-[11px] leading-4 font-semibold">
-                      ✓ Verified on target: counter reads{" "}
-                      {completionSummary.ocrVerified.expected.toLocaleString()}.
+                      Character count matches:{" "}
+                      {completionSummary.ocrVerified.expected.toLocaleString()}. Content is not
+                      independently verified.
                     </p>
                   ) : (
                     <p className="text-[11px] leading-4 font-semibold text-amber-700 dark:text-amber-300">
@@ -1169,12 +1170,12 @@ export default function PasteModal() {
                     </p>
                   ))}
                 <p className="text-[11px] leading-4 opacity-90">
-                  The target should show{" "}
+                  Source:{" "}
                   <span className="font-bold">{completionSummary.chars.toLocaleString()}</span>{" "}
-                  characters / cursor on line{" "}
-                  <span className="font-bold">{completionSummary.lines.toLocaleString()}</span>.
-                  Compare with the target&apos;s own counter (e.g. Notepad&apos;s status bar) to
-                  confirm integrity at a glance.
+                  characters across{" "}
+                  <span className="font-bold">{completionSummary.lines.toLocaleString()}</span>{" "}
+                  lines. Compare the received text with the source; counts alone cannot detect wrong
+                  case, substituted symbols or reordering.
                 </p>
               </div>
             )}
@@ -1186,8 +1187,8 @@ export default function PasteModal() {
                   {Math.round((resumeState.committedChars / resumeState.totalChars) * 100)}%).
                 </p>
                 <p className="text-[11px] leading-4 opacity-80">
-                  Everything before that point was delivered to the target. Text after it may have
-                  partially arrived — check the tail on the target and remove any partial text
+                  The device finished sending through this checkpoint; application receipt is not
+                  guaranteed. Verify the prefix and remove any uncertain partial tail on the target
                   before resuming.
                 </p>
                 <div className="flex items-center gap-2 pt-1">
