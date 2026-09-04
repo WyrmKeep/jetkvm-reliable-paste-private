@@ -103,8 +103,8 @@ jobs:
         run: test "$(node --version)" = "v22.23.1"
       - name: Install dependencies
         run: npm ci
-      - name: Run UI Phase 3 focused gate
-        run: npm run test:phase3
+      - name: Run complete UI unit suite
+        run: npm run test:unit
       - name: Typecheck UI
         run: npm run typecheck
 
@@ -123,4 +123,4 @@ jobs:
       - name: Create empty resource directory
         run: mkdir -p static && touch static/.gitkeep
       - name: Run host-safe race tests
-        run: go test -race -tags=hosttest . ./internal/atx ./internal/native ./internal/controlsession ./internal/usbgadget
+        run: go test -race -tags=hosttest . ./internal/atx ./internal/native ./internal/controlsession ./internal/usbgadget ./internal/pastepacing ./internal/regression

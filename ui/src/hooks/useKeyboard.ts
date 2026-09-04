@@ -17,6 +17,7 @@ import { useHidRpc } from "@/hooks/useHidRpc";
 import { JsonRpcResponse, useJsonRpc } from "@/hooks/useJsonRpc";
 import { hidKeyToModifierMask, keys, modifiers } from "@/keyboardMappings";
 import { sleep } from "@/utils";
+import { getPasteRepairDelayMs } from "@/utils/pasteBatches";
 import { createKeepaliveScheduler, type KeepaliveScheduler } from "@/utils/keepaliveScheduler";
 import {
   buildPasteMacroBatches,
@@ -491,6 +492,15 @@ export default function useKeyboard() {
     }
   }, [rpcHidReady, sendKeyboardEventHidRpc, handleLegacyKeyboardReport, cancelKeepAlive]);
 
+  // Browser focus changes must not inject an all-clear into an active paste
+  // press. The macro owns release; explicit cancel/error safety paths remain
+  // independent. Always stop the interactive keepalive on browser blur.
+  const resetKeyboardStateOnBlur = useCallback(async () => {
+    cancelKeepAlive();
+    if (executePasteTextInFlight || useHidStore.getState().isPasteInProgress) return;
+    await resetKeyboardState();
+  }, [cancelKeepAlive, resetKeyboardState]);
+
   // IMPORTANT: See the keyPressReportApiAvailable comment above for the reason this exists
   function simulateDeviceSideKeyHandlingForLegacyDevices(
     state: KeysDownState,
@@ -642,7 +652,9 @@ export default function useKeyboard() {
         }
       }
 
-      sendKeyboardMacroEventHidRpc(macro, isPaste);
+      if (!sendKeyboardMacroEventHidRpc(macro, isPaste)) {
+        throw new Error("Keyboard macro was not sent: HID RPC is not ready");
+      }
     },
     [sendKeyboardMacroEventHidRpc],
   );
@@ -731,6 +743,11 @@ export default function useKeyboard() {
       if (executePasteTextInFlight) {
         throw new Error("A paste is already in progress");
       }
+      // Profile pacing is implemented on the device. Do not silently replace
+      // it with legacy JSON-RPC typing while HID is disabled or handshaking.
+      if (!rpcHidReady) {
+        throw new Error("Paste requires ready HID RPC; reconnect or wait for the handshake");
+      }
       executePasteTextInFlight = true;
       try {
         const {
@@ -770,6 +787,18 @@ export default function useKeyboard() {
         if (!channel || channel.readyState !== "open") {
           throw new Error("HID data channel not available");
         }
+        const assertPasteChannel = () => {
+          const current = useRTCStore.getState();
+          if (
+            channel.readyState !== "open" ||
+            current.rpcHidChannel !== channel ||
+            current.hidRpcDisabled ||
+            current.rpcHidProtocolVersion === null
+          ) {
+            throw new Error("Paste HID channel changed or became unavailable");
+          }
+        };
+        assertPasteChannel();
         const pasteStateSupportedForChannel =
           syncPasteStateSupportChannel(channel) || pasteStateSupportCapability;
 
@@ -794,6 +823,14 @@ export default function useKeyboard() {
               reject(new Error("Paste execution aborted"));
               return;
             }
+            if (channel.readyState !== "open") {
+              reject(new Error("Paste HID channel closed during backpressure"));
+              return;
+            }
+            if (channel.bufferedAmount < PASTE_HIGH_WATERMARK) {
+              resolve();
+              return;
+            }
             drainResolve = resolve;
             drainReject = reject;
           });
@@ -809,7 +846,15 @@ export default function useKeyboard() {
           drainReject = null;
           rejecter?.(new Error("Paste execution aborted"));
         };
+        const onBufferedDrainChannelLoss = () => {
+          const rejecter = drainReject;
+          drainResolve = null;
+          drainReject = null;
+          rejecter?.(new Error("Paste HID channel closed during backpressure"));
+        };
         channel.addEventListener("bufferedamountlow", onLow);
+        channel.addEventListener("close", onBufferedDrainChannelLoss);
+        channel.addEventListener("error", onBufferedDrainChannelLoss);
         signal?.addEventListener("abort", onBufferedDrainAbort);
 
         // Phase 2 chunk policy. Chunk mode is automatic above the threshold,
@@ -867,6 +912,7 @@ export default function useKeyboard() {
                 throw new Error("Paste execution aborted");
               }
 
+              assertPasteChannel();
               const batch = batches[b];
               await executePasteMacro(batch);
 
@@ -997,22 +1043,24 @@ export default function useKeyboard() {
               // chunk's batches so it can roll back and re-type on a detected
               // deficit.
               if (verifyChunk) {
+                const slowRepairDelayMs = getPasteRepairDelayMs(delayMs);
+                const repairDrainTimeoutMs = estimatePasteDrainTimeoutMs(
+                  batchStats.slice(chunk.batchStartIndex, chunk.batchEndIndex),
+                  slowRepairDelayMs,
+                  policy.chunkDrainTimeoutFloorMs,
+                );
                 const drainAfterRepair = () =>
                   waitForPasteDrain(
                     "required",
-                    chunkDrainTimeoutMs,
+                    repairDrainTimeoutMs,
                     signal,
                     isLastChunk ? undefined : 0,
                     undefined,
                     pasteFailureBaseline,
                   );
-                // Repair typing runs SLOW (≈40 cps: 5ms press + 20ms reset),
-                // not at the paste's profile rate. The whole point of repair
-                // is to recover from loss; re-typing at the same rate that
-                // just lost characters re-loses ~as many and never converges.
-                // A near-lossless slow re-type converges in one pass. Repairs
-                // are rare (only lossy chunks), so the slowdown is bounded.
-                const SLOW_REPAIR_DELAY_MS = 20;
+                // Repair is opt-in and bounded by the caller. It must never
+                // accelerate relative to the selected mode; convergence is
+                // not guaranteed and count checks do not verify content.
                 const backspace = async (n: number) => {
                   let remaining = Math.max(0, Math.floor(n));
                   while (remaining > 0) {
@@ -1023,7 +1071,7 @@ export default function useKeyboard() {
                       steps.push({
                         keys: ["Backspace"],
                         modifiers: null,
-                        delay: SLOW_REPAIR_DELAY_MS,
+                        delay: slowRepairDelayMs,
                       });
                     await executePasteMacro(steps);
                     remaining -= take;
@@ -1041,7 +1089,7 @@ export default function useKeyboard() {
                   const rebuilt = buildPasteMacroBatches(
                     chunkText,
                     keyboard,
-                    SLOW_REPAIR_DELAY_MS,
+                    slowRepairDelayMs,
                     maxStepsPerBatch,
                     maxBytesPerBatch,
                   );
@@ -1140,6 +1188,8 @@ export default function useKeyboard() {
           );
         } finally {
           channel.removeEventListener("bufferedamountlow", onLow);
+          channel.removeEventListener("close", onBufferedDrainChannelLoss);
+          channel.removeEventListener("error", onBufferedDrainChannelLoss);
           signal?.removeEventListener("abort", onBufferedDrainAbort);
           channel.bufferedAmountLowThreshold = prevThreshold;
         }
@@ -1164,6 +1214,7 @@ export default function useKeyboard() {
   return {
     handleKeyPress,
     resetKeyboardState,
+    resetKeyboardStateOnBlur,
     executeMacro,
     executePasteMacro,
     executePasteText,

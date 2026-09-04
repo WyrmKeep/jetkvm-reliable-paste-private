@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { PASTE_PROFILES } from "./pasteBatches";
+import { PASTE_PROFILES, getPasteRepairDelayMs } from "./pasteBatches";
 import { estimateBatchBytes } from "./pasteMacro";
 
 const PLAIN_KEY_PRESS_HOLD_MS = 5;
@@ -17,9 +17,8 @@ describe("PASTE_PROFILES", () => {
     }
   });
 
-  test("isolates the host-capacity probe to Reliable pacing", () => {
-    const reliableCps =
-      1000 / (PLAIN_KEY_PRESS_HOLD_MS + PASTE_PROFILES.reliable.keyDelayMs);
+  test("keeps conservative Reliable pacing and unchanged Fast configuration", () => {
+    const reliableCps = 1000 / (PLAIN_KEY_PRESS_HOLD_MS + PASTE_PROFILES.reliable.keyDelayMs);
     const fastCps = 1000 / (PLAIN_KEY_PRESS_HOLD_MS + PASTE_PROFILES.fast.keyDelayMs);
 
     expect(PASTE_PROFILES.reliable).toMatchObject({
@@ -33,5 +32,19 @@ describe("PASTE_PROFILES", () => {
       keyDelayMs: 2,
     });
     expect(fastCps).toBeCloseTo(142.857, 3);
+  });
+});
+
+describe("Slow and repair pacing", () => {
+  test("keeps the 128-step Slow cap reachable and offers 20 cps nominally", () => {
+    expect(PASTE_PROFILES.slow).toEqual({
+      maxStepsPerBatch: 128,
+      maxBytesPerBatch: 2318,
+      keyDelayMs: 45,
+    });
+    expect(1000 / (5 + PASTE_PROFILES.slow.keyDelayMs)).toBe(20);
+  });
+  test.each([2, 20, 45, 80, 0, NaN])("repair never speeds up delay %s", delay => {
+    expect(getPasteRepairDelayMs(delay)).toBe(Number.isFinite(delay) && delay > 45 ? delay : 45);
   });
 });

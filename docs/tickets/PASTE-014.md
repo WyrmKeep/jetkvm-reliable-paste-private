@@ -13,8 +13,9 @@ establish correct timing or application receipt. The retained F13 trace also
 supports investigating device-side catch-up compression.
 
 The follow-up keeps Reliable at 40 cps nominal maximum, adds explicit Slow at
-20 cps, bounds modal chunks, prevents paste catch-up, preserves ordered macro
-admission, and adds focused input/transport safeguards and tests. It does not
+20 cps, bounds modal chunks, prevents paste catch-up, and adds focused
+input/transport safeguards and tests. Queue admission is deferred for a separate
+saturation and teardown proof. It does not
 claim that these additions have received live hardware certification.
 
 Current values, code-path distinctions, evidence limits and the required live

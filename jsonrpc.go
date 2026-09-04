@@ -1239,7 +1239,7 @@ const macroQueueDepth = 64
 
 // pasteInterMacroDrain is the inter-macro pause inside drainMacroQueue,
 // applied to NON-paste macros only since the 2026-06-09 profiling work.
-// Paste macros are uniformly paced per-step at measured-safe rates and get
+// Paste macros preserve minimum per-step delays without catch-up and get
 // no inter-macro gap (gaps were shown not to protect the host: loss tracks
 // instantaneous burst rate, not average — see
 // docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md).
@@ -1428,7 +1428,11 @@ func drainMacroQueue() {
 			macroCurrentCancel = cancel
 			macroLock.Unlock()
 
-			err = rpcDoExecuteKeyboardMacro(ctx, item.generation, item.steps)
+			if item.isPaste {
+				err = rpcDoExecutePasteMacro(ctx, item.generation, item.steps)
+			} else {
+				err = rpcDoExecuteKeyboardMacro(ctx, item.generation, item.steps)
+			}
 
 			macroLock.Lock()
 			macroCurrentCancel = nil
@@ -1456,9 +1460,9 @@ func drainMacroQueue() {
 		}
 
 		// Inter-macro drain delay for NON-paste macros only. Paste macros are
-		// uniformly paced per-step at a measured-safe rate, and uniform pacing
-		// carries through batch boundaries because the final reset step's delay
-		// is slept inside rpcDoExecuteKeyboardMacro — adding a gap here would
+		// paced with minimum per-step delays, including the final reset in
+		// rpcDoExecutePasteMacro. No deadline catch-up is permitted. Adding a
+		// gap here would
 		// just cut throughput. The 2026-06-09 rate-sweep measurements showed
 		// inter-macro gaps do not protect the host anyway: keystroke loss
 		// tracks the burst's instantaneous rate, not the average (burst test

@@ -37,10 +37,12 @@ intentionally favours minimum phase spacing over the earlier average-throughput
 calibration. Ordinary non-paste macros keep their previous scheduler and 200 ms
 inter-macro pause. Cancellation and write-error all-clear remain generation-bound.
 
-Macro admission stays synchronous in the ordered keyboard queue rather than
-leaving an enqueue worker behind after a one-second watchdog. Cancellation still
-uses its separate HID queue. This does not remove all upstream buffering or make
-cancellation over a saturated network instantaneous.
+Macro admission and queue architecture are unchanged in this PR. The one-second
+handler watchdog can leave an enqueue worker in flight; ordered network delivery
+alone is not proof of ordered admission. Fixing that path requires a separate
+saturation/teardown review: making admission synchronous without addressing the
+shared HID queue lock could create a full-queue deadlock. Cancellation still uses
+its separate HID queue, but delivery over a saturated network is not instantaneous.
 
 Browser blur/visibility resets are suppressed during modal submission or observed
 backend paste activity. Explicit cancellation/reset safety paths are not suppressed.

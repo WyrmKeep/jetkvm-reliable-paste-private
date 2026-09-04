@@ -151,6 +151,16 @@ export class ProductReliablePasteTransport implements AutomationPasteTransport {
       throw new PasteTransportFailure("PASTE_UNSUPPORTED");
     }
 
+    const minimumTypingMs = build.batches.reduce(
+      (total, batch) => total + encodeBatch(batch).reduce((ms, step) => ms + step.delay, 0),
+      0,
+    );
+    if (minimumTypingMs >= timeoutMs) {
+      // No bytes or acceptance callback: splitting is the caller's decision.
+      // Real USB/scheduler overhead may still exhaust a larger budget.
+      throw new PasteTransportFailure("DEADLINE_EXCEEDED");
+    }
+
     const terminal = Promise.withResolvers<AutomationPasteResult>();
     const abortListener = () => this.abortCurrent("CANCELLED");
     const timer = setTimeout(() => this.abortCurrent("DEADLINE_EXCEEDED"), timeoutMs);

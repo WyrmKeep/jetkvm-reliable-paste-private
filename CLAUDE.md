@@ -17,19 +17,25 @@ Two modes — pick carefully:
 
 Windows users must run from **WSL with the repo in Linux filesystem** (`~/jetkvm`, not `/mnt/c/`) — CRLF line endings break shell scripts, CMake FetchContent, and npm postinstall.
 
-## Verification (no unit test framework)
+## Verification
 
-Frontend has no vitest/jest — verify changes with:
+The UI has Vitest. Run the complete unit suite and typecheck:
 
 ```bash
-cd ui && npx tsc --noEmit && npx eslint './src/**/*.{ts,tsx}'
+cd ui && npm ci && npm run test:unit && npm run typecheck
 ```
+
+For paste work, use `docs/paste-reliability.md` as the current contract. Host-safe
+Go tests use `go test -race -tags=hosttest . ./internal/pastepacing
+./internal/controlsession ./internal/usbgadget ./internal/regression` (one command).
 
 Go tests: `./dev_deploy.sh -r <IP> --run-go-tests`. E2E: `make test_e2e DEVICE_IP=<IP>` (wipes device config, requires HDMI+USB attached).
 
 ### Verification gotchas
 
-- **`ui-lint` CI has been failing on main since 2026-03-15** (pre-existing drift in `Button.tsx`, `PasteModal.tsx`, `pasteMacro.ts`, `stores.ts`). `golangci-lint` is the real merge gate. Don't block on ui-lint red.
+- **Check the current CI result, not a historical exemption.** Attribute failures
+  against the base branch before calling them pre-existing. Do not ignore a red
+  check or weaken tests to make a paste change appear validated.
 - **ESLint locally on Windows**: 600+ `prettier/prettier` CRLF errors are a `core.autocrlf=true` working-copy artifact — committed blobs are LF. Verify: `git cat-file -p <sha>:<file> | tr -d -c '\r' | wc -c` → 0.
 - **`go test ./...` exec-format-errors under buildkit** (ARM cross-compile on amd64 host). Compile-only gate: `go test -c -o /dev/null <pkg>` per package. Runtime tests via `./dev_deploy.sh -r <IP> --run-go-tests`.
 - **buildkit requires `make build_native`** first to generate C artifacts before `go build ./...` succeeds inside the container.
@@ -41,11 +47,16 @@ Go tests: `./dev_deploy.sh -r <IP> --run-go-tests`. E2E: `make test_e2e DEVICE_I
 - **Flow control lives in the hook**: `PASTE_LOW_WATERMARK`/`PASTE_HIGH_WATERMARK` watermarks and the `isPasteInProgress` drain subscription are in `executePasteText` because they need the WebRTC channel ref. Don't extract them.
 - **Paste completion is edge-triggered on `pasteDepth atomic.Int32`** (PR #49). State emits fire only on 0↔1 transitions. Decisions use `Add()` return value, never `Load`. Non-paste macros don't touch it. `queuedMacro.session` carries the origin `*Session` — emits go to that session, not global `currentSession`.
 - **Don't merge PR #37 wholesale** — built for pre-pipeline ACK-per-batch. #34 ✓ PR #49. Still pending cherry-pick: #33 leak, #35 timer reuse.
-- **`drainMacroQueue`'s 200ms inter-macro `time.Sleep`** applies to NON-paste macros only as of the 2026-06-09 profiling work (`docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md`). Paste macros are uniformly deadline-paced per-step at measured-safe rates; gaps were measured NOT to protect the host (loss tracks instantaneous burst rate, not average). This supersedes PR #41's burst-era guidance. Keep the 200ms for non-paste macros.
-- **`rpcDoExecuteKeyboardMacro` uses absolute-deadline pacing** — per-step `timer.Reset(delay)`-after-write accumulates ~1ms/step overshoot (~20% rate error). Don't revert to sleep-after-write; profile rates are calibrated as exact.
-- **`waitForPasteDrain("required", ...)` ships with zero call sites** — reserved for #38 Phase 2 chunk boundaries. Don't delete as dead code.
+- **`drainMacroQueue`'s 200ms inter-macro `time.Sleep`** applies to NON-paste macros only as of the 2026-06-09 profiling work (`docs/superpowers/specs/2026-06-09-paste-throughput-ceiling-investigation.md`). Paste macros preserve minimum per-step spacing without catch-up; gaps were measured NOT to protect the host (loss tracks instantaneous burst rate, not average). This supersedes PR #41's burst-era guidance. Keep the 200ms for non-paste macros.
+- **Paste pacing must not catch up after lateness.** `rpcDoExecutePasteMacro`
+  preserves minimum post-write delays through `internal/pastepacing`; rates are
+  upper bounds, not exact throughput guarantees. The older deadline scheduler
+  remains only for non-paste macros.
+- **`waitForPasteDrain("required", ...)` is active** at chunk and repair
+  boundaries. Preserve paste-depth edges and cancellation; backend completion
+  must never be presented as target-content verification.
 
-## Phased paste patch rollout
+## Historical phased paste patch rollout (not current status)
 
 - **Phase 1 ✓ PR #49** — #42 paste-depth semantics + #48 shallow 64-slot queue + #34 UpdateKeysDown guard + `waitForPasteDrain` helper + `onHidMessage` goroutine-leak fix
 - **Phase 2** — #38 large-paste safe mode; wire `waitForPasteDrain("required")` into chunk boundaries

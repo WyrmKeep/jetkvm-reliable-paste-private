@@ -1,3 +1,5 @@
+> Historical record: preserve these measurements, but use `docs/paste-reliability.md` for current configuration and evidence limits. Claims below of exact timing, universal losslessness, or exclusive host-layer attribution are not current guarantees.
+
 # PASTE-008 — Content verification to chase byte-perfect (100%)
 
 **Date:** 2026-06-10

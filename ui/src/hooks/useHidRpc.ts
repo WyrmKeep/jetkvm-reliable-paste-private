@@ -192,7 +192,7 @@ export function useHidRpc(
 
   const sendMessage = useCallback(
     (message: RpcMessage, params: HidRpcSendMessageParams = {}) => {
-      sendHidRpcMessage(
+      return sendHidRpcMessage(
         message,
         {
           reliable: rpcHidChannel,
@@ -252,7 +252,7 @@ export function useHidRpc(
 
   const reportKeyboardMacroEvent = useCallback(
     (steps: KeyboardMacroStep[], isPaste = false) => {
-      sendMessage(new KeyboardMacroReportMessage(isPaste, steps.length, steps));
+      return sendMessage(new KeyboardMacroReportMessage(isPaste, steps.length, steps));
     },
     [sendMessage],
   );

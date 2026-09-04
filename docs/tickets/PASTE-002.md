@@ -1,3 +1,5 @@
+> Historical record: preserve these measurements, but use `docs/paste-reliability.md` for current configuration and evidence limits. Claims below of exact timing, universal losslessness, or exclusive host-layer attribution are not current guarantees.
+
 # PASTE-002 — 100k file-upload paste at scale
 
 **Status:** Done (2026-06-10)

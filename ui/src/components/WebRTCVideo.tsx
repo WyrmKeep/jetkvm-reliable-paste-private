@@ -34,7 +34,7 @@ export default function WebRTCVideo({ hasConnectionIssues }: { hasConnectionIssu
 
   // Store hooks
   const settings = useSettingsStore();
-  const { handleKeyPress, resetKeyboardState } = useKeyboard();
+  const { handleKeyPress, resetKeyboardStateOnBlur } = useKeyboard();
   const {
     getRelMouseMoveHandler,
     getAbsMouseMoveHandler,
@@ -469,14 +469,14 @@ export default function WebRTCVideo({ hasConnectionIssues }: { hasConnectionIssu
       document.addEventListener("keydown", keyDownHandler, { signal });
       document.addEventListener("keyup", keyUpHandler, { signal });
 
-      window.addEventListener("blur", resetKeyboardState, { signal });
-      document.addEventListener("visibilitychange", resetKeyboardState, { signal });
+      window.addEventListener("blur", resetKeyboardStateOnBlur, { signal });
+      document.addEventListener("visibilitychange", resetKeyboardStateOnBlur, { signal });
 
       return () => {
         abortController.abort();
       };
     },
-    [keyDownHandler, keyUpHandler, resetKeyboardState],
+    [keyDownHandler, keyUpHandler, resetKeyboardStateOnBlur],
   );
 
   // Setup Video Event Listeners

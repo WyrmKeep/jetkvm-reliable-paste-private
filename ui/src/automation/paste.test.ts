@@ -64,8 +64,7 @@ describe("ProductReliablePasteTransport", () => {
     const channel = new FakePasteChannel();
     const transport = new ProductReliablePasteTransport(channel, keyboard, {
       monotonicNow: () => monotonicMs,
-      nowIso: () =>
-        monotonicMs === 0 ? "2026-07-13T00:00:00.000Z" : "2026-07-13T00:00:00.022Z",
+      nowIso: () => (monotonicMs === 0 ? "2026-07-13T00:00:00.000Z" : "2026-07-13T00:00:00.022Z"),
     });
     const accepted: string[] = [];
     const execution = transport.execute(
@@ -154,7 +153,7 @@ describe("ProductReliablePasteTransport", () => {
       "a".repeat(129),
       new AbortController().signal,
       () => undefined,
-      1000,
+      10000,
     );
 
     expect(channel.writes).toHaveLength(1);
@@ -215,4 +214,21 @@ describe("ProductReliablePasteTransport", () => {
     channel.close();
     await firstFailure;
   });
+});
+
+describe("paste deadline admission", () => {
+  it.each(["a".repeat(12000), "A".repeat(10000)])(
+    "rejects an impossible 300-second paste before sending",
+    async text => {
+      const channel = new FakePasteChannel();
+      const transport = new ProductReliablePasteTransport(channel, keyboard);
+      const accepted = vi.fn();
+      await expect(
+        transport.execute(text, new AbortController().signal, accepted, 300000),
+      ).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
+      expect(channel.writes).toHaveLength(0);
+      expect(accepted).not.toHaveBeenCalled();
+      transport.close();
+    },
+  );
 });

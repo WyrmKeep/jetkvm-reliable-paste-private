@@ -119,9 +119,8 @@ function sliceFromCodePoint(text: string, count: number): string {
 }
 
 // ----- Duration estimate -----
-// Uniform deadline pacing makes paste time deterministic: (5ms press +
-// keyDelayMs reset) per char, plus inter-chunk pauses and ~2s of wake-tap/
-// settle overhead. See the 2026-06-09 throughput spec.
+// Nominal ordinary-character estimate only. Modified/composed characters,
+// USB write time, scheduling and verification increase actual duration.
 function estimatePasteSeconds(chars: number, keyDelayMs: number): number {
   if (chars <= 0) return 0;
   const chunkCount =
@@ -157,16 +156,25 @@ const pasteProfileOptions: {
   {
     value: "reliable",
     label: "Reliable",
-    description: "Smaller batches with target catch-up pacing.",
+    description: "Up to about 40 cps; conservative default.",
     Icon: LuShieldCheck,
     selectedClassName:
       "border-emerald-500/70 bg-emerald-50 text-emerald-950 shadow-xs dark:border-emerald-400/60 dark:bg-emerald-950/30 dark:text-emerald-100",
     iconClassName: "text-emerald-600 dark:text-emerald-300",
   },
   {
+    value: "slow",
+    label: "Slow",
+    description: "Up to about 20 cps for difficult targets.",
+    Icon: LuShieldCheck,
+    selectedClassName:
+      "border-blue-500/70 bg-blue-50 text-blue-950 shadow-xs dark:border-blue-400/60 dark:bg-blue-950/30 dark:text-blue-100",
+    iconClassName: "text-blue-600 dark:text-blue-300",
+  },
+  {
     value: "fast",
     label: "Fast",
-    description: "Larger batches for devices already validated.",
+    description: "Opt-in for validated targets; delivery can lose text.",
     Icon: LuGauge,
     selectedClassName:
       "border-amber-500/70 bg-amber-50 text-amber-950 shadow-xs dark:border-amber-400/60 dark:bg-amber-950/30 dark:text-amber-100",
@@ -360,6 +368,8 @@ export default function PasteModal() {
         pasteAbortControllerRef.current = abortController;
         setTraceLinesPersisted([
           `profile=${pasteProfile} source=${selectedFile ? `file:${selectedFile.name}` : "textarea"} chars=${totalChars}${startOffset > 0 ? ` resume_from=${startOffset}` : ""}`,
+          `transport=hidrpc-required reset_gap_ms=${effectiveDelay || 25} press_ms=5 modified_press_ms=10 debug_override=${debugMode} batch_steps=${profile.maxStepsPerBatch} chunk_chars=${DEFAULT_LARGE_PASTE_POLICY.chunkChars}`,
+          "completion=backend-drain-only; target content requires readback",
         ]);
 
         // PASTE-006: locate the target's character counter in the video frame
@@ -445,7 +455,7 @@ export default function PasteModal() {
           signal: abortController.signal,
           // Auto-verify/repair uses smaller chunks so a repair re-type is
           // short enough to usually land in a clean window and converge.
-          chunkCharsOverride: autoVerify ? 1500 : undefined,
+          chunkCharsOverride: autoVerify ? DEFAULT_LARGE_PASTE_POLICY.chunkChars : undefined,
           onProgress: progress => {
             setPasteProgress({
               completed: progress.completedBatches,
@@ -902,7 +912,7 @@ export default function PasteModal() {
               Paste mode
             </label>
             <div
-              className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+              className="grid grid-cols-1 gap-2 sm:grid-cols-3"
               role="radiogroup"
               aria-label="Paste mode"
             >
@@ -952,7 +962,10 @@ export default function PasteModal() {
                   const fastEta = formatDuration(
                     estimatePasteSeconds(chars, PASTE_PROFILES.fast.keyDelayMs),
                   );
-                  return `${chars.toLocaleString()} characters — ≈${reliableEta} on Reliable, ≈${fastEta} on Fast`;
+                  const slowEta = formatDuration(
+                    estimatePasteSeconds(chars, PASTE_PROFILES.slow.keyDelayMs),
+                  );
+                  return `${chars.toLocaleString()} characters — nominal minimum: ${reliableEta} Reliable, ${slowEta} Slow, ${fastEta} Fast; modified keys, USB and verification add time`;
                 })()}
               </p>
             )}

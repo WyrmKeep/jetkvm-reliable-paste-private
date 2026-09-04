@@ -46,26 +46,25 @@ function assertProfilesReachable(profiles: Record<string, PasteProfile>): void {
   }
 }
 
-// Profile pacing is uniform per keystroke: the backend deadline-paces each
-// wire step, so a plain character costs exactly (5ms press + keyDelayMs reset).
-//
-// Diagnostic host-capacity probe (2026-09-04):
-//   reliable: 5+20 = 25ms/char = 40 chars/sec. This deliberately changes only
-//             the per-key reset delay; the 128-step batch cap, transport,
-//             chunking, and backend execution path remain unchanged. If this
-//             rate is clean while the previous 5+6 = 11ms/char (~91 cps) rate
-//             garbles, the receiving host/application's variable input ceiling
-//             is implicated rather than raw USB throughput.
-//   fast:     5+2 = 7ms/char ~= 143 chars/sec. Retained unchanged as a control.
-//
-// This is diagnostic tuning, not a claimed permanent production default. Keep
-// it isolated until the same corpus has been compared before and after host
-// restart/quiescence under otherwise identical conditions.
+// Configured maximum rates for ordinary characters (5ms press + reset):
+// Reliable ~40 cps, Slow ~20 cps, Fast ~143 cps. Modified keys hold for 10ms;
+// composed characters may need multiple steps. USB writes and scheduling add
+// time. Paste pacing never catches up by shortening a subsequent phase.
+// Robert reported clean use of PR #104 at 40 cps; that is not an exhaustive
+// hardware certification. See docs/paste-reliability.md for evidence limits.
 export const PASTE_PROFILES = {
   reliable: deriveProfile(128, 20),
+  slow: deriveProfile(128, 45),
   fast: deriveProfile(256, 2),
 } satisfies Record<string, PasteProfile>;
 
 assertProfilesReachable(PASTE_PROFILES);
 
 export type PasteProfileName = keyof typeof PASTE_PROFILES;
+
+// Repair must not be faster than the failed delivery. Invalid debug delays use
+// the encoder's 25ms fallback; the repair floor remains the Slow profile.
+export function getPasteRepairDelayMs(activeDelayMs: number): number {
+  const active = Number.isFinite(activeDelayMs) && activeDelayMs > 0 ? activeDelayMs : 25;
+  return Math.max(PASTE_PROFILES.slow.keyDelayMs, active);
+}
