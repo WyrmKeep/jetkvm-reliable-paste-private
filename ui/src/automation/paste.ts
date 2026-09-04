@@ -71,8 +71,12 @@ function encodeBatch(
       0,
     );
     if (keyValues.length === 0 && modifier === 0) continue;
+    const resetDelay =
+      Number.isFinite(step.delay) && step.delay > 0
+        ? step.delay
+        : PASTE_PROFILES.reliable.keyDelayMs;
     encoded.push({ keys: keyValues, modifier, delay: modifier > 0 ? 10 : 5 });
-    encoded.push({ keys: RESET_KEYS, modifier: 0, delay: PASTE_PROFILES.reliable.keyDelayMs });
+    encoded.push({ keys: RESET_KEYS, modifier: 0, delay: resetDelay });
   }
   return encoded;
 }
